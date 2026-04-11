@@ -15,12 +15,31 @@ final class PanelState: ObservableObject {
         isMouseInside = true
         notificationTimer?.invalidate()
         notificationTimer = nil
-        currentState = .detail
+        // Don't override .detail — the user is inside the full settings view.
+        if currentState != .detail {
+            currentState = .extended
+        }
     }
 
     /// Called when mouse exits the panel area.
     func mouseExited() {
         isMouseInside = false
+        // Don't auto-collapse the detail view — the user may be typing in a
+        // text field, etc. The detail view has its own explicit close button.
+        if currentState != .detail {
+            currentState = .compact
+        }
+    }
+
+    /// Jump straight to the full-height detail view (e.g. gear click).
+    func showDetail() {
+        notificationTimer?.invalidate()
+        notificationTimer = nil
+        currentState = .detail
+    }
+
+    /// Dismiss the detail view back to the compact pill.
+    func collapse() {
         currentState = .compact
     }
 
@@ -40,7 +59,7 @@ final class PanelState: ObservableObject {
 
     var panelHeight: CGFloat {
         switch currentState {
-        case .compact: return 36
+        case .compact, .extended: return 36
         case .notification: return 90
         case .detail: return 500
         }
@@ -48,8 +67,9 @@ final class PanelState: ObservableObject {
 
     var panelWidth: CGFloat {
         switch currentState {
-        case .compact: return 500
-        case .notification: return 500
+        case .compact: return 140
+        case .extended: return 340
+        case .notification: return 420
         case .detail: return 700
         }
     }
