@@ -53,6 +53,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start monitoring
         let interval = store.getSettingJSON("sync", as: SyncConfig.self)?.intervalSeconds ?? 30
         monitor.start(interval: TimeInterval(interval))
+
+        // Watch for new important notifications and trigger the banner.
+        Task { @MainActor in
+            for await notif in monitor.$latestNotification.values {
+                guard notif != nil else { continue }
+                let duration = store.getSettingJSON("notification", as: NotificationConfig.self)?.durationSeconds ?? 3
+                panelState.showNotification(duration: TimeInterval(duration))
+            }
+        }
     }
 
     private func setupMouseTracking() {
