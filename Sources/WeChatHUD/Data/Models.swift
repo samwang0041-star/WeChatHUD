@@ -3,9 +3,10 @@ import Foundation
 // MARK: - Panel State
 
 enum HUDState {
-    case compact
-    case notification
-    case detail
+    case compact        // default — tiniest pill, passive glance
+    case extended       // hover-expanded pill (same height, wider)
+    case notification   // popup banner for important alerts
+    case detail         // full-height panel (chat list, settings)
 }
 
 // MARK: - Stats (CompactBar)
@@ -22,7 +23,8 @@ enum SyncStatus {
     case idle
     case syncing
     case ok
-    case stale       // >5 min since last sync
+    case stale              // >5 min since last sync
+    case waitingForWeChat   // WeChat process not running
     case error(String)
 
     var dotColor: String {
@@ -30,7 +32,7 @@ enum SyncStatus {
         case .idle, .syncing: return "yellow"
         case .ok: return "green"
         case .stale: return "yellow"
-        case .error: return "red"
+        case .waitingForWeChat, .error: return "red"
         }
     }
 }
@@ -124,6 +126,30 @@ struct AIConfig: Codable {
 struct SyncConfig: Codable {
     var intervalSeconds: Int = 30
     var wechatDBPath: String = "auto"
+    var cacheStrategy: CacheStrategy = .persistent
+}
+
+/// Where decrypted WeChat DBs are cached.
+enum CacheStrategy: String, Codable, CaseIterable {
+    case persistent   // ~/.wechat-hud/cache/ — fast cold start, plaintext on disk
+    case temporary    // /tmp/wechat_hud_cache/ — cleared on reboot
+    case memory       // never touches disk — most secure, slowest cold start
+
+    var label: String {
+        switch self {
+        case .persistent: return "持久磁盘"
+        case .temporary:  return "临时磁盘"
+        case .memory:     return "仅内存"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .persistent: return "~/.wechat-hud/cache — 启动最快，明文落盘"
+        case .temporary:  return "/tmp — 重启清空，每次开机首次解密"
+        case .memory:     return "进程内存 — 最安全，每次启动都全量解密"
+        }
+    }
 }
 
 struct NotificationConfig: Codable {

@@ -1,7 +1,7 @@
 import Foundation
 import SQLite3
 
-final class HUDStore {
+final class HUDStore: ObservableObject {
     private let dbPath: String
     private var db: OpaquePointer?
 

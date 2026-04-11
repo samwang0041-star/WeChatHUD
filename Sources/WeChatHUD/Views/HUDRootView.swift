@@ -5,22 +5,29 @@ struct HUDRootView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
-        VStack(spacing: 0) {
-            CompactBarView(stats: monitor.stats)
-
-            if panelState.currentState == .notification {
-                if let notif = monitor.latestNotification {
-                    NotificationBannerView(notification: notif)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+        ZStack {
+            // Base layer: compact or extended pill (same height, different width).
+            switch panelState.currentState {
+            case .compact:
+                CompactBarView(stats: monitor.stats)
+                    .transition(.opacity)
+            case .extended:
+                ExtendedBarView(stats: monitor.stats)
+                    .transition(.opacity)
+            case .notification:
+                VStack(spacing: 0) {
+                    CompactBarView(stats: monitor.stats)
+                    if let notif = monitor.latestNotification {
+                        NotificationBannerView(notification: notif)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
-            }
-
-            if panelState.currentState == .detail {
+            case .detail:
                 DetailPanelView()
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: panelState.currentState)
-        .frame(maxWidth: .infinity)
+        .animation(.spring(response: 0.35, dampingFraction: 0.78), value: panelState.currentState)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

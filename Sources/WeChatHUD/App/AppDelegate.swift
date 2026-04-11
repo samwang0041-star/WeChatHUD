@@ -8,9 +8,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var store: HUDStore!
     var reader: WeChatReader!
     var aiService: AIService!
+    var fsWatcher: FSEventsWatcher?
     var trackingArea: NSTrackingArea?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        print("[WCHUD] launch — pid=\(ProcessInfo.processInfo.processIdentifier)")
         // Initialize data layer
         store = HUDStore()
         do {
@@ -19,7 +21,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             print("Failed to open HUDStore: \(error)")
         }
 
-        reader = WeChatReader()
+        // Cache strategy comes from persisted settings (default = persistent).
+        let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
+        reader = WeChatReader(cacheStrategy: syncCfg.cacheStrategy)
+
         aiService = AIService(
             config: store.getSettingJSON("ai", as: AIConfig.self) ?? AIConfig()
         )
@@ -28,33 +33,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelState = PanelState()
         monitor = ChatMonitor(reader: reader, store: store)
 
-        // Create SwiftUI view
+        // SwiftUI view — inject store so settings views can persist.
         let rootView = HUDRootView()
             .environmentObject(panelState)
             .environmentObject(monitor)
+            .environmentObject(store)
 
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Create floating panel
         panel = FloatingPanel(contentView: hostingView)
         panel.orderFrontRegardless()
-
-        // Set up mouse tracking on the panel's content view
         setupMouseTracking()
 
-        // Observe state changes to resize panel
+        // Resize panel when state changes
         Task { @MainActor in
             for await _ in panelState.$currentState.values {
                 panel.animateHeight(to: panelState.panelHeight, width: panelState.panelWidth)
             }
         }
 
-        // Start monitoring
-        let interval = store.getSettingJSON("sync", as: SyncConfig.self)?.intervalSeconds ?? 30
-        monitor.start(interval: TimeInterval(interval))
+        // Start the monitor (includes initial scan + WeChat process observer).
+        monitor.start()
 
-        // Watch for new important notifications and trigger the banner.
+        // Start FSEvents-based file watcher for incremental updates.
+        startFSWatcher()
+
+        // Forward important notifications to the panel banner.
         Task { @MainActor in
             for await notif in monitor.$latestNotification.values {
                 guard notif != nil else { continue }
@@ -64,11 +69,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func startFSWatcher() {
+        let dbDir = reader.dbDir
+        print("[WCHUD] dbDir=\(dbDir.isEmpty ? "<EMPTY>" : dbDir)")
+        guard !dbDir.isEmpty else {
+            print("[WCHUD] FSWatcher NOT started — no dbDir")
+            return
+        }
+        print("[WCHUD] FSWatcher starting on \(dbDir)")
+        // latency = 0 → kernel delivers events as soon as they happen, with
+        // only the minimum coalescing for concurrent writes. Every 1ms we
+        // shave here is 1ms closer to "instant" from the user's POV.
+        let watcher = FSEventsWatcher(paths: [dbDir], latency: 0.0) { [weak self] paths in
+            // FSEvents delivers on our main dispatch queue (set in start()).
+            MainActor.assumeIsolated {
+                self?.monitor.onFSEvent(paths: paths)
+            }
+        }
+        watcher.start()
+        fsWatcher = watcher
+    }
+
     private func setupMouseTracking() {
         guard let contentView = panel.contentView else { return }
-
-        // Tracking area covers the entire content view. `.inVisibleRect` keeps
-        // it in sync when the panel resizes between compact/notification/detail.
         let area = NSTrackingArea(
             rect: contentView.bounds,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
@@ -79,23 +102,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         trackingArea = area
     }
 
-    // NSTrackingArea dispatches these via selector on the owner. AppDelegate
-    // isn't an NSResponder so we can't override them — @objc is sufficient.
-    // AppKit guarantees delivery on the main thread, so we assert main-actor
-    // isolation rather than hop through Task.
     @objc func mouseEntered(with event: NSEvent) {
-        MainActor.assumeIsolated {
-            panelState.mouseEntered()
-        }
+        MainActor.assumeIsolated { panelState.mouseEntered() }
     }
 
     @objc func mouseExited(with event: NSEvent) {
-        MainActor.assumeIsolated {
-            panelState.mouseExited()
-        }
+        MainActor.assumeIsolated { panelState.mouseExited() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        fsWatcher?.stop()
         monitor.stop()
         store.close()
     }
