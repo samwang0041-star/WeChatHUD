@@ -9,6 +9,11 @@ final class PanelState: ObservableObject {
     /// When set, DetailPanelView shows conversation analysis instead of settings.
     @Published var selectedChatUsername: String?
     @Published var selectedChatName: String?
+    /// Set when returning from > 30 min idle — triggers digest banner.
+    @Published var showSmartDigest = false
+
+    /// Last time the user actively interacted (mouse entered extended).
+    private var lastActiveAt = Date()
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
@@ -31,6 +36,14 @@ final class PanelState: ObservableObject {
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
+
+        // Smart Digest: if > 30 min since last active, flag for digest
+        let idleMinutes = Date().timeIntervalSince(lastActiveAt) / 60
+        if idleMinutes >= 30 && currentState == .compact {
+            showSmartDigest = true
+        }
+        lastActiveAt = Date()
+
         // Don't override .detail — the user is inside the full settings view.
         if currentState != .detail && currentState != .extended {
             currentState = .extended

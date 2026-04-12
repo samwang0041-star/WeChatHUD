@@ -63,6 +63,10 @@ struct ExtendedTabsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Smart Digest banner — shown after > 30 min idle
+            if panelState.showSmartDigest {
+                smartDigestBanner
+            }
             tabBar
             Divider()
                 .background(Color.white.opacity(0.08))
@@ -168,6 +172,60 @@ struct ExtendedTabsView: View {
             .cornerRadius(4)
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Smart Digest banner
+
+    private var smartDigestBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.badge.exclamationmark")
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("你离开了一段时间")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.8))
+                let summary = digestSummary
+                if !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: {
+                selectedTab = .catchup
+                panelState.showSmartDigest = false
+            }) {
+                Text("查看追赶")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.12))
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            Button(action: { panelState.showSmartDigest = false }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.08))
+    }
+
+    private var digestSummary: String {
+        var parts: [String] = []
+        if !unreadItems.isEmpty { parts.append("\(unreadItems.count)条未读") }
+        if !replyDebtItems.isEmpty { parts.append("\(replyDebtItems.count)条待回") }
+        let pendingCommitments = monitor.commitments.filter { $0.status == .pending }.count
+        if pendingCommitments > 0 { parts.append("\(pendingCommitments)个承诺") }
+        return parts.joined(separator: "、")
     }
 
     // MARK: - Follow content
