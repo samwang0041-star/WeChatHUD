@@ -2,3 +2,10 @@
 .swiftpm/
 *.xcodeproj
 DerivedData/
+
+# Private classifier fixture grown from real WeChat messages — never commit.
+# The committed Tests/Fixtures/labeled_messages.json stays small + synthetic;
+# real-data growth lives in this gitignored sibling.
+Tests/Fixtures/labeled_messages_private.json
+# classify-real default output goes to /tmp; ignore any local redirects too.
+classify_real_*.json

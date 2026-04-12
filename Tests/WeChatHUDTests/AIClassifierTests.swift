@@ -32,7 +32,7 @@ final class AIClassifierTests: XCTestCase {
     func testClassifierConfigDefaults() {
         let cfg = AIClassifierConfig()
         XCTAssertEqual(cfg.baseURL, "http://127.0.0.1:8000/v1")
-        XCTAssertEqual(cfg.model, "Qwen3.5-35B-A3B-4bit")
+        XCTAssertEqual(cfg.model, "Qwen3.5-27B-6bit")
         XCTAssertEqual(cfg.promptVersion, "classifier_v1")
         XCTAssertLessThanOrEqual(cfg.temperature, 0.2)
     }

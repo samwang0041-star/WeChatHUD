@@ -16,7 +16,8 @@ struct ExtendedBarView: View {
             // Full-label stats
             statLabel("\(stats.unreadCount) 未读", icon: "envelope.fill")
             statLabel("\(stats.atMentionCount) @你", icon: "at")
-            statLabel("\(stats.importantCount) 重要", icon: "exclamationmark.circle.fill")
+            statLabel("\(stats.replyDebtCount) 待回", icon: "arrowshape.turn.up.left.fill")
+            statLabel("\(stats.vipCount) VIP", icon: "star.fill")
 
             Spacer(minLength: 4)
 

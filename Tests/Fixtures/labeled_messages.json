@@ -1,0 +1,146 @@
+[
+  {
+    "msg_id": "seed-001",
+    "text": "明天上午把预算单发给我",
+    "sender_name": "林总",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "send_file",
+      "summary": "发送预算单",
+      "deadline_relative": "+1d"
+    }
+  },
+  {
+    "msg_id": "seed-002",
+    "text": "好的，我下午处理",
+    "sender_name": "张姐",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": false,
+      "type": "none",
+      "summary": "",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-003",
+    "text": "周三还是周四开会比较好？",
+    "sender_name": "王经理",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "decide",
+      "summary": "决定开会日期",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-004",
+    "text": "刚发的稿子帮看一下",
+    "sender_name": "小李",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "review",
+      "summary": "审核稿子",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-005",
+    "text": "你那边客户的预算批了吗",
+    "sender_name": "老周",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "yes_no",
+      "summary": "确认客户预算",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-006",
+    "text": "今天天气真好",
+    "sender_name": "同事",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": false,
+      "type": "none",
+      "summary": "",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-007",
+    "text": "[图片]",
+    "sender_name": "未知",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": false,
+      "type": "none",
+      "summary": "",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-008",
+    "text": "把昨天会议的纪要发到群里",
+    "sender_name": "副总",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "send_file",
+      "summary": "发送会议纪要",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-009",
+    "text": "我刚刚到公司了",
+    "sender_name": "助理",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": false,
+      "type": "none",
+      "summary": "",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-010",
+    "text": "晚上一起吃饭吗",
+    "sender_name": "朋友",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "yes_no",
+      "summary": "确认晚上一起吃饭",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-011",
+    "text": "我下午发你",
+    "sender_name": "同事",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": false,
+      "type": "none",
+      "summary": "",
+      "deadline_relative": null
+    }
+  },
+  {
+    "msg_id": "seed-012",
+    "text": "客户的联系方式有吗 发我一下",
+    "sender_name": "老板",
+    "chat_kind": "private",
+    "expected": {
+      "is_ask": true,
+      "type": "send_file",
+      "summary": "发送客户联系方式",
+      "deadline_relative": null
+    }
+  }
+]

@@ -19,5 +19,7 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>WeChatHUD 需要通过 System Events 向微信发送搜索指令，以便在点击消息条目时跳转到对应会话。</string>
 </dict>
 </plist>

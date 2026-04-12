@@ -12,10 +12,6 @@ struct SyncSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("数据同步")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
-
             // Cache strategy
             VStack(alignment: .leading, spacing: 4) {
                 Text("解密缓存位置")
@@ -27,7 +23,7 @@ struct SyncSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: cacheStrategy) { _ in save() }
+                .onChange(of: cacheStrategy) { save() }
                 Text(cacheStrategy.hint)
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.55))
@@ -60,7 +56,7 @@ struct SyncSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: interval) { _ in save() }
+                .onChange(of: interval) { save() }
             }
         }
         .onAppear(perform: load)

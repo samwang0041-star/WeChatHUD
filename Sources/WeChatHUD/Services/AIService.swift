@@ -11,6 +11,15 @@ actor AIService {
         self.config = config
     }
 
+    func currentConfig() -> AIConfig {
+        config
+    }
+
+    func isConfigured() -> Bool {
+        !config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     /// Send a chat completion request and return the response text.
     func complete(system: String, user: String) async throws -> String {
         let baseURL = normalizeURL(config.baseURL)
