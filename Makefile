@@ -27,4 +27,6 @@ clean:
 	rm -rf .build/WeChatHUD.app
 
 test:
-	swift test
+	@swift test 2>&1 | tee /tmp/wechathud-test.log | grep -E '(Test Case.*failed|Executed.*tests|error:)' ; \
+	TOTAL=$$(grep 'Executed.*tests' /tmp/wechathud-test.log | tail -1); \
+	echo ""; echo "$$TOTAL"

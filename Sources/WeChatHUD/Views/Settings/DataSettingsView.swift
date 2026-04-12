@@ -25,7 +25,7 @@ struct DataSettingsView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .onChange(of: selectedSection) { _ in reload() }
+            .onChange(of: selectedSection) { reload() }
 
             switch selectedSection {
             case .recalls:

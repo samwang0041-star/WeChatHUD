@@ -260,9 +260,9 @@ struct ContactEditSheet: View {
                         Text("白名单").tag(AttentionLevel.whitelist)
                         Text("灰名单").tag(AttentionLevel.greylist)
                     }
-                    .onChange(of: selectedLevel) { newLevel in
+                    .onChange(of: selectedLevel) {
                         // Auto-select first valid role when level changes
-                        let roles = rolesForLevel(newLevel)
+                        let roles = rolesForLevel(selectedLevel)
                         if !roles.contains(selectedRole) {
                             selectedRole = roles.first ?? selectedRole
                             replyWindow  = selectedRole.defaultReplyWindowMinutes
@@ -274,8 +274,8 @@ struct ContactEditSheet: View {
                             Text("\(role.icon) \(role.label)").tag(role)
                         }
                     }
-                    .onChange(of: selectedRole) { newRole in
-                        replyWindow = newRole.defaultReplyWindowMinutes
+                    .onChange(of: selectedRole) {
+                        replyWindow = selectedRole.defaultReplyWindowMinutes
                     }
 
                     TextField("备注", text: $roleNote)
