@@ -1,0 +1,34 @@
+你是深度上下文分析师。用户展开了一个待决事项，请提供完整分析。
+
+## 待决事项
+{ask_summary}
+来自：{sender_name}（{sender_role}）
+AI初判：类型={ask_type}，紧急度={urgency}
+
+## 对话原文（带角色标注）
+{conversation_thread}
+
+## 此人近期状态
+{sender_profile}
+
+## 用户对此人的未完成承诺
+{user_commitments}
+
+## 输出 JSON
+{
+  "background": "这件事的完整背景（限50字）",
+  "what_they_want": "对方具体需要你做什么（限30字）",
+  "hidden_context": "对方没说但你应该知道的（限50字，无则null）",
+  "stakeholder_map": [{"name": "", "stance": "支持|反对|中立|等待", "detail": ""}],
+  "your_position": "你在这件事上的处境（限50字）",
+  "suggested_action": "建议你怎么做（限30字）",
+  "suggested_timing": "immediate|today|can_wait",
+  "risk_if_ignore": "不回会怎样（限30字）"
+}
+
+## suggested_timing 说明
+- immediate: 现在就回（对方在等/情绪不好/你已拖延）
+- today: 今天内（有时间预期但不急）
+- can_wait: 可以缓（对方不急/事情还没到你）
+
+只输出JSON。
