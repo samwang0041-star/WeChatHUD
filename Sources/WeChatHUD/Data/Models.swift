@@ -867,6 +867,18 @@ struct RoleConfig: Codable {
     var vipTrackDimensions: [String]
 }
 
+// MARK: - Conversation Memory
+
+struct ConversationMemory {
+    let chatUsername: String
+    var summary: String
+    var keyTopics: [String]
+    var pendingItems: [String]
+    var moodTrend: String
+    var messageCount7d: Int
+    var lastUpdated: Date
+}
+
 // MARK: - Chat Trend
 
 struct DayMessageCount: Identifiable {
