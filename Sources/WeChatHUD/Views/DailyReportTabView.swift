@@ -6,8 +6,55 @@ import AppKit
 struct DailyReportTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
+    enum ReportMode: String, CaseIterable {
+        case daily = "日报"
+        case weekly = "周报"
+    }
+    @State private var reportMode: ReportMode = .daily
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Mode toggle
+            HStack(spacing: 0) {
+                Picker("", selection: $reportMode) {
+                    ForEach(ReportMode.allCases, id: \.self) { mode in
+                        Text(mode.rawValue).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 140)
+                .controlSize(.small)
+                Spacer()
+                Button(action: {
+                    Task { await monitor.loadDailyReport(force: true) }
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+
+            Divider().background(Color.white.opacity(0.07))
+
+            if reportMode == .daily {
+                dailyContent
+            } else {
+                weeklyContent
+            }
+        }
+        .task {
+            await monitor.loadDailyReport()
+        }
+    }
+
+    // MARK: - Daily content
+
+    private var dailyContent: some View {
+        Group {
             if monitor.dailyReport == nil && monitor.dailyReportGeneratedAt == nil {
                 loadingState
             } else if let report = monitor.dailyReport {
@@ -29,9 +76,71 @@ struct DailyReportTabView: View {
                 emptyState("日报生成失败，请稍后重试")
             }
         }
-        .task {
-            await monitor.loadDailyReport()
+    }
+
+    // MARK: - Weekly content
+
+    private var weeklyContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                weeklyOverview
+                divider
+                weeklyCommitments
+                divider
+                weeklyPendingAsks
+            }
+            .padding(.bottom, 8)
         }
+    }
+
+    private var weeklyOverview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel("本周概览")
+            let pending = monitor.commitments.filter { $0.status == .pending }.count
+            let fulfilled = monitor.commitments.filter { $0.status == .fulfilled }.count
+            let overdue = monitor.commitments.filter { $0.status == .overdue }.count
+
+            HStack(spacing: 6) {
+                statPill(label: "待处理承诺", value: "\(pending)", color: pending > 0 ? .orange : .white)
+                statPill(label: "已完成", value: "\(fulfilled)", color: fulfilled > 0 ? .green : .white)
+                statPill(label: "超期", value: "\(overdue)", color: overdue > 0 ? .red : .white)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+    }
+
+    private var weeklyCommitments: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionLabel("本周承诺", count: monitor.commitments.count)
+            if monitor.commitments.isEmpty {
+                Text("本周暂无承诺记录")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.35))
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(sortedCommitments) { commitment in
+                    CommitmentRow(commitment: commitment)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private var weeklyPendingAsks: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionLabel("本周待办")
+            Text("查看「待回」和「追赶」标签页获取最新待办事项")
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.4))
+                .padding(.vertical, 6)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 
     // MARK: - Loading
