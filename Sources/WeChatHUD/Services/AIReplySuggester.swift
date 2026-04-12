@@ -62,10 +62,12 @@ actor AIReplySuggester {
         let relationship: String
         /// Optional style hint from StyleProfiler to match user's writing style.
         let styleHint: String?
+        /// Optional feedback context — what the user liked/disliked in past suggestions.
+        let feedbackContext: String?
 
         init(messageBody: String, senderName: String, chatName: String,
              isGroup: Bool, askType: AskType, relationship: String,
-             styleHint: String? = nil) {
+             styleHint: String? = nil, feedbackContext: String? = nil) {
             self.messageBody = messageBody
             self.senderName = senderName
             self.chatName = chatName
@@ -73,6 +75,7 @@ actor AIReplySuggester {
             self.askType = askType
             self.relationship = relationship
             self.styleHint = styleHint
+            self.feedbackContext = feedbackContext
         }
     }
 
@@ -100,6 +103,10 @@ actor AIReplySuggester {
         // Append style hint if available (from StyleProfiler)
         if let hint = input.styleHint {
             userPrompt += "\n\n[风格参考] \(hint)"
+        }
+        // Append feedback context (from AI learning loop)
+        if let feedback = input.feedbackContext {
+            userPrompt += "\n\n[用户偏好反馈] \(feedback)"
         }
 
         // First attempt

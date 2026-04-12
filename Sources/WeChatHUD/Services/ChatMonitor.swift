@@ -1162,6 +1162,23 @@ final class ChatMonitor: ObservableObject {
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
         // Fetch style profile to make suggestions match user's writing style
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+
+        // Build feedback context from recent AI feedback
+        let recentFeedback = store.loadAIFeedback(limit: 10, msgUIDPrefix: "reply_suggest:")
+        let feedbackHint: String?
+        if !recentFeedback.isEmpty {
+            let adopted = recentFeedback.filter { $0.feedbackType == .truePositive }.count
+            let rejected = recentFeedback.filter { $0.feedbackType == .falsePositive }.count
+            let notes = recentFeedback.compactMap(\.note).filter { !$0.isEmpty }.prefix(3)
+            var parts: [String] = []
+            if adopted > 0 { parts.append("用户采纳了 \(adopted)/\(recentFeedback.count) 条建议") }
+            if rejected > 0 { parts.append("拒绝了 \(rejected) 条") }
+            if !notes.isEmpty { parts.append("偏好备注: \(notes.joined(separator: "; "))") }
+            feedbackHint = parts.isEmpty ? nil : parts.joined(separator: "。")
+        } else {
+            feedbackHint = nil
+        }
+
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
             senderName: item.senderName,
@@ -1169,7 +1186,8 @@ final class ChatMonitor: ObservableObject {
             isGroup: item.isGroup,
             askType: .none,
             relationship: "work",
-            styleHint: style.isEmpty ? nil : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
+            styleHint: style.isEmpty ? nil : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))",
+            feedbackContext: feedbackHint
         )
         return await replySuggester.suggest(input) ?? []
     }
