@@ -1050,6 +1050,10 @@ final class ChatMonitor: ObservableObject {
                 let newMessages = messages.filter { $0.createTime > baseline }
 
                 for msg in newMessages {
+                    // Skip own messages — don't surface them as VIP/whitelist notifications.
+                    if isFromSelf(msg, chatUsername: entry.id, myUsername: myUname) {
+                        continue
+                    }
                     if isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap) {
                         continue
                     }
