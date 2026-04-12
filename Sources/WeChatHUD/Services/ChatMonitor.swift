@@ -1040,6 +1040,12 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Update a commitment's status and refresh the published list.
+    func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
+        try store.updateCommitmentStatus(msgUID: msgUID, status: status)
+        commitments = store.loadCommitments()
+    }
+
     /// Load pending asks for a specific chat. Used by Person Profile card.
     func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
         Array(store.loadPendingAsks(status: .pending)
