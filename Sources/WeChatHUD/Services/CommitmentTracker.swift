@@ -93,7 +93,8 @@ actor CommitmentTracker {
     }
 
     private func callModel(prompt: String, config: AIClassifierConfig) async -> String? {
-        guard let url = URL(string: "\(config.baseURL)/chat/completions") else { return nil }
+        let base = normalizeURL(config.baseURL)
+        guard let url = URL(string: "\(base)/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -113,6 +114,14 @@ actor CommitmentTracker {
               let message = choices.first?["message"] as? [String: Any],
               let content = message["content"] as? String else { return nil }
         return content
+    }
+
+    private func normalizeURL(_ url: String) -> String {
+        var u = url
+        if !u.contains("://") { u = "http://\(u)" }
+        while u.hasSuffix("/") { u.removeLast() }
+        if !u.hasSuffix("/v1") { u += "/v1" }
+        return u
     }
 
     private func parseResult(_ text: String) -> CommitmentResult? {
