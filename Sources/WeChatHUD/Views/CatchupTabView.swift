@@ -147,7 +147,29 @@ struct CatchupTabView: View {
                     }
                 }
 
-                if result.needsAction.isEmpty && result.important.isEmpty && result.lowPriority.isEmpty {
+                // Cross-chat correlations
+                let correlations = findCrossChartCorrelations()
+                if !correlations.isEmpty {
+                    sectionHeader("🔗 跨对话关联", count: correlations.count)
+                    ForEach(correlations, id: \.keyword) { corr in
+                        HStack(alignment: .top, spacing: 8) {
+                            Rectangle().fill(Color.purple.opacity(0.6)).frame(width: 2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("「\(corr.keyword)」出现在 \(corr.chatNames.count) 个对话中")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                                Text(corr.chatNames.joined(separator: "、"))
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .lineLimit(1)
+                            }
+                            .padding(.vertical, 3)
+                        }
+                        .padding(.horizontal, 12)
+                    }
+                }
+
+                if result.needsAction.isEmpty && result.important.isEmpty && result.lowPriority.isEmpty && correlations.isEmpty {
                     Text("过去 \(hourWindow) 小时没有需要关注的消息。")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
@@ -227,6 +249,43 @@ struct CatchupTabView: View {
             replyDebt: monitor.replyDebtItems.count,
             commitments: monitor.commitments.filter { $0.status == .pending }.count
         )
+    }
+
+    // MARK: - Cross-chat correlations
+
+    struct CrossChatCorrelation {
+        let keyword: String
+        let chatNames: [String]
+    }
+
+    private func findCrossChartCorrelations() -> [CrossChatCorrelation] {
+        // Collect recent message texts per chat
+        var chatTexts: [String: [String]] = [:]  // chatName → [texts]
+        for notif in monitor.recentNotifications {
+            chatTexts[notif.chatName, default: []].append(notif.snippet)
+        }
+        for item in monitor.unreadItems {
+            chatTexts[item.chatName, default: []].append(item.preview)
+        }
+
+        guard chatTexts.count >= 2 else { return [] }
+
+        // Extract keywords (simple: words > 2 chars that appear in 2+ chats)
+        var keywordChats: [String: Set<String>] = [:]
+        for (chatName, texts) in chatTexts {
+            let combined = texts.joined(separator: " ")
+            let words = combined.components(separatedBy: .whitespacesAndNewlines)
+                .filter { $0.count >= 2 }
+            for word in Set(words) {
+                keywordChats[word, default: []].insert(chatName)
+            }
+        }
+
+        return keywordChats
+            .filter { $0.value.count >= 2 }
+            .sorted { $0.value.count > $1.value.count }
+            .prefix(3)
+            .map { CrossChatCorrelation(keyword: $0.key, chatNames: Array($0.value)) }
     }
 
     private func loadCatchup() async {
