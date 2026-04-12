@@ -327,6 +327,18 @@ final class HUDStore: ObservableObject {
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_role TEXT")
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN urgency TEXT")
 
+        // Reply drafts
+        try exec("""
+            CREATE TABLE IF NOT EXISTS reply_drafts (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                text            TEXT NOT NULL,
+                send_at         INTEGER NOT NULL DEFAULT 0,
+                created_at      INTEGER NOT NULL
+            )
+        """)
+
         // Conversation memory — rolling 7-day summary per chat
         try exec("""
             CREATE TABLE IF NOT EXISTS conversation_memory (
@@ -1605,6 +1617,43 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    // MARK: - Reply Drafts
+
+    func saveDraft(chatUsername: String, chatName: String, text: String, sendAt: Date?) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let sendAtTs = sendAt.map { Int($0.timeIntervalSince1970) } ?? 0
+        try exec("""
+            INSERT INTO reply_drafts(chat_username, chat_name, text, send_at, created_at)
+            VALUES(?,?,?,?,?)
+        """, params: [chatUsername, chatName, text, String(sendAtTs), String(now)])
+    }
+
+    func loadDrafts() -> [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] {
+        var results: [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, chat_username, chat_name, text, send_at, created_at
+            FROM reply_drafts ORDER BY created_at DESC
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let sendAtTs = sqlite3_column_int64(stmt, 3)
+            results.append((
+                id: sqlite3_column_int64(stmt, 0),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 1)),
+                chatName: String(cString: sqlite3_column_text(stmt, 2)),
+                text: String(cString: sqlite3_column_text(stmt, 3)),
+                sendAt: sendAtTs > 0 ? Date(timeIntervalSince1970: Double(sendAtTs)) : nil,
+                createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5)))
+            ))
+        }
+        return results
+    }
+
+    func deleteDraft(id: Int64) throws {
+        try exec("DELETE FROM reply_drafts WHERE id=?", params: [String(id)])
     }
 
     // MARK: - Conversation Memory
