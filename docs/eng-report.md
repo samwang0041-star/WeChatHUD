@@ -4,28 +4,39 @@
 
 ## Current Status
 
-**状态**: 🟡 P4 功能补全 — P4a 完成，继续 P4b
+**状态**: 🟢 P4 功能补全 — 全部完成
 
-## Completed: P4a Catch-up Mode UI ✅
+## P4 完成总结
 
-**新增文件**: `CatchupTabView.swift` (362 行)
+### P4a: Catch-up Mode UI ✅
+- 新增 `CatchupTabView.swift`，三段式优先级摘要
+- 时间窗口选择器，纯客户端数据聚合
 
-**功能**:
-- 三段式优先级摘要：🔴需要处理 → 📌重要动态 → 💤稍后看
-- 时间窗口选择器（1h/3h/6h/12h/24h）
-- 聚合已有数据（unreadItems + replyDebtItems + commitments + recentNotifications）
-- 无需额外 AI 调用，纯客户端数据聚合
-- 点击行打开对应微信聊天
-- 已集成到 ExtendedTabsView 的「追赶」标签
+### P4b: Person Profile Card ✅
+- 增强 `VIPInsightCardView`，新增待处理事项和承诺 section
+- 新增 `ChatMonitor.pendingAsksForChat()` helper
 
-**设计决策**:
-- 选择纯客户端聚合而非调用 AIGroupCatchup，因为所需数据已在 ChatMonitor 的 @Published 属性中
-- 后续可以加 AI 增强（用 AIGroupCatchup 生成摘要），但 MVP 先用确定性逻辑
+### P4c: Weekly Report ✅
+- `DailyReportTabView` 新增 日/周 切换
+- 周报展示承诺统计和完整承诺列表
 
-## In Progress
+### P4d: Commitment Tracking UI ✅
+- 新增 `CommitmentTabView.swift`，独立承诺管理标签页
+- 完成/取消操作按钮，状态过滤器
+- 新增 `ChatMonitor.updateCommitmentStatus()` 方法
 
-P4b: Person Profile Card — 接下来实现
+## 全项目总成果 (P0-P4)
+
+| 指标 | 数值 |
+|------|------|
+| 测试 | 117 → 156 (+39) |
+| 生产 bug | 1 修复 (autopilot column index) |
+| 架构 | ChatMonitor 1690→1131行, +ScanEngine +MessageHelpers |
+| AI 服务 | 11/11 审计通过, CommitmentTracker 加固 |
+| 构建质量 | Release build 零警告 |
+| 新功能 | 4 个 UI tab (追赶/承诺/周报/Person Profile 增强) |
+| 新文件 | CatchupTabView, CommitmentTabView, ScanEngine, MessageHelpers |
 
 ## Questions for PM
 
-(暂无)
+(暂无 — 等待 PM review P4 并决定下一步)
