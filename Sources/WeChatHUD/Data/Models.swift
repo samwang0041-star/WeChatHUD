@@ -69,6 +69,8 @@ struct MessageInfo: Identifiable {
     let baseType: Int
     let subType: Int
     let createTime: Int      // unix timestamp
+    /// App message subtype from parseAppMsg (0 for non-appmsg).
+    var appType: Int = 0
 
     var isAtMention: Bool { text.contains("@") }
     var relativeTime: String { Self.formatRelative(createTime) }
@@ -876,9 +878,122 @@ struct ConversationMemory {
     var summary: String
     var keyTopics: [String]
     var pendingItems: [String]
+    var sharedContext: [String]
+    var communicationNotes: [String]
     var moodTrend: String
+    /// Current conversation phase: 闲聊/讨论/决策/争论/告别/无
+    var conversationPhase: String
+    /// User's current stance or position in the conversation (e.g., "支持方案A").
+    var stance: String
     var messageCount7d: Int
     var lastUpdated: Date
+
+    /// Format memory as concise text block for prompt injection.
+    /// Capped at 400 characters to control token budget on local models.
+    /// Priority: phase/stance > summary > key_topics > shared_context > pending > communication > mood.
+    func formatForPrompt() -> String? {
+        var parts: [String] = []
+        // Phase and stance are highest priority — directly affect reply coherence
+        if !conversationPhase.isEmpty && conversationPhase != "无" {
+            parts.append("当前对话阶段: \(conversationPhase)")
+        }
+        if !stance.isEmpty { parts.append("你的立场: \(stance)") }
+        if !summary.isEmpty { parts.append("摘要: \(summary)") }
+        if !keyTopics.isEmpty { parts.append("最近话题: \(keyTopics.joined(separator: "、"))") }
+        if !sharedContext.isEmpty { parts.append("共同背景: \(sharedContext.joined(separator: "、"))") }
+        if !pendingItems.isEmpty { parts.append("待办/未完成: \(pendingItems.joined(separator: "、"))") }
+        if !communicationNotes.isEmpty { parts.append("沟通习惯: \(communicationNotes.joined(separator: "、"))") }
+        if !moodTrend.isEmpty { parts.append("情绪: \(moodTrend)") }
+        guard !parts.isEmpty else { return nil }
+
+        // Two-pass truncation: reserve first 80 chars for phase+stance (indices 0-1),
+        // remaining 320 chars for other fields.
+        var result = ""
+        for (idx, part) in parts.enumerated() {
+            let candidate = result.isEmpty ? part : result + "\n" + part
+            // Phase/stance fields (first 2) get 80-char budget
+            // Remaining fields share 320-char budget (total 400)
+            let limit = idx < 2 ? 80 : 400
+            if candidate.count > limit { break }
+            result = candidate
+        }
+        return result.isEmpty ? nil : result
+    }
+}
+
+// MARK: - Reply Timing Profile
+
+/// Per-contact reply timing model. Stores delay distribution across time periods.
+struct ReplyTimingProfile {
+    let chatUsername: String
+    /// Delay in seconds at P25/P50/P75 percentiles per time period.
+    var workHours: DelayDistribution   // Mon-Fri 9:00-18:00
+    var evening: DelayDistribution     // 18:00-23:00
+    var weekend: DelayDistribution     // Sat-Sun 9:00-23:00
+    var lateNight: DelayDistribution   // 23:00-7:00
+    /// Whether user historically stays silent during late night (23:00-7:00).
+    var silentAtNight: Bool
+    /// Late-night reply rate (0.0-1.0). Used for configurable threshold comparison.
+    var lateNightReplyRate: Double
+    /// Total reply pairs analyzed.
+    var sampleCount: Int
+    var lastUpdated: Date
+
+    struct DelayDistribution: Codable {
+        var p25: Int  // seconds
+        var p50: Int  // seconds (median)
+        var p75: Int  // seconds
+        var count: Int
+
+        static let zero = DelayDistribution(p25: 0, p50: 0, p75: 0, count: 0)
+
+        /// Pick a random delay within the distribution range to mimic human variance.
+        func randomDelay() -> TimeInterval {
+            guard count > 0, p50 > 0 else { return 30 } // fallback: 30s
+            // Random between P25 and P75 with slight bias toward P50
+            let lo = Double(p25)
+            let hi = Double(p75)
+            let mid = Double(p50)
+            let r = Double.random(in: 0...1)
+            // Weighted toward median: 50% chance in P25-P50, 50% in P50-P75
+            let delay = r < 0.5
+                ? lo + (mid - lo) * (r * 2)
+                : mid + (hi - mid) * ((r - 0.5) * 2)
+            return max(5, delay) // minimum 5 seconds
+        }
+    }
+}
+
+/// Message urgency level — affects reply delay.
+enum MessageUrgency {
+    case high    // 问号、"急"、"在吗"
+    case normal
+    case low     // 表情、闲聊
+
+    /// Multiplier applied to base delay. < 1.0 = faster reply.
+    var delayMultiplier: Double {
+        switch self {
+        case .high: return 0.4
+        case .normal: return 1.0
+        case .low: return 1.3
+        }
+    }
+
+    /// Detect urgency from message text.
+    static func detect(from text: String) -> MessageUrgency {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // High urgency signals
+        let highSignals = ["?", "？", "急", "在吗", "在不在", "有空吗", "能不能",
+                           "马上", "立刻", "尽快", "赶紧", "！！", "!!", "ASAP"]
+        for signal in highSignals {
+            if t.contains(signal) { return .high }
+        }
+        // Multiple question marks
+        if t.filter({ $0 == "？" || $0 == "?" }).count >= 2 { return .high }
+        // Very short messages are often low urgency (greetings, stickers)
+        if t.count <= 2 { return .low }
+        return .normal
+    }
 }
 
 // MARK: - Relationship Strength
@@ -920,6 +1035,7 @@ enum AutopilotAction: String, Codable {
     case sent           // auto-replied successfully
     case pending        // AI not confident enough, waiting for user review
     case skipped        // message doesn't need reply (sticker, system msg, etc.)
+    case readNoReply    // opened chat (triggered read receipt) but no reply
     case vipNotified    // VIP contact — sent "busy" notice instead of real reply
     case failed         // attempted send but failed
     case groupLogged    // group @mention — logged only, not replied
@@ -1019,4 +1135,8 @@ struct AutopilotConfig: Codable {
         "合同", "签字", "辞职", "离职", "解雇",
         "骂", "傻逼", "滚", "操", "妈的"
     ]
+    /// Global reply speed multiplier. < 1.0 = faster, > 1.0 = slower. Default 1.0.
+    var replySpeedMultiplier: Double = 1.0
+    /// Late-night silence threshold (0.0-1.0). If reply rate in 23:00-7:00 < this → silent.
+    var silentNightThreshold: Double = 0.2
 }

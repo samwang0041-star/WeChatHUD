@@ -399,7 +399,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     text: parsed.text,
                     baseType: baseType,
                     subType: subType,
-                    createTime: createTime
+                    createTime: createTime,
+                    appType: parsed.appType
                 )
                 results.append(msg)
             }

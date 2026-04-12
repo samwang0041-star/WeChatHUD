@@ -302,7 +302,9 @@ enum ScanEngine {
                             isAtMention: isAt,
                             attentionLevel: level,
                             contactRole: contact?.role ?? .acquaintance,
-                            timestamp: msg.createTime
+                            timestamp: msg.createTime,
+                            messageType: msg.baseType,
+                            appType: msg.appType
                         ))
                     }
 
@@ -348,6 +350,59 @@ enum ScanEngine {
                 }
             }
             let vipCount = mergedRecent.filter(\.isVIP).count
+
+            // ---- Autopilot: scan non-whitelist private chats ----
+            // Design spec: autopilot handles ALL private chats (VIP/whitelist/greylist),
+            // not just whitelisted ones. Different tiers get different processing depth.
+            let whitelistUsernames = Set(whitelist.map(\.id))
+            if let allSessions = try? reader.getSessions() {
+                for session in allSessions {
+                    // Skip group chats, already-scanned whitelist chats, and chatrooms
+                    guard !session.username.contains("@chatroom"),
+                          !whitelistUsernames.contains(session.username),
+                          session.unreadCount > 0 else { continue }
+
+                    // Only scan recent private chats with unread messages
+                    let messages: [MessageInfo]
+                    do {
+                        messages = try reader.getMessages(chatUsername: session.username, limit: 20, sinceLocalId: nil)
+                    } catch { continue }
+
+                    guard let baseline = store.getWhitelistBaseline(username: session.username) else {
+                        let seed = messages.first?.createTime ?? Int(Date().timeIntervalSince1970)
+                        try? store.setWhitelistBaseline(username: session.username, lastCreateTime: seed)
+                        continue
+                    }
+
+                    let newMessages = messages.filter { $0.createTime > baseline }
+                    for msg in newMessages {
+                        if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname) { continue }
+                        let contact = store.getContact(username: msg.senderUsername)
+                        let level: AttentionLevel = contact?.attentionLevel ?? .greylist
+                        // Strangers (no contact record, no greylist) are skipped
+                        autopilotInbound.append(AutopilotService.InboundMessage(
+                            msgUID: msg.id,
+                            chatUsername: msg.chatUsername,
+                            chatName: msg.chatName,
+                            senderUsername: msg.senderUsername,
+                            senderName: msg.senderName,
+                            text: msg.text,
+                            isGroup: false,
+                            isAtMention: false,
+                            attentionLevel: level,
+                            contactRole: contact?.role ?? .acquaintance,
+                            timestamp: msg.createTime,
+                            messageType: msg.baseType,
+                            appType: msg.appType
+                        ))
+                    }
+
+                    // Update baseline
+                    if let maxTime = newMessages.first?.createTime, maxTime > baseline {
+                        try? store.setWhitelistBaseline(username: session.username, lastCreateTime: maxTime)
+                    }
+                }
+            }
 
             return ScanOutcome(
                 stats: HUDStats(

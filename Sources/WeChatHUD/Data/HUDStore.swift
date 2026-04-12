@@ -346,9 +346,60 @@ final class HUDStore: ObservableObject {
                 summary         TEXT NOT NULL DEFAULT '',
                 key_topics      TEXT NOT NULL DEFAULT '[]',
                 pending_items   TEXT NOT NULL DEFAULT '[]',
+                shared_context  TEXT NOT NULL DEFAULT '[]',
+                communication_notes TEXT NOT NULL DEFAULT '[]',
                 mood_trend      TEXT NOT NULL DEFAULT '',
                 message_count_7d INTEGER NOT NULL DEFAULT 0,
                 last_updated    INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+        // Migrate: add shared_context and communication_notes if missing
+        let colCheck = "PRAGMA table_info(conversation_memory)"
+        var colStmt: OpaquePointer?
+        var hasSharedContext = false
+        if sqlite3_prepare_v2(db, colCheck, -1, &colStmt, nil) == SQLITE_OK {
+            while sqlite3_step(colStmt) == SQLITE_ROW {
+                let name = String(cString: sqlite3_column_text(colStmt, 1))
+                if name == "shared_context" { hasSharedContext = true }
+            }
+        }
+        sqlite3_finalize(colStmt)
+        if !hasSharedContext {
+            try? exec("ALTER TABLE conversation_memory ADD COLUMN shared_context TEXT NOT NULL DEFAULT '[]'")
+            try? exec("ALTER TABLE conversation_memory ADD COLUMN communication_notes TEXT NOT NULL DEFAULT '[]'")
+        }
+
+        // Migrate: add conversation_phase and stance if missing
+        var hasPhase = false
+        var phaseStmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, colCheck, -1, &phaseStmt, nil) == SQLITE_OK {
+            while sqlite3_step(phaseStmt) == SQLITE_ROW {
+                let name = String(cString: sqlite3_column_text(phaseStmt, 1))
+                if name == "conversation_phase" { hasPhase = true }
+            }
+        }
+        sqlite3_finalize(phaseStmt)
+        if !hasPhase {
+            try? exec("ALTER TABLE conversation_memory ADD COLUMN conversation_phase TEXT NOT NULL DEFAULT ''")
+            try? exec("ALTER TABLE conversation_memory ADD COLUMN stance TEXT NOT NULL DEFAULT ''")
+        }
+
+        // Prune stale conversation memories (not updated in 90 days)
+        let ninetyDaysAgo = Int(Date().timeIntervalSince1970) - 90 * 86400
+        try? exec("DELETE FROM conversation_memory WHERE last_updated > 0 AND last_updated < ?", params: [String(ninetyDaysAgo)])
+
+        // Reply timing profiles — per-contact delay distribution
+        try exec("""
+            CREATE TABLE IF NOT EXISTS reply_timing_profiles (
+                chat_username    TEXT PRIMARY KEY,
+                work_hours       TEXT NOT NULL DEFAULT '{}',
+                evening          TEXT NOT NULL DEFAULT '{}',
+                weekend          TEXT NOT NULL DEFAULT '{}',
+                late_night       TEXT NOT NULL DEFAULT '{}',
+                silent_at_night  INTEGER NOT NULL DEFAULT 0,
+                sample_count     INTEGER NOT NULL DEFAULT 0,
+                last_updated     INTEGER NOT NULL DEFAULT 0
             )
         """)
     }
@@ -1664,14 +1715,22 @@ final class HUDStore: ObservableObject {
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         let pendingJSON = (try? JSONSerialization.data(withJSONObject: memory.pendingItems))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let sharedJSON = (try? JSONSerialization.data(withJSONObject: memory.sharedContext))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let commJSON = (try? JSONSerialization.data(withJSONObject: memory.communicationNotes))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         try exec("""
-            INSERT INTO conversation_memory(chat_username, summary, key_topics, pending_items, mood_trend, message_count_7d, last_updated)
-            VALUES(?,?,?,?,?,?,?)
+            INSERT INTO conversation_memory(chat_username, summary, key_topics, pending_items, shared_context, communication_notes, mood_trend, conversation_phase, stance, message_count_7d, last_updated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(chat_username) DO UPDATE SET
                 summary = excluded.summary,
                 key_topics = excluded.key_topics,
                 pending_items = excluded.pending_items,
+                shared_context = excluded.shared_context,
+                communication_notes = excluded.communication_notes,
                 mood_trend = excluded.mood_trend,
+                conversation_phase = excluded.conversation_phase,
+                stance = excluded.stance,
                 message_count_7d = excluded.message_count_7d,
                 last_updated = excluded.last_updated
         """, params: [
@@ -1679,7 +1738,11 @@ final class HUDStore: ObservableObject {
             memory.summary,
             topicsJSON,
             pendingJSON,
+            sharedJSON,
+            commJSON,
             memory.moodTrend,
+            memory.conversationPhase,
+            memory.stance,
             String(memory.messageCount7d),
             String(now)
         ])
@@ -1689,7 +1752,7 @@ final class HUDStore: ObservableObject {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, """
-            SELECT chat_username, summary, key_topics, pending_items, mood_trend, message_count_7d, last_updated
+            SELECT chat_username, summary, key_topics, pending_items, shared_context, communication_notes, mood_trend, conversation_phase, stance, message_count_7d, last_updated
             FROM conversation_memory WHERE chat_username=?
         """, -1, &stmt, nil) == SQLITE_OK else { return nil }
         sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
@@ -1697,17 +1760,91 @@ final class HUDStore: ObservableObject {
 
         let topicsStr = String(cString: sqlite3_column_text(stmt, 2))
         let pendingStr = String(cString: sqlite3_column_text(stmt, 3))
+        let sharedStr = String(cString: sqlite3_column_text(stmt, 4))
+        let commStr = String(cString: sqlite3_column_text(stmt, 5))
         let topics = (try? JSONSerialization.jsonObject(with: Data(topicsStr.utf8)) as? [String]) ?? []
         let pending = (try? JSONSerialization.jsonObject(with: Data(pendingStr.utf8)) as? [String]) ?? []
+        let shared = (try? JSONSerialization.jsonObject(with: Data(sharedStr.utf8)) as? [String]) ?? []
+        let comm = (try? JSONSerialization.jsonObject(with: Data(commStr.utf8)) as? [String]) ?? []
+
+        // Phase and stance columns (7, 8) — may be NULL for old rows
+        let phase: String
+        if let p = sqlite3_column_text(stmt, 7) { phase = String(cString: p) } else { phase = "" }
+        let stanceVal: String
+        if let s = sqlite3_column_text(stmt, 8) { stanceVal = String(cString: s) } else { stanceVal = "" }
 
         return ConversationMemory(
             chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
             summary: String(cString: sqlite3_column_text(stmt, 1)),
             keyTopics: topics,
             pendingItems: pending,
-            moodTrend: String(cString: sqlite3_column_text(stmt, 4)),
-            messageCount7d: Int(sqlite3_column_int(stmt, 5)),
-            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 6)))
+            sharedContext: shared,
+            communicationNotes: comm,
+            moodTrend: String(cString: sqlite3_column_text(stmt, 6)),
+            conversationPhase: phase,
+            stance: stanceVal,
+            messageCount7d: Int(sqlite3_column_int(stmt, 9)),
+            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10)))
+        )
+    }
+
+    // MARK: - Reply Timing Profiles
+
+    func upsertReplyTimingProfile(_ profile: ReplyTimingProfile) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let encode: (ReplyTimingProfile.DelayDistribution) -> String = { dist in
+            (try? JSONEncoder().encode(dist)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        }
+        try exec("""
+            INSERT INTO reply_timing_profiles(chat_username, work_hours, evening, weekend, late_night, silent_at_night, sample_count, last_updated)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(chat_username) DO UPDATE SET
+                work_hours = excluded.work_hours,
+                evening = excluded.evening,
+                weekend = excluded.weekend,
+                late_night = excluded.late_night,
+                silent_at_night = excluded.silent_at_night,
+                sample_count = excluded.sample_count,
+                last_updated = excluded.last_updated
+        """, params: [
+            profile.chatUsername,
+            encode(profile.workHours),
+            encode(profile.evening),
+            encode(profile.weekend),
+            encode(profile.lateNight),
+            profile.silentAtNight ? "1" : "0",
+            String(profile.sampleCount),
+            String(now)
+        ])
+    }
+
+    func loadReplyTimingProfile(chatUsername: String) -> ReplyTimingProfile? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT chat_username, work_hours, evening, weekend, late_night, silent_at_night, sample_count, last_updated
+            FROM reply_timing_profiles WHERE chat_username=?
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let decode: (Int32) -> ReplyTimingProfile.DelayDistribution = { col in
+            let str = String(cString: sqlite3_column_text(stmt, col))
+            return (try? JSONDecoder().decode(ReplyTimingProfile.DelayDistribution.self, from: Data(str.utf8)))
+                ?? .zero
+        }
+
+        let isSilent = sqlite3_column_int(stmt, 5) != 0
+        return ReplyTimingProfile(
+            chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
+            workHours: decode(1),
+            evening: decode(2),
+            weekend: decode(3),
+            lateNight: decode(4),
+            silentAtNight: isSilent,
+            lateNightReplyRate: isSilent ? 0.0 : 1.0,  // approximate from boolean
+            sampleCount: Int(sqlite3_column_int(stmt, 6)),
+            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 7)))
         )
     }
 
