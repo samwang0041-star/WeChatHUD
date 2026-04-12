@@ -3,8 +3,10 @@ import SwiftUI
 /// Data management: recalled messages, commitment tracking, pending asks.
 struct DataSettingsView: View {
     @EnvironmentObject private var store: HUDStore
+    @EnvironmentObject private var monitor: ChatMonitor
 
     @State private var selectedSection: DataSection = .recalls
+    @State private var exportMessage: String?
     @State private var recalledMessages: [RecalledMessage] = []
     @State private var commitments: [Commitment] = []
     @State private var pendingAsks: [PendingAsk] = []
@@ -18,6 +20,33 @@ struct DataSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // Export button
+            HStack {
+                Spacer()
+                Button(action: {
+                    if let url = monitor.exportReport() {
+                        exportMessage = "已导出到 \(url.lastPathComponent)"
+                    } else {
+                        exportMessage = "导出失败"
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { exportMessage = nil }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 10))
+                        Text("导出报告")
+                            .font(.system(size: 11))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                if let msg = exportMessage {
+                    Text(msg)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+
             // Section picker
             Picker("", selection: $selectedSection) {
                 ForEach(DataSection.allCases, id: \.self) { section in
