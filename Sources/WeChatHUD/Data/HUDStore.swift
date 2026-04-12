@@ -287,6 +287,41 @@ final class HUDStore: ObservableObject {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status, deadline_at)")
 
+        // -- autopilot_sessions table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS autopilot_sessions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at      INTEGER NOT NULL,
+                ended_at        INTEGER,
+                total_handled   INTEGER NOT NULL DEFAULT 0,
+                total_pending   INTEGER NOT NULL DEFAULT 0,
+                total_sent      INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+
+        // -- autopilot_log table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS autopilot_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id      INTEGER NOT NULL,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                sender_username TEXT NOT NULL,
+                sender_name     TEXT NOT NULL,
+                trigger_msg_uid TEXT NOT NULL,
+                trigger_text    TEXT NOT NULL,
+                generated_reply TEXT,
+                confidence      REAL NOT NULL DEFAULT 0,
+                risk_level      TEXT NOT NULL DEFAULT 'low',
+                action          TEXT NOT NULL,
+                ai_reasoning    TEXT,
+                sent_at         INTEGER,
+                created_at      INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_session ON autopilot_log(session_id, created_at DESC)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_action ON autopilot_log(action)")
+
         // Migrations for pending_asks new columns (four-tier system)
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_level TEXT")
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_role TEXT")
@@ -1557,6 +1592,203 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    // MARK: - Autopilot
+
+    func startAutopilotSession() throws -> Int64 {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("INSERT INTO autopilot_sessions(started_at) VALUES(?)", params: [String(now)])
+        return sqlite3_last_insert_rowid(db)
+    }
+
+    func endAutopilotSession(id: Int64) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("UPDATE autopilot_sessions SET ended_at=? WHERE id=?", params: [String(now), String(id)])
+    }
+
+    func updateAutopilotSessionCounts(id: Int64, handled: Int, pending: Int, sent: Int) throws {
+        try exec(
+            "UPDATE autopilot_sessions SET total_handled=?, total_pending=?, total_sent=? WHERE id=?",
+            params: [String(handled), String(pending), String(sent), String(id)]
+        )
+    }
+
+    func currentAutopilotSession() -> AutopilotSession? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, started_at, ended_at, total_handled, total_pending, total_sent
+            FROM autopilot_sessions WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return AutopilotSession(
+            id: sqlite3_column_int64(stmt, 0),
+            startedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 1))),
+            endedAt: nil,
+            totalHandled: Int(sqlite3_column_int(stmt, 3)),
+            totalPending: Int(sqlite3_column_int(stmt, 4)),
+            totalSent: Int(sqlite3_column_int(stmt, 5))
+        )
+    }
+
+    func insertAutopilotLog(_ entry: AutopilotLogEntry) throws {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            INSERT INTO autopilot_log(session_id, chat_username, chat_name, sender_username, sender_name,
+                trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level, action, ai_reasoning, sent_at, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw HUDStoreError.sqlError("prepare autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        let TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_int64(stmt, 1, entry.sessionId)
+        sqlite3_bind_text(stmt, 2, entry.chatUsername, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 3, entry.chatName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 4, entry.senderUsername, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 5, entry.senderName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 6, entry.triggerMsgUID, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 7, entry.triggerText, -1, TRANSIENT)
+        if let reply = entry.generatedReply {
+            sqlite3_bind_text(stmt, 8, reply, -1, TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 8)
+        }
+        sqlite3_bind_double(stmt, 9, entry.confidence)
+        sqlite3_bind_text(stmt, 10, entry.riskLevel.rawValue, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 11, entry.action.rawValue, -1, TRANSIENT)
+        if let reasoning = entry.aiReasoning {
+            sqlite3_bind_text(stmt, 12, reasoning, -1, TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 12)
+        }
+        if let sentAt = entry.sentAt {
+            sqlite3_bind_int64(stmt, 13, Int64(sentAt.timeIntervalSince1970))
+        } else {
+            sqlite3_bind_null(stmt, 13)
+        }
+        sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    func loadAutopilotLog(sessionId: Int64, limit: Int = 50) -> [AutopilotLogEntry] {
+        var results: [AutopilotLogEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
+                   trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
+                   action, ai_reasoning, sent_at, created_at
+            FROM autopilot_log WHERE session_id=? ORDER BY created_at DESC LIMIT ?
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int64(stmt, 1, sessionId)
+        sqlite3_bind_int(stmt, 2, Int32(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let genReply = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+            let reasoning = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 12)) : nil
+            let sentAt = sqlite3_column_type(stmt, 13) != SQLITE_NULL
+                ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 13)))
+                : nil
+            results.append(AutopilotLogEntry(
+                id: sqlite3_column_int64(stmt, 0),
+                sessionId: sqlite3_column_int64(stmt, 1),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                chatName: String(cString: sqlite3_column_text(stmt, 3)),
+                senderUsername: String(cString: sqlite3_column_text(stmt, 4)),
+                senderName: String(cString: sqlite3_column_text(stmt, 5)),
+                triggerMsgUID: String(cString: sqlite3_column_text(stmt, 6)),
+                triggerText: String(cString: sqlite3_column_text(stmt, 7)),
+                generatedReply: genReply,
+                confidence: sqlite3_column_double(stmt, 9),
+                riskLevel: AutopilotRisk(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .low,
+                action: AutopilotAction(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .skipped,
+                aiReasoning: reasoning,
+                sentAt: sentAt,
+                createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 14)))
+            ))
+        }
+        return results
+    }
+
+    func loadPendingAutopilotItems(sessionId: Int64) -> [AutopilotLogEntry] {
+        var results: [AutopilotLogEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
+                   trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
+                   action, ai_reasoning, sent_at, created_at
+            FROM autopilot_log WHERE session_id=? AND action='pending' ORDER BY created_at DESC
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int64(stmt, 1, sessionId)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let genReply = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+            let reasoning = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 12)) : nil
+            let sentAt = sqlite3_column_type(stmt, 13) != SQLITE_NULL
+                ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 13)))
+                : nil
+            results.append(AutopilotLogEntry(
+                id: sqlite3_column_int64(stmt, 0),
+                sessionId: sqlite3_column_int64(stmt, 1),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                chatName: String(cString: sqlite3_column_text(stmt, 3)),
+                senderUsername: String(cString: sqlite3_column_text(stmt, 4)),
+                senderName: String(cString: sqlite3_column_text(stmt, 5)),
+                triggerMsgUID: String(cString: sqlite3_column_text(stmt, 6)),
+                triggerText: String(cString: sqlite3_column_text(stmt, 7)),
+                generatedReply: genReply,
+                confidence: sqlite3_column_double(stmt, 9),
+                riskLevel: AutopilotRisk(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .low,
+                action: AutopilotAction(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .pending,
+                aiReasoning: reasoning,
+                sentAt: sentAt,
+                createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 14)))
+            ))
+        }
+        return results
+    }
+
+    func updateAutopilotLogAction(id: Int64, action: AutopilotAction) throws {
+        try exec("UPDATE autopilot_log SET action=? WHERE id=?", params: [action.rawValue, String(id)])
+    }
+
+    func markAutopilotLogSent(id: Int64) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])
+    }
+
+    func loadAutopilotSessions(limit: Int = 20) -> [AutopilotSession] {
+        var results: [AutopilotSession] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, started_at, ended_at, total_handled, total_pending, total_sent
+            FROM autopilot_sessions ORDER BY id DESC LIMIT ?
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let endedAt = sqlite3_column_type(stmt, 2) != SQLITE_NULL
+                ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 2)))
+                : nil
+            results.append(AutopilotSession(
+                id: sqlite3_column_int64(stmt, 0),
+                startedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 1))),
+                endedAt: endedAt,
+                totalHandled: Int(sqlite3_column_int(stmt, 3)),
+                totalPending: Int(sqlite3_column_int(stmt, 4)),
+                totalSent: Int(sqlite3_column_int(stmt, 5))
+            ))
+        }
+        return results
+    }
+
+    func clearAutopilotHistory() throws {
+        try exec("DELETE FROM autopilot_log")
+        try exec("DELETE FROM autopilot_sessions")
     }
 
     // MARK: - Migration
