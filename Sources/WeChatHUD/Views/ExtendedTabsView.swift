@@ -514,10 +514,14 @@ private struct UnreadRow: View {
                 kindIcon.frame(width: 18, height: 18)
                 content.lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 0)
-                statusBadge
-                if !item.isWhitelisted,
-                   let suggestion = monitor.whitelistSuggestions[item.chatUsername] {
-                    WhitelistSuggestionBadge(chatUsername: item.chatUsername, suggestion: suggestion)
+                if hovered && !isSuppressedView {
+                    quickActions
+                } else {
+                    statusBadge
+                    if !item.isWhitelisted,
+                       let suggestion = monitor.whitelistSuggestions[item.chatUsername] {
+                        WhitelistSuggestionBadge(chatUsername: item.chatUsername, suggestion: suggestion)
+                    }
                 }
                 Text(relativeTime(item.timestamp))
                     .font(.system(size: 9))
@@ -656,6 +660,34 @@ private struct UnreadRow: View {
         } else {
             Color.clear.frame(width: 2)
         }
+    }
+
+    /// Inline quick action buttons shown on hover.
+    private var quickActions: some View {
+        HStack(spacing: 3) {
+            quickActionButton(icon: "eye.slash", tip: "静默处理") {
+                monitor.silenceChat(item.chatUsername)
+            }
+            quickActionButton(icon: "clock", tip: "延后30分钟") {
+                monitor.snoozeChat(item.chatUsername, minutes: 30)
+            }
+            quickActionButton(icon: "bubble.left.and.bubble.right", tip: "打开微信") {
+                WeChatLauncher.openChat(named: item.chatName)
+            }
+        }
+    }
+
+    private func quickActionButton(icon: String, tip: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white.opacity(0.6))
+                .frame(width: 20, height: 18)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(3)
+        }
+        .buttonStyle(.plain)
+        .help(tip)
     }
 
     @ViewBuilder
