@@ -25,6 +25,7 @@ struct ExtendedTabsView: View {
         case unread
         case replyDebt
         case catchup
+        case commitments
         case dailyReport
         case autopilot
     }
@@ -72,6 +73,7 @@ struct ExtendedTabsView: View {
                     case .unread:      unreadContent
                     case .replyDebt:   replyDebtContent
                     case .catchup:     CatchupTabView()
+                    case .commitments: CommitmentTabView()
                     case .dailyReport: DailyReportTabView()
                     case .autopilot:   AutopilotTabView()
                     }
@@ -116,6 +118,9 @@ struct ExtendedTabsView: View {
                 tabButton(.unread, label: "未读", count: unreadItems.count)
             }
             tabButton(.catchup, label: "追赶", count: 0)
+            if !monitor.commitments.isEmpty {
+                tabButton(.commitments, label: "承诺", count: monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count)
+            }
             tabButton(.dailyReport, label: "日报", count: 0)
             tabButton(.autopilot, label: monitor.autopilotActive ? "🤖托管" : "托管", count: monitor.autopilotSessionPending)
             Spacer()
