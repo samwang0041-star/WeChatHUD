@@ -326,6 +326,19 @@ final class HUDStore: ObservableObject {
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_level TEXT")
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_role TEXT")
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN urgency TEXT")
+
+        // Conversation memory — rolling 7-day summary per chat
+        try exec("""
+            CREATE TABLE IF NOT EXISTS conversation_memory (
+                chat_username   TEXT PRIMARY KEY,
+                summary         TEXT NOT NULL DEFAULT '',
+                key_topics      TEXT NOT NULL DEFAULT '[]',
+                pending_items   TEXT NOT NULL DEFAULT '[]',
+                mood_trend      TEXT NOT NULL DEFAULT '',
+                message_count_7d INTEGER NOT NULL DEFAULT 0,
+                last_updated    INTEGER NOT NULL DEFAULT 0
+            )
+        """)
     }
 
     // MARK: - Settings
@@ -1592,6 +1605,61 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    // MARK: - Conversation Memory
+
+    func upsertConversationMemory(_ memory: ConversationMemory) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let topicsJSON = (try? JSONSerialization.data(withJSONObject: memory.keyTopics))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        let pendingJSON = (try? JSONSerialization.data(withJSONObject: memory.pendingItems))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        try exec("""
+            INSERT INTO conversation_memory(chat_username, summary, key_topics, pending_items, mood_trend, message_count_7d, last_updated)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(chat_username) DO UPDATE SET
+                summary = excluded.summary,
+                key_topics = excluded.key_topics,
+                pending_items = excluded.pending_items,
+                mood_trend = excluded.mood_trend,
+                message_count_7d = excluded.message_count_7d,
+                last_updated = excluded.last_updated
+        """, params: [
+            memory.chatUsername,
+            memory.summary,
+            topicsJSON,
+            pendingJSON,
+            memory.moodTrend,
+            String(memory.messageCount7d),
+            String(now)
+        ])
+    }
+
+    func loadConversationMemory(chatUsername: String) -> ConversationMemory? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT chat_username, summary, key_topics, pending_items, mood_trend, message_count_7d, last_updated
+            FROM conversation_memory WHERE chat_username=?
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let topicsStr = String(cString: sqlite3_column_text(stmt, 2))
+        let pendingStr = String(cString: sqlite3_column_text(stmt, 3))
+        let topics = (try? JSONSerialization.jsonObject(with: Data(topicsStr.utf8)) as? [String]) ?? []
+        let pending = (try? JSONSerialization.jsonObject(with: Data(pendingStr.utf8)) as? [String]) ?? []
+
+        return ConversationMemory(
+            chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
+            summary: String(cString: sqlite3_column_text(stmt, 1)),
+            keyTopics: topics,
+            pendingItems: pending,
+            moodTrend: String(cString: sqlite3_column_text(stmt, 4)),
+            messageCount7d: Int(sqlite3_column_int(stmt, 5)),
+            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 6)))
+        )
     }
 
     // MARK: - Autopilot

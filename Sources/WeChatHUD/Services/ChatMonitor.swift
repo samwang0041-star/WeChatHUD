@@ -1044,6 +1044,11 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Load conversation memory for a chat.
+    func loadConversationMemory(chatUsername: String) -> ConversationMemory? {
+        store.loadConversationMemory(chatUsername: chatUsername)
+    }
+
     /// Compute 7-day message trend for a chat. Returns daily counts (oldest first).
     func chatTrend(chatUsername: String) -> [DayMessageCount] {
         let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 200, sinceLocalId: nil)) ?? []

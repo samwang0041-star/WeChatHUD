@@ -17,6 +17,8 @@ struct ConversationDetailView: View {
             Divider().background(Color.white.opacity(0.08))
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    memoryCard
+                    divider
                     messagesSection
                     divider
                     pendingAsksSection
@@ -72,6 +74,51 @@ struct ConversationDetailView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Conversation Memory Card
+
+    @ViewBuilder
+    private var memoryCard: some View {
+        if let memory = monitor.loadConversationMemory(chatUsername: chatUsername),
+           !memory.summary.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                sectionLabel("🧠 上下文记忆")
+                Text(memory.summary)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(2)
+
+                if !memory.keyTopics.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(memory.keyTopics.prefix(5), id: \.self) { topic in
+                            Text(topic)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.white.opacity(0.6))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.08))
+                                .cornerRadius(3)
+                        }
+                    }
+                }
+
+                if !memory.moodTrend.isEmpty {
+                    HStack(spacing: 4) {
+                        Text("情绪:")
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.4))
+                        Text(memory.moodTrend)
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+        }
     }
 
     // MARK: - Messages
