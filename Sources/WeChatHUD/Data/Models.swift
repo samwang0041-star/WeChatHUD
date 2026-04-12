@@ -881,6 +881,23 @@ struct ConversationMemory {
     var lastUpdated: Date
 }
 
+// MARK: - Relationship Strength
+
+struct RelationshipStrength {
+    let score: Int  // 0-100
+    let label: String
+    let daysSinceLastInteraction: Int
+
+    var color: String {
+        if score >= 80 { return "green" }
+        if score >= 50 { return "yellow" }
+        if score >= 20 { return "orange" }
+        return "red"
+    }
+
+    var isCooling: Bool { daysSinceLastInteraction >= 7 }
+}
+
 // MARK: - Chat Trend
 
 struct DayMessageCount: Identifiable {

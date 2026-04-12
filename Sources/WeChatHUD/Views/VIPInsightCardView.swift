@@ -100,8 +100,25 @@ struct VIPInsightCardView: View {
                     .cornerRadius(4)
                 }
 
-                // 7-day message trend
+                // Relationship strength + 7-day trend
                 if let username = chatUsername {
+                    let strength = monitor.relationshipStrength(chatUsername: username)
+                    insightSection(label: "关系热度") {
+                        HStack(spacing: 8) {
+                            Text("\(strength.score)")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(strengthColor(strength))
+                            Text(strength.label)
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.6))
+                            if strength.isCooling {
+                                Text("⚠️ \(strength.daysSinceLastInteraction)天未互动")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.orange)
+                            }
+                        }
+                    }
+
                     let trend = monitor.chatTrend(chatUsername: username)
                     if trend.contains(where: { $0.count > 0 }) {
                         insightSection(label: "7日消息趋势") {
@@ -179,6 +196,17 @@ struct VIPInsightCardView: View {
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(.white.opacity(0.4))
             content()
+        }
+    }
+
+    // MARK: - Strength color
+
+    private func strengthColor(_ s: RelationshipStrength) -> Color {
+        switch s.score {
+        case 80...100: return .green
+        case 50..<80: return .yellow
+        case 20..<50: return .orange
+        default: return .red
         }
     }
 

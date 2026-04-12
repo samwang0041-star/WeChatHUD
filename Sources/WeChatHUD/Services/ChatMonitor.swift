@@ -1131,6 +1131,33 @@ final class ChatMonitor: ObservableObject {
         store.loadConversationMemory(chatUsername: chatUsername)
     }
 
+    /// Compute relationship strength score (0-100) for a contact.
+    func relationshipStrength(chatUsername: String) -> RelationshipStrength {
+        let trend = chatTrend(chatUsername: chatUsername)
+        let totalMessages = trend.reduce(0) { $0 + $1.count }
+        let activeDays = trend.filter { $0.count > 0 }.count
+        let daysSinceLastActive = trend.reversed().firstIndex { $0.count > 0 } ?? 7
+
+        // Score: frequency (0-50) + recency (0-50)
+        let frequencyScore = min(totalMessages * 3, 50)
+        let recencyScore = max(50 - daysSinceLastActive * 10, 0)
+        let score = min(frequencyScore + recencyScore, 100)
+
+        let label: String
+        switch score {
+        case 80...100: label = "活跃"
+        case 50..<80: label = "正常"
+        case 20..<50: label = "冷却中"
+        default: label = "疏远"
+        }
+
+        return RelationshipStrength(
+            score: score,
+            label: label,
+            daysSinceLastInteraction: daysSinceLastActive
+        )
+    }
+
     /// Compute 7-day message trend for a chat. Returns daily counts (oldest first).
     func chatTrend(chatUsername: String) -> [DayMessageCount] {
         let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 200, sinceLocalId: nil)) ?? []
