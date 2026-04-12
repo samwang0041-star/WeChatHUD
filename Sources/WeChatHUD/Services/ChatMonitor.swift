@@ -87,6 +87,9 @@ final class ChatMonitor: ObservableObject {
     private lazy var replySuggester: AIReplySuggester = {
         AIReplySuggester(store: store, config: store.loadClassifierConfig())
     }()
+    private lazy var styleProfiler: StyleProfiler = {
+        StyleProfiler(reader: reader, store: store)
+    }()
     private lazy var dailyRetrospector: AIDailyRetrospector = {
         AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
     }()
@@ -104,7 +107,7 @@ final class ChatMonitor: ObservableObject {
     /// the timer fires extends the window (cancels + reschedules).
     private var pendingChangedPaths: Set<String> = []
     private var debounceWorkItem: DispatchWorkItem?
-    private let debounceInterval: TimeInterval = 0.25
+    private let debounceInterval: TimeInterval = 0.5
 
     nonisolated private static let wechatBundleIDs: Set<String> = [
         "com.tencent.xinWeChat",
@@ -788,7 +791,8 @@ final class ChatMonitor: ObservableObject {
             return
         }
 
-        print("[WCHUD] scan: unread=\(o.stats.unreadCount) (@=\(o.stats.atMentionCount)), \(ms)ms")
+        let scanType = changedRelPaths == nil ? "full" : "incremental(\(changedRelPaths!.count) files)"
+        print("[WCHUD] scan[\(scanType)]: unread=\(o.stats.unreadCount) @=\(o.stats.atMentionCount) debt=\(o.stats.replyDebtCount) vip=\(o.stats.vipCount), \(ms)ms")
 
         // One batched apply — all @Published mutations land together so
         // SwiftUI only does a single render pass.
@@ -1055,13 +1059,16 @@ final class ChatMonitor: ObservableObject {
 
     /// Generate reply suggestions for a reply debt item.
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
+        // Fetch style profile to make suggestions match user's writing style
+        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
             senderName: item.senderName,
             chatName: item.chatName,
             isGroup: item.isGroup,
             askType: .none,
-            relationship: "work"
+            relationship: "work",
+            styleHint: style.isEmpty ? nil : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
         )
         return await replySuggester.suggest(input) ?? []
     }
