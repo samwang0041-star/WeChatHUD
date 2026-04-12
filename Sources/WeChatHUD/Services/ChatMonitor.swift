@@ -1108,6 +1108,11 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Save a reply draft for later sending.
+    func saveDraft(chatUsername: String, chatName: String, text: String) throws {
+        try store.saveDraft(chatUsername: chatUsername, chatName: chatName, text: text, sendAt: nil)
+    }
+
     /// Record AI reply feedback (adopted/ignored) for the learning loop.
     func recordReplyFeedback(adopted: Bool, chatUsername: String) throws {
         try store.writeAIFeedback(AIFeedbackEntry(

@@ -64,6 +64,24 @@ struct ConversationDetailView: View {
                     .scaleEffect(0.6)
                     .frame(width: 28, height: 28)
             } else {
+                // Save as draft
+                Button(action: {
+                    guard !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    try? monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText)
+                    sendResult = "已存为草稿"
+                    replyText = ""
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
+                }) {
+                    Image(systemName: "tray.and.arrow.down")
+                        .font(.system(size: 11))
+                        .foregroundColor(replyText.isEmpty ? .white.opacity(0.15) : .white.opacity(0.5))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .disabled(replyText.isEmpty)
+                .help("稍后发送")
+
+                // Send now
                 Button(action: {
                     guard !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                     showSendConfirm = true
