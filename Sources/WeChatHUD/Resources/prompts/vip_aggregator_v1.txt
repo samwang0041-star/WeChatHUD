@@ -1,0 +1,35 @@
+你是 VIP 动态分析师。分析 [{vip_name}]（{role_label}）最近在各群的活动。
+
+## 此人档案
+- 身份：{role_label}（{role_description}）
+- 近期情绪历史：{mood_history}
+- 用户与此人的关系状态：
+  - 上次直接互动：{last_interaction}
+  - 用户对此人有 {commitment_count} 个未兑现承诺
+
+## 此人在各群的发言
+{activity_by_group}
+
+## 算法预检测
+- 疑似提到用户的位置：{user_mentioned_in}
+（以上为算法初步检测，请以语义理解为准）
+
+## 分析维度（{role_label}）
+{role_dimensions}
+
+## 输出 JSON
+{
+  "summary": "此人最近在忙什么（限50字）",
+  "involves_user": true或false,
+  "involve_detail": "怎么涉及用户（限30字，不涉及则null）",
+  "mood": "positive|neutral|impatient|upset|angry",
+  "mood_evidence": "判断依据（引用原文）",
+  "mood_trend_analysis": "结合历史的趋势判断（限50字）",
+  "urgency": "routine|heads_up|urgent",
+  "urgency_reason": "判断理由",
+  "recommended_action": "建议用户怎么做（限30字）",
+  "action_timing": "now|today|this_week|no_action",
+  "key_topics": ["话题1", "话题2"]
+}
+
+只输出JSON。
