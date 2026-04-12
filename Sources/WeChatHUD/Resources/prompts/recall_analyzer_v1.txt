@@ -1,0 +1,30 @@
+此人撤回了一条消息，请分析。
+
+## 撤回信息
+- 发送者：{sender_name}（{sender_role}）
+- 原文："{original_text}"
+- 发出 {delay_seconds} 秒后撤回
+- 聊天类型：{chat_type}（{chat_name}）
+
+## 撤回前后上下文
+{context}
+
+## 分析（输出JSON）
+{
+  "likely_reason": "wrong_chat|said_too_much|changed_mind|typo|emotional|premature",
+  "intelligence_value": "high|medium|low|none",
+  "detail": "情报内容（限30字，仅value>=medium时提供，否则null）",
+  "should_notify": true或false,
+  "notify_level": "strong|standard|light"
+}
+
+## 判断依据
+- 发出<5秒撤回+之后重发了类似内容 → typo, value=none
+- 发出<10秒撤回+没重发 → premature或wrong_chat
+- 包含敏感信息（人名/金额/决策/内部信息）→ said_too_much, value=high
+- 情绪化措辞后撤回 → emotional
+- 无敏感内容+短消息 → 大概率typo, value=none
+- boss/key_client撤回 → should_notify倾向true
+- acquaintance/service撤回 → should_notify=false
+
+只输出JSON。
