@@ -22,6 +22,15 @@ final class HUDStore: ObservableObject {
         try exec("PRAGMA foreign_keys=ON")
         try exec("PRAGMA busy_timeout=5000")
         try createTables()
+
+        // Seed AI configs to the settings table on first launch. After
+        // this runs, every code path reads its AI config from the DB —
+        // source files no longer carry endpoint URLs or model names.
+        self.seedAISettingsIfMissing()
+
+        // Best-effort housekeeping. Failures are non-fatal — the app
+        // still starts, we just leave old audit rows around.
+        try? pruneAIAudit(olderThanDays: 14)
     }
 
     func close() {
@@ -42,6 +51,7 @@ final class HUDStore: ObservableObject {
                 display_name    TEXT NOT NULL,
                 is_group        INTEGER NOT NULL DEFAULT 0,
                 category        TEXT NOT NULL CHECK(category IN ('work','life','other')),
+                attention_level TEXT NOT NULL DEFAULT 'vip' CHECK(attention_level IN ('watch','vip')),
                 added_at        INTEGER NOT NULL,
                 auto_suggested  INTEGER NOT NULL DEFAULT 0
             )
@@ -94,6 +104,190 @@ final class HUDStore: ObservableObject {
                 last_check_at   INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        // Migration: add last_create_time for whitelist-scan baselines.
+        // `last_local_id` can't be used as a cross-table cursor because
+        // each `Msg_<hash>` table in each message_N.db has an independent
+        // AUTOINCREMENT sequence — an id from one table has no meaning in
+        // another. `create_time` is a unix timestamp so it's globally
+        // comparable. Failure means the column already exists (older DB).
+        _ = try? exec("ALTER TABLE sync_state ADD COLUMN last_create_time INTEGER NOT NULL DEFAULT 0")
+        _ = try? exec("ALTER TABLE whitelist ADD COLUMN attention_level TEXT NOT NULL DEFAULT 'vip'")
+
+        // Per-chat HUD-side action state (silence / snooze). Independent
+        // from WeChat's own read state — we're layering our own triage
+        // on top of whatever WeChat reports. Cleared only by explicit
+        // action or a newer message (timestamp > silenced_at).
+        try exec("""
+            CREATE TABLE IF NOT EXISTS chat_actions (
+                chat_username  TEXT PRIMARY KEY,
+                silenced_at    INTEGER NOT NULL DEFAULT 0,
+                snoozed_until  INTEGER NOT NULL DEFAULT 0,
+                updated_at     INTEGER NOT NULL
+            )
+        """)
+
+        // Per-chat sender ignores. More precise than `chat_actions`:
+        // users can mute one noisy participant in a group without
+        // suppressing the whole room.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS ignored_senders (
+                chat_username      TEXT NOT NULL,
+                chat_name          TEXT NOT NULL,
+                sender_identifier  TEXT NOT NULL,
+                sender_username    TEXT NOT NULL,
+                sender_name        TEXT NOT NULL,
+                created_at         INTEGER NOT NULL,
+                PRIMARY KEY(chat_username, sender_identifier)
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_ignored_senders_created_at ON ignored_senders(created_at DESC)")
+
+        // AI subsystem tables. See:
+        //   docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md
+        //
+        // pending_asks: structured "what does this message ask of me"
+        // records produced by the classifier. Drives the 待决 tab.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS pending_asks (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_uid         TEXT UNIQUE NOT NULL,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                sender_name     TEXT NOT NULL,
+                raw_text        TEXT NOT NULL,
+                summary         TEXT NOT NULL,
+                ask_type        TEXT NOT NULL,
+                deadline_at     INTEGER,
+                confidence      REAL NOT NULL,
+                bucket          TEXT NOT NULL,
+                status          TEXT NOT NULL,
+                prompt_version  TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_pending_asks_status ON pending_asks(status, deadline_at)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_pending_asks_msg_uid ON pending_asks(msg_uid)")
+
+        // ai_audit: one row per AI call across ALL roles. Used for debug
+        // and weekly false-positive review. Pruned to last 14 days on open().
+        try exec("""
+            CREATE TABLE IF NOT EXISTS ai_audit (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                role            TEXT NOT NULL,
+                model           TEXT NOT NULL,
+                prompt_version  TEXT NOT NULL,
+                input_text      TEXT NOT NULL,
+                output_text     TEXT NOT NULL,
+                latency_ms      INTEGER NOT NULL,
+                status          TEXT NOT NULL,
+                error_message   TEXT
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_ai_audit_ts ON ai_audit(ts DESC)")
+
+        // ai_feedback: explicit user signals about classifier output.
+        // Drives the manual weekly prompt-tuning loop.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS ai_feedback (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                msg_uid         TEXT NOT NULL,
+                feedback_type   TEXT NOT NULL,
+                original_output TEXT NOT NULL,
+                user_action     TEXT,
+                note            TEXT
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_ai_feedback_msg_uid ON ai_feedback(msg_uid)")
+
+        // -- contacts table (four-tier system)
+        try exec("""
+            CREATE TABLE IF NOT EXISTS contacts (
+                username            TEXT PRIMARY KEY,
+                display_name        TEXT NOT NULL,
+                attention_level     TEXT NOT NULL DEFAULT 'stranger',
+                role                TEXT NOT NULL DEFAULT '',
+                role_note           TEXT NOT NULL DEFAULT '',
+                reply_window_minutes INTEGER NOT NULL DEFAULT 120,
+                level_changed_at    INTEGER,
+                created_at          INTEGER NOT NULL,
+                updated_at          INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_contacts_level ON contacts(attention_level)")
+
+        // -- vip_traces table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS vip_traces (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                vip_username    TEXT NOT NULL,
+                vip_name        TEXT NOT NULL,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                msg_uid         TEXT UNIQUE NOT NULL,
+                raw_text        TEXT NOT NULL,
+                msg_time        INTEGER NOT NULL,
+                batch_id        TEXT,
+                created_at      INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_vip_traces_vip ON vip_traces(vip_username, msg_time)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_vip_traces_batch ON vip_traces(batch_id)")
+
+        // -- recalled_messages table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS recalled_messages (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_uid               TEXT UNIQUE NOT NULL,
+                sender_username       TEXT NOT NULL,
+                sender_name           TEXT NOT NULL,
+                sender_level          TEXT NOT NULL,
+                sender_role           TEXT NOT NULL,
+                chat_username         TEXT NOT NULL,
+                chat_name             TEXT NOT NULL,
+                chat_type             TEXT NOT NULL,
+                original_text         TEXT NOT NULL,
+                sent_at               INTEGER NOT NULL,
+                recalled_at           INTEGER NOT NULL,
+                recall_delay_seconds  INTEGER NOT NULL,
+                ai_reason             TEXT,
+                ai_intelligence_value TEXT,
+                ai_detail             TEXT,
+                ai_should_notify      INTEGER,
+                ai_notify_level       TEXT,
+                ai_analyzed_at        INTEGER,
+                created_at            INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_recalled_sender ON recalled_messages(sender_username, recalled_at)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_recalled_time ON recalled_messages(recalled_at)")
+
+        // -- commitments table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS commitments (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                msg_uid         TEXT UNIQUE NOT NULL,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                content         TEXT NOT NULL,
+                commit_to       TEXT NOT NULL,
+                deadline_at     INTEGER,
+                confidence      REAL NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                prompt_version  TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status, deadline_at)")
+
+        // Migrations for pending_asks new columns (four-tier system)
+        _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_level TEXT")
+        _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_role TEXT")
+        _ = try? exec("ALTER TABLE pending_asks ADD COLUMN urgency TEXT")
     }
 
     // MARK: - Settings
@@ -127,27 +321,47 @@ final class HUDStore: ObservableObject {
         var results: [WhitelistEntry] = []
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT username, display_name, is_group, category, added_at, auto_suggested FROM whitelist ORDER BY category, display_name", -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, """
+            SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
+            FROM whitelist
+            ORDER BY CASE attention_level WHEN 'vip' THEN 0 ELSE 1 END, category, display_name
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
         while sqlite3_step(stmt) == SQLITE_ROW {
             let entry = WhitelistEntry(
                 id: String(cString: sqlite3_column_text(stmt, 0)),
                 displayName: String(cString: sqlite3_column_text(stmt, 1)),
                 isGroup: sqlite3_column_int(stmt, 2) != 0,
                 category: WhitelistCategory(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .other,
-                addedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 4))),
-                autoSuggested: sqlite3_column_int(stmt, 5) != 0
+                attentionLevel: WhitelistAttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .vip,
+                addedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5))),
+                autoSuggested: sqlite3_column_int(stmt, 6) != 0
             )
             results.append(entry)
         }
         return results
     }
 
-    func addToWhitelist(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory) throws {
+    func addToWhitelist(
+        username: String,
+        displayName: String,
+        isGroup: Bool,
+        category: WhitelistCategory,
+        attentionLevel: WhitelistAttentionLevel = .watch
+    ) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
-            INSERT OR REPLACE INTO whitelist(username, display_name, is_group, category, added_at, auto_suggested)
-            VALUES(?,?,?,?,?,0)
-        """, params: [username, displayName, isGroup ? "1" : "0", category.rawValue, "\(now)"])
+            INSERT OR REPLACE INTO whitelist(
+                username, display_name, is_group, category, attention_level, added_at, auto_suggested
+            )
+            VALUES(?,?,?,?,?,?,0)
+        """, params: [
+            username,
+            displayName,
+            isGroup ? "1" : "0",
+            category.rawValue,
+            attentionLevel.rawValue,
+            "\(now)"
+        ])
     }
 
     func removeFromWhitelist(username: String) throws {
@@ -160,6 +374,28 @@ final class HUDStore: ObservableObject {
         guard sqlite3_prepare_v2(db, "SELECT 1 FROM whitelist WHERE username=?", -1, &stmt, nil) == SQLITE_OK else { return false }
         sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    func getWhitelistEntry(username: String) -> WhitelistEntry? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
+            FROM whitelist
+            WHERE username=?
+            LIMIT 1
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return WhitelistEntry(
+            id: String(cString: sqlite3_column_text(stmt, 0)),
+            displayName: String(cString: sqlite3_column_text(stmt, 1)),
+            isGroup: sqlite3_column_int(stmt, 2) != 0,
+            category: WhitelistCategory(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .other,
+            attentionLevel: WhitelistAttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .vip,
+            addedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5))),
+            autoSuggested: sqlite3_column_int(stmt, 6) != 0
+        )
     }
 
     // MARK: - Sync State
@@ -179,6 +415,1115 @@ final class HUDStore: ObservableObject {
             INSERT OR REPLACE INTO sync_state(source_key, last_local_id, last_check_at)
             VALUES(?,?,?)
         """, params: [sourceKey, "\(lastLocalId)", "\(now)"])
+    }
+
+    /// Whitelist baseline — the max `create_time` we've already seen for a
+    /// given whitelist username. `nil` means we've never scanned this
+    /// entry before, in which case the caller MUST baseline it (without
+    /// firing notifications) to prevent historical messages from being
+    /// replayed as "new".
+    func getWhitelistBaseline(username: String) -> Int? {
+        let key = "wl/\(username)"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT last_create_time FROM sync_state WHERE source_key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        let value = Int(sqlite3_column_int64(stmt, 0))
+        // DEFAULT 0 from the migration means "never baselined" — treat it
+        // exactly the same as a missing row so migration from old state
+        // forces a fresh baseline instead of replaying history.
+        return value > 0 ? value : nil
+    }
+
+    func setWhitelistBaseline(username: String, lastCreateTime: Int) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let key = "wl/\(username)"
+        try exec("""
+            INSERT INTO sync_state(source_key, last_local_id, last_check_at, last_create_time)
+            VALUES(?, 0, ?, ?)
+            ON CONFLICT(source_key) DO UPDATE SET
+                last_create_time = excluded.last_create_time,
+                last_check_at    = excluded.last_check_at
+        """, params: [key, "\(now)", "\(lastCreateTime)"])
+    }
+
+    // MARK: - Chat actions (HUD-side triage state)
+
+    struct ChatActionState {
+        let silencedAt: Int    // unix seconds; items with ts ≤ this are hidden
+        let snoozedUntil: Int  // unix seconds; entire chat suppressed until this
+    }
+
+    static func senderIdentifier(senderUsername: String, senderName: String) -> String {
+        let normalizedUsername = senderUsername
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !normalizedUsername.isEmpty {
+            return "username:\(normalizedUsername)"
+        }
+        let normalizedName = senderName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return "name:\(normalizedName)"
+    }
+
+    func loadChatActions() -> [String: ChatActionState] {
+        var result: [String: ChatActionState] = [:]
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT chat_username, silenced_at, snoozed_until FROM chat_actions", -1, &stmt, nil) == SQLITE_OK else {
+            return result
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let username = String(cString: sqlite3_column_text(stmt, 0))
+            let silenced = Int(sqlite3_column_int64(stmt, 1))
+            let snoozed = Int(sqlite3_column_int64(stmt, 2))
+            result[username] = ChatActionState(silencedAt: silenced, snoozedUntil: snoozed)
+        }
+        return result
+    }
+
+    /// Silence a chat up to and including `silencedAt` — any unread item
+    /// whose timestamp is ≤ this value is suppressed. Newer messages in
+    /// the same chat pass through unaffected.
+    func silenceChat(chatUsername: String, silencedAt: Int) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT INTO chat_actions(chat_username, silenced_at, snoozed_until, updated_at)
+            VALUES(?, ?, 0, ?)
+            ON CONFLICT(chat_username) DO UPDATE SET
+                silenced_at = excluded.silenced_at,
+                updated_at  = excluded.updated_at
+        """, params: [chatUsername, "\(silencedAt)", "\(now)"])
+    }
+
+    /// Snooze an entire chat (regardless of message timestamps) until
+    /// the given unix second. All unread items from that chat are hidden
+    /// while `now < snoozed_until`.
+    func snoozeChat(chatUsername: String, until: Int) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT INTO chat_actions(chat_username, silenced_at, snoozed_until, updated_at)
+            VALUES(?, 0, ?, ?)
+            ON CONFLICT(chat_username) DO UPDATE SET
+                snoozed_until = excluded.snoozed_until,
+                updated_at    = excluded.updated_at
+        """, params: [chatUsername, "\(until)", "\(now)"])
+    }
+
+    func clearChatAction(chatUsername: String) throws {
+        try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [chatUsername])
+    }
+
+    func loadIgnoredSenders() -> [IgnoredSenderRule] {
+        var result: [IgnoredSenderRule] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at
+            FROM ignored_senders
+            ORDER BY created_at DESC, chat_name ASC, sender_name ASC
+        """, -1, &stmt, nil) == SQLITE_OK else {
+            return result
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let rule = IgnoredSenderRule(
+                chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
+                chatName: String(cString: sqlite3_column_text(stmt, 1)),
+                senderIdentifier: String(cString: sqlite3_column_text(stmt, 2)),
+                senderUsername: String(cString: sqlite3_column_text(stmt, 3)),
+                senderName: String(cString: sqlite3_column_text(stmt, 4)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5)))
+            )
+            result.append(rule)
+        }
+        return result
+    }
+
+    func loadIgnoredSenderMap() -> [String: Set<String>] {
+        var map: [String: Set<String>] = [:]
+        for rule in loadIgnoredSenders() {
+            map[rule.chatUsername, default: []].insert(rule.senderIdentifier)
+        }
+        return map
+    }
+
+    func ignoreSender(
+        chatUsername: String,
+        chatName: String,
+        senderUsername: String,
+        senderName: String
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let identifier = HUDStore.senderIdentifier(
+            senderUsername: senderUsername,
+            senderName: senderName
+        )
+        try exec("""
+            INSERT INTO ignored_senders(
+                chat_username, chat_name, sender_identifier,
+                sender_username, sender_name, created_at
+            )
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(chat_username, sender_identifier) DO UPDATE SET
+                chat_name       = excluded.chat_name,
+                sender_username = excluded.sender_username,
+                sender_name     = excluded.sender_name
+        """, params: [
+            chatUsername,
+            chatName,
+            identifier,
+            senderUsername,
+            senderName,
+            "\(now)"
+        ])
+    }
+
+    func unignoreSender(
+        chatUsername: String,
+        senderUsername: String,
+        senderName: String
+    ) throws {
+        try exec("""
+            DELETE FROM ignored_senders
+            WHERE chat_username=? AND sender_identifier=?
+        """, params: [
+            chatUsername,
+            HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
+        ])
+    }
+
+    func isSenderIgnored(
+        chatUsername: String,
+        senderUsername: String,
+        senderName: String
+    ) -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT 1
+            FROM ignored_senders
+            WHERE chat_username=? AND sender_identifier=?
+            LIMIT 1
+        """, -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        let identifier = HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
+        sqlite3_bind_text(stmt, 2, identifier, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    // MARK: - AI: pending_asks
+
+    /// Insert or update an ask. Dedup is by `msg_uid`. The provided
+    /// `ask.id` is ignored — SQLite assigns one on insert; on conflict
+    /// the existing row is updated in place (preserving its id and
+    /// `created_at`, refreshing everything else and `updated_at`).
+    func upsertPendingAsk(_ ask: PendingAsk) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let createdAt = Int(ask.createdAt.timeIntervalSince1970)
+        let deadline: String = ask.deadlineAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        try exec("""
+            INSERT INTO pending_asks(
+                msg_uid, chat_username, chat_name, sender_name, raw_text,
+                summary, ask_type, deadline_at, confidence, bucket, status,
+                prompt_version, created_at, updated_at,
+                sender_level, sender_role, urgency
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(msg_uid) DO UPDATE SET
+                summary        = excluded.summary,
+                ask_type       = excluded.ask_type,
+                deadline_at    = excluded.deadline_at,
+                confidence     = excluded.confidence,
+                bucket         = excluded.bucket,
+                status         = excluded.status,
+                prompt_version = excluded.prompt_version,
+                updated_at     = excluded.updated_at,
+                sender_level   = excluded.sender_level,
+                sender_role    = excluded.sender_role,
+                urgency        = excluded.urgency
+        """, params: [
+            ask.msgUID,
+            ask.chatUsername,
+            ask.chatName,
+            ask.senderName,
+            ask.rawText,
+            ask.summary,
+            ask.askType.rawValue,
+            deadline,
+            String(ask.confidence),
+            ask.bucket.rawValue,
+            ask.status.rawValue,
+            ask.promptVersion,
+            String(createdAt),
+            String(now),
+            ask.senderLevel?.rawValue ?? "",
+            ask.senderRole?.rawValue ?? "",
+            ask.urgency?.rawValue ?? ""
+        ])
+    }
+
+    /// Load asks filtered by bucket and/or status. Pass nil to skip a
+    /// filter. Sort: items with a deadline come first (earliest deadline
+    /// first), then dateless items by creation time descending.
+    func loadPendingAsks(bucket: AskBucket? = nil, status: AskStatus? = nil) -> [PendingAsk] {
+        var sql = """
+            SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
+                   summary, ask_type, deadline_at, confidence, bucket, status,
+                   prompt_version, created_at, updated_at,
+                   sender_level, sender_role, urgency
+            FROM pending_asks
+        """
+        var clauses: [String] = []
+        var params: [String] = []
+        if let bucket = bucket {
+            clauses.append("bucket=?")
+            params.append(bucket.rawValue)
+        }
+        if let status = status {
+            clauses.append("status=?")
+            params.append(status.rawValue)
+        }
+        if !clauses.isEmpty {
+            sql += " WHERE " + clauses.joined(separator: " AND ")
+        }
+        sql += " ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC"
+
+        var results: [PendingAsk] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        for (i, p) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let deadlineRaw = sqlite3_column_int64(stmt, 8)
+            let deadline: Date? = sqlite3_column_type(stmt, 8) == SQLITE_NULL || deadlineRaw == 0
+                ? nil
+                : Date(timeIntervalSince1970: TimeInterval(deadlineRaw))
+            // Read nullable new columns (15, 16, 17)
+            let senderLevelStr: String? = sqlite3_column_type(stmt, 15) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 15))
+            let senderRoleStr: String? = sqlite3_column_type(stmt, 16) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 16))
+            let urgencyStr: String? = sqlite3_column_type(stmt, 17) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 17))
+            let ask = PendingAsk(
+                id: sqlite3_column_int64(stmt, 0),
+                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                chatName: String(cString: sqlite3_column_text(stmt, 3)),
+                senderName: String(cString: sqlite3_column_text(stmt, 4)),
+                rawText: String(cString: sqlite3_column_text(stmt, 5)),
+                summary: String(cString: sqlite3_column_text(stmt, 6)),
+                askType: AskType(rawValue: String(cString: sqlite3_column_text(stmt, 7))) ?? .none,
+                deadlineAt: deadline,
+                confidence: sqlite3_column_double(stmt, 9),
+                bucket: AskBucket(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .review,
+                status: AskStatus(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .pending,
+                promptVersion: String(cString: sqlite3_column_text(stmt, 12)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 13))),
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14))),
+                senderLevel: senderLevelStr.flatMap { s in s.isEmpty ? nil : AttentionLevel(rawValue: s) },
+                senderRole: senderRoleStr.flatMap { s in s.isEmpty ? nil : ContactRole(rawValue: s) },
+                urgency: urgencyStr.flatMap { s in s.isEmpty ? nil : AskUrgency(rawValue: s) }
+            )
+            results.append(ask)
+        }
+        return results
+    }
+
+    /// Has the classifier already produced a row for this message? Used
+    /// by `ChatMonitor` to avoid re-classifying messages on every scan.
+    func hasPendingAsk(msgUID: String) -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM pending_asks WHERE msg_uid=? LIMIT 1", -1, &stmt, nil) == SQLITE_OK else { return false }
+        sqlite3_bind_text(stmt, 1, msgUID, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    func updatePendingAskStatus(msgUID: String, status: AskStatus) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE pending_asks SET status=?, updated_at=? WHERE msg_uid=?
+        """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    func dismissPendingAsk(msgUID: String) throws {
+        try updatePendingAskStatus(msgUID: msgUID, status: .dismissed)
+    }
+
+    // MARK: - AI: ai_audit
+
+    /// Append one row to the audit log. Called from every AI service on
+    /// every call (success and failure). Best-effort — if this throws,
+    /// the caller logs and moves on; we never want audit failures to
+    /// break a real user flow.
+    func writeAIAudit(_ entry: AIAuditEntry) throws {
+        let ts = Int(entry.ts.timeIntervalSince1970)
+        try exec("""
+            INSERT INTO ai_audit(
+                ts, role, model, prompt_version, input_text, output_text,
+                latency_ms, status, error_message
+            )
+            VALUES(?,?,?,?,?,?,?,?,?)
+        """, params: [
+            "\(ts)",
+            entry.role.rawValue,
+            entry.model,
+            entry.promptVersion,
+            entry.inputText,
+            entry.outputText,
+            "\(entry.latencyMs)",
+            entry.status.rawValue,
+            entry.errorMessage ?? ""
+        ])
+    }
+
+    /// Most recent audit entries, newest first. For debug viewing only —
+    /// the table can grow large so always pass a sane limit.
+    func loadRecentAIAudit(
+        limit: Int = 100,
+        role: AIRole? = nil,
+        promptVersionPrefix: String? = nil
+    ) -> [AIAuditEntry] {
+        var results: [AIAuditEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        var sql = """
+            SELECT id, ts, role, model, prompt_version, input_text, output_text,
+                   latency_ms, status, error_message
+            FROM ai_audit
+        """
+        var clauses: [String] = []
+        var params: [String] = []
+        if let role {
+            clauses.append("role=?")
+            params.append(role.rawValue)
+        }
+        if let promptVersionPrefix, !promptVersionPrefix.isEmpty {
+            clauses.append("prompt_version LIKE ?")
+            params.append("\(promptVersionPrefix)%")
+        }
+        if !clauses.isEmpty {
+            sql += " WHERE " + clauses.joined(separator: " AND ")
+        }
+        sql += """
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        for (index, param) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), param, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        sqlite3_bind_int64(stmt, Int32(params.count + 1), Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let errMsg: String? = sqlite3_column_type(stmt, 9) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 9))
+            let entry = AIAuditEntry(
+                id: sqlite3_column_int64(stmt, 0),
+                ts: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1))),
+                role: AIRole(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .classifier,
+                model: String(cString: sqlite3_column_text(stmt, 3)),
+                promptVersion: String(cString: sqlite3_column_text(stmt, 4)),
+                inputText: String(cString: sqlite3_column_text(stmt, 5)),
+                outputText: String(cString: sqlite3_column_text(stmt, 6)),
+                latencyMs: Int(sqlite3_column_int64(stmt, 7)),
+                status: AIAuditStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .ok,
+                errorMessage: (errMsg?.isEmpty == true) ? nil : errMsg
+            )
+            results.append(entry)
+        }
+        return results
+    }
+
+    // MARK: - AI housekeeping
+
+    /// Best-effort retention for verbose AI audit logs. Keeps the table
+    /// bounded without turning startup into a migration workflow.
+    func pruneAIAudit(olderThanDays days: Int) throws {
+        let cutoff = Int(Date().timeIntervalSince1970) - max(0, days) * 24 * 3600
+        try exec("DELETE FROM ai_audit WHERE ts < ?", params: ["\(cutoff)"])
+    }
+
+    // MARK: - Analysis cache
+
+    func loadAnalysisCache(
+        chatUsername: String,
+        analysisType: String,
+        inputHash: String,
+        now: Date = Date()
+    ) -> String? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT result, expires_at
+            FROM analysis_cache
+            WHERE chat_username=? AND analysis_type=? AND input_hash=?
+            LIMIT 1
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_text(stmt, 2, analysisType, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_text(stmt, 3, inputHash, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+        let expiresAt = sqlite3_column_int64(stmt, 1)
+        if expiresAt <= Int64(now.timeIntervalSince1970) {
+            try? exec("""
+                DELETE FROM analysis_cache
+                WHERE chat_username=? AND analysis_type=? AND input_hash=?
+            """, params: [chatUsername, analysisType, inputHash])
+            return nil
+        }
+        guard let ptr = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: ptr)
+    }
+
+    func writeAnalysisCache(
+        chatUsername: String,
+        analysisType: String,
+        inputHash: String,
+        result: String,
+        ttlHours: Int,
+        now: Date = Date()
+    ) throws {
+        let createdAt = Int(now.timeIntervalSince1970)
+        let expiresAt = createdAt + max(1, ttlHours) * 3600
+        try exec("""
+            INSERT INTO analysis_cache(
+                chat_username, analysis_type, input_hash, result, created_at, expires_at
+            )
+            VALUES(?,?,?,?,?,?)
+            ON CONFLICT(chat_username, analysis_type, input_hash)
+            DO UPDATE SET
+                result = excluded.result,
+                created_at = excluded.created_at,
+                expires_at = excluded.expires_at
+        """, params: [
+            chatUsername,
+            analysisType,
+            inputHash,
+            result,
+            "\(createdAt)",
+            "\(expiresAt)"
+        ])
+    }
+
+    // MARK: - AI: ai_feedback
+
+    func writeAIFeedback(_ entry: AIFeedbackEntry) throws {
+        let ts = Int(entry.ts.timeIntervalSince1970)
+        try exec("""
+            INSERT INTO ai_feedback(
+                ts, msg_uid, feedback_type, original_output, user_action, note
+            )
+            VALUES(?,?,?,?,?,?)
+        """, params: [
+            "\(ts)",
+            entry.msgUID,
+            entry.feedbackType.rawValue,
+            entry.originalOutput,
+            entry.userAction ?? "",
+            entry.note ?? ""
+        ])
+    }
+
+    func loadAIFeedback(limit: Int = 200, msgUIDPrefix: String? = nil) -> [AIFeedbackEntry] {
+        var results: [AIFeedbackEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        var sql = """
+            SELECT id, ts, msg_uid, feedback_type, original_output, user_action, note
+            FROM ai_feedback
+        """
+        var params: [String] = []
+        if let msgUIDPrefix, !msgUIDPrefix.isEmpty {
+            sql += " WHERE msg_uid LIKE ?"
+            params.append("\(msgUIDPrefix)%")
+        }
+        sql += """
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        for (index, param) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(index + 1), param, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        sqlite3_bind_int64(stmt, Int32(params.count + 1), Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let userAction: String? = sqlite3_column_type(stmt, 5) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 5))
+            let note: String? = sqlite3_column_type(stmt, 6) == SQLITE_NULL
+                ? nil
+                : String(cString: sqlite3_column_text(stmt, 6))
+            let entry = AIFeedbackEntry(
+                id: sqlite3_column_int64(stmt, 0),
+                ts: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1))),
+                msgUID: String(cString: sqlite3_column_text(stmt, 2)),
+                feedbackType: AIFeedbackType(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .truePositive,
+                originalOutput: String(cString: sqlite3_column_text(stmt, 4)),
+                userAction: (userAction?.isEmpty == true) ? nil : userAction,
+                note: (note?.isEmpty == true) ? nil : note
+            )
+            results.append(entry)
+        }
+        return results
+    }
+
+    func loadLatestAIFeedbackByMsgUID(
+        limit: Int = 200,
+        msgUIDPrefix: String? = nil
+    ) -> [String: AIFeedbackEntry] {
+        var latest: [String: AIFeedbackEntry] = [:]
+        for entry in loadAIFeedback(limit: limit, msgUIDPrefix: msgUIDPrefix) {
+            if latest[entry.msgUID] == nil {
+                latest[entry.msgUID] = entry
+            }
+        }
+        return latest
+    }
+
+    // MARK: - AI: config seed (single source of truth)
+    //
+    // This section is the ONLY place in the codebase that knows the
+    // factory values for AI endpoints and model names. Everywhere else
+    // reads via `loadClassifierConfig()` (or the existing settings-table
+    // accessor for `ai`). Editing the values below is the only way to
+    // change "what model do we ship with" — runtime managment after
+    // first launch happens through the settings table (or future UI).
+
+    /// Factory defaults for the per-message ask classifier. These get
+    /// written to the `classifier` row in `settings` on first launch.
+    /// Edit values here to change what new installs ship with; existing
+    /// installs are unaffected (their settings row is preserved).
+    ///
+    /// `apiKey` is intentionally empty in factory defaults — never
+    /// commit a real key to source. Existing user installs preserve
+    /// whatever key is already in their `classifier` settings row;
+    /// new installs land with an empty key the user has to fill in
+    /// from the settings UI.
+    private static let factoryClassifierConfig: AIClassifierConfig = {
+        var cfg = AIClassifierConfig()
+        cfg.baseURL = "http://127.0.0.1:8000/v1"
+        cfg.model = "Qwen3.5-27B-6bit"
+        cfg.apiKey = ""
+        cfg.temperature = 0.1
+        cfg.maxTokens = 256
+        cfg.promptVersion = "classifier_v1"
+        return cfg
+    }()
+
+    /// Factory defaults for the general AIService (chat completions
+    /// used by the existing summary / replyDebt features). `apiKey`
+    /// stays empty — never commit a real key to source.
+    private static let factoryAIConfig: AIConfig = {
+        var cfg = AIConfig()
+        cfg.baseURL = "http://127.0.0.1:8000/v1"
+        cfg.model = "Qwen3.5-27B-6bit"
+        cfg.apiKey = ""
+        cfg.maxTokens = 2048
+        cfg.temperature = 0.3
+        return cfg
+    }()
+
+    /// Insert factory defaults for AI configs into the settings table
+    /// if they don't already exist. Existing user customizations are
+    /// preserved. Called from `open()`.
+    ///
+    /// CRITICAL: use `getSetting` (raw row exists check), NOT
+    /// `getSettingJSON` (decode success check). When new fields are
+    /// added to AIClassifierConfig or AIConfig, old DB rows without
+    /// those fields would fail to decode under strict Codable — but
+    /// that is NOT a reason to overwrite the user's persisted
+    /// customization with factory defaults. The decode failure should
+    /// surface as nil at the read point and let the caller handle it,
+    /// not silently revert the row.
+    func seedAISettingsIfMissing() {
+        if getSetting("classifier") == nil {
+            do {
+                try setSettingJSON("classifier", value: HUDStore.factoryClassifierConfig)
+                print("[WCHUD] seeded settings.classifier (first launch)")
+            } catch {
+                print("[WCHUD] failed to seed classifier config: \(error)")
+            }
+        }
+        if getSetting("ai") == nil {
+            do {
+                try setSettingJSON("ai", value: HUDStore.factoryAIConfig)
+                print("[WCHUD] seeded settings.ai (first launch)")
+            } catch {
+                print("[WCHUD] failed to seed ai config: \(error)")
+            }
+        }
+    }
+
+    /// Single read point for the classifier config. Always returns a
+    /// usable config (post-seed) or, in the should-not-happen case
+    /// where the seed didn't run, the empty struct defaults — which
+    /// will fail loudly at the first HTTP call with a clear "invalid
+    /// URL" error rather than silently using a baked-in fallback.
+    func loadClassifierConfig() -> AIClassifierConfig {
+        getSettingJSON("classifier", as: AIClassifierConfig.self) ?? AIClassifierConfig()
+    }
+
+    /// Single read point for the general AI service config. Same
+    /// contract as `loadClassifierConfig()`.
+    func loadAIConfig() -> AIConfig {
+        getSettingJSON("ai", as: AIConfig.self) ?? AIConfig()
+    }
+
+    // MARK: - Contacts
+
+    func upsertContact(
+        username: String,
+        displayName: String,
+        attentionLevel: AttentionLevel,
+        role: ContactRole,
+        roleNote: String = "",
+        replyWindowMinutes: Int = 120
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT INTO contacts(
+                username, display_name, attention_level, role, role_note,
+                reply_window_minutes, level_changed_at, created_at, updated_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(username) DO UPDATE SET
+                display_name         = excluded.display_name,
+                attention_level      = excluded.attention_level,
+                role                 = excluded.role,
+                role_note            = excluded.role_note,
+                reply_window_minutes = excluded.reply_window_minutes,
+                level_changed_at     = CASE
+                    WHEN contacts.attention_level != excluded.attention_level
+                    THEN excluded.level_changed_at
+                    ELSE contacts.level_changed_at
+                END,
+                updated_at           = excluded.updated_at
+        """, params: [
+            username,
+            displayName,
+            attentionLevel.rawValue,
+            role.rawValue,
+            roleNote,
+            "\(replyWindowMinutes)",
+            "\(now)",
+            "\(now)",
+            "\(now)"
+        ])
+    }
+
+    func getContact(username: String) -> ContactEntry? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT username, display_name, attention_level, role, role_note,
+                   reply_window_minutes, level_changed_at, created_at, updated_at
+            FROM contacts
+            WHERE username=?
+            LIMIT 1
+        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return readContactRow(stmt)
+    }
+
+    func loadContacts(level: AttentionLevel? = nil) -> [ContactEntry] {
+        var results: [ContactEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        var sql = """
+            SELECT username, display_name, attention_level, role, role_note,
+                   reply_window_minutes, level_changed_at, created_at, updated_at
+            FROM contacts
+        """
+        if level != nil {
+            sql += " WHERE attention_level=?"
+        }
+        sql += " ORDER BY updated_at DESC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        if let level = level {
+            sqlite3_bind_text(stmt, 1, level.rawValue, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(readContactRow(stmt))
+        }
+        return results
+    }
+
+    func updateContactLevel(username: String, level: AttentionLevel, role: ContactRole) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE contacts SET attention_level=?, role=?, level_changed_at=?, updated_at=?
+            WHERE username=?
+        """, params: [level.rawValue, role.rawValue, "\(now)", "\(now)", username])
+    }
+
+    func loadVIPUsernames() -> Set<String> {
+        var result: Set<String> = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT username FROM contacts WHERE attention_level='vip'", -1, &stmt, nil) == SQLITE_OK else {
+            return result
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.insert(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return result
+    }
+
+    private func readContactRow(_ stmt: OpaquePointer?) -> ContactEntry {
+        let levelChangedRaw = sqlite3_column_int64(stmt, 6)
+        let levelChangedAt: Date? = sqlite3_column_type(stmt, 6) == SQLITE_NULL || levelChangedRaw == 0
+            ? nil
+            : Date(timeIntervalSince1970: TimeInterval(levelChangedRaw))
+        let roleStr = String(cString: sqlite3_column_text(stmt, 3))
+        let username = String(cString: sqlite3_column_text(stmt, 0))
+        return ContactEntry(
+            id: username,
+            username: username,
+            displayName: String(cString: sqlite3_column_text(stmt, 1)),
+            attentionLevel: AttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .stranger,
+            role: ContactRole(rawValue: roleStr) ?? .acquaintance,
+            roleNote: String(cString: sqlite3_column_text(stmt, 4)),
+            replyWindowMinutes: Int(sqlite3_column_int64(stmt, 5)),
+            levelChangedAt: levelChangedAt,
+            createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 7))),
+            updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 8)))
+        )
+    }
+
+    // MARK: - VIP Traces
+
+    func insertVIPTrace(
+        vipUsername: String,
+        vipName: String,
+        chatUsername: String,
+        chatName: String,
+        msgUID: String,
+        rawText: String,
+        msgTime: Int
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT OR IGNORE INTO vip_traces(
+                vip_username, vip_name, chat_username, chat_name,
+                msg_uid, raw_text, msg_time, created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?)
+        """, params: [
+            vipUsername,
+            vipName,
+            chatUsername,
+            chatName,
+            msgUID,
+            rawText,
+            "\(msgTime)",
+            "\(now)"
+        ])
+    }
+
+    func loadVIPTraces(vipUsername: String, since: Int = 0, limit: Int = 100) -> [VIPTrace] {
+        var results: [VIPTrace] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            SELECT id, vip_username, vip_name, chat_username, chat_name,
+                   msg_uid, raw_text, msg_time, batch_id, created_at
+            FROM vip_traces
+            WHERE vip_username=? AND msg_time >= ?
+            ORDER BY msg_time DESC
+            LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, vipUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_int64(stmt, 2, Int64(since))
+        sqlite3_bind_int64(stmt, 3, Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let batchID: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 8))
+            results.append(VIPTrace(
+                id: sqlite3_column_int64(stmt, 0),
+                vipUsername: String(cString: sqlite3_column_text(stmt, 1)),
+                vipName: String(cString: sqlite3_column_text(stmt, 2)),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 3)),
+                chatName: String(cString: sqlite3_column_text(stmt, 4)),
+                msgUID: String(cString: sqlite3_column_text(stmt, 5)),
+                rawText: String(cString: sqlite3_column_text(stmt, 6)),
+                msgTime: Int(sqlite3_column_int64(stmt, 7)),
+                batchID: (batchID?.isEmpty == true) ? nil : batchID,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 9)))
+            ))
+        }
+        return results
+    }
+
+    func loadUnbatchedVIPTraces(vipUsername: String, limit: Int = 50) -> [VIPTrace] {
+        var results: [VIPTrace] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            SELECT id, vip_username, vip_name, chat_username, chat_name,
+                   msg_uid, raw_text, msg_time, batch_id, created_at
+            FROM vip_traces
+            WHERE vip_username=? AND batch_id IS NULL
+            ORDER BY msg_time ASC
+            LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_text(stmt, 1, vipUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_int64(stmt, 2, Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let batchID: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 8))
+            results.append(VIPTrace(
+                id: sqlite3_column_int64(stmt, 0),
+                vipUsername: String(cString: sqlite3_column_text(stmt, 1)),
+                vipName: String(cString: sqlite3_column_text(stmt, 2)),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 3)),
+                chatName: String(cString: sqlite3_column_text(stmt, 4)),
+                msgUID: String(cString: sqlite3_column_text(stmt, 5)),
+                rawText: String(cString: sqlite3_column_text(stmt, 6)),
+                msgTime: Int(sqlite3_column_int64(stmt, 7)),
+                batchID: (batchID?.isEmpty == true) ? nil : batchID,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 9)))
+            ))
+        }
+        return results
+    }
+
+    func markVIPTracesBatched(ids: [Int64], batchID: String) throws {
+        guard !ids.isEmpty else { return }
+        let placeholders = ids.map { _ in "?" }.joined(separator: ",")
+        var params = [batchID]
+        params.append(contentsOf: ids.map { "\($0)" })
+        try exec("""
+            UPDATE vip_traces SET batch_id=? WHERE id IN (\(placeholders))
+        """, params: params)
+    }
+
+    // MARK: - Recalled Messages
+
+    func insertRecalledMessage(
+        msgUID: String,
+        senderUsername: String,
+        senderName: String,
+        senderLevel: AttentionLevel,
+        senderRole: ContactRole,
+        chatUsername: String,
+        chatName: String,
+        chatType: ChatType,
+        originalText: String,
+        sentAt: Int,
+        recalledAt: Int
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let delay = recalledAt - sentAt
+        try exec("""
+            INSERT OR IGNORE INTO recalled_messages(
+                msg_uid, sender_username, sender_name, sender_level, sender_role,
+                chat_username, chat_name, chat_type, original_text,
+                sent_at, recalled_at, recall_delay_seconds, created_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, params: [
+            msgUID,
+            senderUsername,
+            senderName,
+            senderLevel.rawValue,
+            senderRole.rawValue,
+            chatUsername,
+            chatName,
+            chatType.rawValue,
+            originalText,
+            "\(sentAt)",
+            "\(recalledAt)",
+            "\(delay)",
+            "\(now)"
+        ])
+    }
+
+    func loadRecalledMessages(since: Int = 0, limit: Int = 100) -> [RecalledMessage] {
+        var results: [RecalledMessage] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            SELECT id, msg_uid, sender_username, sender_name, sender_level, sender_role,
+                   chat_username, chat_name, chat_type, original_text,
+                   sent_at, recalled_at, recall_delay_seconds,
+                   ai_reason, ai_intelligence_value, ai_detail,
+                   ai_should_notify, ai_notify_level, ai_analyzed_at,
+                   created_at
+            FROM recalled_messages
+            WHERE recalled_at >= ?
+            ORDER BY recalled_at DESC
+            LIMIT ?
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int64(stmt, 1, Int64(since))
+        sqlite3_bind_int64(stmt, 2, Int64(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let aiReason: String? = sqlite3_column_type(stmt, 13) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 13))
+            let aiValue: String? = sqlite3_column_type(stmt, 14) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 14))
+            let aiDetail: String? = sqlite3_column_type(stmt, 15) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 15))
+            let aiShouldNotify: Bool? = sqlite3_column_type(stmt, 16) == SQLITE_NULL
+                ? nil : sqlite3_column_int(stmt, 16) != 0
+            let aiNotifyStr: String? = sqlite3_column_type(stmt, 17) == SQLITE_NULL
+                ? nil : String(cString: sqlite3_column_text(stmt, 17))
+            let aiAnalyzedRaw = sqlite3_column_int64(stmt, 18)
+            let aiAnalyzedAt: Date? = sqlite3_column_type(stmt, 18) == SQLITE_NULL || aiAnalyzedRaw == 0
+                ? nil : Date(timeIntervalSince1970: TimeInterval(aiAnalyzedRaw))
+
+            results.append(RecalledMessage(
+                id: sqlite3_column_int64(stmt, 0),
+                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
+                senderUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                senderName: String(cString: sqlite3_column_text(stmt, 3)),
+                senderLevel: AttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .stranger,
+                senderRole: ContactRole(rawValue: String(cString: sqlite3_column_text(stmt, 5))) ?? .acquaintance,
+                chatUsername: String(cString: sqlite3_column_text(stmt, 6)),
+                chatName: String(cString: sqlite3_column_text(stmt, 7)),
+                chatType: ChatType(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .privateChat,
+                originalText: String(cString: sqlite3_column_text(stmt, 9)),
+                sentAt: Int(sqlite3_column_int64(stmt, 10)),
+                recalledAt: Int(sqlite3_column_int64(stmt, 11)),
+                recallDelaySeconds: Int(sqlite3_column_int64(stmt, 12)),
+                aiReason: (aiReason?.isEmpty == true) ? nil : aiReason,
+                aiIntelligenceValue: (aiValue?.isEmpty == true) ? nil : aiValue,
+                aiDetail: (aiDetail?.isEmpty == true) ? nil : aiDetail,
+                aiShouldNotify: aiShouldNotify,
+                aiNotifyLevel: aiNotifyStr.flatMap { NotifyLevel(rawValue: $0) },
+                aiAnalyzedAt: aiAnalyzedAt,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 19)))
+            ))
+        }
+        return results
+    }
+
+    func updateRecallAnalysis(
+        msgUID: String,
+        reason: String,
+        value: String,
+        detail: String,
+        shouldNotify: Bool,
+        notifyLevel: NotifyLevel
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE recalled_messages SET
+                ai_reason=?, ai_intelligence_value=?, ai_detail=?,
+                ai_should_notify=?, ai_notify_level=?, ai_analyzed_at=?
+            WHERE msg_uid=?
+        """, params: [
+            reason,
+            value,
+            detail,
+            shouldNotify ? "1" : "0",
+            notifyLevel.rawValue,
+            "\(now)",
+            msgUID
+        ])
+    }
+
+    // MARK: - Commitments
+
+    func upsertCommitment(
+        msgUID: String,
+        chatUsername: String,
+        chatName: String,
+        content: String,
+        commitTo: String,
+        deadlineAt: Date? = nil,
+        confidence: Double,
+        promptVersion: String
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let deadlineStr = deadlineAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        try exec("""
+            INSERT INTO commitments(
+                msg_uid, chat_username, chat_name, content, commit_to,
+                deadline_at, confidence, status, prompt_version,
+                created_at, updated_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(msg_uid) DO UPDATE SET
+                content        = excluded.content,
+                commit_to      = excluded.commit_to,
+                deadline_at    = excluded.deadline_at,
+                confidence     = excluded.confidence,
+                prompt_version = excluded.prompt_version,
+                updated_at     = excluded.updated_at
+        """, params: [
+            msgUID,
+            chatUsername,
+            chatName,
+            content,
+            commitTo,
+            deadlineStr,
+            String(confidence),
+            CommitmentStatus.pending.rawValue,
+            promptVersion,
+            "\(now)",
+            "\(now)"
+        ])
+    }
+
+    func loadCommitments(status: CommitmentStatus? = nil) -> [Commitment] {
+        var results: [Commitment] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        var sql = """
+            SELECT id, msg_uid, chat_username, chat_name, content, commit_to,
+                   deadline_at, confidence, status, prompt_version,
+                   created_at, updated_at
+            FROM commitments
+        """
+        var params: [String] = []
+        if let status = status {
+            sql += " WHERE status=?"
+            params.append(status.rawValue)
+        }
+        sql += " ORDER BY COALESCE(deadline_at, 9999999999) ASC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        for (i, p) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let deadlineRaw = sqlite3_column_int64(stmt, 6)
+            let deadline: Date? = sqlite3_column_type(stmt, 6) == SQLITE_NULL || deadlineRaw == 0
+                ? nil
+                : Date(timeIntervalSince1970: TimeInterval(deadlineRaw))
+            results.append(Commitment(
+                id: sqlite3_column_int64(stmt, 0),
+                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                chatName: String(cString: sqlite3_column_text(stmt, 3)),
+                content: String(cString: sqlite3_column_text(stmt, 4)),
+                commitTo: String(cString: sqlite3_column_text(stmt, 5)),
+                deadlineAt: deadline,
+                confidence: sqlite3_column_double(stmt, 7),
+                status: CommitmentStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .pending,
+                promptVersion: String(cString: sqlite3_column_text(stmt, 9)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 10))),
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 11)))
+            ))
+        }
+        return results
+    }
+
+    func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
+        """, params: [status.rawValue, "\(now)", msgUID])
     }
 
     // MARK: - Helpers
