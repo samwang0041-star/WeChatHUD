@@ -8,9 +8,9 @@ extension Notification.Name {
 struct AISettingsView: View {
     @EnvironmentObject private var store: HUDStore
 
-    @State private var baseURL = "http://127.0.0.1:8000/v1"
-    @State private var model = "Qwen3.5-27B-6bit"
-    @State private var apiKey = "samwang1"
+    @State private var baseURL = ""
+    @State private var model = ""
+    @State private var apiKey = ""
     @State private var replyDebtAIEnabled = false
     @State private var replyDebtShadowMode = true
     @State private var recentReplyDebtAudit: [AIAuditEntry] = []
