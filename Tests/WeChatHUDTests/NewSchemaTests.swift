@@ -457,4 +457,30 @@ final class NewSchemaTests: XCTestCase {
         XCTAssertEqual(configs?["boss"]?.replyWindow, 30)
         XCTAssertEqual(configs?["key_client"]?.replyWindow, 60)
     }
+
+    // MARK: - Whitelist Migration
+
+    func testWhitelistMigrationToContacts() {
+        try! store.addToWhitelist(username: "boss1", displayName: "王总", isGroup: false,
+                                  category: .work, attentionLevel: .vip)
+        try! store.addToWhitelist(username: "coworker1", displayName: "李四", isGroup: false,
+                                  category: .work, attentionLevel: .watch)
+        try! store.addToWhitelist(username: "friend1", displayName: "小红", isGroup: false,
+                                  category: .life, attentionLevel: .watch)
+
+        store.migrateWhitelistToContacts()
+
+        let boss = store.getContact(username: "boss1")
+        XCTAssertNotNil(boss)
+        XCTAssertEqual(boss?.attentionLevel, .vip)
+        XCTAssertEqual(boss?.role, .colleague) // default for work category
+
+        let coworker = store.getContact(username: "coworker1")
+        XCTAssertNotNil(coworker)
+        XCTAssertEqual(coworker?.attentionLevel, .whitelist) // watch → whitelist
+
+        let friend = store.getContact(username: "friend1")
+        XCTAssertNotNil(friend)
+        XCTAssertEqual(friend?.role, .friend) // life → friend
+    }
 }

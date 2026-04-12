@@ -28,6 +28,9 @@ final class HUDStore: ObservableObject {
         // source files no longer carry endpoint URLs or model names.
         self.seedAISettingsIfMissing()
 
+        // One-time migration: copy legacy whitelist entries into contacts.
+        migrateWhitelistToContacts()
+
         // Best-effort housekeeping. Failures are non-fatal — the app
         // still starts, we just leave old audit rows around.
         try? pruneAIAudit(olderThanDays: 14)
@@ -1545,6 +1548,32 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    // MARK: - Migration
+
+    /// One-time migration: copy whitelist entries into the new contacts table.
+    /// Maps old watch → whitelist, old vip → vip. Role defaults to .colleague
+    /// for work, .friend for life, .acquaintance for other.
+    func migrateWhitelistToContacts() {
+        let entries = getWhitelist()
+        for entry in entries {
+            let newLevel: AttentionLevel = entry.attentionLevel == .vip ? .vip : .whitelist
+            let defaultRole: ContactRole
+            switch entry.category {
+            case .work: defaultRole = .colleague
+            case .life: defaultRole = .friend
+            case .other: defaultRole = .acquaintance
+            }
+            if getContact(username: entry.id) == nil {
+                try? upsertContact(
+                    username: entry.id,
+                    displayName: entry.displayName,
+                    attentionLevel: newLevel,
+                    role: defaultRole
+                )
+            }
+        }
     }
 
     // MARK: - Helpers
