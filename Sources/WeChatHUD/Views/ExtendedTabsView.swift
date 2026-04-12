@@ -420,7 +420,7 @@ private struct MessageRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
 
         if showInsight, let insight = monitor.vipInsights[notification.chatUsername] {
-            VIPInsightCardView(insight: insight, vipName: notification.senderName)
+            VIPInsightCardView(insight: insight, vipName: notification.senderName, chatUsername: notification.chatUsername)
         }
         }
     }

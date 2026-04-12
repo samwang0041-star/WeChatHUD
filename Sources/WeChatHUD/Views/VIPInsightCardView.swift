@@ -21,8 +21,16 @@ private func moodColor(_ mood: String) -> Color {
 /// Full VIP analysis card shown below a MessageRow when the user taps a
 /// VIP notification that has a loaded `VIPAggregator.AggregateResult`.
 struct VIPInsightCardView: View {
+    @EnvironmentObject var monitor: ChatMonitor
     let insight: VIPAggregator.AggregateResult
     let vipName: String
+    let chatUsername: String?
+
+    init(insight: VIPAggregator.AggregateResult, vipName: String, chatUsername: String? = nil) {
+        self.insight = insight
+        self.vipName = vipName
+        self.chatUsername = chatUsername
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -37,6 +45,42 @@ struct VIPInsightCardView: View {
                         .foregroundColor(.white.opacity(0.88))
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
+                }
+
+                // Person profile: pending items related to this person
+                let personAsks = pendingAsksForPerson
+                if !personAsks.isEmpty {
+                    insightSection(label: "📋 待处理事项 (\(personAsks.count))") {
+                        ForEach(personAsks, id: \.msgUID) { ask in
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(ask.bucket == .main ? Color.orange : Color.white.opacity(0.3))
+                                    .frame(width: 5, height: 5)
+                                Text(ask.summary)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white.opacity(0.75))
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+
+                // Person profile: commitments you made to this person
+                let personCommitments = commitmentsForPerson
+                if !personCommitments.isEmpty {
+                    insightSection(label: "🤝 你的承诺 (\(personCommitments.count))") {
+                        ForEach(personCommitments, id: \.msgUID) { c in
+                            HStack(spacing: 4) {
+                                Image(systemName: c.status == .pending ? "circle" : "checkmark.circle.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(c.status == .pending ? .orange : .green)
+                                Text(c.content)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.white.opacity(0.75))
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
                 }
 
                 // Involves user callout
@@ -145,6 +189,21 @@ struct VIPInsightCardView: View {
             .padding(.vertical, 3)
             .background(Color.white.opacity(0.1))
             .cornerRadius(3)
+    }
+
+    // MARK: - Person profile data
+
+    private var pendingAsksForPerson: [PendingAsk] {
+        guard let username = chatUsername else { return [] }
+        return monitor.pendingAsksForChat(username)
+    }
+
+    private var commitmentsForPerson: [Commitment] {
+        guard let username = chatUsername else { return [] }
+        return monitor.commitments
+            .filter { $0.chatUsername == username && $0.status == .pending }
+            .prefix(3)
+            .map { $0 }
     }
 }
 
