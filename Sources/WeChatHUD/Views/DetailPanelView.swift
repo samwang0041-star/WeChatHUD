@@ -14,7 +14,7 @@ struct DetailPanelView: View {
             Button(action: { panelState.collapse() }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             .padding(10)

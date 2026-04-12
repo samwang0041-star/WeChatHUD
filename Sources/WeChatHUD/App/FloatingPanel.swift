@@ -103,6 +103,10 @@ class FloatingPanel: NSPanel {
         container.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         container.layer?.masksToBounds = true
 
+        // Set a window appearance so SwiftUI controls render correctly in the
+        // dark pill states. The detail (settings) state will override this.
+        self.appearance = NSAppearance(named: .darkAqua)
+
         container.addSubview(contentView)
         contentView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -140,6 +144,21 @@ class FloatingPanel: NSPanel {
             NSRect(x: x, y: y, width: newWidth, height: newHeight),
             display: true
         )
+    }
+
+    /// Switch the panel between the dark pill appearance and the light
+    /// system-settings appearance used in the `.detail` state.
+    func setDetailAppearance(_ isDetail: Bool) {
+        if isDetail {
+            // Use system (light) appearance for the settings panel so SwiftUI
+            // controls render with native macOS System Settings styling.
+            self.appearance = nil   // inherit system appearance
+            pillContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        } else {
+            // Revert to the opaque black pill for compact / extended / notification.
+            self.appearance = NSAppearance(named: .darkAqua)
+            pillContainer.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+        }
     }
 
     // Dynamic focus policy.

@@ -16,7 +16,7 @@ struct RoleConfigSettingsView: View {
             HStack(spacing: 8) {
                 Text("每种身份角色的 AI 行为参数。修改后自动保存。")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 if showSaved {
                     Text("已保存")
                         .font(.system(size: 10, weight: .semibold))
@@ -67,10 +67,10 @@ struct RoleConfigSettingsView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(role.label)
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(.primary)
                             Text(role.roleDescription)
                                 .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.55))
+                                .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -83,7 +83,7 @@ struct RoleConfigSettingsView: View {
 
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.3))
+                            .foregroundColor(.secondary)
                     }
                     .contentShape(Rectangle())
                 }
@@ -92,7 +92,7 @@ struct RoleConfigSettingsView: View {
                 // Expanded editor
                 if isExpanded {
                     VStack(alignment: .leading, spacing: 10) {
-                        Divider().background(Color.white.opacity(0.08))
+                        Divider()
 
                         // Reply window
                         configRow("回复窗口") {
@@ -103,7 +103,7 @@ struct RoleConfigSettingsView: View {
                                     .frame(width: 60)
                                 Text("分钟（0 = 不追踪）")
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.55))
+                                    .foregroundColor(.secondary)
                             }
                         }
 
@@ -147,7 +147,7 @@ struct RoleConfigSettingsView: View {
                             configRow("VIP 追踪维度") {
                                 Text(config.vipTrackDimensions.joined(separator: ", "))
                                     .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.6))
+                                    .foregroundColor(.secondary)
                             }
                         }
                     }
@@ -162,7 +162,7 @@ struct RoleConfigSettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(.secondary)
             content()
         }
     }

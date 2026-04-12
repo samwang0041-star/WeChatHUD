@@ -38,10 +38,10 @@ struct WhitelistScanView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("AI 白名单扫描")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text("扫描未关注的联系人，AI 自动建议是否加入白名单")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(.secondary)
                 }
                 Spacer()
                 Button(action: startScan) {
@@ -70,7 +70,7 @@ struct WhitelistScanView: View {
                         .progressViewStyle(.linear)
                     Text("已扫描 \(scanned) / \(total)")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                 }
             }
 
@@ -80,7 +80,7 @@ struct WhitelistScanView: View {
                     HStack {
                         Text("扫描结果 (\(pendingResults.count) 条建议)")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.secondary)
                         Spacer()
                         // Bulk actions
                         Button("全部接受") {
@@ -102,7 +102,7 @@ struct WhitelistScanView: View {
                         }
                     }
                     .padding(6)
-                    .background(Color.white.opacity(0.04))
+                    .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
                 } else if !acceptedResults.isEmpty {
                     Text("已接受 \(acceptedResults.count) 个建议")
@@ -111,7 +111,7 @@ struct WhitelistScanView: View {
                 } else {
                     Text("已处理所有建议")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -136,11 +136,11 @@ struct WhitelistScanView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.displayName)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .lineLimit(1)
                 Text(result.suggestion.reason)
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(.secondary)
                     .lineLimit(2)
             }
 
@@ -148,7 +148,7 @@ struct WhitelistScanView: View {
 
             Text("\(Int(result.suggestion.confidence * 100))%")
                 .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(.secondary)
                 .monospacedDigit()
 
             Button("接受") {

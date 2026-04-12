@@ -106,10 +106,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .detail:
                     self.panel.allowsBecomeKey = true
                     self.panel.makeKey()
+                    self.panel.setDetailAppearance(true)
                 case .extended:
                     self.panel.allowsBecomeKey = true
+                    self.panel.setDetailAppearance(false)
                 case .compact, .notification:
                     self.panel.allowsBecomeKey = false
+                    self.panel.setDetailAppearance(false)
                 }
             }
             .store(in: &cancellables)

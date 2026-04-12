@@ -49,11 +49,11 @@ struct DataSettingsView: View {
                 HStack {
                     Text("最近被撤回的消息")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Spacer()
                     Text("\(recalledMessages.count) 条")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                 }
 
                 if recalledMessages.isEmpty {
@@ -66,21 +66,21 @@ struct DataSettingsView: View {
                                     .font(.system(size: 12))
                                 Text(msg.senderName)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.primary)
                                 Text(msg.chatName)
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.55))
+                                    .foregroundColor(.secondary)
                                 Spacer()
                                 Text("\(msg.recallDelaySeconds)秒后撤回")
                                     .font(.system(size: 9))
                                     .foregroundColor(.orange.opacity(0.7))
                                 Text(MessageInfo.formatRelative(msg.recalledAt))
                                     .font(.system(size: 9))
-                                    .foregroundColor(.white.opacity(0.3))
+                                    .foregroundColor(.secondary)
                             }
                             Text("「\(msg.originalText)」")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.7))
+                                .foregroundColor(.secondary)
                                 .lineLimit(2)
 
                             // AI analysis if available
@@ -90,14 +90,14 @@ struct DataSettingsView: View {
                                     if let detail = msg.aiDetail, !detail.isEmpty {
                                         Text(detail)
                                             .font(.system(size: 10))
-                                            .foregroundColor(.white.opacity(0.5))
+                                            .foregroundColor(.secondary)
                                             .lineLimit(1)
                                     }
                                 }
                             }
                         }
                         .padding(8)
-                        .background(Color.white.opacity(0.04))
+                        .background(Color.gray.opacity(0.06))
                         .cornerRadius(6)
                     }
                 }
@@ -113,7 +113,7 @@ struct DataSettingsView: View {
                 HStack {
                     Text("你的未完成承诺")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Spacer()
                     let overdue = commitments.filter {
                         $0.status == .pending && $0.deadlineAt != nil && $0.deadlineAt! < Date()
@@ -138,15 +138,15 @@ struct DataSettingsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.content)
                                     .font(.system(size: 11, weight: .medium))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.primary)
                                 HStack(spacing: 6) {
                                     Text("→ \(item.commitTo)")
                                         .font(.system(size: 10))
-                                        .foregroundColor(.white.opacity(0.5))
+                                        .foregroundColor(.secondary)
                                     if let deadline = item.deadlineAt {
                                         Text(deadline < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(deadline.timeIntervalSince1970)))")
                                             .font(.system(size: 10))
-                                            .foregroundColor(deadline < Date() ? .red : .white.opacity(0.55))
+                                            .foregroundColor(deadline < Date() ? .red : .secondary)
                                     }
                                 }
                             }
@@ -168,15 +168,15 @@ struct DataSettingsView: View {
                                 }
                                 .font(.system(size: 10))
                                 .buttonStyle(.plain)
-                                .foregroundColor(.white.opacity(0.55))
+                                .foregroundColor(.secondary)
                             } else {
                                 Text(item.status.rawValue)
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.3))
+                                    .foregroundColor(.secondary)
                             }
                         }
                         .padding(8)
-                        .background(Color.white.opacity(0.04))
+                        .background(Color.gray.opacity(0.06))
                         .cornerRadius(6)
                     }
                 }
@@ -192,12 +192,12 @@ struct DataSettingsView: View {
                 HStack {
                     Text("AI 识别的待决事项")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Spacer()
                     let pending = pendingAsks.filter { $0.status == .pending }.count
                     Text("\(pending) 待处理")
                         .font(.system(size: 10))
-                        .foregroundColor(pending > 0 ? .orange : .white.opacity(0.55))
+                        .foregroundColor(pending > 0 ? .orange : .secondary)
                 }
 
                 if pendingAsks.isEmpty {
@@ -218,23 +218,23 @@ struct DataSettingsView: View {
                                     }
                                     Text(ask.senderName)
                                         .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(.primary)
                                     Text(ask.chatName)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.white.opacity(0.55))
+                                        .foregroundColor(.secondary)
                                 }
                                 Text(ask.summary)
                                     .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .foregroundColor(.secondary)
                                     .lineLimit(1)
                                 HStack(spacing: 6) {
                                     aiPill(ask.askType.label, color: .blue)
                                     Text(String(format: "%.0f%%", ask.confidence * 100))
                                         .font(.system(size: 9))
-                                        .foregroundColor(.white.opacity(0.3))
+                                        .foregroundColor(.secondary)
                                     Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
                                         .font(.system(size: 9))
-                                        .foregroundColor(.white.opacity(0.3))
+                                        .foregroundColor(.secondary)
                                 }
                             }
 
@@ -255,15 +255,15 @@ struct DataSettingsView: View {
                                 }
                                 .font(.system(size: 10))
                                 .buttonStyle(.plain)
-                                .foregroundColor(.white.opacity(0.55))
+                                .foregroundColor(.secondary)
                             } else {
                                 Text(ask.status.rawValue)
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.3))
+                                    .foregroundColor(.secondary)
                             }
                         }
                         .padding(8)
-                        .background(Color.white.opacity(0.04))
+                        .background(Color.gray.opacity(0.06))
                         .cornerRadius(6)
                     }
                 }
@@ -278,7 +278,7 @@ struct DataSettingsView: View {
             Spacer()
             Text(text)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(.secondary)
                 .padding(.vertical, 20)
             Spacer()
         }
@@ -310,7 +310,7 @@ struct DataSettingsView: View {
         case .urgent: return .red
         case .timely: return .orange
         case .routine: return .blue
-        case .none: return .white.opacity(0.3)
+        case .none: return Color(nsColor: .tertiaryLabelColor)
         }
     }
 

@@ -109,7 +109,7 @@ struct WhitelistSettingsView: View {
             ForEach(lines, id: \.self) { line in
                 Text(line)
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.58))
+                    .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -128,15 +128,15 @@ struct WhitelistSettingsView: View {
                     .frame(width: 36, height: 36)
                 Image(systemName: "wand.and.stars")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("智能分析")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                 Text(importMessage ?? "按最近 45 天的活跃度筛选最值得加入白名单的聊天，导入后默认不强提醒")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .lineLimit(1)
             }
             Spacer()
@@ -160,11 +160,11 @@ struct WhitelistSettingsView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color(nsColor: .controlBackgroundColor))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 0.5)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
         )
     }
 
@@ -176,18 +176,18 @@ struct WhitelistSettingsView: View {
             HStack {
                 Text("分析结果")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.primary)
                 Spacer()
                 Text("选中 \(selectedCandidates.count) / \(list.count)")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .monospacedDigit()
             }
 
             if list.isEmpty {
                 Text("没有足够活跃的聊天。可以试试手动搜索添加。")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .padding(.vertical, 10)
             } else {
                 VStack(spacing: 2) {
@@ -203,30 +203,30 @@ struct WhitelistSettingsView: View {
                 .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
+                        .fill(Color(nsColor: .controlBackgroundColor))
                 )
 
                 HStack {
                     Button(action: { selectAllCandidates(list) }) {
                         Text("全选")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
                     Button(action: { selectedCandidates.removeAll() }) {
                         Text("清空")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
                     Spacer()
                     Button(action: { candidates = nil; selectedCandidates.removeAll() }) {
                         Text("取消")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.secondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 4)
-                            .background(Color.white.opacity(0.08))
+                            .background(Color.gray.opacity(0.15))
                             .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
@@ -238,7 +238,7 @@ struct WhitelistSettingsView: View {
                             .padding(.vertical, 4)
                             .background(selectedCandidates.isEmpty
                                         ? Color.accentColor.opacity(0.4)
-                                        : Color.accentColor.opacity(0.9))
+                                        : Color.accentColor)
                             .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
@@ -267,19 +267,19 @@ struct WhitelistSettingsView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("白名单与 VIP")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.primary)
                 Text(isMultiSelecting
                      ? "选中 \(selectedInWhitelist.count) / \(whitelist.count)"
                      : "\(whitelist.count) 项 · VIP \(vipCount)")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .monospacedDigit()
                 Spacer()
                 if !whitelist.isEmpty {
                     Button(action: toggleMultiSelect) {
                         Text(isMultiSelecting ? "完成" : "多选")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -288,7 +288,7 @@ struct WhitelistSettingsView: View {
             if whitelist.isEmpty {
                 Text("暂未配置任何白名单来源，点击智能分析或使用下方搜索添加。")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
                 if isMultiSelecting {
@@ -317,7 +317,7 @@ struct WhitelistSettingsView: View {
                 .padding(6)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(0.04))
+                        .fill(Color(nsColor: .controlBackgroundColor))
                 )
             }
         }
@@ -329,13 +329,13 @@ struct WhitelistSettingsView: View {
             Button(action: selectAllWhitelist) {
                 Text("全选")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             Button(action: { selectedInWhitelist.removeAll() }) {
                 Text("清空选择")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
             Spacer()
@@ -346,10 +346,10 @@ struct WhitelistSettingsView: View {
             } label: {
                 Text("批量分类")
                     .font(.system(size: 11))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
+                    .background(Color.gray.opacity(0.12))
                     .cornerRadius(4)
             }
             .menuStyle(.borderlessButton)
@@ -362,10 +362,10 @@ struct WhitelistSettingsView: View {
             } label: {
                 Text("批量层级")
                     .font(.system(size: 11))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color.white.opacity(0.1))
+                    .background(Color.gray.opacity(0.12))
                     .cornerRadius(4)
             }
             .menuStyle(.borderlessButton)
@@ -375,7 +375,7 @@ struct WhitelistSettingsView: View {
             Button(action: batchRemove) {
                 Text("删除 \(selectedInWhitelist.count)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(selectedInWhitelist.isEmpty
@@ -394,16 +394,16 @@ struct WhitelistSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("添加联系人")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(.primary)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.secondary)
                 TextField("搜索联系人或群聊名称 / wxid", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .onChange(of: searchText) { updateSearch() }
                 if !searchText.isEmpty {
                     Button(action: {
@@ -412,21 +412,25 @@ struct WhitelistSettingsView: View {
                     }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(Color.white.opacity(0.06))
+            .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(6)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+            )
 
             if !searchText.isEmpty {
                 if searchResults.isEmpty {
                     Text("无匹配结果")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                         .padding(.vertical, 6)
                 } else {
                     VStack(spacing: 2) {
@@ -441,7 +445,7 @@ struct WhitelistSettingsView: View {
                     .padding(6)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.04))
+                            .fill(Color(nsColor: .controlBackgroundColor))
                     )
                 }
             }
@@ -695,7 +699,7 @@ private struct WhitelistRow: View {
                 Button(action: onTapSelect) {
                     Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                         .font(.system(size: 13))
-                        .foregroundColor(isSelected ? .accentColor : .white.opacity(0.35))
+                        .foregroundColor(isSelected ? .accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
                 .frame(width: 16)
@@ -703,7 +707,7 @@ private struct WhitelistRow: View {
 
             Image(systemName: entry.isGroup ? "person.3.fill" : "person.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.secondary)
                 .frame(width: 16)
 
             Text(entry.displayName)
@@ -807,16 +811,16 @@ private struct WhitelistRow: View {
                 .frame(width: 6, height: 6)
             Text(label)
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(interactive ? 1 : 0.75))
+                .foregroundColor(.primary)
             if interactive {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(Color.white.opacity(interactive ? 0.12 : 0.08))
+        .background(Color.gray.opacity(0.12))
         .cornerRadius(3)
     }
 }
@@ -834,19 +838,19 @@ private struct CandidateRow: View {
             HStack(spacing: 10) {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .font(.system(size: 13))
-                    .foregroundColor(isSelected ? .accentColor : .white.opacity(0.35))
+                    .foregroundColor(isSelected ? .accentColor : .secondary)
                     .frame(width: 16)
 
                 Image(systemName: candidate.isGroup ? "person.3.fill" : "person.fill")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.secondary)
                     .frame(width: 16)
 
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(candidate.displayName)
                             .font(.system(size: 12))
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                         if candidate.isGroup {
@@ -861,12 +865,12 @@ private struct CandidateRow: View {
                         if alreadyAdded {
                             Text("已在白名单")
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.55))
+                                .foregroundColor(.secondary)
                         }
                     }
                     Text("近 45 天 \(candidate.recentCount) 条 · 总计 \(candidate.totalCount)")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
 
@@ -891,12 +895,12 @@ private struct SearchResultRow: View {
         HStack(spacing: 10) {
             Image(systemName: contact.isGroup ? "person.3.fill" : "person.fill")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.secondary)
                 .frame(width: 16)
 
             Text(contact.displayName)
                 .font(.system(size: 12))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
@@ -905,7 +909,7 @@ private struct SearchResultRow: View {
             if alreadyAdded {
                 Text("已添加")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             } else {
@@ -915,7 +919,7 @@ private struct SearchResultRow: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Color.accentColor.opacity(0.85))
+                        .background(Color.accentColor)
                         .cornerRadius(3)
                 }
                 .buttonStyle(.plain)
