@@ -256,10 +256,17 @@ struct WhitelistScanView: View {
             }
 
             for candidate in candidates {
+                // Load recent messages so the AI has real content to classify.
+                // Skip contacts with no message history — AI can't categorize without content.
+                let recentMsgs = monitor.recentMessages(chatUsername: candidate.username)
+                guard !recentMsgs.isEmpty else {
+                    await MainActor.run { scanned += 1 }
+                    continue
+                }
                 let input = AIWhitelistCategorizer.Input(
                     contactName: candidate.displayName,
                     isGroup: candidate.isGroup,
-                    messages: []  // No messages available in scan context; AI infers from name/context
+                    messages: recentMsgs
                 )
 
                 if let suggestion = await categorizer.categorize(input), suggestion.shouldWhitelist {

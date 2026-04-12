@@ -13,6 +13,9 @@ struct ReplyDebtExpandedView: View {
     @State private var isLoading = false
     @State private var hasLoaded = false
     @State private var hoveredIndex: Int? = nil
+    /// Tracks which suggestion was just copied. Non-nil shows the inline
+    /// confirmation bar so the user can open WeChat and paste — no modal alert.
+    @State private var copiedSuggestion: AIReplySuggester.Suggestion? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -77,6 +80,9 @@ struct ReplyDebtExpandedView: View {
 
             ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
                 suggestionRow(suggestion, index: index)
+                if copiedSuggestion?.text == suggestion.text {
+                    copiedConfirmationBar(for: suggestion)
+                }
             }
         }
         .padding(.bottom, 6)
@@ -101,8 +107,39 @@ struct ReplyDebtExpandedView: View {
         .contentShape(Rectangle())
         .onHover { hoveredIndex = $0 ? index : nil }
         .onTapGesture {
-            copySuggestionAndAsk(suggestion)
+            copySuggestion(suggestion)
         }
+    }
+
+    /// Inline confirmation bar shown below the copied suggestion.
+    /// Replaces the old NSAlert — works safely in a .nonactivatingPanel.
+    private func copiedConfirmationBar(for suggestion: AIReplySuggester.Suggestion) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.green)
+            Text("已复制")
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.75))
+            Spacer(minLength: 0)
+            Button("打开微信并粘贴") {
+                copiedSuggestion = nil
+                WeChatLauncher.openChat(named: item.chatName)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    WeChatLauncher.pasteClipboard()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.mini)
+            Button("关闭") {
+                copiedSuggestion = nil
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+        .background(Color.green.opacity(0.08))
     }
 
     // MARK: - Tone badge
@@ -127,27 +164,10 @@ struct ReplyDebtExpandedView: View {
         }
     }
 
-    // MARK: - Copy + paste flow
+    // MARK: - Copy flow
 
-    private func copySuggestionAndAsk(_ suggestion: AIReplySuggester.Suggestion) {
-        // Write text to NSPasteboard.
+    private func copySuggestion(_ suggestion: AIReplySuggester.Suggestion) {
         WeChatLauncher.copyText(suggestion.text)
-
-        // Ask user if they want to open WeChat and paste.
-        let alert = NSAlert()
-        alert.messageText = "已复制到剪贴板"
-        alert.informativeText = "是否打开微信对话框并粘贴？"
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "打开并粘贴")
-        alert.addButton(withTitle: "只复制")
-
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return }
-
-        // Open the chat, then paste after a short settle delay.
-        WeChatLauncher.openChat(named: item.chatName)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            WeChatLauncher.pasteClipboard()
-        }
+        copiedSuggestion = suggestion
     }
 }

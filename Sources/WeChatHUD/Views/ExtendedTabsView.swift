@@ -602,25 +602,6 @@ private struct UnreadRow: View {
         }
     }
 
-    /// Snooze-until helper. `hour` is 24-h clock. If `nextDay` is true
-    /// (e.g. "明早 9:00"), shift to tomorrow regardless of current time;
-    /// otherwise use today, or tomorrow if the hour has already passed.
-    private func snoozeTarget(hour: Int, nextDay: Bool) -> Int {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = .current
-        var comps = cal.dateComponents([.year, .month, .day], from: Date())
-        comps.hour = hour
-        comps.minute = 0
-        comps.second = 0
-        guard var target = cal.date(from: comps) else {
-            return Int(Date().timeIntervalSince1970) + 3600
-        }
-        if nextDay || target <= Date() {
-            target = cal.date(byAdding: .day, value: 1, to: target) ?? target
-        }
-        return Int(target.timeIntervalSince1970)
-    }
-
     /// Overdue rows get a red tint so the user can spot them in
     /// peripheral vision. Everything else gets a hover highlight.
     @ViewBuilder
@@ -895,28 +876,4 @@ private struct FirstMouseRowHost<Content: View>: NSViewRepresentable {
     }
 }
 
-// MARK: - helpers
-
-private func relativeTime(_ date: Date) -> String {
-    let diff = Int(Date().timeIntervalSince(date))
-    if diff < 60 { return "刚刚" }
-    if diff < 3600 { return "\(diff / 60)分前" }
-    if diff < 86400 { return "\(diff / 3600)时前" }
-    return "\(diff / 86400)天前"
-}
-
-private func snoozeTarget(hour: Int, nextDay: Bool) -> Int {
-    var cal = Calendar(identifier: .gregorian)
-    cal.timeZone = .current
-    var comps = cal.dateComponents([.year, .month, .day], from: Date())
-    comps.hour = hour
-    comps.minute = 0
-    comps.second = 0
-    guard var target = cal.date(from: comps) else {
-        return Int(Date().timeIntervalSince1970) + 3600
-    }
-    if nextDay || target <= Date() {
-        target = cal.date(byAdding: .day, value: 1, to: target) ?? target
-    }
-    return Int(target.timeIntervalSince1970)
-}
+// relativeTime(_:) and snoozeTarget(hour:nextDay:) are defined in ViewHelpers.swift

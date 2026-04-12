@@ -1,5 +1,21 @@
 import SwiftUI
 
+// MARK: - Shared helpers
+
+private func moodColor(_ mood: String) -> Color {
+    let m = mood.lowercased()
+    if m.contains("积极") || m.contains("正面") || m.contains("高兴") || m.contains("满意") {
+        return .green
+    }
+    if m.contains("消极") || m.contains("不满") || m.contains("愤怒") || m.contains("焦虑") {
+        return .red
+    }
+    if m.contains("紧张") || m.contains("担忧") || m.contains("压力") {
+        return .orange
+    }
+    return .white.opacity(0.5)
+}
+
 // MARK: - VIP Insight Card (expandable)
 
 /// Full VIP analysis card shown below a MessageRow when the user taps a
@@ -119,20 +135,6 @@ struct VIPInsightCardView: View {
             .frame(width: 6, height: 6)
     }
 
-    private func moodColor(_ mood: String) -> Color {
-        let m = mood.lowercased()
-        if m.contains("积极") || m.contains("正面") || m.contains("高兴") || m.contains("满意") {
-            return .green
-        }
-        if m.contains("消极") || m.contains("不满") || m.contains("愤怒") || m.contains("焦虑") {
-            return .red
-        }
-        if m.contains("紧张") || m.contains("担忧") || m.contains("压力") {
-            return .orange
-        }
-        return .white.opacity(0.5)
-    }
-
     // MARK: - Topic chip
 
     private func topicChip(_ topic: String) -> some View {
@@ -187,19 +189,6 @@ struct VIPInlineTags: View {
             .cornerRadius(3)
     }
 
-    private func moodColor(_ mood: String) -> Color {
-        let m = mood.lowercased()
-        if m.contains("积极") || m.contains("正面") || m.contains("高兴") || m.contains("满意") {
-            return .green
-        }
-        if m.contains("消极") || m.contains("不满") || m.contains("愤怒") || m.contains("焦虑") {
-            return .red
-        }
-        if m.contains("紧张") || m.contains("担忧") || m.contains("压力") {
-            return .orange
-        }
-        return .white.opacity(0.5)
-    }
 }
 
 // MARK: - FlowLayout helper

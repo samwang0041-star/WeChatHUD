@@ -145,13 +145,4 @@ struct RecalledMessageRow: View {
         }
     }
 
-    // MARK: - Relative time
-
-    private func relativeTime(_ date: Date) -> String {
-        let diff = Int(Date().timeIntervalSince(date))
-        if diff < 60 { return "刚刚" }
-        if diff < 3600 { return "\(diff / 60)分前" }
-        if diff < 86400 { return "\(diff / 3600)时前" }
-        return "\(diff / 86400)天前"
-    }
 }
