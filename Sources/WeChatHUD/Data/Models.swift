@@ -1036,6 +1036,7 @@ enum AutopilotAction: String, Codable {
     case pending        // AI not confident enough, waiting for user review
     case skipped        // message doesn't need reply (sticker, system msg, etc.)
     case readNoReply    // opened chat (triggered read receipt) but no reply
+    case proactive      // proactively initiated conversation
     case vipNotified    // VIP contact — sent "busy" notice instead of real reply
     case failed         // attempted send but failed
     case groupLogged    // group @mention — logged only, not replied
@@ -1137,6 +1138,12 @@ struct AutopilotConfig: Codable {
     ]
     /// Global reply speed multiplier. < 1.0 = faster, > 1.0 = slower. Default 1.0.
     var replySpeedMultiplier: Double = 1.0
+    /// Enable proactive messaging (autopilot initiates conversations). Default false.
+    var proactiveEnabled: Bool = false
+    /// Max proactive messages per session. Default 3.
+    var maxProactivePerSession: Int = 3
+    /// Minimum days since last interaction before proactive outreach. Default 3.
+    var proactiveSilenceDays: Int = 3
     /// Late-night silence threshold (0.0-1.0). If reply rate in 23:00-7:00 < this → silent.
     var silentNightThreshold: Double = 0.2
 }
