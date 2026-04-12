@@ -2,23 +2,27 @@
 
 ## Current Status
 
-**状态**: 🟢 P6 全部完成
+**状态**: 🟢 P7 全部完成 — 六轮进化结束
 
-## P6 完成总结
+## P7 完成总结
 
 | 任务 | 成果 |
 |------|------|
-| P6a: 测试补充 | +38 tests (MessageHelpers 23 + AutopilotSafety 15), 总计 194 |
-| P6b: Quick Actions | Unread row hover 显示行内操作按钮 (静默/延后/打开微信) |
-| P6c: 通知增强 | Banner 新增打开微信 + 静默按钮，点击打开对话分析面板 |
+| P7a: Error Recovery | 审计 4 场景: 3/4 已 SAFE, DB lock 增加诊断日志 |
+| P7b: CLAUDE.md 更新 | 从"准备实现"更新为完整的生产文档 |
+| P7c: 最终验证 | ✅ App 构建+签名, 194 tests 0 failures, 0 warnings |
 
-## 全项目累计 (P0-P6, 五轮进化)
+## 全项目最终成果 (P0-P7, 六轮进化)
 
 | 指标 | 数值 |
 |------|------|
 | 测试 | 117 → **194** (+77, +66%) |
-| 生产 bug | 1 修复 |
-| 架构 | ChatMonitor 1690→1131行 |
-| 新功能 | 9 个 (追赶/承诺/周报/Profile/对话分析/安全护栏/快捷键/Quick Actions/通知增强) |
-| 构建 | 零警告 |
-| Commits | 24 个原子 commit |
+| 生产 bug 修复 | 1 (autopilot column index) |
+| 代码质量修复 | CommitmentTracker 解析 + 10 deprecation warnings |
+| 架构改善 | ChatMonitor 1690→1131行, +ScanEngine +MessageHelpers |
+| AI 服务审计 | 11/11 验证健壮 |
+| 新功能 | 9 个 |
+| 构建质量 | Release build 零警告 |
+| Commits | 27 个原子 commit |
+| CLAUDE.md | 完整更新 |
+| Error Recovery | 4/4 场景已处理 |
