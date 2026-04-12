@@ -1,0 +1,2 @@
+{"type":"server-started","port":55050,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:55050","screen_dir":"/Users/yuriwong/wechatcli/WeChatHUD/.superpowers/brainstorm/78086-1775975969/content","state_dir":"/Users/yuriwong/wechatcli/WeChatHUD/.superpowers/brainstorm/78086-1775975969/state"}
+{"type":"server-stopped","reason":"idle timeout"}

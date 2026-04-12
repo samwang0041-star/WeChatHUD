@@ -55,7 +55,7 @@ final class ChatMonitor: ObservableObject {
     @Published var whitelistSuggestions: [String: AIWhitelistCategorizer.Suggestion] = [:]
     /// Cached daily retrospective, regenerated every 30 minutes.
     @Published var dailyReport: AIDailyRetrospector.Retrospective? = nil
-    var dailyReportGeneratedAt: Date? = nil
+    @Published var dailyReportGeneratedAt: Date? = nil
     private let recentLimit = 10
 
     private let reader: WeChatReader
@@ -64,6 +64,12 @@ final class ChatMonitor: ObservableObject {
     private let groupContextBriefingService: GroupContextBriefingService
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
+    private lazy var replySuggester: AIReplySuggester = {
+        AIReplySuggester(store: store, config: store.loadClassifierConfig())
+    }()
+    private lazy var dailyRetrospector: AIDailyRetrospector = {
+        AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
+    }()
     private var safetyTimer: Timer?
     private var scanInProgress = false
 
@@ -316,9 +322,11 @@ final class ChatMonitor: ObservableObject {
                 chatType: chatType,
                 role: .contextAnalyzer
             )
+            // Look up actual sender role from contacts; fall back to .colleague if unknown.
+            let senderRole: ContactRole = store.getContact(username: notification.senderUsername)?.role ?? .colleague
             if let deepResult = await analyzer.analyze(
                 ask: syntheticAsk,
-                senderRole: .colleague,
+                senderRole: senderRole,
                 conversationContext: contextWindow,
                 senderProfile: "",
                 userCommitments: ""
@@ -523,9 +531,10 @@ final class ChatMonitor: ObservableObject {
     func acceptWhitelistSuggestion(chatUsername: String, suggestion: AIWhitelistCategorizer.Suggestion) {
         let category: WhitelistCategory = suggestion.category == "work" ? .work : suggestion.category == "life" ? .life : .other
         let attentionLevel: WhitelistAttentionLevel = suggestion.isGroup ? .watch : .watch
+        let displayName = reader.displayName(for: chatUsername)
         try? store.addToWhitelist(
             username: chatUsername,
-            displayName: chatUsername,
+            displayName: displayName.isEmpty ? chatUsername : displayName,
             isGroup: suggestion.isGroup,
             category: category,
             attentionLevel: attentionLevel
@@ -809,8 +818,6 @@ final class ChatMonitor: ObservableObject {
            dailyReport != nil {
             return
         }
-        let cfg = store.loadClassifierConfig()
-        let retrospector = AIDailyRetrospector(store: store, config: cfg)
         let pending = store.loadPendingAsks(status: .pending)
         let handled = store.loadPendingAsks(status: .done)
         let input = AIDailyRetrospector.Input(
@@ -824,14 +831,19 @@ final class ChatMonitor: ObservableObject {
             messageCount: stats.unreadCount,
             focusDurationMinutes: 0
         )
-        dailyReport = await retrospector.retrospect(input)
+        dailyReport = await dailyRetrospector.retrospect(input)
         dailyReportGeneratedAt = Date()
+    }
+
+    /// Load recent messages for a chat as (sender, body) tuples — used by
+    /// WhitelistScanView to give the AI categorizer real content.
+    func recentMessages(chatUsername: String, limit: Int = 20) -> [(sender: String, body: String)] {
+        (try? reader.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil))?
+            .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
     /// Generate reply suggestions for a reply debt item.
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
-        let cfg = store.loadClassifierConfig()
-        let suggester = AIReplySuggester(store: store, config: cfg)
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
             senderName: item.senderName,
@@ -840,7 +852,7 @@ final class ChatMonitor: ObservableObject {
             askType: .none,
             relationship: "work"
         )
-        return await suggester.suggest(input) ?? []
+        return await replySuggester.suggest(input) ?? []
     }
 
     /// Background-safe scan body. Pure function over `reader`, `store`,
