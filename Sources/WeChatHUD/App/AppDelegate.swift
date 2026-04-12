@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var reader: WeChatReader!
     var aiService: AIService!
     var fsWatcher: FSEventsWatcher?
+    private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -162,6 +163,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Start FSEvents-based file watcher for incremental updates.
         startFSWatcher()
 
+        // Menu bar status item
+        setupMenuBarItem()
+
         // Forward whitelist-message previews to the banner. Any non-nil
         // publish from ChatMonitor (which, post-change, fires for every
         // new whitelist message — not just @ mentions) flips the panel
@@ -202,6 +206,65 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return event }
             return MainActor.assumeIsolated { self.handleKeyDown(event) ? nil : event }
         }
+    }
+
+    /// Set up menu bar status item with unread badge.
+    private func setupMenuBarItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        updateMenuBarIcon()
+
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "显示/隐藏 HUD", action: #selector(toggleHUD), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
+        statusItem?.menu = menu
+
+        // Update badge when unread count changes — use same pattern as
+        // other Combine sinks in this file (synchronous on @Published setter).
+        monitor.objectWillChange
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                MainActor.assumeIsolated {
+                    self.updateMenuBarIcon(unread: self.monitor.stats.unreadCount)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func updateMenuBarIcon(unread: Int = 0) {
+        guard let button = statusItem?.button else { return }
+        if unread > 0 {
+            button.title = " \(unread)"
+        } else {
+            button.title = ""
+        }
+        button.image = NSImage(systemSymbolName: "message.badge.fill", accessibilityDescription: "WeChatHUD")
+        button.image?.size = NSSize(width: 18, height: 18)
+    }
+
+    @objc private func toggleHUD() {
+        MainActor.assumeIsolated {
+            if panelState.currentState == .compact {
+                panelState.mouseEntered()
+            } else {
+                panelState.collapse()
+            }
+        }
+    }
+
+    @objc private func refreshNow() {
+        MainActor.assumeIsolated { monitor.refreshNow() }
+    }
+
+    @objc private func openSettings() {
+        MainActor.assumeIsolated { panelState.showDetail() }
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 
     /// Show first-launch onboarding in a separate window.
