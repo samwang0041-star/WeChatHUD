@@ -292,6 +292,16 @@ struct GroupContextBriefing: Codable, Equatable {
     let confidence: Double
     let source: GroupContextBriefingSource
     let generatedAt: Date
+
+    // Deep analysis (from ContextAnalyzer, loaded async after initial briefing)
+    var deepBackground: String?
+    var deepWhatTheyWant: String?
+    var deepHiddenContext: String?
+    var deepStakeholders: [String]?
+    var deepYourPosition: String?
+    var deepSuggestedAction: String?
+    var deepSuggestedTiming: String?
+    var deepRiskIfIgnore: String?
 }
 
 enum GroupContextBriefingSource: String, Codable {
@@ -558,7 +568,7 @@ struct AIConfig: Codable {
 struct SyncConfig: Codable {
     var intervalSeconds: Int = 30
     var wechatDBPath: String = "auto"
-    var cacheStrategy: CacheStrategy = .persistent
+    var cacheStrategy: CacheStrategy = .temporary
 }
 
 /// Where decrypted WeChat DBs are cached.
@@ -610,7 +620,7 @@ struct NotificationConfig: Codable {
 struct AIClassifierConfig: Codable {
     var baseURL: String = "http://127.0.0.1:8000/v1"
     var model: String = "Qwen3.5-27B-6bit"
-    var apiKey: String = "samwang1"
+    var apiKey: String = ""
     var temperature: Double = 0.1
     var maxTokens: Int = 256
     var promptVersion: String = "classifier_v1"

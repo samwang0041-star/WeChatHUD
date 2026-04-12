@@ -489,6 +489,10 @@ private struct UnreadRow: View {
                 content.lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 0)
                 statusBadge
+                if !item.isWhitelisted,
+                   let suggestion = monitor.whitelistSuggestions[item.chatUsername] {
+                    WhitelistSuggestionBadge(chatUsername: item.chatUsername, suggestion: suggestion)
+                }
                 Text(relativeTime(item.timestamp))
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.4))

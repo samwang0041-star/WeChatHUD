@@ -417,6 +417,23 @@ final class ChatMonitor: ObservableObject {
         recomputeStatsFromItems()
     }
 
+    func acceptWhitelistSuggestion(chatUsername: String, suggestion: AIWhitelistCategorizer.Suggestion) {
+        let category: WhitelistCategory = suggestion.category == "work" ? .work : suggestion.category == "life" ? .life : .other
+        let attentionLevel: WhitelistAttentionLevel = suggestion.isGroup ? .watch : .watch
+        try? store.addToWhitelist(
+            username: chatUsername,
+            displayName: chatUsername,
+            isGroup: suggestion.isGroup,
+            category: category,
+            attentionLevel: attentionLevel
+        )
+        whitelistSuggestions.removeValue(forKey: chatUsername)
+    }
+
+    func dismissWhitelistSuggestion(chatUsername: String) {
+        whitelistSuggestions.removeValue(forKey: chatUsername)
+    }
+
     /// Add an unread item's chat into the tracked source list. Private
     /// chats default to VIP; groups default to plain whitelist/watch.
     func addUnreadToWhitelist(_ item: UnreadItem) {

@@ -128,6 +128,45 @@ private struct GroupContextBriefingPopover: View {
                     FlowChips(items: briefing.participants)
                 }
             }
+
+            if let bg = briefing.deepBackground {
+                Divider().padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("深度分析")
+                        .font(.system(size: 11, weight: .bold))
+                    section("背景", text: bg)
+                    if let want = briefing.deepWhatTheyWant {
+                        section("他想要什么", text: want)
+                    }
+                    if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("利益相关方")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            FlowChips(items: stakeholders)
+                        }
+                    }
+                    if let position = briefing.deepYourPosition {
+                        section("你的立场", text: position)
+                    }
+                    if let action = briefing.deepSuggestedAction {
+                        section("建议行动", text: action)
+                    }
+                    if let timing = briefing.deepSuggestedTiming {
+                        section("建议时机", text: timing)
+                    }
+                    if let risk = briefing.deepRiskIfIgnore {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                            Text("风险：\(risk)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -188,12 +227,36 @@ private struct GroupContextBriefingPopover: View {
     }
 
     private func copyText(for briefing: GroupContextBriefing) -> String {
-        [
+        var lines = [
             "发生了什么：\(briefing.situation)",
             "为什么@你：\(briefing.whyMentioned)",
             "当前状态：\(briefing.currentStatus)",
             "下一步：\(briefing.nextStep)"
-        ].joined(separator: "\n")
+        ]
+        if let bg = briefing.deepBackground {
+            lines.append("")
+            lines.append("【深度分析】")
+            lines.append("背景：\(bg)")
+        }
+        if let want = briefing.deepWhatTheyWant {
+            lines.append("他想要什么：\(want)")
+        }
+        if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
+            lines.append("利益相关方：\(stakeholders.joined(separator: "、"))")
+        }
+        if let position = briefing.deepYourPosition {
+            lines.append("你的立场：\(position)")
+        }
+        if let action = briefing.deepSuggestedAction {
+            lines.append("建议行动：\(action)")
+        }
+        if let timing = briefing.deepSuggestedTiming {
+            lines.append("建议时机：\(timing)")
+        }
+        if let risk = briefing.deepRiskIfIgnore {
+            lines.append("风险：\(risk)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
