@@ -5,7 +5,7 @@ struct SyncSettingsView: View {
 
     @State private var dbPath = "auto"
     @State private var interval = 30
-    @State private var cacheStrategy: CacheStrategy = .persistent
+    @State private var cacheStrategy: CacheStrategy = .temporary
     @State private var detectedPath = ""
 
     let intervals = [15, 30, 60, 300]

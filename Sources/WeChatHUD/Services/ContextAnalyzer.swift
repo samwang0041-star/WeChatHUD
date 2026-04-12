@@ -120,7 +120,11 @@ actor ContextAnalyzer {
     }
 
     private func normalizeURL(_ url: String) -> String {
-        url.hasSuffix("/") ? String(url.dropLast()) : url
+        var u = url
+        if !u.contains("://") { u = "http://\(u)" }
+        while u.hasSuffix("/") { u.removeLast() }
+        if !u.hasSuffix("/v1") { u += "/v1" }
+        return u
     }
 
     private func cleanJSON(_ text: String) -> String {

@@ -138,6 +138,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.resizeExtendedIfActive() }
             .store(in: &cancellables)
 
+        monitor.$commitments
+            .dropFirst()
+            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
+            .store(in: &cancellables)
+
+        monitor.$recalledMessages
+            .dropFirst()
+            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
+            .store(in: &cancellables)
+
         // Start the monitor (includes initial scan + WeChat process observer).
         monitor.start()
 

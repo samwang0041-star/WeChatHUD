@@ -2,12 +2,19 @@ import Foundation
 import CryptoKit
 import SQLite3
 
-final class WeChatReader: ObservableObject {
+final class WeChatReader: ObservableObject, @unchecked Sendable {
     private let keysPath: String
     let dbDir: String
     private let cacheDir: String
     private let cacheStrategy: CacheStrategy
     private let manifestPath: String
+
+    /// Recursive lock protecting all mutable dictionary state from concurrent access.
+    /// ChatMonitor runs scans on a detached task while the main actor may read state;
+    /// this lock serialises those accesses without requiring full actor isolation.
+    /// Recursive because public methods (e.g. refreshIfChanged) call other locked
+    /// methods (e.g. getDecryptedDB) internally.
+    private let lock = NSRecursiveLock()
 
     private var keys: [String: Data] = [:]           // relative path → 32-byte key
     private var contactCache: [String: String] = [:] // username → display name
@@ -58,28 +65,30 @@ final class WeChatReader: ObservableObject {
     // MARK: - Key Loading
 
     func loadKeys(force: Bool = false) throws {
-        let fm = FileManager.default
-        let curMtime = (try? fm.attributesOfItem(atPath: keysPath)[.modificationDate]) as? Date
-        if !force, let cur = curMtime, let last = keysMtime, cur == last {
-            return  // unchanged, nothing to do
-        }
-        guard let data = fm.contents(atPath: keysPath) else {
-            throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
-        }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ReaderError.keyLoadFailed("Invalid JSON in \(keysPath)")
-        }
+        try lock.withLock {
+            let fm = FileManager.default
+            let curMtime = (try? fm.attributesOfItem(atPath: keysPath)[.modificationDate]) as? Date
+            if !force, let cur = curMtime, let last = keysMtime, cur == last {
+                return  // unchanged, nothing to do
+            }
+            guard let data = fm.contents(atPath: keysPath) else {
+                throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw ReaderError.keyLoadFailed("Invalid JSON in \(keysPath)")
+            }
 
-        keys.removeAll(keepingCapacity: true)
-        for (path, value) in json {
-            guard !path.hasPrefix("_") else { continue }
-            guard let dict = value as? [String: Any],
-                  let hexKey = dict["enc_key"] as? String else { continue }
-            guard let keyData = Data(hexString: hexKey), keyData.count == 32 else { continue }
-            let normalized = path.replacingOccurrences(of: "\\", with: "/")
-            keys[normalized] = keyData
+            keys.removeAll(keepingCapacity: true)
+            for (path, value) in json {
+                guard !path.hasPrefix("_") else { continue }
+                guard let dict = value as? [String: Any],
+                      let hexKey = dict["enc_key"] as? String else { continue }
+                guard let keyData = Data(hexString: hexKey), keyData.count == 32 else { continue }
+                let normalized = path.replacingOccurrences(of: "\\", with: "/")
+                keys[normalized] = keyData
+            }
+            keysMtime = curMtime
         }
-        keysMtime = curMtime
     }
 
     // MARK: - Cache Invalidation (mtime-based)
@@ -97,78 +106,82 @@ final class WeChatReader: ObservableObject {
     /// ~30-40 ms, which is still cheap enough for the hot path.
     @discardableResult
     func refreshIfChanged(relPath: String) throws -> Bool {
-        let normalized = relPath.replacingOccurrences(of: "\\", with: "/")
-        let encPath = "\(dbDir)/\(normalized)"
-        let walPath = encPath + "-wal"
-        let fm = FileManager.default
+        try lock.withLock {
+            let normalized = relPath.replacingOccurrences(of: "\\", with: "/")
+            let encPath = "\(dbDir)/\(normalized)"
+            let walPath = encPath + "-wal"
+            let fm = FileManager.default
 
-        guard fm.fileExists(atPath: encPath) else { return false }
+            guard fm.fileExists(atPath: encPath) else { return false }
 
-        let mainMtime = (try? fm.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
-        let walMtime = (try? fm.attributesOfItem(atPath: walPath)[.modificationDate]) as? Date
+            let mainMtime = (try? fm.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
+            let walMtime = (try? fm.attributesOfItem(atPath: walPath)[.modificationDate]) as? Date
 
-        let mainChanged = mainMtime != mainMtimes[normalized]
-        let walChanged = walMtime != walMtimes[normalized]
+            let mainChanged = mainMtime != mainMtimes[normalized]
+            let walChanged = walMtime != walMtimes[normalized]
 
-        if !mainChanged && !walChanged {
-            return false  // common case — nothing moved
-        }
-
-        // Main DB touched → drop the cache and re-decrypt. This is the only
-        // way to pick up pages that WCDB already flushed from WAL into the
-        // main file. Cost for a typical message DB is ~30-40 ms.
-        if mainChanged {
-            if let old = decryptedCache[normalized] {
-                try? fm.removeItem(atPath: old)
+            if !mainChanged && !walChanged {
+                return false  // common case — nothing moved
             }
-            decryptedCache.removeValue(forKey: normalized)
+
+            // Main DB touched → drop the cache and re-decrypt. This is the only
+            // way to pick up pages that WCDB already flushed from WAL into the
+            // main file. Cost for a typical message DB is ~30-40 ms.
+            if mainChanged {
+                if let old = decryptedCache[normalized] {
+                    try? fm.removeItem(atPath: old)
+                }
+                decryptedCache.removeValue(forKey: normalized)
+            }
+
+            let decPath = try getDecryptedDB(relativePath: normalized)
+
+            // Still apply WAL — catches the case where WAL has newer frames than
+            // the last checkpoint (rare but possible on rapid writes).
+            if fm.fileExists(atPath: walPath), let key = findKey(for: normalized) {
+                try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
+            }
+
+            mainMtimes[normalized] = mainMtime
+            walMtimes[normalized] = walMtime
+            if cacheStrategy == .persistent { saveManifest() }
+            return true
         }
-
-        let decPath = try getDecryptedDB(relativePath: normalized)
-
-        // Still apply WAL — catches the case where WAL has newer frames than
-        // the last checkpoint (rare but possible on rapid writes).
-        if fm.fileExists(atPath: walPath), let key = findKey(for: normalized) {
-            try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
-        }
-
-        mainMtimes[normalized] = mainMtime
-        walMtimes[normalized] = walMtime
-        if cacheStrategy == .persistent { saveManifest() }
-        return true
     }
 
     // MARK: - DB Access
 
     /// Get a decrypted, readable SQLite DB for the given relative path.
     func getDecryptedDB(relativePath: String) throws -> String {
-        let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
+        try lock.withLock {
+            let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
 
-        if let cached = decryptedCache[normalized], FileManager.default.fileExists(atPath: cached) {
-            return cached
+            if let cached = decryptedCache[normalized], FileManager.default.fileExists(atPath: cached) {
+                return cached
+            }
+
+            guard let key = findKey(for: normalized) else {
+                throw ReaderError.noKey(normalized)
+            }
+
+            let encPath = "\(dbDir)/\(normalized)"
+            guard FileManager.default.fileExists(atPath: encPath) else {
+                throw ReaderError.dbNotFound(encPath)
+            }
+
+            let hash = md5Hex(normalized)
+            let decPath = "\(cacheDir)/\(hash).db"
+
+            try WeChatDecryptor.decryptDB(inputPath: encPath, outputPath: decPath, key: key)
+
+            let walPath = encPath + "-wal"
+            if FileManager.default.fileExists(atPath: walPath) {
+                try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
+            }
+
+            decryptedCache[normalized] = decPath
+            return decPath
         }
-
-        guard let key = findKey(for: normalized) else {
-            throw ReaderError.noKey(normalized)
-        }
-
-        let encPath = "\(dbDir)/\(normalized)"
-        guard FileManager.default.fileExists(atPath: encPath) else {
-            throw ReaderError.dbNotFound(encPath)
-        }
-
-        let hash = md5Hex(normalized)
-        let decPath = "\(cacheDir)/\(hash).db"
-
-        try WeChatDecryptor.decryptDB(inputPath: encPath, outputPath: decPath, key: key)
-
-        let walPath = encPath + "-wal"
-        if FileManager.default.fileExists(atPath: walPath) {
-            try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
-        }
-
-        decryptedCache[normalized] = decPath
-        return decPath
     }
 
     private func findKey(for path: String) -> Data? {
@@ -187,17 +200,19 @@ final class WeChatReader: ObservableObject {
     /// Reload contacts only if contact.db mtime changed since last load.
     @discardableResult
     func refreshContactsIfChanged() throws -> Bool {
-        let rel = "contact/contact.db"
-        let encPath = "\(dbDir)/\(rel)"
-        guard FileManager.default.fileExists(atPath: encPath) else { return false }
-        let cur = (try? FileManager.default.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
-        if let cur = cur, let last = contactsMtime, cur == last, !contactCache.isEmpty {
-            return false
+        try lock.withLock {
+            let rel = "contact/contact.db"
+            let encPath = "\(dbDir)/\(rel)"
+            guard FileManager.default.fileExists(atPath: encPath) else { return false }
+            let cur = (try? FileManager.default.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
+            if let cur = cur, let last = contactsMtime, cur == last, !contactCache.isEmpty {
+                return false
+            }
+            try refreshIfChanged(relPath: rel)
+            try loadContacts()
+            contactsMtime = cur
+            return true
         }
-        try refreshIfChanged(relPath: rel)
-        try loadContacts()
-        contactsMtime = cur
-        return true
     }
 
     func loadContacts() throws {
@@ -234,7 +249,7 @@ final class WeChatReader: ObservableObject {
     }
 
     func displayName(for username: String) -> String {
-        contactCache[username] ?? username
+        lock.withLock { contactCache[username] ?? username }
     }
 
     // MARK: - Self (my username)
@@ -634,15 +649,17 @@ final class WeChatReader: ObservableObject {
     /// For the `.memory` cache strategy: remove decrypted files after use so
     /// plaintext never lingers on disk. Call this after each scan cycle.
     func purgeEphemeralCache() {
-        guard cacheStrategy == .memory else { return }
-        let fm = FileManager.default
-        for (rel, path) in decryptedCache {
-            try? fm.removeItem(atPath: path)
-            _ = rel
+        lock.withLock {
+            guard cacheStrategy == .memory else { return }
+            let fm = FileManager.default
+            for (rel, path) in decryptedCache {
+                try? fm.removeItem(atPath: path)
+                _ = rel
+            }
+            decryptedCache.removeAll(keepingCapacity: true)
+            mainMtimes.removeAll(keepingCapacity: true)
+            walMtimes.removeAll(keepingCapacity: true)
         }
-        decryptedCache.removeAll(keepingCapacity: true)
-        mainMtimes.removeAll(keepingCapacity: true)
-        walMtimes.removeAll(keepingCapacity: true)
     }
 
     // MARK: - Manifest (persistent strategy only)
