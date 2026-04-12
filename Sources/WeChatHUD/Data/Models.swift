@@ -847,6 +847,15 @@ enum AskUrgency: String, Codable {
     case urgent
 }
 
+/// Per-role default configuration, stored as JSON in settings["role_configs"].
+struct RoleConfig: Codable {
+    var replyWindow: Int
+    var notifyLevel: String
+    var classifierStrictness: String  // "normal" or "high"
+    var replyTone: String
+    var vipTrackDimensions: [String]
+}
+
 // MARK: - DB Key
 
 struct DBKey {
