@@ -90,6 +90,9 @@ final class ChatMonitor: ObservableObject {
     private lazy var styleProfiler: StyleProfiler = {
         StyleProfiler(reader: reader, store: store)
     }()
+    private lazy var alertEngine: ProactiveAlertEngine = {
+        ProactiveAlertEngine(store: store)
+    }()
     private lazy var dailyRetrospector: AIDailyRetrospector = {
         AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
     }()
@@ -807,6 +810,14 @@ final class ChatMonitor: ObservableObject {
         reader.purgeEphemeralCache()
         reloadAIData()
         runPostScanAI(o)
+
+        // Proactive alerts — evaluate rules after state update
+        alertEngine.evaluate(
+            unreadItems: unreadItems,
+            replyDebtItems: replyDebtItems,
+            commitments: commitments,
+            recentNotifications: recentNotifications
+        )
 
         // --- Autopilot: feed messages + flush expired batches ---
         // Always call handleNewMessages when active (even with empty array)
