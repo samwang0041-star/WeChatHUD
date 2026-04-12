@@ -3,10 +3,13 @@ import AppKit
 import SQLite3
 
 /// Millisecond-precision timestamp for log tracing.
-private func ts() -> String {
+private let _tsFormatter: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss.SSS"
-    return f.string(from: Date())
+    return f
+}()
+private func ts() -> String {
+    _tsFormatter.string(from: Date())
 }
 
 /// Event-driven WeChat message monitor.
@@ -42,6 +45,17 @@ final class ChatMonitor: ObservableObject {
     /// On-demand AI context briefings for group @ mentions. Shared
     /// between the notification banner and the follow-feed rows.
     @Published var groupContextStates: [String: GroupContextBriefingLoadState] = [:]
+    /// Commitments extracted from user's outgoing messages.
+    @Published var commitments: [Commitment] = []
+    /// Recalled messages with AI analysis.
+    @Published var recalledMessages: [RecalledMessage] = []
+    /// VIP aggregate insights keyed by vip username.
+    @Published var vipInsights: [String: VIPAggregator.AggregateResult] = [:]
+    /// AI-suggested whitelist additions keyed by chat username.
+    @Published var whitelistSuggestions: [String: AIWhitelistCategorizer.Suggestion] = [:]
+    /// Cached daily retrospective, regenerated every 30 minutes.
+    @Published var dailyReport: AIDailyRetrospector.Retrospective? = nil
+    var dailyReportGeneratedAt: Date? = nil
     private let recentLimit = 10
 
     private let reader: WeChatReader
@@ -614,7 +628,7 @@ final class ChatMonitor: ObservableObject {
         // classes are ObservableObjects but not MainActor-isolated —
         // their methods can run on any thread. We rely on `scanInProgress`
         // + sqlite's FULLMUTEX to serialise access.
-        nonisolated(unsafe) let readerRef = reader
+        let readerRef = reader
         nonisolated(unsafe) let storeRef = store
         let cp = changedRelPaths
         let th = thresholds
@@ -659,6 +673,54 @@ final class ChatMonitor: ObservableObject {
             latestNotification = latest
         }
         reader.purgeEphemeralCache()
+        reloadAIData()
+    }
+
+    /// Reload commitments and recalled messages from store.
+    func reloadAIData() {
+        commitments = store.loadCommitments()
+        recalledMessages = store.loadRecalledMessages(limit: 50)
+    }
+
+    /// Load or refresh daily report. Only calls AI if stale (>30 min).
+    func loadDailyReport(force: Bool = false) async {
+        if !force, let gen = dailyReportGeneratedAt,
+           Date().timeIntervalSince(gen) < 1800,
+           dailyReport != nil {
+            return
+        }
+        let cfg = store.loadClassifierConfig()
+        let retrospector = AIDailyRetrospector(store: store, config: cfg)
+        let pending = store.loadPendingAsks(status: .pending)
+        let handled = store.loadPendingAsks(status: .done)
+        let input = AIDailyRetrospector.Input(
+            date: {
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd"
+                return f.string(from: Date())
+            }(),
+            handled: handled,
+            pending: pending,
+            messageCount: stats.unreadCount,
+            focusDurationMinutes: 0
+        )
+        dailyReport = await retrospector.retrospect(input)
+        dailyReportGeneratedAt = Date()
+    }
+
+    /// Generate reply suggestions for a reply debt item.
+    func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
+        let cfg = store.loadClassifierConfig()
+        let suggester = AIReplySuggester(store: store, config: cfg)
+        let input = AIReplySuggester.Input(
+            messageBody: item.preview,
+            senderName: item.senderName,
+            chatName: item.chatName,
+            isGroup: item.isGroup,
+            askType: .none,
+            relationship: "work"
+        )
+        return await suggester.suggest(input) ?? []
     }
 
     /// Background-safe scan body. Pure function over `reader`, `store`,
