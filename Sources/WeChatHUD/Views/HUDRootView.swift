@@ -84,8 +84,9 @@ func extendedTabsSize(vip: Int, unread: Int, replyDebt: Int) -> (CGFloat, CGFloa
     let vipBodyHeight = max(50, vipRows * 34 + vipSectionHeaderBudget)
     let unreadBodyHeight = max(50, unreadRows * 30)
     let replyDebtBodyHeight = max(70, replyDebtRows * 42)
-    let bodyHeight = max(vipBodyHeight, unreadBodyHeight, replyDebtBodyHeight)
-    let height: CGFloat = 38 + 1 + bodyHeight + 6
+    let dailyReportBodyHeight: CGFloat = 360
+    let bodyHeight = max(vipBodyHeight, unreadBodyHeight, replyDebtBodyHeight, dailyReportBodyHeight)
+    let height: CGFloat = min(38 + 1 + bodyHeight + 6, 500)
     let width: CGFloat = replyDebt > 0 ? 520 : 480
     return (width, height)
 }
