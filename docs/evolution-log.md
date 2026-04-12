@@ -81,3 +81,25 @@
 - 强行提取需要引入回调模式或新 ObservableObject，会增加复杂度不减少
 - ChatMonitor 角色已从 God Object → Coordinator（scan 在 ScanEngine，工具在 MessageHelpers，12 个 AI service 独立）
 - 建议 P1 关闭，进入 P2 (AI 响应健壮性)
+
+### [PM] P1 关闭，下发 P2 指令
+- P1 成果: ChatMonitor 1690→1131行(-33%), ScanEngine(492行) + MessageHelpers(81行) 独立
+- 接受工程师判断: 剩余代码是 Coordinator 本职工作，不应强行拆
+- P2 启动: AI 响应健壮性，从 ReplyDebtJudge 的 invalidResponseShape 开始
+
+### [Engineer] P2 审计���成 — 项目质量超预期
+- 11 个 AI service 全面审计: 10/11 已健壮
+- 唯一真实问题: CommitmentTracker 默认值掩盖解析错误 → 已修复
+- 关键发现: `invalidResponseShape` 是设计意图（防御��制），非 bug
+- ReplyDebtJudge 已有完善的 audit + fallback 到确定性排序
+
+### [PM] P2 关闭，第一轮进化完成
+- P2 关闭: 审计充分，唯一问题已修复
+- PM 反思: 项目代码质量比初始评估好得多，后续指令需更深技术验证
+- **第一轮进化总结**: P0-P2 全部完成，+39 测���，1 个生产 bug 修复，架构改善
+- P3 方向交给工程师提议（已建立信任）
+
+### [Engineer] P3 方向提议: 实际运行验证
+- 选择 [1] 实际运行验证 + [5] 工程发现
+- P0-P2 都是读代码/写测试/重构，没有真正运行 app
+- 计划: make app → 运行验证 → 修复发现的问题 → 工程改进(test report, audit prune)
