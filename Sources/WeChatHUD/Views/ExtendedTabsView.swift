@@ -684,69 +684,76 @@ private struct ReplyDebtRow: View {
     let item: ReplyDebtItem
 
     @State private var hovered = false
+    @State private var isExpanded = false
 
     var body: some View {
-        FirstMouseRowHost {
-            HStack(alignment: .top, spacing: 8) {
-                priorityBadge
-                    .frame(width: 26, height: 18)
-                    .padding(.top, 1)
+        VStack(spacing: 0) {
+            FirstMouseRowHost {
+                HStack(alignment: .top, spacing: 8) {
+                    priorityBadge
+                        .frame(width: 26, height: 18)
+                        .padding(.top, 1)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(item.chatName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(item.chatName)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+
+                            if item.isGroup {
+                                Text("群聊")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.45))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(Color.white.opacity(0.08))
+                                    .cornerRadius(3)
+                            }
+
+                            Spacer(minLength: 0)
+
+                            Text(relativeTime(item.timestamp))
+                                .font(.system(size: 9))
+                                .foregroundColor(.white.opacity(0.4))
+                                .monospacedDigit()
+                        }
+
+                        Text("\(item.senderName): \(item.preview)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.82))
                             .lineLimit(1)
+                            .truncationMode(.tail)
 
-                        if item.isGroup {
-                            Text("群聊")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.white.opacity(0.45))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Color.white.opacity(0.08))
-                                .cornerRadius(3)
-                        }
-
-                        Spacer(minLength: 0)
-
-                        Text(relativeTime(item.timestamp))
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
-                            .monospacedDigit()
-                    }
-
-                    Text("\(item.senderName): \(item.preview)")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.82))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    HStack(spacing: 4) {
-                        ForEach(Array(item.reasons.prefix(2))) { reason in
-                            reasonChip(reason.label)
+                        HStack(spacing: 4) {
+                            ForEach(Array(item.reasons.prefix(2))) { reason in
+                                reasonChip(reason.label)
+                            }
                         }
                     }
                 }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .frame(minHeight: 42)
-            .background(rowBackground)
-            .overlay(leftAccent, alignment: .leading)
-            .contentShape(Rectangle())
-            .onHover { hovered = $0 }
-            .onTapGesture {
-                if NSEvent.modifierFlags.contains(.command) {
-                    WeChatLauncher.copyText("\(item.senderName): \(item.preview)")
-                } else {
-                    WeChatLauncher.openChat(named: item.chatName)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minHeight: 42)
+                .background(rowBackground)
+                .overlay(leftAccent, alignment: .leading)
+                .contentShape(Rectangle())
+                .onHover { hovered = $0 }
+                .onTapGesture {
+                    if NSEvent.modifierFlags.contains(.command) {
+                        WeChatLauncher.copyText("\(item.senderName): \(item.preview)")
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+                    }
                 }
+                .contextMenu { contextMenuContent }
             }
-            .contextMenu { contextMenuContent }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isExpanded {
+                ReplyDebtExpandedView(item: item)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var contextMenuContent: some View {
@@ -755,6 +762,12 @@ private struct ReplyDebtRow: View {
                 WeChatLauncher.openChat(named: item.chatName)
             } label: {
                 Label("在微信中打开", systemImage: "bubble.left.and.bubble.right")
+            }
+
+            Button {
+                withAnimation { isExpanded = true }
+            } label: {
+                Label("AI 回复建议", systemImage: "sparkles")
             }
 
             Button {
