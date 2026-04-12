@@ -79,6 +79,13 @@ struct ExtendedTabsView: View {
                     }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .hudSwitchTab)) { notif in
+                guard let index = notif.userInfo?["index"] as? Int else { return }
+                let tabs: [Tab] = [.vip, .replyDebt, .unread, .catchup, .dailyReport]
+                if index < tabs.count {
+                    selectedTab = tabs[index]
+                }
+            }
         }
     }
 

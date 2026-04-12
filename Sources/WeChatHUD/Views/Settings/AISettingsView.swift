@@ -3,6 +3,7 @@ import SwiftUI
 extension Notification.Name {
     static let hudAIConfigDidChange = Notification.Name("WeChatHUD.AIConfigDidChange")
     static let hudReplyDebtAIConfigDidChange = Notification.Name("WeChatHUD.ReplyDebtAIConfigDidChange")
+    static let hudSwitchTab = Notification.Name("WeChatHUD.SwitchTab")
 }
 
 struct AISettingsView: View {
