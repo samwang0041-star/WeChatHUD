@@ -337,6 +337,7 @@ struct ExtendedTabsView: View {
 
 private struct MessageRow: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
     let notification: HUDNotification
     @State private var hovered = false
     @State private var showInsight = false
@@ -372,6 +373,8 @@ private struct MessageRow: View {
                 .onTapGesture {
                     if NSEvent.modifierFlags.contains(.command) {
                         WeChatLauncher.copyText("\(notification.senderName): \(notification.snippet)")
+                    } else if NSEvent.modifierFlags.contains(.option) {
+                        panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
                     } else if notification.isVIP,
                               monitor.vipInsights[notification.chatUsername] != nil {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -386,6 +389,11 @@ private struct MessageRow: View {
                     WeChatLauncher.openChat(named: notification.chatName)
                 } label: {
                     Label("在微信中打开", systemImage: "bubble.left.and.bubble.right")
+                }
+                Button {
+                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                } label: {
+                    Label("详细分析", systemImage: "doc.text.magnifyingglass")
                 }
                 Button {
                     WeChatLauncher.copyText("\(notification.senderName): \(notification.snippet)")

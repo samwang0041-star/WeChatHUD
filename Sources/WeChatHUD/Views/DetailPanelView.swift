@@ -1,14 +1,23 @@
 import SwiftUI
 
-/// Detail panel = SettingsView directly. The earlier "chat list" landing
-/// page was removed — the gear button jumps straight here.
+/// Detail panel — shows either a conversation analysis workbench
+/// (when a chat is selected) or the settings view (gear button).
 struct DetailPanelView: View {
     @EnvironmentObject var panelState: PanelState
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            SettingsView()
+            if let chatUsername = panelState.selectedChatUsername,
+               let chatName = panelState.selectedChatName {
+                ConversationDetailView(
+                    chatUsername: chatUsername,
+                    chatName: chatName
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                SettingsView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
             // Explicit close — back to compact pill.
             Button(action: { panelState.collapse() }) {
