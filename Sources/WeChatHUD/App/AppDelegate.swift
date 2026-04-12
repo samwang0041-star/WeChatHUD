@@ -151,6 +151,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.resizeExtendedIfActive() }
             .store(in: &cancellables)
 
+        // First-launch onboarding
+        if store.getSetting("onboarded") == nil {
+            showOnboarding()
+        }
+
         // Start the monitor (includes initial scan + WeChat process observer).
         monitor.start()
 
@@ -197,6 +202,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return event }
             return MainActor.assumeIsolated { self.handleKeyDown(event) ? nil : event }
         }
+    }
+
+    /// Show first-launch onboarding in a separate window.
+    private func showOnboarding() {
+        let onboardingView = OnboardingView {
+            // Dismiss onboarding window
+            NSApp.windows.first { $0.title == "WeChatHUD 设置向导" }?.close()
+        }
+        .environmentObject(store)
+        .environmentObject(monitor)
+
+        let hostingView = NSHostingView(rootView: onboardingView)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 420),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "WeChatHUD 设置向导"
+        window.contentView = hostingView
+        window.center()
+        window.makeKeyAndOrderFront(nil)
     }
 
     /// Handle keyboard shortcuts. Returns true if the event was consumed.
