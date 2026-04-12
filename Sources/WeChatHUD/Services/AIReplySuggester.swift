@@ -60,6 +60,20 @@ actor AIReplySuggester {
         /// "work" / "life" / "other" — comes from whitelist category,
         /// or "unknown" if not on whitelist.
         let relationship: String
+        /// Optional style hint from StyleProfiler to match user's writing style.
+        let styleHint: String?
+
+        init(messageBody: String, senderName: String, chatName: String,
+             isGroup: Bool, askType: AskType, relationship: String,
+             styleHint: String? = nil) {
+            self.messageBody = messageBody
+            self.senderName = senderName
+            self.chatName = chatName
+            self.isGroup = isGroup
+            self.askType = askType
+            self.relationship = relationship
+            self.styleHint = styleHint
+        }
     }
 
     /// Returns 3 candidate replies, or nil if the model failed twice.
@@ -75,13 +89,18 @@ actor AIReplySuggester {
             return nil
         }
 
-        let userPrompt = template
+        var userPrompt = template
             .replacingOccurrences(of: "{message_body}", with: clean(input.messageBody))
             .replacingOccurrences(of: "{sender_name}", with: clean(input.senderName))
             .replacingOccurrences(of: "{chat_name}", with: clean(input.chatName))
             .replacingOccurrences(of: "{chat_kind}", with: input.isGroup ? "群聊" : "私聊")
             .replacingOccurrences(of: "{ask_type}", with: input.askType.rawValue)
             .replacingOccurrences(of: "{relationship}", with: input.relationship)
+
+        // Append style hint if available (from StyleProfiler)
+        if let hint = input.styleHint {
+            userPrompt += "\n\n[风格参考] \(hint)"
+        }
 
         // First attempt
         let first = await call(userPrompt)
