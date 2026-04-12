@@ -1108,6 +1108,19 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Record AI reply feedback (adopted/ignored) for the learning loop.
+    func recordReplyFeedback(adopted: Bool, chatUsername: String) throws {
+        try store.writeAIFeedback(AIFeedbackEntry(
+            id: 0,
+            ts: Date(),
+            msgUID: "reply_suggest:\(chatUsername):\(Int(Date().timeIntervalSince1970))",
+            feedbackType: adopted ? .truePositive : .falsePositive,
+            originalOutput: "",
+            userAction: adopted ? "adopted_suggestion" : "ignored_suggestion",
+            note: nil
+        ))
+    }
+
     /// Load conversation memory for a chat.
     func loadConversationMemory(chatUsername: String) -> ConversationMemory? {
         store.loadConversationMemory(chatUsername: chatUsername)

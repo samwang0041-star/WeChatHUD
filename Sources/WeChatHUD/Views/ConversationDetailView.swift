@@ -10,6 +10,10 @@ struct ConversationDetailView: View {
 
     @State private var suggestions: [AIReplySuggester.Suggestion] = []
     @State private var isLoadingSuggestions = false
+    @State private var replyText = ""
+    @State private var isSending = false
+    @State private var sendResult: String?
+    @State private var showSendConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,7 +31,88 @@ struct ConversationDetailView: View {
                 }
                 .padding(.bottom, 8)
             }
+
+            Divider().background(Color.white.opacity(0.12))
+            replyComposer
         }
+        .alert("确认发送", isPresented: $showSendConfirm) {
+            Button("发送") { Task { await sendReply() } }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("将通过微信发送给 \(chatName):\n\n\(replyText)")
+        }
+    }
+
+    // MARK: - Reply Composer
+
+    private var replyComposer: some View {
+        HStack(spacing: 8) {
+            TextField("输入回复...", text: $replyText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.white.opacity(0.08))
+                .cornerRadius(6)
+                .onSubmit {
+                    guard !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    showSendConfirm = true
+                }
+
+            if isSending {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(width: 28, height: 28)
+            } else {
+                Button(action: {
+                    guard !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+                    showSendConfirm = true
+                }) {
+                    Image(systemName: "paperplane.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(replyText.isEmpty ? .white.opacity(0.2) : .accentColor)
+                        .frame(width: 28, height: 28)
+                        .background(replyText.isEmpty ? Color.clear : Color.accentColor.opacity(0.15))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .disabled(replyText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) {
+            if let result = sendResult {
+                Text(result)
+                    .font(.system(size: 10))
+                    .foregroundColor(result.contains("成功") ? .green : .red)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(4)
+                    .offset(y: -20)
+            }
+        }
+    }
+
+    private func sendReply() async {
+        let text = replyText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        isSending = true
+        defer { isSending = false }
+
+        let success = await WeChatLauncher.sendMessage(chatName: chatName, text: text)
+        if success {
+            sendResult = "发送成功"
+            replyText = ""
+            // Record as positive AI feedback if the reply came from a suggestion
+            if suggestions.contains(where: { $0.text == text }) {
+                try? monitor.recordReplyFeedback(adopted: true, chatUsername: chatUsername)
+            }
+        } else {
+            sendResult = "发送失败"
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
     }
 
     // MARK: - Header
@@ -279,6 +364,8 @@ struct ConversationDetailView: View {
         .padding(.horizontal, 6)
         .background(Color.white.opacity(0.04))
         .cornerRadius(4)
+        .contentShape(Rectangle())
+        .onTapGesture { replyText = suggestion.text }
     }
 
     private func loadSuggestions() async {
