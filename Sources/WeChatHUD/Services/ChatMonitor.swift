@@ -217,6 +217,7 @@ final class ChatMonitor: ObservableObject {
         let catchup = aiGroupCatchup
         let analyzer = contextAnalyzer
         let readerRef = reader
+        let storeRef = store
         let myUname = reader.myUsername()
         Task { [weak self] in
             let result = await service.explain(
@@ -305,7 +306,7 @@ final class ChatMonitor: ObservableObject {
                 role: .contextAnalyzer
             )
             // Look up actual sender role from contacts; fall back to .colleague if unknown.
-            let senderRole: ContactRole = store.getContact(username: notification.senderUsername)?.role ?? .colleague
+            let senderRole: ContactRole = storeRef.getContact(username: notification.senderUsername)?.role ?? .colleague
             if let deepResult = await analyzer.analyze(
                 ask: syntheticAsk,
                 senderRole: senderRole,
@@ -828,9 +829,7 @@ final class ChatMonitor: ObservableObject {
                 if hasPending {
                     let delay = TimeInterval(config.batchWindowSeconds) + 1
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    await MainActor.run { [weak self] in
-                        Task { await self?.scan() }
-                    }
+                    await self.scan()
                 }
             }
         }

@@ -9,6 +9,7 @@ struct SettingsView: View {
     enum Tab: Hashable, CaseIterable {
         case contacts
         case aiEngine
+        case autopilot
         case roleConfig
         case notification
         case data
@@ -19,6 +20,7 @@ struct SettingsView: View {
             switch self {
             case .contacts:     return "联系人"
             case .aiEngine:     return "AI 引擎"
+            case .autopilot:    return "自动托管"
             case .roleConfig:   return "角色配置"
             case .notification: return "通知"
             case .data:         return "数据"
@@ -31,6 +33,7 @@ struct SettingsView: View {
             switch self {
             case .contacts:     return "person.2.fill"
             case .aiEngine:     return "cpu"
+            case .autopilot:    return "robot"
             case .roleConfig:   return "slider.horizontal.3"
             case .notification: return "bell.badge.fill"
             case .data:         return "tray.full.fill"
@@ -43,6 +46,7 @@ struct SettingsView: View {
             switch self {
             case .contacts:     return .blue
             case .aiEngine:     return .purple
+            case .autopilot:    return .cyan
             case .roleConfig:   return .indigo
             case .notification: return .red
             case .data:         return .green
@@ -55,6 +59,7 @@ struct SettingsView: View {
             switch self {
             case .contacts:     return "管理四级联系人：VIP 全域追踪、白名单按需分析、灰名单低优先级、陌生人忽略。"
             case .aiEngine:     return "配置本地 AI 模型端点、分类器参数、审计日志与准确度监控。"
+            case .autopilot:    return "配置自动回复托管：信心阈值、频率限制、VIP 忙碌通知模板。"
             case .roleConfig:   return "为每种身份角色设定回复窗口、通知级别、分类严格度与回复语气。"
             case .notification: return "决定哪些消息弹出通知、通知时长与勿扰时段。"
             case .data:         return "查看撤回消息记录、你的承诺追踪、待决事项管理。"
@@ -148,6 +153,8 @@ struct SettingsView: View {
                     ContactsSettingsView()
                 case .aiEngine:
                     SettingsCard { AISettingsView() }
+                case .autopilot:
+                    SettingsCard { AutopilotSettingsView() }
                 case .roleConfig:
                     RoleConfigSettingsView()
                 case .notification:
@@ -227,11 +234,11 @@ struct NotificationSettingsBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle("@提到我时弹出通知", isOn: $atMention)
-                .onChange(of: atMention) { _ in save() }
+                .onChange(of: atMention) { save() }
             Toggle("VIP 消息弹出通知", isOn: $vipMessage)
-                .onChange(of: vipMessage) { _ in save() }
+                .onChange(of: vipMessage) { save() }
             Toggle("白名单消息也弹出", isOn: $whitelistMessage)
-                .onChange(of: whitelistMessage) { _ in save() }
+                .onChange(of: whitelistMessage) { save() }
 
             Divider()
 
@@ -246,7 +253,7 @@ struct NotificationSettingsBody: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 200)
-                .onChange(of: durationSeconds) { _ in save() }
+                .onChange(of: durationSeconds) { save() }
             }
         }
         .font(.system(size: 12))
