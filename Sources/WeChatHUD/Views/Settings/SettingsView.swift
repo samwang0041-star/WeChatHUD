@@ -70,7 +70,6 @@ struct SettingsView: View {
                 .frame(width: 180)
 
             Divider()
-                .background(Color.white.opacity(0.08))
 
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -85,7 +84,7 @@ struct SettingsView: View {
             HStack {
                 Text("设置")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                 Spacer()
             }
             .padding(.horizontal, 14)
@@ -102,7 +101,7 @@ struct SettingsView: View {
 
             Spacer(minLength: 0)
         }
-        .background(Color.white.opacity(0.025))
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func sidebarRow(_ tab: Tab) -> some View {
@@ -119,14 +118,14 @@ struct SettingsView: View {
                 }
                 Text(tab.label)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .foregroundColor(isSelected ? .white : .primary)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+                    .fill(isSelected ? Color.accentColor : Color.clear)
             )
             .contentShape(Rectangle())
         }
@@ -180,10 +179,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selectedTab.label)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                 Text(selectedTab.subtitle)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 0)
@@ -194,7 +193,7 @@ struct SettingsView: View {
 // MARK: - Grouped card wrapper
 
 /// Wraps a settings subview in the native "rounded grouped section" look:
-/// dark translucent fill, 10 pt corner radius, hairline separator border.
+/// system control background fill, 10 pt corner radius, subtle border.
 struct SettingsCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
@@ -204,11 +203,11 @@ struct SettingsCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(Color(nsColor: .controlBackgroundColor))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(0.07), lineWidth: 0.5)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
             )
     }
 }
@@ -234,12 +233,12 @@ struct NotificationSettingsBody: View {
             Toggle("白名单消息也弹出", isOn: $whitelistMessage)
                 .onChange(of: whitelistMessage) { _ in save() }
 
-            Divider().background(Color.white.opacity(0.08))
+            Divider()
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("通知停留时长")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 Picker("", selection: $durationSeconds) {
                     Text("3 秒").tag(3)
                     Text("5 秒").tag(5)
@@ -251,7 +250,7 @@ struct NotificationSettingsBody: View {
             }
         }
         .font(.system(size: 12))
-        .foregroundColor(.white)
+        .foregroundColor(.primary)
         .toggleStyle(.switch)
         .onAppear {
             if !didLoad {

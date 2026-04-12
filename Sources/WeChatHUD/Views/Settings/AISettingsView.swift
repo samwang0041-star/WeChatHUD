@@ -52,13 +52,9 @@ struct AISettingsView: View {
                         }
                         Text(isTesting ? "测试中..." : "测试连接")
                     }
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.3))
-                    .cornerRadius(4)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(isTesting)
 
                 if !testResult.isEmpty {
@@ -86,7 +82,7 @@ struct AISettingsView: View {
                 if recentReplyDebtAudit.isEmpty {
                     Text("最近还没有待回 AI 审计记录。")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(recentReplyDebtAudit, id: \.id) { entry in
@@ -94,7 +90,7 @@ struct AISettingsView: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: entry.ts))
                                         .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.white.opacity(0.6))
+                                        .foregroundColor(.secondary)
                                     Text(auditStatusLabel(entry))
                                         .font(.system(size: 10, weight: .semibold))
                                         .padding(.horizontal, 6)
@@ -104,7 +100,7 @@ struct AISettingsView: View {
                                         .cornerRadius(4)
                                     Text(entry.model)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.white.opacity(0.6))
+                                        .foregroundColor(.secondary)
                                         .lineLimit(1)
                                 }
                                 Text(auditSummary(entry))
@@ -158,7 +154,7 @@ struct AISettingsView: View {
                 if recentGroupContextAudit.isEmpty {
                     Text("最近还没有群聊上下文简报记录。")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.secondary)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(recentGroupContextAudit, id: \.id) { entry in
@@ -166,7 +162,7 @@ struct AISettingsView: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: entry.ts))
                                         .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.white.opacity(0.6))
+                                        .foregroundColor(.secondary)
                                     Text(auditStatusLabel(entry))
                                         .font(.system(size: 10, weight: .semibold))
                                         .padding(.horizontal, 6)
@@ -176,7 +172,7 @@ struct AISettingsView: View {
                                         .cornerRadius(4)
                                     Text(entry.model)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.white.opacity(0.6))
+                                        .foregroundColor(.secondary)
                                         .lineLimit(1)
                                 }
                                 Text(auditSummary(entry))
@@ -219,12 +215,12 @@ struct AISettingsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("最近误判")
                                 .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.6))
+                                .foregroundColor(.secondary)
                             ForEach(Array(recentFalsePositives.prefix(3)), id: \.id) { feedback in
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: feedback.ts))
                                         .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.white.opacity(0.6))
+                                        .foregroundColor(.secondary)
                                     Text(feedback.note ?? "无摘要")
                                         .font(.system(size: 11))
                                         .foregroundColor(.primary)
@@ -248,33 +244,15 @@ struct AISettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
             if isSecure {
                 SecureField("", text: text)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.07))
-                    .cornerRadius(5)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                    )
             } else {
                 TextField("", text: text)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.07))
-                    .cornerRadius(5)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                    )
             }
         }
     }
@@ -413,10 +391,10 @@ struct AISettingsView: View {
         }
         .buttonStyle(.plain)
         .font(.system(size: 10, weight: selected ? .semibold : .regular))
-        .foregroundColor(selected ? .white : .white.opacity(0.72))
+        .foregroundColor(selected ? .white : .secondary)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(selected ? feedbackColor(type).opacity(0.75) : Color.white.opacity(0.08))
+        .background(selected ? feedbackColor(type).opacity(0.75) : Color.gray.opacity(0.15))
         .cornerRadius(4)
     }
 

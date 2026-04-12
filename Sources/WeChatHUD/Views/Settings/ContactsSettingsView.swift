@@ -17,7 +17,7 @@ struct ContactsSettingsView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 TextField("搜索联系人...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
@@ -27,12 +27,16 @@ struct ContactsSettingsView: View {
                         .font(.system(size: 11, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .foregroundColor(.blue)
+                .foregroundColor(.accentColor)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.white.opacity(0.06))
+            .background(Color(nsColor: .controlBackgroundColor))
             .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+            )
 
             // Stats bar
             if !contacts.isEmpty {
@@ -76,7 +80,7 @@ struct ContactsSettingsView: View {
             Spacer()
             Text("共 \(contacts.count) 人")
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -85,7 +89,7 @@ struct ContactsSettingsView: View {
             Circle().fill(color).frame(width: 6, height: 6)
             Text("\(count) \(label)")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -101,10 +105,10 @@ struct ContactsSettingsView: View {
                     Circle().fill(color).frame(width: 8, height: 8)
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text("(\(filtered.count))")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                 }
 
                 VStack(spacing: 2) {
@@ -113,7 +117,7 @@ struct ContactsSettingsView: View {
                     }
                 }
                 .padding(6)
-                .background(Color.white.opacity(0.04))
+                .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(8)
             }
         )
@@ -130,11 +134,11 @@ struct ContactsSettingsView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(contact.displayName)
                         .font(.system(size: 12))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     if !contact.roleNote.isEmpty {
                         Text(contact.roleNote)
                             .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.55))
+                            .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
                 }
@@ -154,12 +158,12 @@ struct ContactsSettingsView: View {
                 if contact.replyWindowMinutes > 0 {
                     Text("\(contact.replyWindowMinutes)m")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(.secondary)
                 }
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.2))
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -222,10 +226,10 @@ struct ContactEditSheet: View {
                 VStack(alignment: .leading) {
                     Text(contact.displayName)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text(contact.username)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(.secondary)
                 }
                 Spacer()
             }
@@ -234,7 +238,7 @@ struct ContactEditSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("关注级别")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 Picker("", selection: $selectedLevel) {
                     Text("VIP").tag(AttentionLevel.vip)
                     Text("白名单").tag(AttentionLevel.whitelist)
@@ -247,7 +251,7 @@ struct ContactEditSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("身份角色")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 70))], spacing: 4) {
                     ForEach(rolesForLevel(selectedLevel), id: \.self) { role in
                         Button(action: {
@@ -262,11 +266,11 @@ struct ContactEditSheet: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(selectedRole == role ? Color.accentColor.opacity(0.3) : Color.white.opacity(0.06))
+                            .background(selectedRole == role ? Color.accentColor.opacity(0.2) : Color(nsColor: .controlBackgroundColor))
                             .cornerRadius(4)
                         }
                         .buttonStyle(.plain)
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     }
                 }
             }
@@ -274,17 +278,17 @@ struct ContactEditSheet: View {
             // Role description
             Text(selectedRole.roleDescription)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(.secondary)
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.white.opacity(0.03))
+                .background(Color.gray.opacity(0.08))
                 .cornerRadius(6)
 
             // Role note
             VStack(alignment: .leading, spacing: 4) {
                 Text("备注")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 TextField("如：负责华东区的大客户经理", text: $roleNote)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
@@ -294,7 +298,7 @@ struct ContactEditSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("回复窗口（分钟，0 = 不追踪）")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                 HStack {
                     TextField("", value: $replyWindow, format: .number)
                         .textFieldStyle(.roundedBorder)
@@ -302,7 +306,7 @@ struct ContactEditSheet: View {
                         .frame(width: 80)
                     Text("默认 \(selectedRole.defaultReplyWindowMinutes)m")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(.secondary)
                 }
             }
 
@@ -311,7 +315,7 @@ struct ContactEditSheet: View {
                 Spacer()
                 Button("取消") { dismiss() }
                     .buttonStyle(.plain)
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                 Button("保存") {
                     try? store.upsertContact(
                         username: contact.username,

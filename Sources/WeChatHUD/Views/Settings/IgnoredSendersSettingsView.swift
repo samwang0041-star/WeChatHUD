@@ -10,12 +10,12 @@ struct IgnoredSendersSettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("这里管理通过消息右键添加的忽略规则。被忽略的人不会再进入未读统计，白名单消息也不会继续打扰。")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
 
             if ignoredSenders.isEmpty {
                 Text("当前没有被忽略的人。")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
                 VStack(spacing: 8) {
@@ -38,16 +38,16 @@ struct IgnoredSendersSettingsView: View {
                 HStack(spacing: 6) {
                     Text(rule.senderName)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                     Text(rule.chatName)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 if !rule.senderUsername.isEmpty {
                     Text(rule.senderUsername)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
             }
@@ -67,7 +67,7 @@ struct IgnoredSendersSettingsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.white.opacity(0.04))
+        .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(8)
     }
 

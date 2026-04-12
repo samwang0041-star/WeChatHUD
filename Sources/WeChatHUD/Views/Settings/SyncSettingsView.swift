@@ -25,7 +25,7 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("解密缓存位置")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                 Picker("", selection: $cacheStrategy) {
                     ForEach(CacheStrategy.allCases, id: \.self) { s in
                         Text(s.label).tag(s)
@@ -35,26 +35,17 @@ struct SyncSettingsView: View {
                 .onChange(of: cacheStrategy) { save() }
                 Text(cacheStrategy.hint)
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.55))
+                    .foregroundColor(.secondary)
             }
 
             // DB path
             VStack(alignment: .leading, spacing: 4) {
                 Text("微信数据路径")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                 TextField("auto = 自动检测", text: $dbPath)
-                    .textFieldStyle(.plain)
+                    .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.07))
-                    .cornerRadius(5)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-                    )
                     .onSubmit { save() }
                 if !detectedPath.isEmpty {
                     Text("检测到: \(detectedPath)")
@@ -67,7 +58,7 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("轮询间隔")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                 Picker("", selection: $interval) {
                     ForEach(intervals, id: \.self) { i in
                         Text(i < 60 ? "\(i)秒" : "\(i / 60)分钟").tag(i)
