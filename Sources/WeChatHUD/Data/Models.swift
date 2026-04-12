@@ -624,6 +624,8 @@ enum AskType: String, Codable {
     case review
     case decide
     case info
+    case schedule
+    case action
     case none
 
     var label: String {
@@ -633,6 +635,8 @@ enum AskType: String, Codable {
         case .review:   return "审核"
         case .decide:   return "决定"
         case .info:     return "提供信息"
+        case .schedule: return "安排"
+        case .action:   return "执行"
         case .none:     return "无"
         }
     }
@@ -678,6 +682,10 @@ struct PendingAsk: Identifiable {
     let promptVersion: String
     let createdAt: Date
     let updatedAt: Date
+    // New fields for four-tier system
+    let senderLevel: AttentionLevel?
+    let senderRole: ContactRole?
+    let urgency: AskUrgency?
 }
 
 enum AskBucket: String, Codable {
@@ -711,6 +719,12 @@ enum AIRole: String, Codable {
     case classifier
     case ranker
     case retrospector
+    case commitmentTracker = "commitment_tracker"
+    case contextAnalyzer   = "context_analyzer"
+    case replyGenerator    = "reply_generator"
+    case vipAggregator     = "vip_aggregator"
+    case groupDigestor     = "group_digestor"
+    case recallAnalyzer    = "recall_analyzer"
 }
 
 enum AIAuditStatus: String, Codable {
@@ -738,6 +752,99 @@ enum AIFeedbackType: String, Codable {
     case falsePositive = "false_positive"
     case trueNegative  = "true_negative"
     case falseNegative = "false_negative"
+}
+
+// MARK: - Enhanced Contact (four-tier system)
+
+struct ContactEntry: Identifiable {
+    let id: String  // username
+    let username: String
+    let displayName: String
+    let attentionLevel: AttentionLevel
+    let role: ContactRole
+    let roleNote: String
+    let replyWindowMinutes: Int
+    let levelChangedAt: Date?
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+// MARK: - VIP Trace
+
+struct VIPTrace: Identifiable {
+    let id: Int64
+    let vipUsername: String
+    let vipName: String
+    let chatUsername: String
+    let chatName: String
+    let msgUID: String
+    let rawText: String
+    let msgTime: Int
+    let batchID: String?
+    let createdAt: Date
+}
+
+// MARK: - Recalled Message
+
+enum ChatType: String, Codable {
+    case privateChat = "private"
+    case group
+}
+
+struct RecalledMessage: Identifiable {
+    let id: Int64
+    let msgUID: String
+    let senderUsername: String
+    let senderName: String
+    let senderLevel: AttentionLevel
+    let senderRole: ContactRole
+    let chatUsername: String
+    let chatName: String
+    let chatType: ChatType
+    let originalText: String
+    let sentAt: Int
+    let recalledAt: Int
+    let recallDelaySeconds: Int
+    // AI analysis (filled async)
+    let aiReason: String?
+    let aiIntelligenceValue: String?
+    let aiDetail: String?
+    let aiShouldNotify: Bool?
+    let aiNotifyLevel: NotifyLevel?
+    let aiAnalyzedAt: Date?
+    let createdAt: Date
+}
+
+// MARK: - Commitment (your promises)
+
+enum CommitmentStatus: String, Codable {
+    case pending
+    case fulfilled
+    case overdue
+    case cancelled
+}
+
+struct Commitment: Identifiable {
+    let id: Int64
+    let msgUID: String
+    let chatUsername: String
+    let chatName: String
+    let content: String
+    let commitTo: String
+    let deadlineAt: Date?
+    let confidence: Double
+    let status: CommitmentStatus
+    let promptVersion: String
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+// MARK: - Urgency (used by enhanced Classifier)
+
+enum AskUrgency: String, Codable {
+    case routine
+    case timely
+    case urgent
 }
 
 // MARK: - DB Key
