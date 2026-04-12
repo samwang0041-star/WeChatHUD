@@ -735,6 +735,7 @@ enum AIRole: String, Codable {
     case vipAggregator     = "vip_aggregator"
     case groupDigestor     = "group_digestor"
     case recallAnalyzer    = "recall_analyzer"
+    case autopilot         = "autopilot"
 }
 
 enum AIAuditStatus: String, Codable {
@@ -871,4 +872,112 @@ struct RoleConfig: Codable {
 struct DBKey {
     let relativePath: String
     let encKey: Data         // 32 bytes
+}
+
+// MARK: - Autopilot
+
+/// Autopilot action taken for a message.
+enum AutopilotAction: String, Codable {
+    case sent           // auto-replied successfully
+    case pending        // AI not confident enough, waiting for user review
+    case skipped        // message doesn't need reply (sticker, system msg, etc.)
+    case vipNotified    // VIP contact — sent "busy" notice instead of real reply
+    case failed         // attempted send but failed
+    case groupLogged    // group @mention — logged only, not replied
+}
+
+/// Risk level assessed by AI for an auto-reply.
+enum AutopilotRisk: String, Codable {
+    case low
+    case medium
+    case high
+}
+
+/// One autopilot log entry — every message processed during autopilot mode.
+struct AutopilotLogEntry: Identifiable {
+    let id: Int64
+    let sessionId: Int64
+    let chatUsername: String
+    let chatName: String
+    let senderUsername: String
+    let senderName: String
+    let triggerMsgUID: String
+    let triggerText: String
+    let generatedReply: String?
+    let confidence: Double
+    let riskLevel: AutopilotRisk
+    let action: AutopilotAction
+    let aiReasoning: String?
+    let sentAt: Date?
+    let createdAt: Date
+}
+
+/// An autopilot session — one contiguous period of autopilot mode.
+struct AutopilotSession: Identifiable {
+    let id: Int64
+    let startedAt: Date
+    var endedAt: Date?
+    var totalHandled: Int
+    var totalPending: Int
+    var totalSent: Int
+}
+
+/// Reply style preference for autopilot-generated replies.
+enum AutopilotReplyStyle: String, Codable, CaseIterable {
+    case auto       // follow user's historical style (default)
+    case brief      // always keep replies under 15 chars
+    case detailed   // always give complete answers
+
+    var label: String {
+        switch self {
+        case .auto:     return "跟随历史风格"
+        case .brief:    return "极简模式"
+        case .detailed: return "详细模式"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .auto:     return "分析你的聊天记录，模仿真实风格回复"
+        case .brief:    return "所有回复控制在 15 字以内"
+        case .detailed: return "完整回答对方的问题，不省略细节"
+        }
+    }
+
+    var promptFragment: String {
+        switch self {
+        case .auto:     return ""
+        case .brief:    return "\n额外要求：回复必须极简，不超过 15 个字。能用一两个字回的绝不多说。"
+        case .detailed: return "\n额外要求：回复要完整详细，回答对方所有问题，不省略信息。"
+        }
+    }
+}
+
+/// Persisted autopilot configuration.
+struct AutopilotConfig: Codable {
+    var enabled: Bool = false
+    /// Confidence threshold for auto-sending (0.0-1.0). Below this → pending review.
+    var confidenceThreshold: Double = 0.8
+    /// Max auto-replies per hour (rate limit).
+    var maxRepliesPerHour: Int = 20
+    /// Whether to handle group @mentions (currently false per user request).
+    var handleGroupAt: Bool = false
+    /// Whether VIP contacts get the "busy" auto-notification.
+    var vipAutoNotify: Bool = true
+    /// The "busy" message template for VIP contacts.
+    var vipBusyTemplate: String = "你好，我现在可能正在忙，你的消息已标记为重要信息，会马上通知他查看回复。"
+    /// Seconds to wait for more messages before processing a batch.
+    var batchWindowSeconds: Int = 10
+    /// Contact usernames excluded from autopilot (never auto-reply).
+    var excludedContacts: [String] = []
+    /// Reply style preference.
+    var replyStyle: AutopilotReplyStyle = .auto
+    /// Maximum total sends per autopilot session. 0 = unlimited.
+    var maxSendsPerSession: Int = 50
+    /// Sensitive keywords — if AI reply contains any, route to pending review.
+    var sensitiveKeywords: [String] = [
+        "钱", "转账", "汇款", "银行卡", "密码", "验证码",
+        "合同", "签字", "辞职", "离职", "解雇",
+        "骂", "傻逼", "滚", "操", "妈的"
+    ]
 }
