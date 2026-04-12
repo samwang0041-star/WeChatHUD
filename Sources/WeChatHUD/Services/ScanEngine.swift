@@ -46,7 +46,13 @@ enum ScanEngine {
             let ignoredSenderMap = store.loadIgnoredSenderMap()
             let nowEpoch = Int(Date().timeIntervalSince1970)
 
-            let sessions = (try? reader.getSessions()) ?? []
+            let sessions: [SessionInfo]
+            do {
+                sessions = try reader.getSessions()
+            } catch {
+                print("[WCHUD] getSessions failed (DB locked?): \(error) — using empty session list")
+                sessions = []
+            }
             let myUname = reader.myUsername()
             let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
