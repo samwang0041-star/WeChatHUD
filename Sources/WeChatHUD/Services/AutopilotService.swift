@@ -104,6 +104,8 @@ actor AutopilotService {
         batchTimers.removeAll()
         batchStartTimes.removeAll()
         sentMsgUIDs.removeAll()
+        proactiveSentCount = 0
+        proactiveContactsSent.removeAll()
         pausedForUserActivity = false
         print("[WCHUD] Autopilot started — session #\(id)")
 
@@ -268,7 +270,7 @@ actor AutopilotService {
             switch entry.action {
             case .sent, .vipNotified: sent += 1
             case .pending: pending += 1
-            case .skipped, .groupLogged, .failed, .readNoReply: skipped += 1
+            case .skipped, .groupLogged, .failed, .readNoReply, .proactive: skipped += 1
             }
         }
 
@@ -882,6 +884,158 @@ actor AutopilotService {
         )
         try? store.upsertConversationMemory(memory)
         print("[WCHUD] Autopilot: memory updated for '\(chatName)'")
+    }
+
+    // MARK: - Proactive messaging
+
+    /// Counter for proactive messages sent this session.
+    private var proactiveSentCount = 0
+    /// Fix 2: per-contact dedup — contacts already proactively contacted this session.
+    private var proactiveContactsSent: Set<String> = []
+
+    /// Evaluate whitelist contacts and proactively message those who meet criteria.
+    /// Called periodically by ChatMonitor (e.g., every 10 minutes during autopilot).
+    func evaluateProactiveOutreach(config: AutopilotConfig) async {
+        guard config.proactiveEnabled, !pausedForUserActivity, sessionId != nil else { return }
+        guard proactiveSentCount < config.maxProactivePerSession else { return }
+
+        // Don't initiate during late night
+        let currentPeriod = StyleProfiler.timePeriod(unixTime: Int(Date().timeIntervalSince1970))
+        guard currentPeriod != .lateNight else { return }
+
+        let whitelist = store.getWhitelist()
+        for entry in whitelist.prefix(10) {
+            guard proactiveSentCount < config.maxProactivePerSession else { break }
+            // Fix 2: skip contacts already proactively contacted this session
+            guard !proactiveContactsSent.contains(entry.id) else { continue }
+
+            // ContactRole filter: only friend/family for now
+            let contact = store.getContact(username: entry.id)
+            let role = contact?.role ?? .acquaintance
+            guard role == .friend || role == .family else { continue }
+
+            guard let memory = store.loadConversationMemory(chatUsername: entry.id) else { continue }
+
+            // Fix 5: use actual last message time, not memory lastUpdated
+            let lastMsgTime: Date
+            if let msgs = try? reader.getMessages(chatUsername: entry.id, limit: 1), let last = msgs.first {
+                lastMsgTime = Date(timeIntervalSince1970: Double(last.createTime))
+            } else {
+                lastMsgTime = memory.lastUpdated
+            }
+
+            let trigger = evaluateProactiveTrigger(memory: memory, lastMessageTime: lastMsgTime, config: config)
+            guard let reason = trigger else { continue }
+
+            // Generate opening message via AI
+            let style = await styleProfiler.getProfile(chatUsername: entry.id, excludeMsgUIDs: sentMsgUIDs)
+            let contactHint = Self.buildContactStyleHint(style: style, contactRole: role)
+
+            let prompt = """
+            你是微信用户的自动助手。需要主动给对方发一条消息。
+
+            对方：\(entry.displayName)
+            触发原因：\(reason)
+            你和对方的记忆：\(memory.formatForPrompt() ?? "（无）")
+            你和对方的聊天风格：\(contactHint.isEmpty ? "（无数据）" : contactHint)
+
+            生成一条自然的开场消息。要求：
+            1. 像真人主动找人聊天一样，不要太正式
+            2. 紧扣触发原因（如问候近况、追问之前的事）
+            3. 长度\(style.lengthP25)-\(style.lengthP75)字
+            4. 模仿用户风格
+
+            只输出消息文本，不要 JSON。
+            """
+
+            var baseURL = aiConfig.baseURL
+            if !baseURL.contains("://") { baseURL = "http://\(baseURL)" }
+            while baseURL.hasSuffix("/") { baseURL.removeLast() }
+            if !baseURL.hasSuffix("/v1") { baseURL += "/v1" }
+            guard let url = URL(string: "\(baseURL)/chat/completions") else { continue }
+
+            var req = URLRequest(url: url)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if !aiConfig.apiKey.isEmpty {
+                req.setValue("Bearer \(aiConfig.apiKey)", forHTTPHeaderField: "Authorization")
+            }
+            req.timeoutInterval = 30
+
+            let body: [String: Any] = [
+                "model": aiConfig.model,
+                "messages": [
+                    ["role": "system", "content": "你是微信用户的主动聊天助手。只输出消息文本。"],
+                    ["role": "user", "content": prompt]
+                ],
+                "temperature": 0.5,
+                "max_tokens": 128
+            ]
+            guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { continue }
+            req.httpBody = httpBody
+
+            guard let (data, response) = try? await URLSession.shared.data(for: req),
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let first = choices.first,
+                  let message = first["message"] as? [String: Any],
+                  var content = message["content"] as? String else { continue }
+
+            content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Strip quotes if AI wrapped the message
+            if content.hasPrefix("\"") && content.hasSuffix("\"") {
+                content = String(content.dropFirst().dropLast())
+            }
+            guard !content.isEmpty, content.count <= 100 else { continue }
+
+            // Fix 3: sensitive keyword check (proactive messages are higher risk)
+            if !config.sensitiveKeywords.isEmpty {
+                let lower = content.lowercased()
+                if config.sensitiveKeywords.contains(where: { lower.contains($0.lowercased()) }) {
+                    continue // silently skip — don't proactively send sensitive content
+                }
+            }
+
+            // Default: all proactive messages go to pending for user approval
+            proactiveContactsSent.insert(entry.id)
+            proactiveSentCount += 1
+            let logEntry = AutopilotLogEntry(
+                id: 0, sessionId: sessionId ?? 0,
+                chatUsername: entry.id, chatName: entry.displayName,
+                senderUsername: "", senderName: "系统",
+                triggerMsgUID: "proactive", triggerText: reason,
+                generatedReply: content, confidence: 0.7,
+                riskLevel: .medium, action: .pending,  // Fix 4: medium risk + default pending
+                aiReasoning: "主动发起(待确认): \(reason)",
+                sentAt: nil, createdAt: Date()
+            )
+            try? store.insertAutopilotLog(logEntry)
+            print("[WCHUD] Autopilot: proactive draft queued for '\(entry.displayName)': \(content)")
+        }
+    }
+
+    /// Evaluate if a contact warrants proactive outreach. Returns trigger reason or nil.
+    /// Fix 5: uses actual last message time instead of memory.lastUpdated.
+    private func evaluateProactiveTrigger(memory: ConversationMemory, lastMessageTime: Date, config: AutopilotConfig) -> String? {
+        let daysSinceLastMsg = Int(Date().timeIntervalSince(lastMessageTime) / 86400)
+
+        // Trigger 1: Overdue pending items (> N days without follow-up)
+        if !memory.pendingItems.isEmpty && daysSinceLastMsg >= config.proactiveSilenceDays {
+            return "待办事项未跟进(\(daysSinceLastMsg)天): \(memory.pendingItems.first ?? "")"
+        }
+
+        // Trigger 2: Long silence with close contacts (> silenceDays)
+        if daysSinceLastMsg >= config.proactiveSilenceDays && !memory.sharedContext.isEmpty {
+            return "好友\(daysSinceLastMsg)天未联系，有共同背景"
+        }
+
+        // Trigger 3: Conversation left mid-discussion
+        if memory.conversationPhase == "讨论" && daysSinceLastMsg >= 1 {
+            return "讨论中断\(daysSinceLastMsg)天，话题: \(memory.keyTopics.first ?? "未知")"
+        }
+
+        return nil
     }
 
     // MARK: - Style consistency score

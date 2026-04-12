@@ -97,6 +97,7 @@ final class ChatMonitor: ObservableObject {
         AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
     }()
     private var safetyTimer: Timer?
+    private var safetyTickCount = 0
     private var scanInProgress = false
 
     /// Coalesced FSEvent debouncer.
@@ -177,7 +178,16 @@ final class ChatMonitor: ObservableObject {
         // Safety fallback: cheap mtime-only check every 60s.
         // If FSEvents delivers in time, this is a no-op.
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { [weak self] in await self?.scan() }
+            Task { [weak self] in
+                await self?.scan()
+                // Proactive outreach check every ~10 minutes (10th tick)
+                guard let self = self else { return }
+                self.safetyTickCount += 1
+                if self.safetyTickCount % 10 == 0 {
+                    let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+                    await self.autopilotService?.evaluateProactiveOutreach(config: config)
+                }
+            }
         }
     }
 
