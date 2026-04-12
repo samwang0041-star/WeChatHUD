@@ -129,12 +129,28 @@ actor CommitmentTracker {
         guard let data = cleaned.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let isCommitment = json["is_commitment"] as? Bool else { return nil }
+        // When AI says it IS a commitment, require content and commit_to
+        // to be present — empty strings indicate a malformed response.
+        if isCommitment {
+            guard let content = json["content"] as? String, !content.isEmpty,
+                  let commitTo = json["commit_to"] as? String, !commitTo.isEmpty else {
+                return nil
+            }
+            return CommitmentResult(
+                isCommitment: true,
+                content: content,
+                commitTo: commitTo,
+                deadlineExtracted: json["deadline_extracted"] as? String ?? "none",
+                confidence: json["confidence"] as? Double ?? 0.0
+            )
+        }
+        // Not a commitment — fields are irrelevant, safe to use defaults.
         return CommitmentResult(
-            isCommitment: isCommitment,
-            content: json["content"] as? String ?? "",
-            commitTo: json["commit_to"] as? String ?? "",
-            deadlineExtracted: json["deadline_extracted"] as? String ?? "none",
-            confidence: json["confidence"] as? Double ?? 0.5
+            isCommitment: false,
+            content: "",
+            commitTo: "",
+            deadlineExtracted: "none",
+            confidence: json["confidence"] as? Double ?? 0.0
         )
     }
 

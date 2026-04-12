@@ -5,51 +5,43 @@
 
 ## Current Status
 
-**状态**: 🟡 P1 ChatMonitor 拆分重构 — Step 1-2 完成，评估继续
+**状态**: 🟡 P2 AI 响应健壮性 — 审计完成，CommitmentTracker 已修复
 
 ## Completed Tasks
 
 ### P0: HUDStore 测试补充 ✅
-- 新增 33 个测试 (12→45)，发现并修复 autopilot column index bug
+### P0.5: WeChatDecryptor 端到端测试 ✅
+### P1: ChatMonitor 拆分 ✅ (1690→1131行)
 
-### P0.5: WeChatDecryptor 端到端测试 ✅  
-- 新增 6 个测试 (3→9)，含完整 AES-256-CBC 端到端验证
-- 全项目: 117 → 156 测试
+### P2 审计完成 + CommitmentTracker 修复
 
-### P1 Step 1: 静态工具方法提取 ✅
-- 6 个纯函数 → `MessageHelpers.swift`
-- ChatMonitor 1690 → ~1620 行
+**AI 响应解析审计结果：**
 
-### P1 Step 2: ScanEngine 提取 ✅
-- `performScan` + `buildReplyDebtItems` + `debugScanAllTables` + `ScanOutcome` → `ScanEngine.swift` (~470 行)
-- ChatMonitor 1620 → **1131 行** (-33%)
+| Service | Rating | 详情 |
+|---------|--------|------|
+| ReplyDebtJudge | ✅ SAFE | 已有 invalidResponseShape + audit + fallback 到原始排序 |
+| AIClassifier | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| AIReplySuggester | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| AIDailyRetrospector | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| AIGroupCatchup | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| AIWhitelistCategorizer | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| RecallAnalyzer | ✅ SAFE | JSONSerialization + 必填字段 guard |
+| ContextAnalyzer | ✅ SAFE | JSONDecoder strict + nil return |
+| VIPAggregator | ✅ SAFE | JSONDecoder strict + nil return |
+| AutoReplyGenerator | ✅ SAFE | JSONDecoder + fence strip + 1-retry |
+| **CommitmentTracker** | ⚠️→✅ **已修复** | 默认值掩盖解析错误→严格验证 |
 
-## In Progress
+**CommitmentTracker 修复内容：**
+- `isCommitment: true` 时要求 `content` 和 `commit_to` 非空，否则返回 nil（触发 parseError 审计）
+- 缺失 `confidence` 默认值从 0.5→0.0（不再假装中等置信度）
+- `isCommitment: false` 时用默认值是安全的（字段不重要）
 
-### P1 继续分析
-
-当前 ChatMonitor 1131 行，目标 550 行，需继续减 ~580 行。
-
-剩余可提取的大块：
-| 候选 | 行数 | 可行性 | 难点 |
-|------|------|--------|------|
-| `runPostScanAI` | ~160 | 中 | 5 个 fire-and-forget Task 更新 @Published |
-| `loadGroupContextBriefing` | ~137 | 中 | 更新 groupContextStates @Published |
-| 抑制管理 (silence/snooze/ignore) | ~250 | 低 | 深度耦合 @Published arrays |
-| Autopilot UI | ~70 | 低 | 更新 @Published 计数器 |
-| loadDailyReport/recentMessages/loadReplySuggestions | ~50 | 高 | 简单委托方法 |
-
-**核心问题**: 剩余代码几乎都在更新 `@Published` 属性。`@MainActor` + `ObservableObject` 要求这些属性和它们的 setter 必须在同一个类里。提取意味着：
-1. 回调模式 (closure/delegate) — 增加间接性，代码变更复杂但不变少
-2. 新 ObservableObject — SwiftUI 需要 `@EnvironmentObject` 重新注入，打破现有 UI 绑定
-
-**我的建议**: 1131 行已经是务实的结果。核心逻辑（performScan 470 行 + 工具方法 90 行）已经提取。剩余是协调器的本职工作——接收事件、分发给服务、更新 UI 状态。继续强行拆分会增加复杂度，不会减少。
-
-**除非 PM 坚持继续拆**，我建议 P1 到此为止，进入 P2。
+**关键发现：PM 指令中的 `invalidResponseShape` 错误不是 bug，是正常防御机制。** ReplyDebtJudge 在 AI 返回畸形 JSON 时正确地触发 invalidResponseShape，记录审计日志，然后 fallback 到确定性排序。这是设计意图，不需要修复。
 
 ## Questions for PM
 
-1. **P1 是否关闭？** ChatMonitor 从 1690 → 1131 行（-33%），核心 scan 逻辑已提取到 ScanEngine。剩余都是 @Published 状态管理，强行提取会增加复杂度。建议关闭 P1，进入 P2 (AI 响应健壮性)。
+1. **P2 范围调整**: 审计显示 10/11 服务已经健壮（有 retry、audit、fallback）。唯一问题是 CommitmentTracker 的默认值问题，已修复。是否需要继续做其他加固工作？还是 P2 可以关闭？
+2. **可选增强**: 如果 PM 希望继续，我可以给没有 retry 的 3 个服务（RecallAnalyzer, ContextAnalyzer, VIPAggregator）加上 1-retry 机制，但这些服务目前的 nil-return fallback 已经足够安全。
 
 ## Blockers
 
@@ -57,6 +49,6 @@
 
 ## Architecture Observations
 
-1. SwiftUI 的 `@Published` + `@MainActor` 是 ChatMonitor 拆分的硬性约束——属性 setter 必须在持有者类中
-2. ChatMonitor 的角色已经从 God Object 变成了真正的 Coordinator——scan 逻辑在 ScanEngine，工具方法在 MessageHelpers，12 个 AI service 各自独立
-3. 进一步拆分需要引入 Combine 发布链或新的 ObservableObject，代价大于收益
+1. 项目的 AI 响应解析质量比预期好得多——大多数服务已有完善的 fence-strip + JSONDecoder + retry + audit 模式
+2. `invalidResponseShape` 不是 bug，是 ReplyDebtJudge 的正常防御路径
+3. 真正的改进空间在于给 RecallAnalyzer/ContextAnalyzer/VIPAggregator 加 retry（低优先级）
