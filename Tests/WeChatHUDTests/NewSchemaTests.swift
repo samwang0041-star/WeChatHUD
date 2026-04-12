@@ -445,4 +445,16 @@ final class NewSchemaTests: XCTestCase {
         XCTAssertEqual(AIRole.groupDigestor.rawValue, "group_digestor")
         XCTAssertEqual(AIRole.recallAnalyzer.rawValue, "recall_analyzer")
     }
+
+    // MARK: - Role Configs
+
+    func testSeedRoleConfigs() {
+        let json = store.getSetting("role_configs")
+        XCTAssertNotNil(json, "role_configs should be seeded on open()")
+        let configs = store.getSettingJSON("role_configs", as: [String: RoleConfig].self)
+        XCTAssertNotNil(configs)
+        XCTAssertNotNil(configs?["boss"])
+        XCTAssertEqual(configs?["boss"]?.replyWindow, 30)
+        XCTAssertEqual(configs?["key_client"]?.replyWindow, 60)
+    }
 }

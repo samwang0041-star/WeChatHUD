@@ -1059,6 +1059,27 @@ final class HUDStore: ObservableObject {
                 print("[WCHUD] failed to seed ai config: \(error)")
             }
         }
+        if getSetting("role_configs") == nil {
+            let configs: [String: RoleConfig] = [
+                "boss": RoleConfig(replyWindow: 30, notifyLevel: "strong", classifierStrictness: "high", replyTone: "reporting", vipTrackDimensions: ["decisions", "mood", "dissatisfaction", "directives"]),
+                "key_client": RoleConfig(replyWindow: 60, notifyLevel: "strong", classifierStrictness: "high", replyTone: "professional", vipTrackDimensions: ["complaints", "needs", "competitor_mentions", "praise"]),
+                "family": RoleConfig(replyWindow: 120, notifyLevel: "standard", classifierStrictness: "normal", replyTone: "casual", vipTrackDimensions: ["health", "safety", "life_arrangements", "emotions"]),
+                "partner": RoleConfig(replyWindow: 120, notifyLevel: "standard", classifierStrictness: "normal", replyTone: "professional", vipTrackDimensions: ["project_progress", "attitude_shifts", "competitor_activity"]),
+                "colleague": RoleConfig(replyWindow: 240, notifyLevel: "standard", classifierStrictness: "normal", replyTone: "collaborative", vipTrackDimensions: []),
+                "client": RoleConfig(replyWindow: 120, notifyLevel: "standard", classifierStrictness: "high", replyTone: "professional", vipTrackDimensions: []),
+                "friend": RoleConfig(replyWindow: 240, notifyLevel: "standard", classifierStrictness: "normal", replyTone: "casual", vipTrackDimensions: []),
+                "supplier": RoleConfig(replyWindow: 480, notifyLevel: "standard", classifierStrictness: "normal", replyTone: "collaborative", vipTrackDimensions: []),
+                "acquaintance": RoleConfig(replyWindow: 0, notifyLevel: "light", classifierStrictness: "normal", replyTone: "polite", vipTrackDimensions: []),
+                "group_only": RoleConfig(replyWindow: 0, notifyLevel: "light", classifierStrictness: "normal", replyTone: "polite", vipTrackDimensions: []),
+                "service": RoleConfig(replyWindow: 0, notifyLevel: "none", classifierStrictness: "normal", replyTone: "polite", vipTrackDimensions: []),
+            ]
+            do {
+                try setSettingJSON("role_configs", value: configs)
+                print("[WCHUD] seeded settings.role_configs (first launch)")
+            } catch {
+                print("[WCHUD] failed to seed role_configs: \(error)")
+            }
+        }
     }
 
     /// Single read point for the classifier config. Always returns a
