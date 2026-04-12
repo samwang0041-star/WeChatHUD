@@ -12,6 +12,7 @@ import AppKit
 /// Unlike the old `HistoryListView`, this is tab-driven and session-aware.
 struct ExtendedTabsView: View {
     @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
     let vipNotifications: [HUDNotification]
     let unreadItems: [UnreadItem]
     let suppressedItems: [UnreadItem]
@@ -173,6 +174,14 @@ struct ExtendedTabsView: View {
                         MessageRow(notification: notif)
                     }
                 }
+
+                let notifiableRecalls = monitor.recalledMessages.filter { $0.aiShouldNotify == true }
+                if !notifiableRecalls.isEmpty {
+                    sectionHeader("撤回消息", count: notifiableRecalls.count)
+                    ForEach(notifiableRecalls, id: \.id) { recalled in
+                        RecalledMessageRow(recalled: recalled)
+                    }
+                }
             }
         }
         .padding(.bottom, 6)
@@ -319,38 +328,49 @@ private struct MessageRow: View {
     @EnvironmentObject var monitor: ChatMonitor
     let notification: HUDNotification
     @State private var hovered = false
+    @State private var showInsight = false
 
     var body: some View {
-        FirstMouseRowHost {
-            HStack(spacing: 8) {
-                kindIcon.frame(width: 18, height: 18)
-                content.lineLimit(1).truncationMode(.tail)
-                if notification.isVIP {
-                    miniBadge("VIP", color: .yellow)
+        VStack(spacing: 0) {
+            FirstMouseRowHost {
+                HStack(spacing: 8) {
+                    kindIcon.frame(width: 18, height: 18)
+                    content.lineLimit(1).truncationMode(.tail)
+                    if notification.isVIP {
+                        miniBadge("VIP", color: .yellow)
+                    }
+                    if notification.isVIP,
+                       let insight = monitor.vipInsights[notification.chatUsername] {
+                        VIPInlineTags(insight: insight)
+                    }
+                    if notification.canExplainContext {
+                        GroupContextBriefingButton(notification: notification)
+                    }
+                    Spacer(minLength: 0)
+                    Text(relativeTime(notification.timestamp))
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.4))
+                        .monospacedDigit()
                 }
-                if notification.canExplainContext {
-                    GroupContextBriefingButton(notification: notification)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .frame(height: notification.canExplainContext ? 34 : 30)
+                .background(hovered ? Color.white.opacity(0.08) : Color.clear)
+                .contentShape(Rectangle())
+                .onHover { hovered = $0 }
+                .onTapGesture {
+                    if NSEvent.modifierFlags.contains(.command) {
+                        WeChatLauncher.copyText("\(notification.senderName): \(notification.snippet)")
+                    } else if notification.isVIP,
+                              monitor.vipInsights[notification.chatUsername] != nil {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showInsight.toggle()
+                        }
+                    } else {
+                        WeChatLauncher.openChat(named: notification.chatName)
+                    }
                 }
-                Spacer(minLength: 0)
-                Text(relativeTime(notification.timestamp))
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .frame(height: notification.canExplainContext ? 34 : 30)
-            .background(hovered ? Color.white.opacity(0.08) : Color.clear)
-            .contentShape(Rectangle())
-            .onHover { hovered = $0 }
-            .onTapGesture {
-                if NSEvent.modifierFlags.contains(.command) {
-                    WeChatLauncher.copyText("\(notification.senderName): \(notification.snippet)")
-                } else {
-                    WeChatLauncher.openChat(named: notification.chatName)
-                }
-            }
-            .contextMenu {
+                .contextMenu {
                 Button {
                     WeChatLauncher.openChat(named: notification.chatName)
                 } label: {
@@ -392,6 +412,11 @@ private struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+
+        if showInsight, let insight = monitor.vipInsights[notification.chatUsername] {
+            VIPInsightCardView(insight: insight, vipName: notification.senderName)
+        }
+        }
     }
 
     @ViewBuilder
