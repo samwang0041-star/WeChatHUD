@@ -116,11 +116,14 @@ final class ChatMonitor: ObservableObject {
         chatUsername: String,
         myUsername: String
     ) -> Bool {
+        // Primary check: match against the known wxid from db_storage path.
         if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
-        // 1-on-1 fallback: for private chats, anything that is NOT the
-        // peer is self. This catches the empty-sender case where
-        // real_sender_id=0 and Name2Id has no 0 row.
-        if !chatUsername.contains("@chatroom") {
+        // 1-on-1 fallback: for private chats, if the sender field is
+        // populated and doesn't match the peer, it must be self. Only
+        // apply when senderUsername is non-empty — empty sender means
+        // WeChat didn't populate the field (common for older messages),
+        // and we can't assume it's self.
+        if !chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty {
             if msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername {
                 return true
             }
