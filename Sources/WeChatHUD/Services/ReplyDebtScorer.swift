@@ -127,7 +127,7 @@ enum ReplyDebtScorer {
     }
 
     /// Predict recommended reply window based on contact level + urgency.
-    private static func predictReplyWindow(seed: Seed, priority: ReplyDebtPriority) -> Int {
+    static func predictReplyWindow(seed: Seed, priority: ReplyDebtPriority) -> Int {
         // VIP → tight window
         if seed.isVIP {
             return priority == .p0 ? 10 : 20
