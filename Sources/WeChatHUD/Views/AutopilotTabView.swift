@@ -455,6 +455,7 @@ private struct ActivityRow: View {
         case .groupLogged: return "群记录"
         case .failed: return "失败"
         case .pending: return "待审"
+        case .readNoReply: return "已读"
         }
     }
 
@@ -467,6 +468,8 @@ private struct ActivityRow: View {
             Image(systemName: "star.circle.fill").font(.system(size: 9)).foregroundColor(.yellow)
         case .skipped:
             Image(systemName: "forward.fill").font(.system(size: 8)).foregroundColor(.gray)
+        case .readNoReply:
+            Image(systemName: "eye.fill").font(.system(size: 8)).foregroundColor(.blue.opacity(0.6))
         case .groupLogged:
             Image(systemName: "doc.text").font(.system(size: 8)).foregroundColor(.blue.opacity(0.5))
         case .failed:

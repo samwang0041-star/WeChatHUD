@@ -690,37 +690,8 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
-        // Autopilot auto-pause: detect when user switches to WeChat
-        activateObserver = center.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notif in
-            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let bid = app.bundleIdentifier,
-                  Self.wechatBundleIDs.contains(bid) else { return }
-            Task { @MainActor [weak self] in
-                guard let self = self, self.autopilotActive else { return }
-                await self.autopilotService?.onUserBecameActive()
-                self.autopilotPaused = true
-                print("[WCHUD] Autopilot: user activated WeChat — pausing")
-            }
-        }
-        deactivateObserver = center.addObserver(
-            forName: NSWorkspace.didDeactivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notif in
-            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  let bid = app.bundleIdentifier,
-                  Self.wechatBundleIDs.contains(bid) else { return }
-            Task { @MainActor [weak self] in
-                guard let self = self, self.autopilotActive else { return }
-                await self.autopilotService?.onUserBecameInactive()
-                self.autopilotPaused = false
-                print("[WCHUD] Autopilot: user left WeChat — resuming")
-            }
-        }
+        // Autopilot no longer pauses when WeChat is frontmost —
+        // as long as autopilot is on, it keeps replying.
     }
 
     // MARK: - Scan
@@ -1043,17 +1014,22 @@ final class ChatMonitor: ObservableObject {
                         "\($0.senderName): \($0.text)"
                     }.joined(separator: "\n")
 
+                    let oldShared = oldMemory?.sharedContext ?? []
+                    let oldComm = oldMemory?.communicationNotes ?? []
+
                     let prompt = """
-                    你是对话摘要助手。根据最近消息增量更新对话摘要。
+                    你是对话摘要助手。根据最近消息增量更新对话记忆。保留旧记忆中仍然相关的内容，合并新内容。
 
                     对话: \(entry.displayName)
                     旧摘要: \(oldSummary.isEmpty ? "（首次生成）" : oldSummary)
+                    旧共同背景: \(oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
+                    旧沟通习惯: \(oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
 
                     最近消息:
                     \(msgText)
 
-                    请用 JSON 格式输出:
-                    {"summary":"一句话摘要(50字内)","key_topics":["话题1","话题2"],"pending_items":["待办1"],"mood_trend":"情绪描述"}
+                    请用 JSON 格式输出（每个数组最多5项）:
+                    {"summary":"一句话摘要(50字内)","key_topics":["最近话题1","话题2"],"pending_items":["待办1"],"shared_context":["共同经历/关系背景"],"communication_notes":["沟通习惯"],"mood_trend":"情绪描述","conversation_phase":"闲聊/讨论/决策/争论/告别/无","stance":"用户当前立场(如有)"}
                     """
 
                     guard let response = try? await ai.complete(system: "你是对话摘要助手。只输出JSON。", user: prompt) else { continue }
@@ -1063,9 +1039,13 @@ final class ChatMonitor: ObservableObject {
                     let memory = ConversationMemory(
                         chatUsername: entry.id,
                         summary: json["summary"] as? String ?? oldSummary,
-                        keyTopics: json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? [],
-                        pendingItems: json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? [],
+                        keyTopics: Array((json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? []).prefix(10)),
+                        pendingItems: Array((json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? []).prefix(5)),
+                        sharedContext: Array((json["shared_context"] as? [String] ?? oldShared).prefix(5)),
+                        communicationNotes: Array((json["communication_notes"] as? [String] ?? oldComm).prefix(5)),
                         moodTrend: json["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "",
+                        conversationPhase: json["conversation_phase"] as? String ?? oldMemory?.conversationPhase ?? "",
+                        stance: json["stance"] as? String ?? oldMemory?.stance ?? "",
                         messageCount7d: messages.count,
                         lastUpdated: Date()
                     )

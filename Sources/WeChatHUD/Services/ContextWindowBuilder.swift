@@ -9,6 +9,7 @@ enum ContextRole {
     case vipAggregator        // max 80
     case groupDigestor        // max 200
     case retrospector         // 0 (uses AI outputs, not raw messages)
+    case autopilot            // max 15
 
     var maxMessages: Int {
         switch self {
@@ -19,6 +20,7 @@ enum ContextRole {
         case .vipAggregator: return 80
         case .groupDigestor: return 200
         case .retrospector: return 0
+        case .autopilot: return 15
         }
     }
 
@@ -31,6 +33,7 @@ enum ContextRole {
         case .vipAggregator: return 3
         case .groupDigestor: return 0
         case .retrospector: return 0
+        case .autopilot: return 10
         }
     }
 
@@ -43,6 +46,7 @@ enum ContextRole {
         case .vipAggregator: return 1
         case .groupDigestor: return 0
         case .retrospector: return 0
+        case .autopilot: return 2
         }
     }
 }

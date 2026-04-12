@@ -698,6 +698,77 @@ enum WeChatLauncher {
         pb.setString(text, forType: .string)
     }
 
+    /// Send a text message to a chat by name. Opens the chat, pastes
+    /// the message text, and submits it via Return key.
+    /// Returns true if the sequence completed without obvious error.
+    /// Send a message to a chat. If `typingDelay` > 0, text is pasted into the input
+    /// box first and the send keystroke is delayed to simulate human typing time.
+    static func sendMessage(chatName: String, text: String, typingDelay: TimeInterval = 0) async -> Bool {
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                guard let app = runningWeChat() else {
+                    log("sendMessage: WeChat not running")
+                    continuation.resume(returning: false)
+                    return
+                }
+                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+                guard AXIsProcessTrustedWithOptions(opts) else {
+                    log("sendMessage: Accessibility not granted")
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+                // Navigate to the chat first
+                let pasteboard = NSPasteboard.general
+                let saved = pasteboard.string(forType: .string)
+
+                // Open the chat
+                openChat(named: chatName)
+
+                // Wait for chat to open, then focus input
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    // Find and focus message input FIRST (triggers "typing" indicator for peer)
+                    if let input = findMessageInput(in: axApp) {
+                        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                        _ = clickAXElementCenter(input)
+
+                        // Wait typingDelay BEFORE pasting — peer sees "typing" but
+                        // local user won't see text in input box during the delay.
+                        let preDelay = max(0.2, typingDelay)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + preDelay) {
+                            // Now paste and immediately send
+                            pasteboard.clearContents()
+                            pasteboard.setString(text, forType: .string)
+                            postCmdKey(kVK_ANSI_A)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                postCmdKey(kVK_ANSI_V)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    // Use Cmd+Return to send
+                                    postCmdKey(kVK_Return)
+                                    log("sendMessage: sent to \(chatName) (typingDelay=\(String(format: "%.1f", typingDelay))s)")
+                                    // Restore clipboard
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        pasteboard.clearContents()
+                                        if let saved = saved {
+                                            pasteboard.setString(saved, forType: .string)
+                                        }
+                                    }
+                                    continuation.resume(returning: true)
+                                }
+                            }
+                        }
+                    } else {
+                        log("sendMessage: message input not found")
+                        restoreClipboard(saved: saved)
+                        continuation.resume(returning: false)
+                    }
+                }
+            }
+        }
+    }
+
     private static func runningWeChat() -> NSRunningApplication? {
         NSWorkspace.shared.runningApplications.first { app in
             guard let bid = app.bundleIdentifier else { return false }

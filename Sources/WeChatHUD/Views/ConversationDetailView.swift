@@ -207,6 +207,20 @@ struct ConversationDetailView: View {
                     }
                 }
 
+                if !memory.sharedContext.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(memory.sharedContext.prefix(3), id: \.self) { ctx in
+                            Text(ctx)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(.white.opacity(0.6))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.15))
+                                .cornerRadius(3)
+                        }
+                    }
+                }
+
                 if !memory.moodTrend.isEmpty {
                     HStack(spacing: 4) {
                         Text("情绪:")
