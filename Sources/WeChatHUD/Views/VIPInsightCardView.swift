@@ -100,6 +100,17 @@ struct VIPInsightCardView: View {
                     .cornerRadius(4)
                 }
 
+                // 7-day message trend
+                if let username = chatUsername {
+                    let trend = monitor.chatTrend(chatUsername: username)
+                    if trend.contains(where: { $0.count > 0 }) {
+                        insightSection(label: "7日消息趋势") {
+                            MiniTrendChart(data: trend)
+                                .frame(height: 30)
+                        }
+                    }
+                }
+
                 // Mood section
                 if !insight.mood.isEmpty {
                     insightSection(label: "情绪趋势") {
@@ -248,6 +259,38 @@ struct VIPInlineTags: View {
             .cornerRadius(3)
     }
 
+}
+
+// MARK: - Mini Trend Chart
+
+/// Tiny 7-day bar chart drawn with SwiftUI Path.
+private struct MiniTrendChart: View {
+    let data: [DayMessageCount]
+
+    var body: some View {
+        let maxCount = max(data.map(\.count).max() ?? 1, 1)
+        GeometryReader { geo in
+            let barWidth = max((geo.size.width - CGFloat(data.count - 1) * 2) / CGFloat(data.count), 4)
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(data) { day in
+                    let height = day.count == 0 ? 2 : geo.size.height * CGFloat(day.count) / CGFloat(maxCount)
+                    VStack(spacing: 1) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(barColor(count: day.count, max: maxCount))
+                            .frame(width: barWidth, height: max(height, 2))
+                    }
+                }
+            }
+        }
+    }
+
+    private func barColor(count: Int, max: Int) -> Color {
+        if count == 0 { return .white.opacity(0.1) }
+        let ratio = Double(count) / Double(max)
+        if ratio > 0.7 { return .accentColor.opacity(0.8) }
+        if ratio > 0.3 { return .accentColor.opacity(0.5) }
+        return .accentColor.opacity(0.3)
+    }
 }
 
 // MARK: - FlowLayout helper

@@ -867,6 +867,14 @@ struct RoleConfig: Codable {
     var vipTrackDimensions: [String]
 }
 
+// MARK: - Chat Trend
+
+struct DayMessageCount: Identifiable {
+    let date: Date
+    let count: Int
+    var id: Date { date }
+}
+
 // MARK: - DB Key
 
 struct DBKey {

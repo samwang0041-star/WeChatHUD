@@ -1044,6 +1044,25 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Compute 7-day message trend for a chat. Returns daily counts (oldest first).
+    func chatTrend(chatUsername: String) -> [DayMessageCount] {
+        let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 200, sinceLocalId: nil)) ?? []
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        var counts: [Int: Int] = [:]  // daysAgo → count
+        for msg in messages {
+            let msgDate = Date(timeIntervalSince1970: Double(msg.createTime))
+            let daysAgo = cal.dateComponents([.day], from: cal.startOfDay(for: msgDate), to: today).day ?? 7
+            if daysAgo >= 0 && daysAgo < 7 {
+                counts[daysAgo, default: 0] += 1
+            }
+        }
+        return (0..<7).reversed().map { daysAgo in
+            let date = cal.date(byAdding: .day, value: -daysAgo, to: today)!
+            return DayMessageCount(date: date, count: counts[daysAgo] ?? 0)
+        }
+    }
+
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
