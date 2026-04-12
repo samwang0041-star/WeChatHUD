@@ -4,52 +4,62 @@ import SwiftUI
 /// rounded-square icon + label rows, content pane on the right with a hero
 /// header (icon + title + description) followed by the tab body.
 struct SettingsView: View {
-    @State private var selectedTab: Tab = .whitelist
+    @State private var selectedTab: Tab = .contacts
 
     enum Tab: Hashable, CaseIterable {
-        case whitelist
-        case ignored
-        case ai
-        case sync
+        case contacts
+        case aiEngine
+        case roleConfig
         case notification
+        case data
+        case sync
+        case ignored
 
         var label: String {
             switch self {
-            case .whitelist:    return "白名单"
-            case .ignored:      return "忽略列表"
-            case .ai:           return "AI 配置"
-            case .sync:         return "数据同步"
+            case .contacts:     return "联系人"
+            case .aiEngine:     return "AI 引擎"
+            case .roleConfig:   return "角色配置"
             case .notification: return "通知"
+            case .data:         return "数据"
+            case .sync:         return "同步"
+            case .ignored:      return "忽略列表"
             }
         }
 
         var icon: String {
             switch self {
-            case .whitelist:    return "person.crop.circle.badge.checkmark"
-            case .ignored:      return "person.crop.circle.badge.xmark"
-            case .ai:           return "cpu"
-            case .sync:         return "arrow.triangle.2.circlepath"
+            case .contacts:     return "person.2.fill"
+            case .aiEngine:     return "cpu"
+            case .roleConfig:   return "slider.horizontal.3"
             case .notification: return "bell.badge.fill"
+            case .data:         return "tray.full.fill"
+            case .sync:         return "arrow.triangle.2.circlepath"
+            case .ignored:      return "person.crop.circle.badge.xmark"
             }
         }
 
         var tint: Color {
             switch self {
-            case .whitelist:    return .blue
-            case .ignored:      return .orange
-            case .ai:           return .purple
-            case .sync:         return .teal
+            case .contacts:     return .blue
+            case .aiEngine:     return .purple
+            case .roleConfig:   return .indigo
             case .notification: return .red
+            case .data:         return .green
+            case .sync:         return .teal
+            case .ignored:      return .orange
             }
         }
 
         var subtitle: String {
             switch self {
-            case .whitelist:    return "配置白名单和 VIP：白名单负责跟踪分析，VIP 负责强提醒。"
-            case .ignored:      return "管理被你直接忽略、不再计入未读和 VIP 提醒的人。"
-            case .ai:           return "配置本地或远程的 OpenAI 兼容 AI 服务。"
+            case .contacts:     return "管理四级联系人：VIP 全域追踪、白名单按需分析、灰名单低优先级、陌生人忽略。"
+            case .aiEngine:     return "配置本地 AI 模型端点、分类器参数、审计日志与准确度监控。"
+            case .roleConfig:   return "为每种身份角色设定回复窗口、通知级别、分类严格度与回复语气。"
+            case .notification: return "决定哪些消息弹出通知、通知时长与勿扰时段。"
+            case .data:         return "查看撤回消息记录、你的承诺追踪、待决事项管理。"
             case .sync:         return "管理微信数据源、解密缓存策略与同步节奏。"
-            case .notification: return "决定哪些消息会让胶囊自动展开并弹出预览。"
+            case .ignored:      return "管理被你直接忽略、不再计入未读和 VIP 提醒的人。"
             }
         }
     }
@@ -135,16 +145,20 @@ struct SettingsView: View {
                 // a grouped card to get the native "rounded section" look.
                 // Whitelist has its own full list UI so it opts out of the card.
                 switch selectedTab {
-                case .whitelist:
-                    WhitelistSettingsView()
-                case .ignored:
-                    SettingsCard { IgnoredSendersSettingsView() }
-                case .ai:
+                case .contacts:
+                    ContactsSettingsView()
+                case .aiEngine:
                     SettingsCard { AISettingsView() }
-                case .sync:
-                    SettingsCard { SyncSettingsView() }
+                case .roleConfig:
+                    RoleConfigSettingsView()
                 case .notification:
                     SettingsCard { NotificationSettingsBody() }
+                case .data:
+                    DataSettingsView()
+                case .sync:
+                    SettingsCard { SyncSettingsView() }
+                case .ignored:
+                    SettingsCard { IgnoredSendersSettingsView() }
                 }
             }
             .padding(.horizontal, 24)
@@ -201,17 +215,64 @@ struct SettingsCard<Content: View>: View {
 
 // MARK: - Notification settings body
 
-/// Inline subview — currently placeholder toggles, same as before but
-/// lifted out of SettingsView so the new layout can reuse it cleanly.
+/// Notification settings with persistent toggles.
 struct NotificationSettingsBody: View {
+    @EnvironmentObject private var store: HUDStore
+
+    @State private var atMention = true
+    @State private var vipMessage = true
+    @State private var whitelistMessage = false
+    @State private var durationSeconds = 3
+    @State private var didLoad = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle("@提到我时弹出通知", isOn: .constant(true))
-            Toggle("VIP 消息弹出通知", isOn: .constant(true))
-            Toggle("白名单消息也弹出", isOn: .constant(false))
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("@提到我时弹出通知", isOn: $atMention)
+                .onChange(of: atMention) { _ in save() }
+            Toggle("VIP 消息弹出通知", isOn: $vipMessage)
+                .onChange(of: vipMessage) { _ in save() }
+            Toggle("白名单消息也弹出", isOn: $whitelistMessage)
+                .onChange(of: whitelistMessage) { _ in save() }
+
+            Divider().background(Color.white.opacity(0.08))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("通知停留时长")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.55))
+                Picker("", selection: $durationSeconds) {
+                    Text("3 秒").tag(3)
+                    Text("5 秒").tag(5)
+                    Text("8 秒").tag(8)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 200)
+                .onChange(of: durationSeconds) { _ in save() }
+            }
         }
         .font(.system(size: 12))
         .foregroundColor(.white)
         .toggleStyle(.switch)
+        .onAppear {
+            if !didLoad {
+                if let cfg = store.getSettingJSON("notification", as: NotificationConfig.self) {
+                    atMention = cfg.atMention
+                    vipMessage = cfg.important
+                    whitelistMessage = cfg.allWhitelist
+                    durationSeconds = cfg.durationSeconds
+                }
+                didLoad = true
+            }
+        }
+    }
+
+    private func save() {
+        let cfg = NotificationConfig(
+            atMention: atMention,
+            important: vipMessage,
+            allWhitelist: whitelistMessage,
+            durationSeconds: durationSeconds
+        )
+        try? store.setSettingJSON("notification", value: cfg)
     }
 }
