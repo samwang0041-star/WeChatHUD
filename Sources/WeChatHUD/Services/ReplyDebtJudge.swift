@@ -500,7 +500,8 @@ private extension ReplyDebtItem {
             isVIP: isVIP,
             isAtMention: isAtMention,
             inboundCountSinceLastOutbound: inboundCountSinceLastOutbound,
-            reasons: reasons
+            reasons: reasons,
+            suggestedReplyMinutes: suggestedReplyMinutes
         )
     }
 }

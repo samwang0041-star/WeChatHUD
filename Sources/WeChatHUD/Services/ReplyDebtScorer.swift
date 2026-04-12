@@ -121,7 +121,26 @@ enum ReplyDebtScorer {
             isVIP: seed.isVIP,
             isAtMention: seed.isAtMention,
             inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
-            reasons: reasons
+            reasons: reasons,
+            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority)
         )
+    }
+
+    /// Predict recommended reply window based on contact level + urgency.
+    private static func predictReplyWindow(seed: Seed, priority: ReplyDebtPriority) -> Int {
+        // VIP → tight window
+        if seed.isVIP {
+            return priority == .p0 ? 10 : 20
+        }
+        // @mention in group → medium urgency
+        if seed.isAtMention {
+            return 30
+        }
+        // Whitelist private chat
+        if seed.isWhitelisted && !seed.session.isGroup {
+            return priority == .p0 ? 15 : 60
+        }
+        // Default
+        return priority == .p0 ? 30 : 120
     }
 }

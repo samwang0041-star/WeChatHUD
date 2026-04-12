@@ -216,6 +216,8 @@ struct ReplyDebtItem: Identifiable {
     let isAtMention: Bool
     let inboundCountSinceLastOutbound: Int
     let reasons: [ReplyDebtReason]
+    /// AI-suggested reply window in minutes. nil = no prediction available.
+    let suggestedReplyMinutes: Int?
 }
 
 struct ReplyDebtConfig: Codable {
