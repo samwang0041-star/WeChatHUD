@@ -56,6 +56,14 @@ final class ChatMonitor: ObservableObject {
     /// Cached daily retrospective, regenerated every 30 minutes.
     @Published var dailyReport: AIDailyRetrospector.Retrospective? = nil
     @Published var dailyReportGeneratedAt: Date? = nil
+    /// Autopilot state — exposed for UI.
+    @Published var autopilotActive = false
+    @Published var autopilotPaused = false
+    @Published var autopilotLog: [AutopilotLogEntry] = []
+    @Published var autopilotSessionSent = 0
+    @Published var autopilotSessionPending = 0
+    /// The autopilot service instance. Initialized lazily on first toggle.
+    private(set) var autopilotService: AutopilotService?
     private let recentLimit = 10
 
     private let reader: WeChatReader
@@ -64,6 +72,18 @@ final class ChatMonitor: ObservableObject {
     private let groupContextBriefingService: GroupContextBriefingService
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
+    private lazy var aiClassifier: AIClassifier = {
+        AIClassifier(store: store, config: store.loadClassifierConfig())
+    }()
+    private lazy var commitmentTracker: CommitmentTracker = {
+        CommitmentTracker(store: store)
+    }()
+    private lazy var vipAggregator: VIPAggregator = {
+        VIPAggregator(store: store)
+    }()
+    private lazy var recallAnalyzer: RecallAnalyzer = {
+        RecallAnalyzer(store: store)
+    }()
     private lazy var replySuggester: AIReplySuggester = {
         AIReplySuggester(store: store, config: store.loadClassifierConfig())
     }()
@@ -93,6 +113,8 @@ final class ChatMonitor: ObservableObject {
 
     private var launchObserver: NSObjectProtocol?
     private var terminateObserver: NSObjectProtocol?
+    private var activateObserver: NSObjectProtocol?
+    private var deactivateObserver: NSObjectProtocol?
 
     nonisolated static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
 
@@ -103,46 +125,8 @@ final class ChatMonitor: ObservableObject {
     /// True if the message text mentions the user via @-syntax. Matches
     /// `@<myUsername>`, `@所有人`, `@All` (case-insensitive on "All").
     /// Static so `performScan` can call it from the background queue.
-    nonisolated private static func isAtMe(_ text: String, myUsername: String) -> Bool {
-        if !myUsername.isEmpty, text.contains("@\(myUsername)") { return true }
-        if text.contains("@所有人") { return true }
-        if text.range(of: "@all", options: .caseInsensitive) != nil { return true }
-        return false
-    }
-
-    /// Classify whether a message is from the user themselves.
-    nonisolated private static func isFromSelf(
-        _ msg: MessageInfo,
-        chatUsername: String,
-        myUsername: String
-    ) -> Bool {
-        // Primary check: match against the known wxid from db_storage path.
-        if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
-        // 1-on-1 fallback: for private chats, if the sender field is
-        // populated and doesn't match the peer, it must be self. Only
-        // apply when senderUsername is non-empty — empty sender means
-        // WeChat didn't populate the field (common for older messages),
-        // and we can't assume it's self.
-        if !chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty {
-            if msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername {
-                return true
-            }
-        }
-        return false
-    }
-
-    /// Derive the unread status from raw signals.
-    nonisolated private static func unreadStatus(
-        replied: Bool,
-        timestamp: Date,
-        isVIP: Bool,
-        thresholds: UnreadThresholds
-    ) -> UnreadStatus {
-        if replied { return .answered }
-        let minutes = isVIP ? thresholds.vipMinutes : thresholds.normalMinutes
-        let age = Date().timeIntervalSince(timestamp) / 60
-        return age >= Double(minutes) ? .overdue : .pending
-    }
+    // Static helpers (isAtMe, isFromSelf, unreadStatus, senderIdentifier,
+    // isIgnoredSender, resolveDeadline) extracted to MessageHelpers.swift.
 
     /// Result struct returned from the background scan worker.
     /// Collects everything the `@Published` fields need so the main
@@ -154,6 +138,14 @@ final class ChatMonitor: ObservableObject {
         let replyDebtItems: [ReplyDebtItem]
         let recentNotifications: [HUDNotification]
         let latestPreview: HUDNotification?
+        /// New inbound messages detected this scan cycle (for autopilot).
+        let newInboundMessages: [AutopilotService.InboundMessage]
+        /// New inbound messages from whitelisted chats for AI classification.
+        let newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)]
+        /// VIP messages to insert as traces.
+        let vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)]
+        /// User's own outgoing messages detected this scan (for commitment tracking).
+        let selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)]
     }
 
     init(reader: WeChatReader, store: HUDStore, aiService: AIService? = nil) {
@@ -171,8 +163,11 @@ final class ChatMonitor: ObservableObject {
     }
 
     deinit {
-        if let obs = launchObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
-        if let obs = terminateObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+        let center = NSWorkspace.shared.notificationCenter
+        if let obs = launchObserver { center.removeObserver(obs) }
+        if let obs = terminateObserver { center.removeObserver(obs) }
+        if let obs = activateObserver { center.removeObserver(obs) }
+        if let obs = deactivateObserver { center.removeObserver(obs) }
     }
 
     // MARK: - Lifecycle
@@ -407,11 +402,11 @@ final class ChatMonitor: ObservableObject {
         )
         let moved = unreadItems.filter {
             $0.chatUsername == chatUsername
-                && Self.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
+                && MessageHelpers.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
         }
         unreadItems.removeAll {
             $0.chatUsername == chatUsername
-                && Self.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
+                && MessageHelpers.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
         }
         if !moved.isEmpty {
             suppressedItems.insert(
@@ -436,16 +431,16 @@ final class ChatMonitor: ObservableObject {
         }
         suppressedItems.removeAll {
             $0.chatUsername == chatUsername
-                && Self.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
+                && MessageHelpers.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
                 && !$0.isIgnored
         }
         recentNotifications.removeAll {
             $0.chatUsername == chatUsername
-                && Self.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
+                && MessageHelpers.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName) == identifier
         }
         if let latestNotification,
            latestNotification.chatUsername == chatUsername,
-           Self.senderIdentifier(
+           MessageHelpers.senderIdentifier(
                 senderUsername: latestNotification.senderUsername,
                 senderName: latestNotification.senderName
            ) == identifier {
@@ -470,8 +465,8 @@ final class ChatMonitor: ObservableObject {
         suppressedItems.removeAll {
             $0.isIgnored
                 && $0.chatUsername == chatUsername
-                && Self.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName)
-                    == Self.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
+                && MessageHelpers.senderIdentifier(senderUsername: $0.senderUsername, senderName: $0.senderName)
+                    == MessageHelpers.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
         }
         Task { @MainActor in
             await self.scan()
@@ -610,23 +605,7 @@ final class ChatMonitor: ObservableObject {
         stats.replyDebtCount = replyDebtItems.count
     }
 
-    nonisolated private static func senderIdentifier(
-        senderUsername: String,
-        senderName: String
-    ) -> String {
-        HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
-    }
-
-    nonisolated private static func isIgnoredSender(
-        _ msg: MessageInfo,
-        ignoredSenderMap: [String: Set<String>]
-    ) -> Bool {
-        let identifier = senderIdentifier(
-            senderUsername: msg.senderUsername,
-            senderName: msg.senderName
-        )
-        return ignoredSenderMap[msg.chatUsername]?.contains(identifier) == true
-    }
+    // senderIdentifier and isIgnoredSender extracted to MessageHelpers.swift.
 
     // MARK: - Event entry points
 
@@ -719,6 +698,38 @@ final class ChatMonitor: ObservableObject {
                 )
             }
         }
+
+        // Autopilot auto-pause: detect when user switches to WeChat
+        activateObserver = center.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bid = app.bundleIdentifier,
+                  Self.wechatBundleIDs.contains(bid) else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.autopilotActive else { return }
+                await self.autopilotService?.onUserBecameActive()
+                self.autopilotPaused = true
+                print("[WCHUD] Autopilot: user activated WeChat — pausing")
+            }
+        }
+        deactivateObserver = center.addObserver(
+            forName: NSWorkspace.didDeactivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bid = app.bundleIdentifier,
+                  Self.wechatBundleIDs.contains(bid) else { return }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.autopilotActive else { return }
+                await self.autopilotService?.onUserBecameInactive()
+                self.autopilotPaused = false
+                print("[WCHUD] Autopilot: user left WeChat — resuming")
+            }
+        }
     }
 
     // MARK: - Scan
@@ -806,6 +817,39 @@ final class ChatMonitor: ObservableObject {
         }
         reader.purgeEphemeralCache()
         reloadAIData()
+        runPostScanAI(o)
+
+        // --- Autopilot: feed messages + flush expired batches ---
+        // Always call handleNewMessages when active (even with empty array)
+        // so that buffered batches whose time window expired get flushed.
+        if autopilotActive, let service = autopilotService {
+            let msgs = o.newInboundMessages
+            let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+            let myUname = reader.myUsername()
+            Task {
+                let result = await service.handleNewMessages(msgs, config: config, myUsername: myUname)
+                await MainActor.run {
+                    self.autopilotSessionSent += result.totalSent
+                    self.autopilotSessionPending += result.totalPending
+                    if let session = self.store.currentAutopilotSession() {
+                        self.autopilotLog = self.store.loadAutopilotLog(sessionId: session.id, limit: 50)
+                    }
+                }
+                if result.totalProcessed > 0 {
+                    print("[WCHUD] Autopilot: processed=\(result.totalProcessed), sent=\(result.totalSent), pending=\(result.totalPending)")
+                }
+                // C1 fix: if there are still buffered batches, schedule a
+                // follow-up scan after the batch window so they get flushed.
+                let hasPending = await service.hasPendingBatches
+                if hasPending {
+                    let delay = TimeInterval(config.batchWindowSeconds) + 1
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    await MainActor.run { [weak self] in
+                        Task { await self?.scan() }
+                    }
+                }
+            }
+        }
     }
 
     /// Reload commitments and recalled messages from store.
@@ -813,6 +857,174 @@ final class ChatMonitor: ObservableObject {
         commitments = store.loadCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
     }
+
+    /// Fire-and-forget AI processing for new scan data.
+    /// Runs after scan applies, does not block UI.
+    private func runPostScanAI(_ outcome: ScanOutcome) {
+        let storeRef = store
+
+        // 1. Insert VIP traces to DB
+        for trace in outcome.vipTraceMessages {
+            try? storeRef.insertVIPTrace(
+                vipUsername: trace.vipUsername,
+                vipName: trace.vipName,
+                chatUsername: trace.chatUsername,
+                chatName: trace.chatName,
+                msgUID: trace.msgUID,
+                rawText: trace.rawText,
+                msgTime: trace.msgTime
+            )
+        }
+
+        // 2. VIP aggregation (async)
+        if !outcome.vipTraceMessages.isEmpty {
+            let vipUsernames = Set(outcome.vipTraceMessages.map(\.vipUsername))
+            let aggregator = vipAggregator
+            Task {
+                for vipUsername in vipUsernames {
+                    let contact = storeRef.getContact(username: vipUsername)
+                    let role = contact?.role ?? .acquaintance
+                    let vipName = contact?.displayName ?? vipUsername
+                    if let result = await aggregator.aggregate(
+                        vipUsername: vipUsername,
+                        vipName: vipName,
+                        vipRole: role,
+                        userNameVariants: [],
+                        recentMoodHistory: "",
+                        lastInteraction: "",
+                        commitmentCount: 0
+                    ) {
+                        await MainActor.run {
+                            self.vipInsights[vipUsername] = result
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. AI classify new inbound messages (async)
+        if !outcome.newInboundForClassifier.isEmpty {
+            let classifier = aiClassifier
+            Task {
+                for item in outcome.newInboundForClassifier {
+                    let input = ClassifierInput(
+                        msgUID: item.msg.id,
+                        text: item.msg.text,
+                        senderName: item.msg.senderName,
+                        chatName: item.msg.chatName,
+                        isGroup: item.chatUsername.contains("@chatroom")
+                    )
+                    guard let result = await classifier.classify(message: input) else { continue }
+                    guard result.isAsk else { continue }
+
+                    let contact = storeRef.getContact(username: item.msg.senderUsername)
+                    let bucket: AskBucket = result.confidence >= 0.85 ? .main : .review
+                    let deadline: Date? = result.deadlineRelative.flatMap { MessageHelpers.resolveDeadline($0) }
+
+                    let ask = PendingAsk(
+                        id: 0,
+                        msgUID: item.msg.id,
+                        chatUsername: item.chatUsername,
+                        chatName: item.msg.chatName,
+                        senderName: item.msg.senderName,
+                        rawText: item.msg.text,
+                        summary: result.summary,
+                        askType: result.type,
+                        deadlineAt: deadline,
+                        confidence: result.confidence,
+                        bucket: bucket,
+                        status: .pending,
+                        promptVersion: result.promptVersion,
+                        createdAt: Date(),
+                        updatedAt: Date(),
+                        senderLevel: contact?.attentionLevel,
+                        senderRole: contact?.role,
+                        urgency: nil
+                    )
+                    try? storeRef.upsertPendingAsk(ask)
+                }
+            }
+        }
+
+        // 4. Commitment tracking for self outgoing messages (async)
+        if !outcome.selfOutgoingMessages.isEmpty {
+            let tracker = commitmentTracker
+            let readerRef = reader
+            Task {
+                for item in outcome.selfOutgoingMessages {
+                    let contact = storeRef.getContact(username: item.chatUsername)
+                    let role = contact?.role ?? .acquaintance
+
+                    // Build minimal context
+                    let contextMsgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 10)) ?? []
+                    let contactLookup: ContextWindowBuilder.ContactLookup = { username in
+                        guard let c = storeRef.getContact(username: username) else { return nil }
+                        return (c.attentionLevel, c.role)
+                    }
+                    let window = ContextWindowBuilder.build(
+                        target: item.msg,
+                        role: .commitmentTracker,
+                        allMessages: contextMsgs,
+                        chatType: item.chatUsername.contains("@chatroom") ? .group : .privateChat,
+                        contactLookup: contactLookup
+                    )
+
+                    guard let result = await tracker.analyze(
+                        yourMessage: item.msg,
+                        contextMessages: window.messages,
+                        recipientName: item.recipientName,
+                        recipientRole: role
+                    ) else { continue }
+
+                    guard result.isCommitment, result.confidence >= 0.7 else { continue }
+
+                    let deadline = MessageHelpers.resolveDeadline(result.deadlineExtracted)
+                    try? storeRef.upsertCommitment(
+                        msgUID: item.msg.id,
+                        chatUsername: item.chatUsername,
+                        chatName: item.chatName,
+                        content: result.content,
+                        commitTo: result.commitTo,
+                        deadlineAt: deadline,
+                        confidence: result.confidence,
+                        promptVersion: "commitment_v1"
+                    )
+                }
+                // Refresh published commitments after processing
+                await MainActor.run {
+                    self.commitments = storeRef.loadCommitments()
+                }
+            }
+        }
+
+        // 5. Analyze unanalyzed recalled messages (async)
+        let unanalyzed = recalledMessages.filter { $0.aiReason == nil }
+        if !unanalyzed.isEmpty {
+            let analyzer = recallAnalyzer
+            let readerRef = reader
+            Task {
+                for recalled in unanalyzed {
+                    let context = (try? readerRef.getMessages(chatUsername: recalled.chatUsername, limit: 10)) ?? []
+                    guard let result = await analyzer.analyze(recalled: recalled, context: context) else { continue }
+                    try? storeRef.updateRecallAnalysis(
+                        msgUID: recalled.msgUID,
+                        reason: result.reason,
+                        value: result.intelligenceValue,
+                        detail: result.detail ?? "",
+                        shouldNotify: result.shouldNotify,
+                        notifyLevel: result.notifyLevel ?? .none
+                    )
+                }
+                // Refresh recalled messages after analysis
+                await MainActor.run {
+                    self.recalledMessages = storeRef.loadRecalledMessages(limit: 50)
+                }
+            }
+        }
+    }
+
+    /// Resolve a relative deadline string like "+30m", "+2h", "+1d" to a Date.
+    // resolveDeadline extracted to MessageHelpers.swift.
 
     /// Load or refresh daily report. Only calls AI if stale (>30 min).
     func loadDailyReport(force: Bool = false) async {
@@ -856,6 +1068,78 @@ final class ChatMonitor: ObservableObject {
             relationship: "work"
         )
         return await replySuggester.suggest(input) ?? []
+    }
+
+    // MARK: - Autopilot
+
+    /// Toggle autopilot mode on/off.
+    func toggleAutopilot() {
+        if autopilotActive {
+            stopAutopilot()
+        } else {
+            startAutopilot()
+        }
+    }
+
+    func startAutopilot() {
+        if autopilotService == nil {
+            let config = store.loadClassifierConfig()
+            autopilotService = AutopilotService(store: store, reader: reader, config: config)
+        }
+        let service = autopilotService
+        Task {
+            do {
+                try await service?.start()
+                await MainActor.run {
+                    self.autopilotActive = true
+                    self.autopilotSessionSent = 0
+                    self.autopilotSessionPending = 0
+                    self.autopilotLog = []
+                }
+                print("[WCHUD] Autopilot: ON")
+            } catch {
+                print("[WCHUD] Autopilot: failed to start: \(error)")
+            }
+        }
+    }
+
+    func stopAutopilot() {
+        let service = autopilotService
+        Task {
+            do {
+                try await service?.stop()
+            } catch {
+                print("[WCHUD] Autopilot: failed to stop cleanly: \(error)")
+            }
+        }
+        autopilotActive = false
+        print("[WCHUD] Autopilot: OFF")
+    }
+
+    /// Approve a pending autopilot item and send it.
+    func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String) async -> Bool {
+        guard let service = autopilotService else { return false }
+        let success = await service.approvePending(logId: logId, reply: reply, chatName: chatName, chatUsername: chatUsername)
+        // I1 fix: refresh counters from DB session instead of manual adjustment
+        refreshAutopilotSessionState()
+        return success
+    }
+
+    /// Reject a pending autopilot item.
+    func rejectAutopilotItem(logId: Int64) {
+        Task {
+            await autopilotService?.rejectPending(logId: logId)
+        }
+        refreshAutopilotSessionState()
+    }
+
+    /// Refresh autopilot UI state from the DB (source of truth for counters).
+    private func refreshAutopilotSessionState() {
+        if let session = store.currentAutopilotSession() {
+            autopilotLog = store.loadAutopilotLog(sessionId: session.id, limit: 50)
+            autopilotSessionSent = session.totalSent
+            autopilotSessionPending = session.totalPending
+        }
     }
 
     /// Background-safe scan body. Pure function over `reader`, `store`,
@@ -924,7 +1208,7 @@ final class ChatMonitor: ObservableObject {
                 )) ?? []
 
                 let latestSelfTime: Int = recentMsgs
-                    .filter { isFromSelf($0, chatUsername: session.username, myUsername: myUname) }
+                    .filter { MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname) }
                     .map { $0.createTime }
                     .max() ?? 0
 
@@ -935,7 +1219,7 @@ final class ChatMonitor: ObservableObject {
                 func makeItem(_ msg: MessageInfo, kind: HUDNotificationKind) -> UnreadItem {
                     let ts = Date(timeIntervalSince1970: Double(msg.createTime))
                     let replied = latestSelfTime > msg.createTime
-                    let isIgnored = isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap)
+                    let isIgnored = MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap)
                     return UnreadItem(
                         chatUsername: session.username,
                         chatName: msg.chatName,
@@ -947,7 +1231,7 @@ final class ChatMonitor: ObservableObject {
                         isWhitelisted: isWhitelisted,
                         isVIP: isVIP,
                         replied: replied,
-                        status: unreadStatus(
+                        status: MessageHelpers.unreadStatus(
                             replied: replied,
                             timestamp: ts,
                             isVIP: isVIP,
@@ -959,7 +1243,7 @@ final class ChatMonitor: ObservableObject {
 
                 if !session.isGroup {
                     guard let msg = recentMsgs.first(where: {
-                        !isFromSelf($0, chatUsername: session.username, myUsername: myUname)
+                        !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname)
                     }) else { continue }
                     let item = makeItem(msg, kind: .privateChat)
                     if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
@@ -969,7 +1253,7 @@ final class ChatMonitor: ObservableObject {
                         unreadCollected.append(item)
                     }
                 } else {
-                    for msg in recentMsgs where isAtMe(msg.text, myUsername: myUname) {
+                    for msg in recentMsgs where MessageHelpers.isAtMe(msg.text, myUsername: myUname) {
                         let item = makeItem(msg, kind: .groupAt)
                         if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
                             suppressedCollected.append(item)
@@ -1017,13 +1301,21 @@ final class ChatMonitor: ObservableObject {
                     suppressedItems: sortedSuppressed,
                     replyDebtItems: replyDebtItems,
                     recentNotifications: [],
-                    latestPreview: nil
+                    latestPreview: nil,
+                    newInboundMessages: [],
+                    newInboundForClassifier: [],
+                    vipTraceMessages: [],
+                    selfOutgoingMessages: []
                 )
             }
 
             // ---- Whitelist scan (for the follow feed & VIP alerts) ----
             var latestPreview: HUDNotification?
             var perChatLatest: [String: HUDNotification] = [:]
+            var autopilotInbound: [AutopilotService.InboundMessage] = []
+            var vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)] = []
+            var newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)] = []
+            var selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)] = []
 
             let msgDBs = reader.findMessageDBs()
             for relPath in msgDBs {
@@ -1053,14 +1345,19 @@ final class ChatMonitor: ObservableObject {
                 let newMessages = messages.filter { $0.createTime > baseline }
 
                 for msg in newMessages {
-                    // Skip own messages — don't surface them as VIP/whitelist notifications.
-                    if isFromSelf(msg, chatUsername: entry.id, myUsername: myUname) {
+                    // Collect self messages for commitment tracking BEFORE skipping
+                    if MessageHelpers.isFromSelf(msg, chatUsername: entry.id, myUsername: myUname) {
+                        let recipientName = reader.displayName(for: entry.id)
+                        selfOutgoingMessages.append((
+                            msg: msg, chatUsername: entry.id,
+                            chatName: msg.chatName, recipientName: recipientName
+                        ))
+                        continue  // still skip for notification purposes
+                    }
+                    if MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap) {
                         continue
                     }
-                    if isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap) {
-                        continue
-                    }
-                    let isAt = isAtMe(msg.text, myUsername: myUname)
+                    let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname)
                     let kind: HUDNotificationKind
                     if !msg.chatUsername.contains("@chatroom") {
                         kind = .privateChat
@@ -1096,6 +1393,50 @@ final class ChatMonitor: ObservableObject {
                     } else {
                         perChatLatest[msg.chatUsername] = notif
                     }
+
+                    // Collect for autopilot: private chats + group @mentions.
+                    if kind == .privateChat || kind == .groupAt {
+                        let contact = store.getContact(username: msg.senderUsername)
+                        let level: AttentionLevel
+                        if entry.attentionLevel == .vip {
+                            level = .vip
+                        } else {
+                            level = contact?.attentionLevel ?? .whitelist
+                        }
+                        autopilotInbound.append(AutopilotService.InboundMessage(
+                            msgUID: msg.id,
+                            chatUsername: msg.chatUsername,
+                            chatName: msg.chatName,
+                            senderUsername: msg.senderUsername,
+                            senderName: msg.senderName,
+                            text: msg.text,
+                            isGroup: msg.chatUsername.contains("@chatroom"),
+                            isAtMention: isAt,
+                            attentionLevel: level,
+                            contactRole: contact?.role ?? .acquaintance,
+                            timestamp: msg.createTime
+                        ))
+                    }
+
+                    // Collect VIP traces for VIPAggregator
+                    if entry.attentionLevel == .vip {
+                        vipTraceMessages.append((
+                            vipUsername: msg.senderUsername,
+                            vipName: msg.senderName,
+                            chatUsername: msg.chatUsername,
+                            chatName: msg.chatName,
+                            msgUID: msg.id,
+                            rawText: msg.text,
+                            msgTime: msg.createTime
+                        ))
+                    }
+
+                    // Collect for AI classifier (non-self inbound messages)
+                    newInboundForClassifier.append((
+                        msg: msg,
+                        chatUsername: entry.id,
+                        isVIP: entry.attentionLevel == .vip
+                    ))
                 }
 
                 if currentMaxTime > baseline {
@@ -1133,7 +1474,11 @@ final class ChatMonitor: ObservableObject {
                 suppressedItems: sortedSuppressed,
                 replyDebtItems: replyDebtItems,
                 recentNotifications: mergedRecent,
-                latestPreview: latestPreview
+                latestPreview: latestPreview,
+                newInboundMessages: autopilotInbound,
+                newInboundForClassifier: newInboundForClassifier,
+                vipTraceMessages: vipTraceMessages,
+                selfOutgoingMessages: selfOutgoingMessages
             )
         } catch {
             print("[WCHUD] performScan error: \(error)")
@@ -1163,25 +1508,25 @@ final class ChatMonitor: ObservableObject {
             guard !recentMsgs.isEmpty else { return nil }
 
             let latestInbound = recentMsgs.first {
-                !isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
-                    && !isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                    && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
             }
             guard let inbound = latestInbound else { return nil }
 
             let latestOutbound = recentMsgs.first {
-                isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
             }
             let inboundCountSinceLastOutbound: Int
             if let outbound = latestOutbound {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
-                    !isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
-                        && !isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                        && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
                         && $0.createTime > outbound.createTime
                 }.count
             } else {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
-                    !isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
-                        && !isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                        && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
                 }.count
             }
 
@@ -1193,7 +1538,7 @@ final class ChatMonitor: ObservableObject {
                 latestInbound: inbound,
                 latestOutbound: latestOutbound,
                 inboundCountSinceLastOutbound: inboundCountSinceLastOutbound,
-                isAtMention: isAtMe(inbound.text, myUsername: myUsername),
+                isAtMention: MessageHelpers.isAtMe(inbound.text, myUsername: myUsername),
                 chatAction: chatActions[session.username],
                 now: now
             )
