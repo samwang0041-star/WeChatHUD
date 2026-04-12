@@ -178,6 +178,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 Task {
                     await self.aiService.updateConfig(cfg)
                 }
+                // I2 fix: propagate AI config changes to running autopilot
+                let classifierCfg = self.store.loadClassifierConfig()
+                Task {
+                    await self.monitor.autopilotService?.updateConfig(classifierCfg)
+                }
             }
             .store(in: &cancellables)
 
@@ -186,6 +191,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.monitor.refreshNow()
             }
             .store(in: &cancellables)
+
+        // Keyboard shortcuts — only active when the panel is key.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+            return MainActor.assumeIsolated { self.handleKeyDown(event) ? nil : event }
+        }
+    }
+
+    /// Handle keyboard shortcuts. Returns true if the event was consumed.
+    /// Called from NSEvent local monitor (always main thread).
+    @MainActor
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        // Esc → collapse to compact
+        if event.keyCode == 53 {  // Esc
+            panelState.collapse()
+            return true
+        }
+
+        // Cmd+number → switch tabs (only when extended)
+        guard event.modifierFlags.contains(.command),
+              panelState.currentState == .extended else { return false }
+
+        switch event.charactersIgnoringModifiers {
+        case "1":
+            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 0])
+            return true
+        case "2":
+            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 1])
+            return true
+        case "3":
+            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 2])
+            return true
+        case "4":
+            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 3])
+            return true
+        case "5":
+            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 4])
+            return true
+        default:
+            return false
+        }
     }
 
     /// Resolve the target panel size for a given state. `.extended`
