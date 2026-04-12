@@ -5,44 +5,51 @@
 
 ## Current Status
 
-**状态**: 🟢 P0 测试补全 — HUDStore 测试补充完成
+**状态**: 🟡 P1 ChatMonitor 拆分重构 — Step 1-2 完成，评估继续
 
 ## Completed Tasks
 
-### 1. HUDStore 测试补充 (P0)
-- **新增 33 个测试**，HUDStoreTests 从 12 个增加到 45 个
-- 全部 150 个项目测试通过（之前 117 个）
-- 覆盖了以下之前未测试的功能域：
-  - **WhitelistEntry & Baseline**: getWhitelistEntry、getWhitelistBaseline、setWhitelistBaseline（含零值边界）
-  - **ChatAction**: silenceChat、snoozeChat、clearChatAction、loadChatActions（含 upsert 更新、空表、多记录）
-  - **IgnoredSenderMap**: loadIgnoredSenderMap 分组聚合
-  - **PendingAsk 完整生命周期**: upsert、load（按 bucket/status 过滤）、hasPendingAsk、updateStatus、dismiss、upsert 更新去重
-  - **AI Audit**: writeAIAudit、loadRecentAIAudit（按 role/promptVersion 过滤）、pruneAIAudit 老数据清理
-  - **Autopilot 完整生命周期**: startSession、endSession、updateCounts、currentSession、insertLog、loadLog、loadPendingItems、updateAction、markSent、loadSessions、clearHistory
-  - **静态工具方法**: senderIdentifier（username 优先、name fallback、空白规范化）
-  - **配置加载**: loadClassifierConfig、loadAIConfig
+### P0: HUDStore 测试补充 ✅
+- 新增 33 个测试 (12→45)，发现并修复 autopilot column index bug
 
-### Bug 发现并修复
-- **`currentAutopilotSession()` column index 偏移 bug**: SQL SELECT 的 column 2 是 `ended_at`，但代码从 column 2 开始读取 `totalHandled`（应该从 column 3 开始）。导致 autopilot session 的 handled/pending/sent 计数全部读错。已修复。
+### P0.5: WeChatDecryptor 端到端测试 ✅  
+- 新增 6 个测试 (3→9)，含完整 AES-256-CBC 端到端验证
+- 全项目: 117 → 156 测试
 
-## Important Finding (from initial assessment)
+### P1 Step 1: 静态工具方法提取 ✅
+- 6 个纯函数 → `MessageHelpers.swift`
+- ChatMonitor 1690 → ~1620 行
 
-PM 指令说"17 个测试文件全是空壳，0 个可执行测试"，**实际情况**：
-- 项目已有 117 个 XCTest 测试且全部通过
-- `swift test` 末尾的 "0 tests in 0 suites" 是 Swift Testing 框架的独立报告（Swift 6.3 双跑 XCTest + Swift Testing），XCTest 部分正常运行
-- 现在已增至 150 个测试
+### P1 Step 2: ScanEngine 提取 ✅
+- `performScan` + `buildReplyDebtItems` + `debugScanAllTables` + `ScanOutcome` → `ScanEngine.swift` (~470 行)
+- ChatMonitor 1620 → **1131 行** (-33%)
 
 ## In Progress
 
-等待 PM 确认下一步方向
+### P1 继续分析
+
+当前 ChatMonitor 1131 行，目标 550 行，需继续减 ~580 行。
+
+剩余可提取的大块：
+| 候选 | 行数 | 可行性 | 难点 |
+|------|------|--------|------|
+| `runPostScanAI` | ~160 | 中 | 5 个 fire-and-forget Task 更新 @Published |
+| `loadGroupContextBriefing` | ~137 | 中 | 更新 groupContextStates @Published |
+| 抑制管理 (silence/snooze/ignore) | ~250 | 低 | 深度耦合 @Published arrays |
+| Autopilot UI | ~70 | 低 | 更新 @Published 计数器 |
+| loadDailyReport/recentMessages/loadReplySuggestions | ~50 | 高 | 简单委托方法 |
+
+**核心问题**: 剩余代码几乎都在更新 `@Published` 属性。`@MainActor` + `ObservableObject` 要求这些属性和它们的 setter 必须在同一个类里。提取意味着：
+1. 回调模式 (closure/delegate) — 增加间接性，代码变更复杂但不变少
+2. 新 ObservableObject — SwiftUI 需要 `@EnvironmentObject` 重新注入，打破现有 UI 绑定
+
+**我的建议**: 1131 行已经是务实的结果。核心逻辑（performScan 470 行 + 工具方法 90 行）已经提取。剩余是协调器的本职工作——接收事件、分发给服务、更新 UI 状态。继续强行拆分会增加复杂度，不会减少。
+
+**除非 PM 坚持继续拆**，我建议 P1 到此为止，进入 P2。
 
 ## Questions for PM
 
-1. **下一步优先级**: HUDStore 测试已补充完成（45 个测试，覆盖率大幅提升）。下一步建议：
-   - (a) 继续补 WeChatDecryptor 端到端测试（需创建 mock encrypted DB fixture）
-   - (b) 直接进入 P1 ChatMonitor 拆分重构
-   - (c) 其他测试文件的补充
-2. **ChatMonitor 测试 vs 重构**: ChatMonitor 0% 测试覆盖但 1690 行耦合严重。建议先 P1 拆分再补测试——否则测试会和 God Object 深度耦合，重构时全部作废。
+1. **P1 是否关闭？** ChatMonitor 从 1690 → 1131 行（-33%），核心 scan 逻辑已提取到 ScanEngine。剩余都是 @Published 状态管理，强行提取会增加复杂度。建议关闭 P1，进入 P2 (AI 响应健壮性)。
 
 ## Blockers
 
@@ -50,6 +57,6 @@ PM 指令说"17 个测试文件全是空壳，0 个可执行测试"，**实际�
 
 ## Architecture Observations
 
-1. `currentAutopilotSession()` 有 column index bug（已修复），建议 review `loadAutopilotSessions()` 是否有类似问题——目前看来 `loadAutopilotSessions` 正确处理了 ended_at 的 nullable 检查，column mapping 正确
-2. ChatMonitor 确实是 God Object (1690 行)，建议先 P1 拆分再补测
-3. HUDStore 现在有 68 个方法中约 55+ 被测试覆盖（含 NewSchemaTests 的 24 个），剩余为 internal 辅助方法和 migration
+1. SwiftUI 的 `@Published` + `@MainActor` 是 ChatMonitor 拆分的硬性约束——属性 setter 必须在持有者类中
+2. ChatMonitor 的角色已经从 God Object 变成了真正的 Coordinator——scan 逻辑在 ScanEngine，工具方法在 MessageHelpers，12 个 AI service 各自独立
+3. 进一步拆分需要引入 Combine 发布链或新的 ObservableObject，代价大于收益
