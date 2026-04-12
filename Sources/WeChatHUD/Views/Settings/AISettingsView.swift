@@ -20,12 +20,20 @@ struct AISettingsView: View {
     @State private var testResult = ""
     @State private var isTesting = false
     @State private var didLoad = false
+    @State private var showSaved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             settingsField("API 地址", text: $baseURL)
             settingsField("模型", text: $model)
             settingsField("API Key", text: $apiKey, isSecure: true)
+
+            if showSaved {
+                Text("已保存")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.green)
+                    .transition(.opacity)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("启用待回 AI 判定", isOn: $replyDebtAIEnabled)
@@ -78,7 +86,7 @@ struct AISettingsView: View {
                 if recentReplyDebtAudit.isEmpty {
                     Text("最近还没有待回 AI 审计记录。")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.6))
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(recentReplyDebtAudit, id: \.id) { entry in
@@ -86,7 +94,7 @@ struct AISettingsView: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: entry.ts))
                                         .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.white.opacity(0.6))
                                     Text(auditStatusLabel(entry))
                                         .font(.system(size: 10, weight: .semibold))
                                         .padding(.horizontal, 6)
@@ -96,7 +104,7 @@ struct AISettingsView: View {
                                         .cornerRadius(4)
                                     Text(entry.model)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.white.opacity(0.6))
                                         .lineLimit(1)
                                 }
                                 Text(auditSummary(entry))
@@ -150,7 +158,7 @@ struct AISettingsView: View {
                 if recentGroupContextAudit.isEmpty {
                     Text("最近还没有群聊上下文简报记录。")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.6))
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(recentGroupContextAudit, id: \.id) { entry in
@@ -158,7 +166,7 @@ struct AISettingsView: View {
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: entry.ts))
                                         .font(.system(size: 11, design: .monospaced))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.white.opacity(0.6))
                                     Text(auditStatusLabel(entry))
                                         .font(.system(size: 10, weight: .semibold))
                                         .padding(.horizontal, 6)
@@ -168,7 +176,7 @@ struct AISettingsView: View {
                                         .cornerRadius(4)
                                     Text(entry.model)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.white.opacity(0.6))
                                         .lineLimit(1)
                                 }
                                 Text(auditSummary(entry))
@@ -211,12 +219,12 @@ struct AISettingsView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("最近误判")
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.white.opacity(0.6))
                             ForEach(Array(recentFalsePositives.prefix(3)), id: \.id) { feedback in
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(Self.auditTimestampFormatter.string(from: feedback.ts))
                                         .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.white.opacity(0.6))
                                     Text(feedback.note ?? "无摘要")
                                         .font(.system(size: 11))
                                         .foregroundColor(.primary)
@@ -240,15 +248,33 @@ struct AISettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .foregroundColor(.white.opacity(0.6))
             if isSecure {
                 SecureField("", text: text)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 12))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.07))
+                    .cornerRadius(5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
             } else {
                 TextField("", text: text)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 12))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.07))
+                    .cornerRadius(5)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
             }
         }
     }
@@ -300,6 +326,8 @@ struct AISettingsView: View {
         let cfg = AIConfig(baseURL: baseURL, model: model, apiKey: apiKey)
         try? store.setSettingJSON("ai", value: cfg)
         NotificationCenter.default.post(name: .hudAIConfigDidChange, object: nil)
+        showSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }
     }
 
     private func saveReplyDebtAIConfig() {
@@ -309,6 +337,8 @@ struct AISettingsView: View {
         cfg.shadowMode = replyDebtShadowMode
         try? store.setSettingJSON("replyDebtAI", value: cfg)
         NotificationCenter.default.post(name: .hudReplyDebtAIConfigDidChange, object: nil)
+        showSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }
     }
 
     private func reloadRecentReplyDebtAudit() {

@@ -53,7 +53,7 @@ struct DataSettingsView: View {
                     Spacer()
                     Text("\(recalledMessages.count) 条")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.white.opacity(0.55))
                 }
 
                 if recalledMessages.isEmpty {
@@ -69,7 +69,7 @@ struct DataSettingsView: View {
                                     .foregroundColor(.white)
                                 Text(msg.chatName)
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.4))
+                                    .foregroundColor(.white.opacity(0.55))
                                 Spacer()
                                 Text("\(msg.recallDelaySeconds)秒后撤回")
                                     .font(.system(size: 9))
@@ -146,7 +146,7 @@ struct DataSettingsView: View {
                                     if let deadline = item.deadlineAt {
                                         Text(deadline < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(deadline.timeIntervalSince1970)))")
                                             .font(.system(size: 10))
-                                            .foregroundColor(deadline < Date() ? .red : .white.opacity(0.4))
+                                            .foregroundColor(deadline < Date() ? .red : .white.opacity(0.55))
                                     }
                                 }
                             }
@@ -168,7 +168,7 @@ struct DataSettingsView: View {
                                 }
                                 .font(.system(size: 10))
                                 .buttonStyle(.plain)
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.white.opacity(0.55))
                             } else {
                                 Text(item.status.rawValue)
                                     .font(.system(size: 10))
@@ -197,7 +197,7 @@ struct DataSettingsView: View {
                     let pending = pendingAsks.filter { $0.status == .pending }.count
                     Text("\(pending) 待处理")
                         .font(.system(size: 10))
-                        .foregroundColor(pending > 0 ? .orange : .white.opacity(0.4))
+                        .foregroundColor(pending > 0 ? .orange : .white.opacity(0.55))
                 }
 
                 if pendingAsks.isEmpty {
@@ -221,7 +221,7 @@ struct DataSettingsView: View {
                                         .foregroundColor(.white)
                                     Text(ask.chatName)
                                         .font(.system(size: 10))
-                                        .foregroundColor(.white.opacity(0.4))
+                                        .foregroundColor(.white.opacity(0.55))
                                 }
                                 Text(ask.summary)
                                     .font(.system(size: 11))
@@ -255,7 +255,7 @@ struct DataSettingsView: View {
                                 }
                                 .font(.system(size: 10))
                                 .buttonStyle(.plain)
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.white.opacity(0.55))
                             } else {
                                 Text(ask.status.rawValue)
                                     .font(.system(size: 10))

@@ -4,6 +4,7 @@ struct IgnoredSendersSettingsView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
     @State private var ignoredSenders: [IgnoredSenderRule] = []
+    @State private var didLoad = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -14,7 +15,7 @@ struct IgnoredSendersSettingsView: View {
             if ignoredSenders.isEmpty {
                 Text("当前没有被忽略的人。")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
                     .padding(.vertical, 8)
             } else {
                 VStack(spacing: 8) {
@@ -24,7 +25,11 @@ struct IgnoredSendersSettingsView: View {
                 }
             }
         }
-        .onAppear(perform: reload)
+        .onAppear {
+            guard !didLoad else { return }
+            didLoad = true
+            reload()
+        }
     }
 
     private func row(_ rule: IgnoredSenderRule) -> some View {
@@ -42,7 +47,7 @@ struct IgnoredSendersSettingsView: View {
                 if !rule.senderUsername.isEmpty {
                     Text(rule.senderUsername)
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.38))
+                        .foregroundColor(.white.opacity(0.5))
                         .lineLimit(1)
                 }
             }
@@ -55,9 +60,7 @@ struct IgnoredSendersSettingsView: View {
                     senderUsername: rule.senderUsername,
                     senderName: rule.senderName
                 )
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    reload()
-                }
+                reload()
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
