@@ -231,7 +231,8 @@ final class ReplyDebtJudgeTests: XCTestCase {
             isVIP: false,
             isAtMention: false,
             inboundCountSinceLastOutbound: 2,
-            reasons: [ReplyDebtReason(code: .privateChat), ReplyDebtReason(code: .repeatedInbound)]
+            reasons: [ReplyDebtReason(code: .privateChat), ReplyDebtReason(code: .repeatedInbound)],
+            suggestedReplyMinutes: nil
         )
     }
 }
