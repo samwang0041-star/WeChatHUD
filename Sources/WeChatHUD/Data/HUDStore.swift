@@ -1083,6 +1083,11 @@ final class HUDStore: ObservableObject {
                 print("[WCHUD] failed to seed role_configs: \(error)")
             }
         }
+
+        if getSetting("notification") == nil {
+            try? setSettingJSON("notification", value: NotificationConfig())
+            print("[WCHUD] seeded settings.notification (first launch)")
+        }
     }
 
     /// Single read point for the classifier config. Always returns a
