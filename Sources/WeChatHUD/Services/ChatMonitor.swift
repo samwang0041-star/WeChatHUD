@@ -62,6 +62,8 @@ final class ChatMonitor: ObservableObject {
     private let store: HUDStore
     private let aiService: AIService?
     private let groupContextBriefingService: GroupContextBriefingService
+    private let aiGroupCatchup: AIGroupCatchup
+    private let contextAnalyzer: ContextAnalyzer
     private var safetyTimer: Timer?
     private var scanInProgress = false
 
@@ -154,6 +156,9 @@ final class ChatMonitor: ObservableObject {
             store: store,
             client: aiService
         )
+        let classifierConfig = store.loadClassifierConfig()
+        self.aiGroupCatchup = AIGroupCatchup(store: store, config: classifierConfig)
+        self.contextAnalyzer = ContextAnalyzer(store: store)
     }
 
     deinit {
@@ -221,6 +226,10 @@ final class ChatMonitor: ObservableObject {
         )
 
         let service = groupContextBriefingService
+        let catchup = aiGroupCatchup
+        let analyzer = contextAnalyzer
+        let readerRef = reader
+        let myUname = reader.myUsername()
         Task { [weak self] in
             let result = await service.explain(
                 notification: notification,
@@ -235,6 +244,100 @@ final class ChatMonitor: ObservableObject {
                     updatedAt: Date()
                 )
                 self.trimGroupContextStateIfNeeded()
+            }
+
+            // --- Phase 2: AIGroupCatchup + ContextAnalyzer (fire-and-forget, non-blocking) ---
+            // Load recent messages for the chat once; reuse for both downstream services.
+            let contextMessages = (try? readerRef.getMessages(
+                chatUsername: notification.chatUsername,
+                limit: 30,
+                sinceLocalId: nil
+            )) ?? []
+
+            // AIGroupCatchup: enrich briefing with headline / highlights.
+            let catchupInput = AIGroupCatchup.Input(
+                chatName: notification.chatName,
+                selfName: myUname,
+                messages: contextMessages.map { ($0.senderName, $0.text) }
+            )
+            if let summary = await catchup.summarize(catchupInput) {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    guard var state = self.groupContextStates[key],
+                          var briefing = state.briefing else { return }
+                    // Only fill deep fields if not already present.
+                    if briefing.deepBackground == nil {
+                        briefing.deepBackground = summary.headline
+                    }
+                    if briefing.deepWhatTheyWant == nil, !summary.highlights.isEmpty {
+                        briefing.deepWhatTheyWant = summary.highlights.joined(separator: " · ")
+                    }
+                    state.briefing = briefing
+                    self.groupContextStates[key] = state
+                }
+            }
+
+            // ContextAnalyzer: fill deep* fields using a synthetic PendingAsk.
+            let syntheticAsk = PendingAsk(
+                id: 0,
+                msgUID: "\(notification.chatUsername):\(notification.messageID)",
+                chatUsername: notification.chatUsername,
+                chatName: notification.chatName,
+                senderName: notification.senderName,
+                rawText: notification.rawText,
+                summary: notification.snippet,
+                askType: .none,
+                deadlineAt: nil,
+                confidence: result.briefing.confidence,
+                bucket: .main,
+                status: .pending,
+                promptVersion: "context_analyzer_v1",
+                createdAt: notification.timestamp,
+                updatedAt: notification.timestamp,
+                senderLevel: nil,
+                senderRole: nil,
+                urgency: nil
+            )
+            let annotated = contextMessages.map { msg in
+                AnnotatedMessage(
+                    id: msg.id,
+                    senderUsername: msg.senderUsername,
+                    senderName: msg.senderName,
+                    senderLevel: nil,
+                    senderRole: nil,
+                    text: msg.text,
+                    createTime: msg.createTime,
+                    isTarget: msg.id == notification.messageID
+                )
+            }
+            let chatType: ChatType = notification.chatUsername.contains("@chatroom") ? .group : .privateChat
+            let contextWindow = ContextWindow(
+                messages: annotated,
+                chatType: chatType,
+                role: .contextAnalyzer
+            )
+            if let deepResult = await analyzer.analyze(
+                ask: syntheticAsk,
+                senderRole: .colleague,
+                conversationContext: contextWindow,
+                senderProfile: "",
+                userCommitments: ""
+            ) {
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    guard var state = self.groupContextStates[key],
+                          var briefing = state.briefing else { return }
+                    briefing.deepBackground = briefing.deepBackground ?? deepResult.background
+                    briefing.deepWhatTheyWant = briefing.deepWhatTheyWant ?? deepResult.whatTheyWant
+                    briefing.deepHiddenContext = deepResult.hiddenContext
+                    briefing.deepStakeholders = deepResult.stakeholderMap.map { "\($0.name): \($0.stance)" }
+                    briefing.deepYourPosition = deepResult.yourPosition
+                    briefing.deepSuggestedAction = deepResult.suggestedAction
+                    briefing.deepSuggestedTiming = deepResult.suggestedTiming
+                    briefing.deepRiskIfIgnore = deepResult.riskIfIgnore
+                    state.briefing = briefing
+                    self.groupContextStates[key] = state
+                }
             }
         }
     }
