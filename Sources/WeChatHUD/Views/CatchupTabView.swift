@@ -8,6 +8,12 @@ struct CatchupTabView: View {
     @State private var hourWindow: Int = 3
     @State private var isLoading = false
     @State private var catchupResult: CatchupResult?
+    @State private var viewMode: CatchupViewMode = .priority
+
+    enum CatchupViewMode: String, CaseIterable {
+        case priority = "优先级"
+        case topic = "按话题"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -17,7 +23,11 @@ struct CatchupTabView: View {
             if isLoading {
                 loadingView
             } else if let result = catchupResult {
-                resultView(result)
+                if viewMode == .priority {
+                    resultView(result)
+                } else {
+                    topicView
+                }
             } else {
                 promptView
             }
@@ -43,6 +53,15 @@ struct CatchupTabView: View {
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 90)
+            .controlSize(.small)
+
+            Picker("", selection: $viewMode) {
+                ForEach(CatchupViewMode.allCases, id: \.self) { m in
+                    Text(m.rawValue).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 110)
             .controlSize(.small)
 
             Spacer()
@@ -249,6 +268,85 @@ struct CatchupTabView: View {
             replyDebt: monitor.replyDebtItems.count,
             commitments: monitor.commitments.filter { $0.status == .pending }.count
         )
+    }
+
+    // MARK: - Topic view
+
+    private var topicView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                let topics = buildTopicSegments()
+                if topics.isEmpty {
+                    Text("暂无话题分段数据")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.4))
+                        .padding(14)
+                } else {
+                    ForEach(Array(topics.enumerated()), id: \.offset) { _, topic in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(topic.chatName)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(.white)
+                                Text("\(topic.messageCount) 条消息")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.white.opacity(0.4))
+                                Spacer()
+                                Text(topic.timeRange)
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.white.opacity(0.3))
+                                    .monospacedDigit()
+                            }
+                            Text(topic.participants.joined(separator: "、"))
+                                .font(.system(size: 9))
+                                .foregroundColor(.white.opacity(0.5))
+                            Text(topic.preview)
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.7))
+                                .lineLimit(2)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+        }
+    }
+
+    struct TopicEntry {
+        let chatName: String
+        let messageCount: Int
+        let participants: [String]
+        let preview: String
+        let timeRange: String
+    }
+
+    private func buildTopicSegments() -> [TopicEntry] {
+        var entries: [TopicEntry] = []
+        let whitelist = monitor.recentNotifications.map(\.chatUsername)
+        let uniqueChats = Set(whitelist)
+
+        for chatUsername in uniqueChats.prefix(5) {
+            let messages = monitor.recentMessages(chatUsername: chatUsername, limit: 30)
+            guard messages.count >= 2 else { continue }
+
+            // Build MessageInfo for segmenter
+            let chatType: ChatType = chatUsername.contains("@chatroom") ? .group : .privateChat
+            let chatName = monitor.recentNotifications.first { $0.chatUsername == chatUsername }?.chatName ?? chatUsername
+
+            let participants = Set(messages.map(\.sender)).sorted()
+            let preview = messages.first.map { "\($0.sender): \($0.body)" } ?? ""
+
+            entries.append(TopicEntry(
+                chatName: chatName,
+                messageCount: messages.count,
+                participants: Array(participants.prefix(4)),
+                preview: String(preview.prefix(80)),
+                timeRange: "\(messages.count) 条"
+            ))
+        }
+        return entries
     }
 
     // MARK: - Cross-chat correlations
