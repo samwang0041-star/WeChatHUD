@@ -1063,6 +1063,72 @@ final class ChatMonitor: ObservableObject {
         }
     }
 
+    /// Export a Markdown report to the Desktop.
+    func exportReport() -> URL? {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        let dateStr = df.string(from: Date())
+        let filename = "WeChatHUD-Report-\(dateStr).md"
+        let desktop = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop")
+            .appendingPathComponent(filename)
+
+        var md = "# WeChatHUD 报告 — \(dateStr)\n\n"
+
+        // Stats
+        md += "## 概览\n\n"
+        md += "- 未读: \(stats.unreadCount)\n"
+        md += "- @提醒: \(stats.atMentionCount)\n"
+        md += "- VIP: \(stats.vipCount)\n"
+        md += "- 待回复: \(stats.replyDebtCount)\n\n"
+
+        // Daily report
+        if let report = dailyReport {
+            md += "## 日报\n\n"
+            md += "\(report.todaySummary)\n\n"
+            md += "### 明天第一件事\n\n\(report.tomorrowFirstThing.action)\n\n"
+        }
+
+        // Commitments
+        let pending = commitments.filter { $0.status == .pending }
+        if !pending.isEmpty {
+            md += "## 进行中的承诺 (\(pending.count))\n\n"
+            for c in pending {
+                md += "- \(c.content) → \(c.commitTo)"
+                if let d = c.deadlineAt { md += " (截止: \(df.string(from: d)))" }
+                md += "\n"
+            }
+            md += "\n"
+        }
+
+        // Reply debt
+        if !replyDebtItems.isEmpty {
+            md += "## 待回复 (\(replyDebtItems.count))\n\n"
+            for item in replyDebtItems.prefix(10) {
+                md += "- [\(item.priority.rawValue.uppercased())] \(item.chatName): \(item.preview)\n"
+            }
+            md += "\n"
+        }
+
+        // Whitelist stats
+        let whitelist = store.getWhitelist()
+        md += "## 白名单 (\(whitelist.count))\n\n"
+        let vips = whitelist.filter { $0.attentionLevel == .vip }
+        let watches = whitelist.filter { $0.attentionLevel == .watch }
+        md += "- VIP: \(vips.count) 人\n"
+        md += "- 关注: \(watches.count) 人\n\n"
+
+        md += "---\n*由 WeChatHUD 自动生成*\n"
+
+        do {
+            try md.write(to: desktop, atomically: true, encoding: .utf8)
+            return desktop
+        } catch {
+            print("[WCHUD] export failed: \(error)")
+            return nil
+        }
+    }
+
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
