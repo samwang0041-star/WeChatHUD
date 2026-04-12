@@ -23,6 +23,7 @@ struct ExtendedTabsView: View {
         case vip
         case unread
         case replyDebt
+        case dailyReport
     }
 
     /// Sub-filter inside the 未读 tab. Default `.needsReply` — the most
@@ -64,9 +65,10 @@ struct ExtendedTabsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     switch selectedTab {
-                    case .vip:    vipContent
-                    case .unread: unreadContent
-                    case .replyDebt: replyDebtContent
+                    case .vip:         vipContent
+                    case .unread:      unreadContent
+                    case .replyDebt:   replyDebtContent
+                    case .dailyReport: DailyReportTabView()
                     }
                 }
             }
@@ -108,6 +110,7 @@ struct ExtendedTabsView: View {
             if !unreadItems.isEmpty || !suppressedItems.isEmpty {
                 tabButton(.unread, label: "未读", count: unreadItems.count)
             }
+            tabButton(.dailyReport, label: "日报", count: 0)
             Spacer()
             Button(action: { panelState.showDetail() }) {
                 Image(systemName: "gearshape.fill")
