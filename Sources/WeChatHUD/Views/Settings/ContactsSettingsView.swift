@@ -44,6 +44,11 @@ struct ContactsSettingsView: View {
                     contactSection(level: .vip, title: "VIP", color: .yellow)
                     contactSection(level: .whitelist, title: "白名单", color: .blue)
                     contactSection(level: .greylist, title: "灰名单", color: .gray)
+
+                    Divider()
+                        .padding(.vertical, 4)
+
+                    WhitelistScanView()
                 }
             }
         }
