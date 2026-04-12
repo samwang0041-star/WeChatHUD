@@ -34,7 +34,8 @@ Sources/WeChatHUD/
 │   ├── ReplyDebtJudge.swift      — AI 二次判断 + shadow mode
 │   ├── AutopilotService.swift    — 自动回复编排 (带安全护栏)
 │   ├── AutoReplyGenerator.swift  — AI 回复生成
-│   └── ... (11 个 AI service 共计)
+│   ├── StyleProfiler.swift       — 用户写作风格学习 (集成到回复建议)
+│   └── ... (12 个 AI service 共计)
 └── Views/
     ├── HUDRootView.swift         — 顶层路由 (compact/extended/notification/detail)
     ├── CompactBarView.swift      — 紧凑模式 (36px)
@@ -55,6 +56,9 @@ Sources/WeChatHUD/
 - **白名单驱动**：只分析白名单里的对话，其余忽略
 - **三态 + 详情**：compact(36px) → extended(tabs) → notification(banner) → detail(500px)
 - **Autopilot 安全**：敏感词检测 + 会话发送上限 + 置信度阈值 + 高风险人工确认
+- **StyleProfiler**：学习用户写作风格，让 AI 回复建议匹配个人习惯
+- **Smart Digest**：离开 30 分钟后返回自动提示"你错过了什么"
+- **7 日趋势图**：VIP Profile 中的消息活跃度迷你柱状图
 
 ## 构建
 
