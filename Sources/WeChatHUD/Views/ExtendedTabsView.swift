@@ -24,7 +24,9 @@ struct ExtendedTabsView: View {
         case vip
         case unread
         case replyDebt
+        case catchup
         case dailyReport
+        case autopilot
     }
 
     /// Sub-filter inside the 未读 tab. Default `.needsReply` — the most
@@ -69,7 +71,9 @@ struct ExtendedTabsView: View {
                     case .vip:         vipContent
                     case .unread:      unreadContent
                     case .replyDebt:   replyDebtContent
+                    case .catchup:     CatchupTabView()
                     case .dailyReport: DailyReportTabView()
+                    case .autopilot:   AutopilotTabView()
                     }
                 }
             }
@@ -111,7 +115,9 @@ struct ExtendedTabsView: View {
             if !unreadItems.isEmpty || !suppressedItems.isEmpty {
                 tabButton(.unread, label: "未读", count: unreadItems.count)
             }
+            tabButton(.catchup, label: "追赶", count: 0)
             tabButton(.dailyReport, label: "日报", count: 0)
+            tabButton(.autopilot, label: monitor.autopilotActive ? "🤖托管" : "托管", count: monitor.autopilotSessionPending)
             Spacer()
             Button(action: { panelState.showDetail() }) {
                 Image(systemName: "gearshape.fill")
