@@ -1040,6 +1040,13 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Load pending asks for a specific chat. Used by Person Profile card.
+    func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
+        Array(store.loadPendingAsks(status: .pending)
+            .filter { $0.chatUsername == chatUsername }
+            .prefix(3))
+    }
+
     /// Generate reply suggestions for a reply debt item.
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
         let input = AIReplySuggester.Input(
