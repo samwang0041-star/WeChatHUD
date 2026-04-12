@@ -679,6 +679,17 @@ enum WeChatLauncher {
         keyUp?.post(tap: .cghidEventTap)
     }
 
+    /// Simulate Cmd+V paste into the frontmost application.
+    static func pasteClipboard() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        keyDown?.flags = .maskCommand
+        keyUp?.flags = .maskCommand
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
+    }
+
     /// Copy arbitrary text to the user's clipboard. Used by the
     /// Cmd+Click shortcut on message rows.
     static func copyText(_ text: String) {
