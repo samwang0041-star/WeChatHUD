@@ -17,7 +17,7 @@ struct ContactsSettingsView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(.white.opacity(0.55))
                 TextField("搜索联系人...", text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
@@ -76,7 +76,7 @@ struct ContactsSettingsView: View {
             Spacer()
             Text("共 \(contacts.count) 人")
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.white.opacity(0.55))
         }
     }
 
@@ -104,7 +104,7 @@ struct ContactsSettingsView: View {
                         .foregroundColor(.white)
                     Text("(\(filtered.count))")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.white.opacity(0.55))
                 }
 
                 VStack(spacing: 2) {
@@ -134,7 +134,7 @@ struct ContactsSettingsView: View {
                     if !contact.roleNote.isEmpty {
                         Text(contact.roleNote)
                             .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.white.opacity(0.55))
                             .lineLimit(1)
                     }
                 }
@@ -274,7 +274,7 @@ struct ContactEditSheet: View {
             // Role description
             Text(selectedRole.roleDescription)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(.white.opacity(0.55))
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.white.opacity(0.03))

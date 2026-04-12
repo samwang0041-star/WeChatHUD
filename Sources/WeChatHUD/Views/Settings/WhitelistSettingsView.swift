@@ -180,14 +180,14 @@ struct WhitelistSettingsView: View {
                 Spacer()
                 Text("选中 \(selectedCandidates.count) / \(list.count)")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
                     .monospacedDigit()
             }
 
             if list.isEmpty {
                 Text("没有足够活跃的聊天。可以试试手动搜索添加。")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
                     .padding(.vertical, 10)
             } else {
                 VStack(spacing: 2) {
@@ -272,7 +272,7 @@ struct WhitelistSettingsView: View {
                      ? "选中 \(selectedInWhitelist.count) / \(whitelist.count)"
                      : "\(whitelist.count) 项 · VIP \(vipCount)")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
                     .monospacedDigit()
                 Spacer()
                 if !whitelist.isEmpty {
@@ -288,7 +288,7 @@ struct WhitelistSettingsView: View {
             if whitelist.isEmpty {
                 Text("暂未配置任何白名单来源，点击智能分析或使用下方搜索添加。")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(.white.opacity(0.55))
                     .padding(.vertical, 8)
             } else {
                 if isMultiSelecting {
@@ -426,7 +426,7 @@ struct WhitelistSettingsView: View {
                 if searchResults.isEmpty {
                     Text("无匹配结果")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.white.opacity(0.55))
                         .padding(.vertical, 6)
                 } else {
                     VStack(spacing: 2) {
@@ -811,7 +811,7 @@ private struct WhitelistRow: View {
             if interactive {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
             }
         }
         .padding(.horizontal, 8)
@@ -861,12 +861,12 @@ private struct CandidateRow: View {
                         if alreadyAdded {
                             Text("已在白名单")
                                 .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.white.opacity(0.55))
                         }
                     }
                     Text("近 45 天 \(candidate.recentCount) 条 · 总计 \(candidate.totalCount)")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(.white.opacity(0.55))
                         .monospacedDigit()
                 }
 
@@ -905,7 +905,7 @@ private struct SearchResultRow: View {
             if alreadyAdded {
                 Text("已添加")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.45))
+                    .foregroundColor(.white.opacity(0.55))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
             } else {

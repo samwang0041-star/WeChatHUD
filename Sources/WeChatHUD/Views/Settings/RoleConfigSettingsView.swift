@@ -9,13 +9,22 @@ struct RoleConfigSettingsView: View {
     @State private var configs: [String: RoleConfig] = [:]
     @State private var expandedRole: String?
     @State private var didLoad = false
+    @State private var showSaved = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("每种身份角色的 AI 行为参数。修改后自动保存。")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.45))
-                .padding(.bottom, 4)
+            HStack(spacing: 8) {
+                Text("每种身份角色的 AI 行为参数。修改后自动保存。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.55))
+                if showSaved {
+                    Text("已保存")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.green)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.bottom, 4)
 
             ForEach(orderedRoles, id: \.key) { key, role in
                 roleCard(key: key, role: role)
@@ -61,7 +70,7 @@ struct RoleConfigSettingsView: View {
                                 .foregroundColor(.white)
                             Text(role.roleDescription)
                                 .font(.system(size: 10))
-                                .foregroundColor(.white.opacity(0.4))
+                                .foregroundColor(.white.opacity(0.55))
                                 .lineLimit(1)
                         }
                         Spacer()
@@ -94,7 +103,7 @@ struct RoleConfigSettingsView: View {
                                     .frame(width: 60)
                                 Text("分钟（0 = 不追踪）")
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.4))
+                                    .foregroundColor(.white.opacity(0.55))
                             }
                         }
 
@@ -194,5 +203,7 @@ struct RoleConfigSettingsView: View {
 
     private func save() {
         try? store.setSettingJSON("role_configs", value: configs)
+        showSaved = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }
     }
 }
