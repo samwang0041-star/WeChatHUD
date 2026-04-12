@@ -1188,6 +1188,10 @@ final class HUDStore: ObservableObject {
         """, params: [level.rawValue, role.rawValue, "\(now)", "\(now)", username])
     }
 
+    func deleteContact(username: String) throws {
+        try exec("DELETE FROM contacts WHERE username=?", params: [username])
+    }
+
     func loadVIPUsernames() -> Set<String> {
         var result: Set<String> = []
         var stmt: OpaquePointer?
