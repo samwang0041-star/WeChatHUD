@@ -6,6 +6,9 @@ import Combine
 final class PanelState: ObservableObject {
     @Published var currentState: HUDState = .compact
     @Published var isMouseInside = false
+    /// When set, DetailPanelView shows conversation analysis instead of settings.
+    @Published var selectedChatUsername: String?
+    @Published var selectedChatName: String?
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
@@ -57,6 +60,19 @@ final class PanelState: ObservableObject {
 
     /// Jump straight to the full-height detail view (e.g. gear click).
     func showDetail() {
+        selectedChatUsername = nil
+        selectedChatName = nil
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = nil
+        notificationTimer?.invalidate()
+        notificationTimer = nil
+        currentState = .detail
+    }
+
+    /// Show detail view for a specific conversation.
+    func showChatDetail(chatUsername: String, chatName: String) {
+        selectedChatUsername = chatUsername
+        selectedChatName = chatName
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
