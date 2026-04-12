@@ -609,7 +609,7 @@ struct NotificationConfig: Codable {
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
 struct AIClassifierConfig: Codable {
     var baseURL: String = "http://127.0.0.1:8000/v1"
-    var model: String = "Qwen3.5-35B-A3B-4bit"
+    var model: String = "Qwen3.5-27B-6bit"
     var apiKey: String = "samwang1"
     var temperature: Double = 0.1
     var maxTokens: Int = 256

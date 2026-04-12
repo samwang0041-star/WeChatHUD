@@ -1,8 +1,8 @@
 import Foundation
-import CommonCrypto
+import CryptoKit
 import SQLite3
 
-final class WeChatReader {
+final class WeChatReader: ObservableObject {
     private let keysPath: String
     let dbDir: String
     private let cacheDir: String
@@ -237,6 +237,56 @@ final class WeChatReader {
         contactCache[username] ?? username
     }
 
+    // MARK: - Self (my username)
+
+    /// Extract the user's own wxid from the dbDir path. WeChat organizes
+    /// per-account data under `xwechat_files/<wxid>/db_storage`, so we
+    /// can grab the second-to-last path component cheaply instead of
+    /// parsing contact.db for a self marker.
+    func myUsername() -> String {
+        let parts = dbDir.split(separator: "/")
+        // .../xwechat_files/<wxid>/db_storage
+        guard parts.count >= 2 else { return "" }
+        return String(parts[parts.count - 2])
+    }
+
+    // MARK: - Sessions (unread state)
+
+    /// Read `session/session.db` → `SessionTable`. Returns one row per
+    /// chat; callers typically filter on `unreadCount > 0`.
+    func getSessions() throws -> [SessionInfo] {
+        let rel = "session/session.db"
+        guard keys[rel] != nil else { return [] }
+        _ = try? refreshIfChanged(relPath: rel)
+        let decPath = try getDecryptedDB(relativePath: rel)
+        var db: OpaquePointer?
+        guard Self.openReadonly(path: decPath, db: &db) else {
+            throw ReaderError.sqlError("Cannot open session.db")
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        let sql = "SELECT username, unread_count, last_timestamp FROM SessionTable"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw ReaderError.sqlError("Cannot query SessionTable: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        var results: [SessionInfo] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let username = columnText(stmt, 0)
+            let unread = Int(sqlite3_column_int64(stmt, 1))
+            let ts = Int(sqlite3_column_int64(stmt, 2))
+            results.append(SessionInfo(
+                username: username,
+                isGroup: username.contains("@chatroom"),
+                unreadCount: unread,
+                lastTimestamp: ts
+            ))
+        }
+        return results
+    }
+
     func allContacts() -> [String: String] {
         contactCache
     }
@@ -369,6 +419,190 @@ final class WeChatReader {
         defer { sqlite3_finalize(stmt) }
 
         return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
+    }
+
+    /// One candidate for smart whitelist import. All scoring inputs are
+    /// preserved so the UI (and the user) can see *why* a contact ranked.
+    struct ActiveContact {
+        let username: String
+        let displayName: String
+        let isGroup: Bool
+        /// Messages exchanged in the last 45 days — the primary signal.
+        let recentCount: Int
+        /// All-time message count per `sqlite_sequence.seq`. Used as a
+        /// baseline pre-filter, not in the final ranking.
+        let totalCount: Int
+        /// Final rank score. Higher is more important.
+        let score: Double
+    }
+
+    /// Smart whitelist ranking.
+    ///
+    /// Strategy — combine multiple signals instead of raw volume so the
+    /// top-N is actually who you *talk to*, not who broadcasts at you:
+    ///
+    /// 1. **Noise filter.** Drop WeChat system accounts, public accounts
+    ///    (`gh_*`), file transfer, WeCom bridges, news feeds, etc. These
+    ///    dominate a naive ranking but none are real conversations.
+    ///
+    /// 2. **Baseline threshold.** Individuals need ≥ 30 total messages,
+    ///    groups need ≥ 150. Chats below the floor are pruned before the
+    ///    expensive pass-2 query.
+    ///
+    /// 3. **Recency window.** Rank by messages in the last 45 days, not
+    ///    all-time, so old-but-dead conversations don't crowd out current
+    ///    VIPs. A `COUNT(*) WHERE create_time > cutoff` per table reads
+    ///    the table but doesn't decode blobs so it's cheap even at 10k
+    ///    rows per chat.
+    ///
+    /// 4. **Group penalty.** Groups are multiplied by 0.35 because they
+    ///    naturally have ~5-10× the volume per "interesting" event, and
+    ///    most of that volume is off-topic chatter.
+    ///
+    /// 5. **Dead-chat cut.** Require ≥ 5 (individual) / ≥ 15 (group) new
+    ///    messages in the window. Otherwise we'd import stale chats that
+    ///    happened to have a lot of history.
+    ///
+    /// Cost: one `sqlite_sequence` scan per DB (pass 1, ~ms) + one
+    /// per-table COUNT for the filtered subset (pass 2, typically well
+    /// under 1 s total because the baseline threshold prunes heavily).
+    func topActiveContacts(limit: Int = 20) throws -> [ActiveContact] {
+        let contacts = contactCache
+        guard !contacts.isEmpty else { return [] }
+
+        // ---- 1. Noise filter ------------------------------------------
+        let noisePrefixes: [String] = [
+            "gh_",                // 公众号 official accounts
+            "fmessage",           // friend-request stream
+            "filehelper",         // 文件传输助手
+            "medianote",          // Apple-device note bridge
+            "newsapp",            // news broadcast
+            "notification_",      // system notifications
+            "notifymessage",
+            "floatbottle",
+            "qqmail",
+            "brandsessionholder", // brand/official session container
+            "masssend",           // mass-send placeholder
+            "officialaccounts",
+            "voip",
+            "blogapp",
+            "tmessage",
+        ]
+        let noiseExact: Set<String> = [
+            "weixin", "qqmail", "qqsync", "qqsafe", "facebook", "voipapp",
+            "masssendapp", "feedsapp",
+        ]
+        func isNoise(_ u: String) -> Bool {
+            if noiseExact.contains(u) { return true }
+            if u.contains("@openim") { return true }       // WeCom bridge
+            if u.contains("@im.chatroom") { return true }  // invalid/legacy
+            for p in noisePrefixes where u.hasPrefix(p) { return true }
+            return false
+        }
+
+        let eligible = contacts.keys.filter { !isNoise($0) }
+        guard !eligible.isEmpty else { return [] }
+
+        var hashToUsername: [String: String] = [:]
+        hashToUsername.reserveCapacity(eligible.count)
+        for u in eligible { hashToUsername[md5Hex(u)] = u }
+
+        // ---- 2. Pass 1: sqlite_sequence → total + table location ------
+        struct TableRef { let relPath: String; let tableName: String }
+        var tablesByUsername: [String: [TableRef]] = [:]
+        var totalCounts: [String: Int] = [:]
+
+        let msgDBs = findMessageDBs()
+        for relPath in msgDBs {
+            _ = try? refreshIfChanged(relPath: relPath)
+            let decPath: String
+            do { decPath = try getDecryptedDB(relativePath: relPath) }
+            catch { continue }
+
+            var db: OpaquePointer?
+            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            defer { sqlite3_close(db) }
+
+            var stmt: OpaquePointer?
+            let sql = "SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'Msg_%'"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            defer { sqlite3_finalize(stmt) }
+
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let namePtr = sqlite3_column_text(stmt, 0) else { continue }
+                let table = String(cString: namePtr)
+                guard table.hasPrefix("Msg_") else { continue }
+                let hash = String(table.dropFirst(4))
+                guard let username = hashToUsername[hash] else { continue }
+                let seq = Int(sqlite3_column_int64(stmt, 1))
+                totalCounts[username, default: 0] += seq
+                tablesByUsername[username, default: []].append(
+                    TableRef(relPath: relPath, tableName: table)
+                )
+            }
+        }
+
+        // ---- 3. Baseline threshold prune ------------------------------
+        let baselineFiltered = totalCounts.filter { username, total in
+            let isGroup = username.contains("@chatroom")
+            return total >= (isGroup ? 150 : 30)
+        }
+        guard !baselineFiltered.isEmpty else { return [] }
+
+        // ---- 4. Pass 2: COUNT(*) in last 45 days, grouped by db -------
+        let cutoff = Int(Date().timeIntervalSince1970) - 45 * 24 * 3600
+
+        // Group (username, tableName) by DB so each DB is opened once.
+        var workByDB: [String: [(String, String)]] = [:]  // relPath → (username, tableName)
+        for (username, _) in baselineFiltered {
+            guard let refs = tablesByUsername[username] else { continue }
+            for ref in refs {
+                workByDB[ref.relPath, default: []].append((username, ref.tableName))
+            }
+        }
+
+        var recentCounts: [String: Int] = [:]
+        for (relPath, work) in workByDB {
+            let decPath: String
+            do { decPath = try getDecryptedDB(relativePath: relPath) }
+            catch { continue }
+
+            var db: OpaquePointer?
+            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            defer { sqlite3_close(db) }
+
+            for (username, table) in work {
+                var stmt: OpaquePointer?
+                let sql = "SELECT COUNT(*) FROM [\(table)] WHERE create_time > \(cutoff)"
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    recentCounts[username, default: 0] += Int(sqlite3_column_int64(stmt, 0))
+                }
+                sqlite3_finalize(stmt)
+            }
+        }
+
+        // ---- 5. Score, dead-chat cut, rank ----------------------------
+        let candidates: [ActiveContact] = recentCounts.compactMap { username, recent in
+            let isGroup = username.contains("@chatroom")
+            let deadFloor = isGroup ? 15 : 5
+            guard recent >= deadFloor else { return nil }
+            let groupPenalty: Double = isGroup ? 0.35 : 1.0
+            let score = Double(recent) * groupPenalty
+            return ActiveContact(
+                username: username,
+                displayName: contacts[username] ?? username,
+                isGroup: isGroup,
+                recentCount: recent,
+                totalCount: totalCounts[username] ?? 0,
+                score: score
+            )
+        }
+
+        return candidates
+            .sorted { $0.score > $1.score }
+            .prefix(limit)
+            .map { $0 }
     }
 
     func listAllChatTables() throws -> [(relPath: String, tableName: String, chatUsername: String)] {
@@ -506,8 +740,7 @@ final class WeChatReader {
 
     private func md5Hex(_ input: String) -> String {
         let data = Data(input.utf8)
-        var digest = [UInt8](repeating: 0, count: Int(CC_MD5_DIGEST_LENGTH))
-        data.withUnsafeBytes { _ = CC_MD5($0.baseAddress, CC_LONG(data.count), &digest) }
+        let digest = Insecure.MD5.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 }

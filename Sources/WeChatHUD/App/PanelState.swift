@@ -9,30 +9,56 @@ final class PanelState: ObservableObject {
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
+    private var exitDebounceTimer: Timer?
+
+    /// Exit debounce: the window resize animation takes ~220 ms, during
+    /// which the sweeping pill edges can cross the cursor and fire
+    /// spurious exited / entered pairs. 400 ms covers the animation window
+    /// plus a small buffer; any real mouse-out is cancelled by a follow-up
+    /// mouseEntered before the timer fires. 400 ms before collapse is also
+    /// forgiving for the user who moves the cursor away briefly to look
+    /// at something else then back.
+    private let exitDebounce: TimeInterval = 0.4
 
     /// Called when mouse enters the panel area.
     func mouseEntered() {
         isMouseInside = true
+        // Cancel any pending collapse — we're back inside.
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
         // Don't override .detail — the user is inside the full settings view.
-        if currentState != .detail {
+        if currentState != .detail && currentState != .extended {
             currentState = .extended
         }
     }
 
-    /// Called when mouse exits the panel area.
+    /// Called when mouse exits the panel area. Debounces briefly so
+    /// animation-induced oscillations don't flicker the state.
     func mouseExited() {
         isMouseInside = false
         // Don't auto-collapse the detail view — the user may be typing in a
         // text field, etc. The detail view has its own explicit close button.
-        if currentState != .detail {
-            currentState = .compact
+        guard currentState != .detail else { return }
+
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: exitDebounce, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                // Only collapse if the mouse actually stayed outside.
+                if !self.isMouseInside && self.currentState == .extended {
+                    self.currentState = .compact
+                }
+                self.exitDebounceTimer = nil
+            }
         }
     }
 
     /// Jump straight to the full-height detail view (e.g. gear click).
     func showDetail() {
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
         currentState = .detail
@@ -57,17 +83,20 @@ final class PanelState: ObservableObject {
         }
     }
 
-    var panelHeight: CGFloat {
-        switch currentState {
+    var panelHeight: CGFloat { Self.height(for: currentState) }
+    var panelWidth: CGFloat { Self.width(for: currentState) }
+
+    static func height(for state: HUDState) -> CGFloat {
+        switch state {
         case .compact, .extended: return 36
         case .notification: return 90
         case .detail: return 500
         }
     }
 
-    var panelWidth: CGFloat {
-        switch currentState {
-        case .compact: return 140
+    static func width(for state: HUDState) -> CGFloat {
+        switch state {
+        case .compact: return 208
         case .extended: return 340
         case .notification: return 420
         case .detail: return 700
