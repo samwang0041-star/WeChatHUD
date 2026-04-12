@@ -1019,6 +1019,59 @@ final class ChatMonitor: ObservableObject {
                 }
             }
         }
+
+        // 6. Conversation memory — incremental summary update for whitelist chats
+        let memoryAI = aiService
+        let memoryReader = reader
+        Task {
+            guard let ai = memoryAI, await ai.isConfigured() else { return }
+            let whitelist = storeRef.getWhitelist()
+                for entry in whitelist.prefix(5) {  // limit to top 5 to control AI cost
+                    // Rate limit: skip if updated < 30 min ago
+                    if let existing = storeRef.loadConversationMemory(chatUsername: entry.id),
+                       Date().timeIntervalSince(existing.lastUpdated) < 1800 {
+                        continue
+                    }
+
+                    let messages = (try? memoryReader.getMessages(chatUsername: entry.id, limit: 30)) ?? []
+                    guard !messages.isEmpty else { continue }
+
+                    let oldMemory = storeRef.loadConversationMemory(chatUsername: entry.id)
+                    let oldSummary = oldMemory?.summary ?? ""
+
+                    let msgText = messages.prefix(20).map {
+                        "\($0.senderName): \($0.text)"
+                    }.joined(separator: "\n")
+
+                    let prompt = """
+                    你是对话摘要助手。根据最近消息增量更新对话摘要。
+
+                    对话: \(entry.displayName)
+                    旧摘要: \(oldSummary.isEmpty ? "（首次生成）" : oldSummary)
+
+                    最近消息:
+                    \(msgText)
+
+                    请用 JSON 格式输出:
+                    {"summary":"一句话摘要(50字内)","key_topics":["话题1","话题2"],"pending_items":["待办1"],"mood_trend":"情绪描述"}
+                    """
+
+                    guard let response = try? await ai.complete(system: "你是对话摘要助手。只输出JSON。", user: prompt) else { continue }
+                    guard let data = response.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+
+                    let memory = ConversationMemory(
+                        chatUsername: entry.id,
+                        summary: json["summary"] as? String ?? oldSummary,
+                        keyTopics: json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? [],
+                        pendingItems: json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? [],
+                        moodTrend: json["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "",
+                        messageCount7d: messages.count,
+                        lastUpdated: Date()
+                    )
+                    try? storeRef.upsertConversationMemory(memory)
+                }
+        }
     }
 
     /// Resolve a relative deadline string like "+30m", "+2h", "+1d" to a Date.
