@@ -46,11 +46,11 @@ struct HUDRootView: View {
 /// Size of the inbox panel for given item count.
 func inboxSize(itemCount: Int) -> (CGFloat, CGFloat) {
     if itemCount == 0 {
-        return (400, 120)  // empty state + menu bar clearance + handled section
+        return (260, 100)  // compact empty state
     }
     let rows = min(CGFloat(itemCount), 10)
-    let bodyHeight = max(60, rows * 48)  // 48px per row (slightly taller for new design)
-    let handledHeight: CGFloat = 30  // collapsed handled section
+    let bodyHeight = max(60, rows * 48)
+    let handledHeight: CGFloat = 30
     let height: CGFloat = min(38 + 1 + bodyHeight + handledHeight + 6, 500)
     return (480, height)
 }
