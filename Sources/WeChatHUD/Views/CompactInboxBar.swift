@@ -23,19 +23,19 @@ struct CompactInboxBar: View {
 
     @ViewBuilder
     private var statusContent: some View {
-        let p0p1Items = monitor.inboxItems.filter { $0.priority != .p2 }
+        // Only count actionRequired items — matches what extended list actually shows
+        let actionItems = monitor.inboxItems.filter { $0.actionRequired }
+        let p0p1Items = actionItems.filter { $0.priority != .p2 }
         let hasUrgent = !p0p1Items.isEmpty
 
-        if hasUrgent, let top = monitor.inboxItems.first {
-            // State 4/5: Has P0/P1 — show top item summary
+        if hasUrgent, let top = actionItems.first {
             urgentContent(top: top, extraCount: p0p1Items.count - 1)
-        } else if !monitor.inboxItems.isEmpty {
-            // State 3: Only P2 items
+        } else if !actionItems.isEmpty {
             HStack(spacing: 4) {
                 Circle()
                     .fill(Color.white.opacity(0.4))
                     .frame(width: 6, height: 6)
-                Text("\(monitor.inboxItems.count)条待处理")
+                Text("\(actionItems.count)条待处理")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.5))
             }
