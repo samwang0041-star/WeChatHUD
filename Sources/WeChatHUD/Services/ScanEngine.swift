@@ -57,6 +57,8 @@ enum ScanEngine {
             let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
+            let allContacts = store.loadContacts()
+            let contactMap = Dictionary(uniqueKeysWithValues: allContacts.map { ($0.username, $0) })
             var replyDebtItems = buildReplyDebtItems(
                 sessions: sessions,
                 reader: reader,
@@ -65,6 +67,7 @@ enum ScanEngine {
                 myUsername: myUname,
                 whitelistSet: whitelistSet,
                 vipSet: vipSet,
+                contactMap: contactMap,
                 config: replyDebtConfig
             )
             if replyDebtAIConfig.enabled,
@@ -437,6 +440,7 @@ enum ScanEngine {
         myUsername: String,
         whitelistSet: Set<String>,
         vipSet: Set<String>,
+        contactMap: [String: ContactEntry],  // NEW
         config: ReplyDebtConfig
     ) -> [ReplyDebtItem] {
         let sortedSessions = sessions.sorted { lhs, rhs in
@@ -483,7 +487,8 @@ enum ScanEngine {
                 inboundCountSinceLastOutbound: inboundCountSinceLastOutbound,
                 isAtMention: MessageHelpers.isAtMe(inbound.text, myUsername: myUsername),
                 chatAction: chatActions[session.username],
-                now: now
+                now: now,
+                contactReplyWindowMinutes: contactMap[session.username]?.replyWindowMinutes
             )
         }
 

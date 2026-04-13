@@ -12,6 +12,7 @@ enum ReplyDebtScorer {
         let isAtMention: Bool
         let chatAction: HUDStore.ChatActionState?
         let now: Date
+        let contactReplyWindowMinutes: Int?  // NEW: from contacts table, nil = use global
     }
 
     private static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
@@ -52,7 +53,9 @@ enum ReplyDebtScorer {
 
         let ageMinutes = max(0, nowTs - latestInbound.createTime) / 60
         let overdueMinutes: Int
-        if seed.session.isGroup && seed.isAtMention {
+        if let contactWindow = seed.contactReplyWindowMinutes, contactWindow > 0 {
+            overdueMinutes = contactWindow
+        } else if seed.session.isGroup && seed.isAtMention {
             overdueMinutes = config.groupAtOverdueMinutes
         } else if seed.isVIP {
             overdueMinutes = config.vipOverdueMinutes
