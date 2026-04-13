@@ -210,41 +210,8 @@ struct WhitelistScanView: View {
         dismissedKeys = []
 
         Task {
-            // Gather candidates: recent unread items from monitor that aren't whitelisted.
-            // Fall back to a sample of known contacts for demonstration if no unread items.
-            var candidates: [(username: String, displayName: String, isGroup: Bool)] = []
-
-            let unreadCandidates = monitor.unreadItems
-                .filter { !$0.isWhitelisted }
-                .map { (username: $0.chatUsername, displayName: $0.chatName, isGroup: $0.chatUsername.contains("@chatroom")) }
-
-            // Deduplicate by username
-            var seen = Set<String>()
-            for c in unreadCandidates {
-                if seen.insert(c.username).inserted {
-                    candidates.append(c)
-                }
-            }
-
-            // Also check monitor suggestions already computed
-            for (username, suggestion) in monitor.whitelistSuggestions {
-                if !seen.contains(username) {
-                    seen.insert(username)
-                    let isGroup = username.contains("@chatroom")
-                    candidates.append((username: username, displayName: username, isGroup: isGroup))
-                    // Pre-populate with existing suggestion
-                    await MainActor.run {
-                        let r = ScanResult(
-                            id: username,
-                            chatUsername: username,
-                            displayName: username,
-                            isGroup: isGroup,
-                            suggestion: suggestion
-                        )
-                        results.append(r)
-                    }
-                }
-            }
+            // Gather candidates from the WeChat DB — active contacts not yet whitelisted.
+            let candidates = monitor.scanCandidates(limit: 50)
 
             let categorizer = AIWhitelistCategorizer(
                 store: store,
