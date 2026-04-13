@@ -314,7 +314,7 @@ struct PixelBuddyView: View {
             }
         }
         .frame(width: 24, height: 24)
-        .onChange(of: mood) { _ in
+        .onChange(of: mood) {
             frameIndex = 0
         }
         .onAppear { startTimer() }
