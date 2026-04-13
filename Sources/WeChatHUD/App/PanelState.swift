@@ -12,6 +12,9 @@ final class PanelState: ObservableObject {
     /// Set when returning from > 30 min idle — triggers digest banner.
     @Published var showSmartDigest = false
 
+    /// Callback to open settings in a separate window.
+    var onShowSettings: (() -> Void)?
+
     /// Last time the user actively interacted (mouse entered extended).
     private var lastActiveAt = Date()
 
@@ -71,15 +74,9 @@ final class PanelState: ObservableObject {
         }
     }
 
-    /// Jump straight to the full-height detail view (e.g. gear click).
+    /// Open settings in a separate window (gear click).
     func showDetail() {
-        selectedChatUsername = nil
-        selectedChatName = nil
-        exitDebounceTimer?.invalidate()
-        exitDebounceTimer = nil
-        notificationTimer?.invalidate()
-        notificationTimer = nil
-        currentState = .detail
+        onShowSettings?()
     }
 
     /// Show detail view for a specific conversation.
