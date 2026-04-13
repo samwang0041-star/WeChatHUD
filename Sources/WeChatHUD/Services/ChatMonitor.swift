@@ -65,6 +65,9 @@ final class ChatMonitor: ObservableObject {
     @Published var autopilotSessionPending = 0
     @Published var autopilotPendingSendQueue: [PendingSend] = []
     @Published var autopilotSessionStats = AutopilotService.SessionStats()
+    @Published var inboxItems: [InboxItem] = []
+    /// Tracks dismissed inbox items: chatUsername → timestamp at time of dismiss.
+    private var dismissedInbox: [String: Int64] = [:]
     /// The autopilot service instance. Initialized lazily on first toggle.
     private(set) var autopilotService: AutopilotService?
     private let recentLimit = 10
@@ -808,6 +811,12 @@ final class ChatMonitor: ObservableObject {
         if let latest = o.latestPreview {
             latestNotification = latest
         }
+        // Build unified inbox from scan results
+        inboxItems = InboxBuilder.build(
+            replyDebtItems: replyDebtItems,
+            notifications: recentNotifications,
+            dismissed: dismissedInbox
+        )
         reader.purgeEphemeralCache()
         reloadAIData()
         runPostScanAI(o)
@@ -1268,6 +1277,24 @@ final class ChatMonitor: ObservableObject {
         Array(store.loadPendingAsks(status: .pending)
             .filter { $0.chatUsername == chatUsername }
             .prefix(3))
+    }
+
+    /// Refresh the reply suggester's config from the settings DB.
+    /// Called by AppDelegate when the user changes AI settings.
+    func refreshReplySuggesterConfig() async {
+        let cfg = store.loadClassifierConfig()
+        await replySuggester.updateConfig(cfg)
+    }
+
+    /// Dismiss an inbox item. It will reactivate if a new message arrives
+    /// (ScanEngine produces a new ReplyDebtItem for the chat).
+    func dismissInboxItem(_ item: InboxItem) {
+        dismissedInbox[item.chatUsername] = Int64(item.timestamp.timeIntervalSince1970)
+        inboxItems = InboxBuilder.build(
+            replyDebtItems: replyDebtItems,
+            notifications: recentNotifications,
+            dismissed: dismissedInbox
+        )
     }
 
     /// Generate reply suggestions for a reply debt item.
