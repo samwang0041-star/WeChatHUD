@@ -166,7 +166,7 @@ struct OnboardingView: View {
             featureRow("🕐", "追赶模式", "离开后快速了解重要消息")
             featureRow("🤝", "承诺追踪", "自动检测你的承诺并提醒")
             featureRow("🤖", "自动托管", "AI 代回消息（可关闭）")
-            featureRow("⌨️", "快捷键", "Esc 折叠, Cmd+1-5 切换标签")
+            featureRow("⌨️", "快捷键", "Esc 折叠, Cmd+, 设置")
         }
     }
 
