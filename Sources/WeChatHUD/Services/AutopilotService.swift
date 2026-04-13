@@ -26,6 +26,8 @@ actor AutopilotService {
 
     /// Messages already processed (by msgUID), avoids double-handling.
     private var processedMsgUIDs: Set<String> = []
+    /// Insertion-ordered list for FIFO eviction of processedMsgUIDs.
+    private var processedMsgOrder: [String] = []
 
     /// Per-chat rate limit tracker: chatUsername → [sentTimestamps].
     private var sendTimestamps: [String: [Date]] = [:]
@@ -121,6 +123,7 @@ actor AutopilotService {
         sessionPending = 0
         sessionSent = 0
         processedMsgUIDs.removeAll()
+        processedMsgOrder.removeAll()
         vipNotifiedThisSession.removeAll()
         batchBuffer.removeAll()
         batchTimers.removeAll()
@@ -155,10 +158,29 @@ actor AutopilotService {
     /// Stop autopilot mode. Ends the current session.
     func stop() throws {
         guard let id = sessionId else { return }
-        // Flush any remaining batches as skipped
+        // Log discarded batches for audit trail
+        let discardedCount = batchBuffer.values.reduce(0) { $0 + $1.count }
+        if discardedCount > 0 {
+            print("[WCHUD] Autopilot: discarding \(discardedCount) buffered messages on stop")
+        }
+        // Log discarded pending sends
+        for item in pendingSendQueue {
+            let logEntry = AutopilotLogEntry(
+                id: 0, sessionId: id,
+                chatUsername: item.chatUsername, chatName: item.chatName,
+                senderUsername: "", senderName: item.senderName,
+                triggerMsgUID: "queue-\(item.id)", triggerText: "",
+                generatedReply: item.replyText, confidence: item.confidence,
+                riskLevel: item.risk, action: .skipped,
+                aiReasoning: "托管停止时取消",
+                sentAt: nil, createdAt: Date()
+            )
+            try? store.insertAutopilotLog(logEntry)
+        }
         batchBuffer.removeAll()
         batchTimers.removeAll()
         batchStartTimes.removeAll()
+        pendingSendQueue.removeAll()
         try store.endAutopilotSession(id: id)
         try store.updateAutopilotSessionCounts(
             id: id, handled: sessionHandled, pending: sessionPending, sent: sessionSent
@@ -194,10 +216,13 @@ actor AutopilotService {
         // Apply config-driven batch window
         batchWindowSeconds = TimeInterval(config.batchWindowSeconds)
 
-        // M4 fix: prune processedMsgUIDs to prevent unbounded growth
+        // M4 fix: prune processedMsgUIDs to prevent unbounded growth.
+        // Keep last 2500 by maintaining insertion-order via processedMsgOrder.
         if processedMsgUIDs.count > 5000 {
-            let toRemove = processedMsgUIDs.count - 2500
-            processedMsgUIDs = Set(processedMsgUIDs.dropFirst(toRemove))
+            let toRemove = processedMsgOrder.count - 2500
+            let evicted = processedMsgOrder.prefix(toRemove)
+            for uid in evicted { processedMsgUIDs.remove(uid) }
+            processedMsgOrder.removeFirst(toRemove)
         }
 
         // Excluded contacts set for fast lookup
@@ -210,6 +235,7 @@ actor AutopilotService {
         for msg in messages {
             guard !processedMsgUIDs.contains(msg.msgUID) else { continue }
             processedMsgUIDs.insert(msg.msgUID)
+            processedMsgOrder.append(msg.msgUID)
 
             // Excluded contacts — skip silently
             if excludedSet.contains(msg.chatUsername) || excludedSet.contains(msg.senderUsername) {
@@ -731,6 +757,10 @@ actor AutopilotService {
         // I6 fix: track the actual outgoing message UID, not the trigger UID
         if let uid = outgoingMsgUID {
             sentMsgUIDs.insert(uid)
+            // Prune to prevent unbounded growth in long sessions
+            if sentMsgUIDs.count > 500 {
+                sentMsgUIDs = Set(sentMsgUIDs.suffix(250))
+            }
         }
         return verified
     }
@@ -773,7 +803,7 @@ actor AutopilotService {
         let myUname = reader.myUsername()
 
         guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 3) else {
-            return (true, nil) // fail open — can't read DB
+            return (false, nil) // fail closed — can't verify, treat as failed
         }
 
         for msg in msgs {
