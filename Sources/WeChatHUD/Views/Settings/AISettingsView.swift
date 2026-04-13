@@ -14,6 +14,15 @@ struct AISettingsView: View {
     @State private var apiKey = ""
     @State private var replyDebtAIEnabled = false
     @State private var replyDebtShadowMode = true
+    // AI capability toggles
+    @State private var summaryEnabled = true
+    @State private var suggestionsEnabled = true
+    @State private var moodDetectionEnabled = true
+    // Notification filter
+    @State private var notifyAtMention = true
+    @State private var notifyVIP = true
+    @State private var notifyWhitelist = false
+    @State private var notifyDuration = 3
     @State private var recentReplyDebtAudit: [AIAuditEntry] = []
     @State private var recentGroupContextAudit: [AIAuditEntry] = []
     @State private var recentReplyDebtFeedback: [AIFeedbackEntry] = []
@@ -63,6 +72,69 @@ struct AISettingsView: View {
                         .font(.system(size: 11))
                         .foregroundColor(testResult.contains("成功") ? .green : .red)
                 }
+            }
+
+            Divider()
+
+            // ── 管家行为 ──
+            VStack(alignment: .leading, spacing: 4) {
+                Text("管家行为")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("消息摘要分析", isOn: $summaryEnabled)
+                        .font(.system(size: 12))
+                    Text("为每条消息生成 AI 摘要，替代原始消息预览。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+
+                    Toggle("回复建议", isOn: $suggestionsEnabled)
+                        .font(.system(size: 12))
+                    Text("展开消息时提供 AI 回复建议。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+
+                    Toggle("情绪检测", isOn: $moodDetectionEnabled)
+                        .font(.system(size: 12))
+                    Text("为 VIP 联系人检测消息情绪。")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .toggleStyle(.switch)
+                .padding(.top, 4)
+            }
+
+            Divider()
+
+            // ── 通知过滤 ──
+            VStack(alignment: .leading, spacing: 4) {
+                Text("通知过滤")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("群聊 @提及", isOn: $notifyAtMention)
+                        .font(.system(size: 12))
+                    Toggle("VIP 消息", isOn: $notifyVIP)
+                        .font(.system(size: 12))
+                    Toggle("所有白名单消息", isOn: $notifyWhitelist)
+                        .font(.system(size: 12))
+
+                    HStack {
+                        Text("提醒时长")
+                            .font(.system(size: 12))
+                        Picker("", selection: $notifyDuration) {
+                            Text("2秒").tag(2)
+                            Text("3秒").tag(3)
+                            Text("5秒").tag(5)
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 150)
+                    }
+                }
+                .toggleStyle(.switch)
+                .padding(.top, 4)
             }
 
             Divider()
@@ -239,6 +311,13 @@ struct AISettingsView: View {
         .onChange(of: apiKey) { _, _ in saveAIConfig() }
         .onChange(of: replyDebtAIEnabled) { _, _ in saveReplyDebtAIConfig() }
         .onChange(of: replyDebtShadowMode) { _, _ in saveReplyDebtAIConfig() }
+        .onChange(of: summaryEnabled) { _, _ in saveAIToggles() }
+        .onChange(of: suggestionsEnabled) { _, _ in saveAIToggles() }
+        .onChange(of: moodDetectionEnabled) { _, _ in saveAIToggles() }
+        .onChange(of: notifyAtMention) { _, _ in saveNotificationConfig() }
+        .onChange(of: notifyVIP) { _, _ in saveNotificationConfig() }
+        .onChange(of: notifyWhitelist) { _, _ in saveNotificationConfig() }
+        .onChange(of: notifyDuration) { _, _ in saveNotificationConfig() }
     }
 
     private func settingsField(_ label: String, text: Binding<String>, isSecure: Bool = false) -> some View {
@@ -295,6 +374,19 @@ struct AISettingsView: View {
             replyDebtAIEnabled = cfg.enabled
             replyDebtShadowMode = cfg.shadowMode
         }
+
+        // AI capability toggles
+        summaryEnabled = cfg.summaryEnabled
+        suggestionsEnabled = cfg.suggestionsEnabled
+        moodDetectionEnabled = cfg.moodDetectionEnabled
+
+        // Notification filter
+        let notifCfg = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
+        notifyAtMention = notifCfg.atMention
+        notifyVIP = notifCfg.important
+        notifyWhitelist = notifCfg.allWhitelist
+        notifyDuration = notifCfg.durationSeconds
+
         reloadRecentReplyDebtAudit()
         reloadRecentGroupContextAudit()
         reloadReplyDebtFeedback()
@@ -321,6 +413,27 @@ struct AISettingsView: View {
         NotificationCenter.default.post(name: .hudReplyDebtAIConfigDidChange, object: nil)
         showSaved = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }
+    }
+
+    private func saveAIToggles() {
+        guard didLoad else { return }
+        var cfg = store.loadAIConfig()
+        cfg.summaryEnabled = summaryEnabled
+        cfg.suggestionsEnabled = suggestionsEnabled
+        cfg.moodDetectionEnabled = moodDetectionEnabled
+        try? store.setSettingJSON("ai", value: cfg)
+        NotificationCenter.default.post(name: .hudAIConfigDidChange, object: nil)
+    }
+
+    private func saveNotificationConfig() {
+        guard didLoad else { return }
+        let cfg = NotificationConfig(
+            atMention: notifyAtMention,
+            important: notifyVIP,
+            allWhitelist: notifyWhitelist,
+            durationSeconds: notifyDuration
+        )
+        try? store.setSettingJSON("notification", value: cfg)
     }
 
     private func reloadRecentReplyDebtAudit() {
