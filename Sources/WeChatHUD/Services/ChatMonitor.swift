@@ -68,6 +68,12 @@ final class ChatMonitor: ObservableObject {
     @Published var inboxItems: [InboxItem] = []
     /// Published handled items for the UI (dismissed/snoozed/silenced).
     @Published var handledItems: [InboxItem] = []
+    /// Chat insight analysis results keyed by chatUsername.
+    @Published var chatInsights: [String: ChatInsightResult] = [:]
+    /// Global briefing across all whitelisted chats.
+    @Published var globalBriefing: GlobalBriefing? = nil
+    /// True while insight analysis is running.
+    @Published var insightLoading: Bool = false
     /// Tracks dismissed inbox items: chatUsername → timestamp at time of dismiss.
     private var dismissedInbox: [String: Int64] = [:]
     /// Tracks snoozed inbox items: chatUsername → snooze expiry date.
@@ -113,6 +119,9 @@ final class ChatMonitor: ObservableObject {
     }()
     private lazy var inboxSummarizer: AIInboxSummarizer = {
         AIInboxSummarizer(store: store, config: store.loadAIConfig())
+    }()
+    private lazy var chatInsightService: AIChatInsight = {
+        AIChatInsight(store: store, config: store.loadAIConfig())
     }()
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
@@ -1133,6 +1142,120 @@ final class ChatMonitor: ObservableObject {
         )
         dailyReport = await dailyRetrospector.retrospect(input)
         dailyReportGeneratedAt = Date()
+    }
+
+    /// Load chat insight analysis for all whitelisted chats.
+    func loadInsight(force: Bool = false) async {
+        // Skip if already loading or recently loaded (within 30 min)
+        guard !insightLoading else { return }
+        if !force, let briefing = globalBriefing {
+            let age = Date().timeIntervalSince(
+                ISO8601DateFormatter().date(from: briefing.date) ?? .distantPast
+            )
+            if age < 1800 { return }
+        }
+
+        insightLoading = true
+
+        let whitelist = store.getWhitelist()
+        let selfUsername = reader.myUsername()
+        let selfDisplayName = reader.displayName(for: selfUsername)
+        let dateStr = ISO8601DateFormatter().string(from: Date())
+        let timeRange = "今天"
+
+        var results: [String: ChatInsightResult] = [:]
+        var statsResults: [ChatStatsData] = []
+
+        // Analyze each whitelisted chat
+        for entry in whitelist {
+            let messages: [MessageInfo]
+            do {
+                messages = try reader.getMessages(chatUsername: entry.id, limit: 200)
+            } catch { continue }
+
+            // Filter to today's messages
+            let todayStart = Calendar.current.startOfDay(for: Date())
+            let todayMessages = messages.filter {
+                Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart
+            }
+            guard !todayMessages.isEmpty else { continue }
+
+            // Pure stats
+            let stats = ChatInsightEngine.computeStats(
+                messages: todayMessages,
+                selfUsername: selfUsername,
+                chatUsername: entry.id,
+                chatName: entry.displayName,
+                isGroup: entry.isGroup,
+                category: entry.category
+            )
+            statsResults.append(stats)
+
+            // Format messages for AI
+            let formatted = todayMessages
+                .sorted { $0.createTime < $1.createTime }
+                .map { (sender: $0.senderName, body: $0.text, time: $0.createTime) }
+
+            // Get recalled messages for this chat
+            let recalled = recalledMessages
+                .filter { $0.chatUsername == entry.id }
+                .map { (sender: $0.senderName, content: $0.originalText) }
+
+            // Get conversation memory
+            let memoryStr = store.loadConversationMemory(chatUsername: entry.id)?
+                .formatForPrompt() ?? ""
+
+            // AI analysis
+            if let result = await chatInsightService.analyzeChat(
+                chatUsername: entry.id,
+                chatName: entry.displayName,
+                chatType: entry.isGroup ? "group" : "private",
+                category: entry.category.rawValue,
+                selfName: selfDisplayName,
+                timeRange: timeRange,
+                messages: formatted,
+                recalledMessages: recalled,
+                memory: memoryStr
+            ) {
+                results[entry.id] = result
+            }
+        }
+
+        // Compute global stats
+        let totalMessages = statsResults.reduce(0) { $0 + $1.messageCount }
+        let myMessages = statsResults.reduce(0) { $0 + $1.myMessageCount }
+        let activeGroups = statsResults.filter { $0.isGroup }.count
+        let totalGroups = whitelist.filter { $0.isGroup }.count
+        let activePrivate = statsResults.filter { !$0.isGroup }.count
+        let workMessages = statsResults
+            .filter { $0.category == .work }
+            .reduce(0) { $0 + $1.messageCount }
+        let workRatio = totalMessages > 0 ? Double(workMessages) / Double(totalMessages) : 0
+
+        let globalStats = BriefingStats(
+            totalMessages: totalMessages,
+            myMessages: myMessages,
+            activeGroups: activeGroups,
+            totalGroups: totalGroups,
+            activePrivateChats: activePrivate,
+            workRatio: workRatio
+        )
+
+        let insightPairs = results.compactMap { (key, value) -> (chatName: String, result: ChatInsightResult)? in
+            guard let entry = whitelist.first(where: { $0.id == key }) else { return nil }
+            return (chatName: entry.displayName, result: value)
+        }
+
+        let briefing = await chatInsightService.generateGlobalBriefing(
+            selfName: selfDisplayName,
+            date: dateStr,
+            chatInsights: insightPairs,
+            globalStats: globalStats
+        )
+
+        chatInsights = results
+        globalBriefing = briefing
+        insightLoading = false
     }
 
     /// Load recent messages for a chat as (sender, body) tuples — used by
