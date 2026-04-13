@@ -1,13 +1,40 @@
 import SwiftUI
 
-/// Four-tier contact manager: VIP → 白名单 → 灰名单 → (陌生人折叠)
-/// Redesigned to match macOS System Settings interaction patterns.
 struct ContactsSettingsView: View {
+    enum SubTab: String, CaseIterable {
+        case contacts = "通讯录"
+        case aiScan = "AI 扫描"
+        case blockRules = "屏蔽规则"
+    }
+
+    @State private var selectedSubTab: SubTab = .contacts
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("", selection: $selectedSubTab) {
+                ForEach(SubTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 320)
+
+            switch selectedSubTab {
+            case .contacts: ContactsListSubView()
+            case .aiScan: WhitelistScanView()
+            case .blockRules: BlockRulesSubView()
+            }
+        }
+    }
+}
+
+// MARK: - Contacts List
+
+private struct ContactsListSubView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
 
     @State private var contacts: [ContactEntry] = []
-    @State private var ignoredSenders: [IgnoredSenderRule] = []
     @State private var searchText = ""
     @State private var editingContact: ContactEntry?
     @State private var showAddSheet = false
@@ -15,91 +42,57 @@ struct ContactsSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Top bar: search + add button
             HStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
+                        .foregroundColor(.secondary).font(.system(size: 12))
                     TextField("搜索联系人", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
+                        .textFieldStyle(.roundedBorder).font(.system(size: 12))
                 }
-
-                Button {
-                    showAddSheet = true
-                } label: {
+                Button { showAddSheet = true } label: {
                     Label("添加", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(.borderedProminent).controlSize(.small)
             }
 
-            // Stats bar
-            if !contacts.isEmpty {
-                statsBar
-            }
+            if !contacts.isEmpty { statsBar }
 
-            // Contact list using native List
             List {
                 contactSection(level: .vip, title: "VIP", color: .yellow)
                 contactSection(level: .whitelist, title: "白名单", color: .blue)
                 contactSection(level: .greylist, title: "灰名单", color: .gray)
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
-            .frame(minHeight: 180)
-
-            Divider()
-
-            WhitelistScanView()
-
-            Divider().padding(.vertical, 8)
-
-            ignoredSendersSection
+            .frame(minHeight: 300)
         }
-        .onAppear {
-            if !didLoad {
-                reload()
-                didLoad = true
-            }
-        }
+        .onAppear { if !didLoad { reload(); didLoad = true } }
         .sheet(item: $editingContact) { contact in
             ContactEditSheet(contact: contact, store: store, onSave: { reload() })
         }
         .sheet(isPresented: $showAddSheet) {
-            // Placeholder add sheet — reuse ContactEditSheet when a new contact model exists
-            Text("添加联系人（待实现）")
-                .padding(32)
+            Text("添加联系人（待实现）").padding(32)
         }
     }
-
-    // MARK: - Stats bar
 
     private var statsBar: some View {
         let vipCount   = contacts.filter { $0.attentionLevel == .vip }.count
         let whiteCount = contacts.filter { $0.attentionLevel == .whitelist }.count
         let greyCount  = contacts.filter { $0.attentionLevel == .greylist }.count
         return HStack(spacing: 12) {
-            statPill("VIP",  count: vipCount,   color: .yellow)
+            statPill("VIP", count: vipCount, color: .yellow)
             statPill("白名单", count: whiteCount, color: .blue)
-            statPill("灰名单", count: greyCount,  color: .gray)
+            statPill("灰名单", count: greyCount, color: .gray)
             Spacer()
-            Text("共 \(contacts.count) 人")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+            Text("共 \(contacts.count) 人").font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 
     private func statPill(_ label: String, count: Int, color: Color) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text("\(count) \(label)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(.secondary)
+            Text("\(count) \(label)").font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
         }
     }
-
-    // MARK: - List sections
 
     @ViewBuilder
     private func contactSection(level: AttentionLevel, title: String, color: Color) -> some View {
@@ -110,72 +103,43 @@ struct ContactsSettingsView: View {
                     || $0.displayName.localizedCaseInsensitiveContains(searchText)
                     || $0.role.label.localizedCaseInsensitiveContains(searchText)
             }
-
         if !filtered.isEmpty {
             Section {
-                ForEach(filtered) { contact in
-                    contactRow(contact, levelColor: color)
-                }
+                ForEach(filtered) { contact in contactRow(contact, levelColor: color) }
             } header: {
                 HStack(spacing: 6) {
                     Circle().fill(color).frame(width: 7, height: 7)
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.primary)
-                    Text("(\(filtered.count))")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                    Text(title).font(.system(size: 11, weight: .semibold)).foregroundColor(.primary)
+                    Text("(\(filtered.count))").font(.system(size: 11)).foregroundColor(.secondary)
                 }
             }
         }
     }
 
-    // MARK: - Contact row
-
     private func contactRow(_ contact: ContactEntry, levelColor: Color) -> some View {
         Button(action: { editingContact = contact }) {
             HStack(spacing: 8) {
-                // Role icon
-                Text(contact.role.icon)
-                    .font(.system(size: 14))
-
-                // Name + note
+                Text(contact.role.icon).font(.system(size: 14))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(contact.displayName)
-                        .font(.system(size: 12))
-                        .foregroundColor(.primary)
+                    Text(contact.displayName).font(.system(size: 12)).foregroundColor(.primary)
                     if !contact.roleNote.isEmpty {
-                        Text(contact.roleNote)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        Text(contact.roleNote).font(.system(size: 10))
+                            .foregroundColor(.secondary).lineLimit(1)
                     }
                 }
-
                 Spacer()
-
-                // Role badge
                 Text(contact.role.label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(levelColor)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(levelColor.opacity(0.12))
-                    .cornerRadius(3)
-
-                // Reply window indicator
+                    .font(.system(size: 10, weight: .medium)).foregroundColor(levelColor)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(levelColor.opacity(0.12)).cornerRadius(3)
                 if contact.replyWindowMinutes > 0 {
-                    Text("\(contact.replyWindowMinutes)m")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                    Text("\(contact.replyWindowMinutes)m").font(.system(size: 9)).foregroundColor(.secondary)
                 }
-
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(Color(nsColor: .tertiaryLabelColor))
             }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+            .padding(.vertical, 2).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -197,78 +161,67 @@ struct ContactsSettingsView: View {
         }
     }
 
-    // MARK: - Ignored senders section
+    private func reload() { contacts = store.loadContacts(level: nil) }
+}
 
-    private var ignoredSendersSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("忽略的发送人")
-                .font(.system(size: 13, weight: .semibold))
+// MARK: - Block Rules
 
+private struct BlockRulesSubView: View {
+    @EnvironmentObject private var store: HUDStore
+    @EnvironmentObject private var monitor: ChatMonitor
+
+    @State private var ignoredSenders: [IgnoredSenderRule] = []
+    @State private var didLoad = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
             Text("通过消息右键菜单添加的忽略规则。被忽略的人不会进入未读统计。")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .font(.system(size: 11)).foregroundColor(.secondary)
 
             if ignoredSenders.isEmpty {
-                Text("没有忽略的发送人")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 4)
-            } else {
-                VStack(spacing: 6) {
-                    ForEach(ignoredSenders) { rule in
-                        ignoredSenderRow(rule)
-                    }
+                VStack(spacing: 8) {
+                    Image(systemName: "person.slash")
+                        .font(.system(size: 28)).foregroundColor(.secondary.opacity(0.4))
+                    Text("没有忽略的发送人")
+                        .font(.system(size: 12)).foregroundColor(.secondary)
                 }
+                .frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                List {
+                    ForEach(ignoredSenders) { rule in ignoredSenderRow(rule) }
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(minHeight: 200)
             }
         }
+        .onAppear { if !didLoad { reload(); didLoad = true } }
     }
 
     private func ignoredSenderRow(_ rule: IgnoredSenderRule) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(rule.senderName)
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(rule.chatName)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    Text(rule.senderName).font(.system(size: 12, weight: .semibold))
+                    Text(rule.chatName).font(.system(size: 11))
+                        .foregroundColor(.secondary).lineLimit(1)
                 }
                 if !rule.senderUsername.isEmpty {
-                    Text(rule.senderUsername)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    Text(rule.senderUsername).font(.system(size: 10))
+                        .foregroundColor(.secondary).lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
             Button("取消忽略") {
-                monitor.unignoreSender(
-                    chatUsername: rule.chatUsername,
-                    senderUsername: rule.senderUsername,
-                    senderName: rule.senderName
-                )
-                reloadIgnoredSenders()
+                monitor.unignoreSender(chatUsername: rule.chatUsername,
+                                       senderUsername: rule.senderUsername,
+                                       senderName: rule.senderName)
+                reload()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.bordered).controlSize(.small)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
     }
 
-    // MARK: - Helpers
-
-    private func reload() {
-        contacts = store.loadContacts(level: nil)
-        reloadIgnoredSenders()
-    }
-
-    private func reloadIgnoredSenders() {
-        ignoredSenders = store.loadIgnoredSenders()
-    }
+    private func reload() { ignoredSenders = store.loadIgnoredSenders() }
 }
 
 // MARK: - Edit Sheet
@@ -288,45 +241,31 @@ struct ContactEditSheet: View {
         self.contact = contact
         self.store = store
         self.onSave = onSave
-        _selectedLevel  = State(initialValue: contact.attentionLevel)
-        _selectedRole   = State(initialValue: contact.role)
-        _roleNote       = State(initialValue: contact.roleNote)
-        _replyWindow    = State(initialValue: contact.replyWindowMinutes)
+        _selectedLevel = State(initialValue: contact.attentionLevel)
+        _selectedRole  = State(initialValue: contact.role)
+        _roleNote      = State(initialValue: contact.roleNote)
+        _replyWindow   = State(initialValue: contact.replyWindowMinutes)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Title bar
             HStack {
-                Text("编辑联系人")
-                    .font(.headline)
+                Text("编辑联系人").font(.headline)
                 Spacer()
-                Button("取消") { dismiss() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                Button("保存") { save() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                Button("取消") { dismiss() }.buttonStyle(.bordered).controlSize(.small)
+                Button("保存") { save() }.buttonStyle(.borderedProminent).controlSize(.small)
             }
             .padding()
-
             Divider()
-
-            // Form body
             Form {
                 Section("基本信息") {
                     LabeledContent("名称") {
-                        HStack(spacing: 6) {
-                            Text(contact.role.icon)
-                            Text(contact.displayName)
-                        }
+                        HStack(spacing: 6) { Text(contact.role.icon); Text(contact.displayName) }
                     }
                     LabeledContent("用户名") {
-                        Text(contact.username)
-                            .foregroundColor(.secondary)
+                        Text(contact.username).foregroundColor(.secondary)
                     }
                 }
-
                 Section("关注设置") {
                     Picker("关注级别", selection: $selectedLevel) {
                         Text("VIP").tag(AttentionLevel.vip)
@@ -334,62 +273,40 @@ struct ContactEditSheet: View {
                         Text("灰名单").tag(AttentionLevel.greylist)
                     }
                     .onChange(of: selectedLevel) {
-                        // Auto-select first valid role when level changes
                         let roles = rolesForLevel(selectedLevel)
                         if !roles.contains(selectedRole) {
                             selectedRole = roles.first ?? selectedRole
-                            replyWindow  = selectedRole.defaultReplyWindowMinutes
+                            replyWindow = selectedRole.defaultReplyWindowMinutes
                         }
                     }
-
                     Picker("身份角色", selection: $selectedRole) {
                         ForEach(rolesForLevel(selectedLevel), id: \.self) { role in
                             Text("\(role.icon) \(role.label)").tag(role)
                         }
                     }
-                    .onChange(of: selectedRole) {
-                        replyWindow = selectedRole.defaultReplyWindowMinutes
-                    }
-
-                    TextField("备注", text: $roleNote)
-                        .textFieldStyle(.roundedBorder)
+                    .onChange(of: selectedRole) { replyWindow = selectedRole.defaultReplyWindowMinutes }
+                    TextField("备注", text: $roleNote).textFieldStyle(.roundedBorder)
                 }
-
                 Section("回复追踪") {
                     HStack(spacing: 8) {
                         TextField("回复窗口（分钟）", value: $replyWindow, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 100)
+                            .textFieldStyle(.roundedBorder).frame(width: 100)
                         Text("默认 \(selectedRole.defaultReplyWindowMinutes) 分钟，0 = 不追踪")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
+                            .foregroundColor(.secondary).font(.caption)
                     }
                 }
-
-                Section {
-                    Text(selectedRole.roleDescription)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                } header: {
-                    Text("角色说明")
-                }
+                Section { Text(selectedRole.roleDescription).font(.caption).foregroundColor(.secondary) }
+                    header: { Text("角色说明") }
             }
             .formStyle(.grouped)
         }
         .frame(width: 420, height: 440)
     }
 
-    // MARK: - Helpers
-
     private func save() {
-        try? store.upsertContact(
-            username: contact.username,
-            displayName: contact.displayName,
-            attentionLevel: selectedLevel,
-            role: selectedRole,
-            roleNote: roleNote,
-            replyWindowMinutes: replyWindow
-        )
+        try? store.upsertContact(username: contact.username, displayName: contact.displayName,
+                                  attentionLevel: selectedLevel, role: selectedRole,
+                                  roleNote: roleNote, replyWindowMinutes: replyWindow)
         onSave()
         dismiss()
     }

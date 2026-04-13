@@ -1,263 +1,259 @@
 import SwiftUI
 
-/// Batch whitelist scan UI shown in ContactsSettingsView.
-/// Scans recent unread contacts (not already whitelisted) through the
-/// AIWhitelistCategorizer and lets the user accept or reject per-item.
 struct WhitelistScanView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
 
     @State private var isScanning = false
-    @State private var scanned = 0
-    @State private var total = 0
-    @State private var results: [ScanResult] = []
-    @State private var dismissedKeys: Set<String> = []
+    @State private var results: [ScanResultItem] = []
+    @State private var dismissed: [ScanDismissedEntry] = []
+    @State private var showDismissed = false
 
-    struct ScanResult: Identifiable {
-        let id: String  // chatUsername
-        let chatUsername: String
+    struct ScanResultItem: Identifiable {
+        let id: String
+        let username: String
         let displayName: String
         let isGroup: Bool
-        let suggestion: AIWhitelistCategorizer.Suggestion
+        let recentCount: Int
+        let category: String
+        let shouldWhitelist: Bool
+        let reason: String
         var accepted: Bool = false
-        var rejected: Bool = false
     }
 
-    private var pendingResults: [ScanResult] {
-        results.filter { !$0.accepted && !$0.rejected && !dismissedKeys.contains($0.id) }
+    private var pendingResults: [ScanResultItem] {
+        results.filter { !$0.accepted && $0.shouldWhitelist }
     }
 
-    private var acceptedResults: [ScanResult] {
-        results.filter { $0.accepted }
+    private var groupedResults: [(String, [ScanResultItem])] {
+        let groups = Dictionary(grouping: pendingResults) { $0.category }
+        return ["work", "life", "other"].compactMap { key in
+            guard let items = groups[key], !items.isEmpty else { return nil }
+            return (key, items)
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI 白名单扫描")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.primary)
-                    Text("扫描未关注的联系人，AI 自动建议是否加入白名单")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
                 Button(action: startScan) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         if isScanning {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .scaleEffect(0.8)
+                            ProgressView().controlSize(.small).scaleEffect(0.8)
                         } else {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 10))
+                            Image(systemName: "sparkles").font(.system(size: 12))
                         }
                         Text(isScanning ? "扫描中…" : "开始扫描")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .controlSize(.regular)
                 .disabled(isScanning)
-            }
 
-            // Progress bar
-            if isScanning || (total > 0 && scanned < total) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: total > 0 ? Double(scanned) / Double(total) : 0)
-                        .progressViewStyle(.linear)
-                    Text("已扫描 \(scanned) / \(total)")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                Spacer()
+
+                if !pendingResults.isEmpty {
+                    Button("全部接受") { acceptAll() }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                    Button("全部忽略") { dismissAll() }
+                        .buttonStyle(.bordered).controlSize(.small)
                 }
             }
 
-            // Results
-            if !results.isEmpty {
-                if !pendingResults.isEmpty {
-                    HStack {
-                        Text("扫描结果 (\(pendingResults.count) 条建议)")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        // Bulk actions
-                        Button("全部接受") {
-                            acceptAll()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.mini)
+            if !results.isEmpty && pendingResults.isEmpty && !isScanning {
+                Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+            }
 
-                        Button("全部忽略") {
-                            rejectAll()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
+            ForEach(groupedResults, id: \.0) { category, items in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Circle().fill(colorFor(category)).frame(width: 8, height: 8)
+                        Text(labelFor(category))
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("(\(items.count))")
+                            .font(.system(size: 11)).foregroundColor(.secondary)
                     }
-
-                    VStack(spacing: 2) {
-                        ForEach(pendingResults) { result in
-                            scanResultRow(result)
-                        }
+                    VStack(spacing: 1) {
+                        ForEach(items) { item in resultRow(item) }
                     }
-                    .padding(6)
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(8)
-                } else if !acceptedResults.isEmpty {
-                    Text("已接受 \(acceptedResults.count) 个建议")
-                        .font(.system(size: 10))
-                        .foregroundColor(.green.opacity(0.7))
-                } else {
-                    Text("已处理所有建议")
-                        .font(.system(size: 10))
+                }
+            }
+
+            if !dismissed.isEmpty {
+                Divider()
+                DisclosureGroup(isExpanded: $showDismissed) {
+                    VStack(spacing: 1) {
+                        ForEach(dismissed) { entry in dismissedRow(entry) }
+                    }
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
+                } label: {
+                    Text("已忽略 (\(dismissed.count))")
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
                 }
             }
         }
+        .onAppear { loadDismissed() }
     }
 
-    private func scanResultRow(_ result: ScanResult) -> some View {
-        HStack(spacing: 8) {
-            // Category badge
-            let catLabel = result.suggestion.category == "work" ? "工作" :
-                           result.suggestion.category == "life" ? "生活" : "其他"
-            let catColor: Color = result.suggestion.category == "work" ? .blue :
-                                  result.suggestion.category == "life" ? .green : .gray
+    // MARK: - Helpers
 
-            Text(catLabel)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(catColor)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(catColor.opacity(0.15))
-                .cornerRadius(3)
+    private func labelFor(_ cat: String) -> String {
+        switch cat { case "work": return "工作"; case "life": return "生活"; default: return "其他" }
+    }
 
+    private func colorFor(_ cat: String) -> Color {
+        switch cat { case "work": return .blue; case "life": return .green; default: return .gray }
+    }
+
+    // MARK: - Rows
+
+    private func resultRow(_ item: ScanResultItem) -> some View {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(result.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                Text(result.suggestion.reason)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(item.displayName)
+                        .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    if item.isGroup {
+                        Text("群").font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.12)).cornerRadius(3)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Text("\(item.recentCount) 条/45天")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                    Text(item.reason)
+                        .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                }
             }
-
             Spacer()
-
-            Text("\(Int(result.suggestion.confidence * 100))%")
-                .font(.system(size: 9))
-                .foregroundColor(.secondary)
-                .monospacedDigit()
-
-            Button("接受") {
-                accept(result)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.mini)
-
-            Button("忽略") {
-                reject(result)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
+            Button("加入") { accept(item) }
+                .buttonStyle(.borderedProminent).controlSize(.mini)
+            Button("忽略") { dismiss(item) }
+                .buttonStyle(.bordered).controlSize(.mini)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+    }
+
+    private func dismissedRow(_ entry: ScanDismissedEntry) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.displayName.isEmpty ? entry.username : entry.displayName)
+                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text("忽略于 \(entry.dismissedAt.formatted(.dateTime.month().day()))")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            Spacer()
+            Button("加入白名单") { acceptDismissed(entry) }
+                .buttonStyle(.borderedProminent).controlSize(.mini)
+            Button("删除") { removeDismissed(entry) }
+                .buttonStyle(.bordered).controlSize(.mini)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
     }
 
     // MARK: - Actions
 
-    private func accept(_ result: ScanResult) {
-        let category = result.suggestion.whitelistCategory
-        try? store.addToWhitelist(
-            username: result.chatUsername,
-            displayName: result.displayName,
-            isGroup: result.isGroup,
-            category: category,
-            attentionLevel: .watch
-        )
-        if let idx = results.firstIndex(where: { $0.id == result.id }) {
-            results[idx].accepted = true
-        }
+    private func accept(_ item: ScanResultItem) {
+        let cat: WhitelistCategory = item.category == "work" ? .work : item.category == "life" ? .life : .other
+        try? store.addToWhitelist(username: item.username, displayName: item.displayName,
+                                  isGroup: item.isGroup, category: cat, attentionLevel: .watch)
+        if let idx = results.firstIndex(where: { $0.id == item.id }) { results[idx].accepted = true }
     }
 
-    private func reject(_ result: ScanResult) {
-        dismissedKeys.insert(result.id)
-        if let idx = results.firstIndex(where: { $0.id == result.id }) {
-            results[idx].rejected = true
-        }
+    private func dismiss(_ item: ScanResultItem) {
+        try? store.dismissScanResult(username: item.username, displayName: item.displayName)
+        results.removeAll { $0.id == item.id }
+        loadDismissed()
     }
 
-    private func acceptAll() {
-        for result in pendingResults {
-            accept(result)
-        }
+    private func acceptAll() { for item in pendingResults { accept(item) } }
+    private func dismissAll() { for item in pendingResults { dismiss(item) } }
+
+    private func acceptDismissed(_ entry: ScanDismissedEntry) {
+        try? store.addToWhitelist(username: entry.username, displayName: entry.displayName,
+                                  isGroup: entry.username.contains("@chatroom"),
+                                  category: .other, attentionLevel: .watch)
+        try? store.undismissScanResult(username: entry.username)
+        loadDismissed()
     }
 
-    private func rejectAll() {
-        for result in pendingResults {
-            reject(result)
-        }
+    private func removeDismissed(_ entry: ScanDismissedEntry) {
+        try? store.undismissScanResult(username: entry.username)
+        loadDismissed()
     }
+
+    private func loadDismissed() { dismissed = store.loadDismissedScanResults() }
+
+    // MARK: - Scan
 
     private func startScan() {
         guard !isScanning else { return }
         isScanning = true
-        scanned = 0
         results = []
-        dismissedKeys = []
 
         Task {
-            // Gather candidates from the WeChat DB — active contacts not yet whitelisted.
             let candidates = monitor.scanCandidates(limit: 50)
-
-            let categorizer = AIWhitelistCategorizer(
-                store: store,
-                config: store.loadAIConfig()
-            )
-
-            await MainActor.run {
-                total = candidates.count
+            guard !candidates.isEmpty else {
+                await MainActor.run { isScanning = false }
+                return
             }
 
-            for candidate in candidates {
-                // Load recent messages so the AI has real content to classify.
-                // Skip contacts with no message history — AI can't categorize without content.
-                let recentMsgs = monitor.recentMessages(chatUsername: candidate.username)
-                guard !recentMsgs.isEmpty else {
-                    await MainActor.run { scanned += 1 }
-                    continue
-                }
-                let input = AIWhitelistCategorizer.Input(
-                    contactName: candidate.displayName,
-                    isGroup: candidate.isGroup,
-                    messages: recentMsgs
-                )
+            var batchItems: [AIWhitelistCategorizer.BatchItem] = []
+            for (i, c) in candidates.enumerated() {
+                let msgs = monitor.recentMessages(chatUsername: c.username, limit: 5)
+                guard !msgs.isEmpty else { continue }
+                batchItems.append(AIWhitelistCategorizer.BatchItem(
+                    index: i + 1, contactName: c.displayName, isGroup: c.isGroup,
+                    recentCount: c.recentCount, messages: msgs
+                ))
+            }
 
-                if let suggestion = await categorizer.categorize(input), suggestion.shouldWhitelist {
-                    await MainActor.run {
-                        let r = ScanResult(
-                            id: candidate.username,
-                            chatUsername: candidate.username,
-                            displayName: candidate.displayName,
-                            isGroup: candidate.isGroup,
-                            suggestion: suggestion
-                        )
-                        // Avoid duplicates if already added from whitelistSuggestions
-                        if !results.contains(where: { $0.id == r.id }) {
-                            results.append(r)
-                        }
-                    }
-                }
+            let categorizer = AIWhitelistCategorizer(store: store, config: store.loadAIConfig())
+            var allResults: [AIWhitelistCategorizer.BatchResult] = []
 
-                await MainActor.run {
-                    scanned += 1
+            let chunks = stride(from: 0, to: batchItems.count, by: 15).map {
+                Array(batchItems[$0..<min($0 + 15, batchItems.count)])
+            }
+            for chunk in chunks {
+                let reindexed = chunk.enumerated().map { i, item in
+                    AIWhitelistCategorizer.BatchItem(
+                        index: i + 1, contactName: item.contactName, isGroup: item.isGroup,
+                        recentCount: item.recentCount, messages: item.messages
+                    )
+                }
+                let batchResults = await categorizer.categorizeBatch(reindexed)
+                for br in batchResults {
+                    let idx = br.index - 1
+                    guard idx >= 0, idx < chunk.count else { continue }
+                    allResults.append(AIWhitelistCategorizer.BatchResult(
+                        index: chunk[idx].index, category: br.category,
+                        shouldWhitelist: br.shouldWhitelist, reason: br.reason
+                    ))
                 }
             }
 
+            let itemByIndex = Dictionary(uniqueKeysWithValues: batchItems.map { ($0.index, $0) })
+
             await MainActor.run {
+                for br in allResults {
+                    guard let _ = itemByIndex[br.index] else { continue }
+                    let candIdx = br.index - 1
+                    guard candIdx >= 0, candIdx < candidates.count else { continue }
+                    let c = candidates[candIdx]
+                    results.append(ScanResultItem(
+                        id: c.username, username: c.username, displayName: c.displayName,
+                        isGroup: c.isGroup, recentCount: c.recentCount,
+                        category: br.category, shouldWhitelist: br.shouldWhitelist, reason: br.reason
+                    ))
+                }
                 isScanning = false
             }
         }
