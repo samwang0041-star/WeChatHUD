@@ -18,7 +18,14 @@ struct HUDRootView: View {
         // slides left after the window has settled" artifact.
         Group {
             switch panelState.currentState {
-            case .compact, .extended:
+            case .compact:
+                let cw = compactBarWidth(
+                    inboxItems: monitor.inboxItems,
+                    syncStatus: monitor.stats.syncStatus
+                )
+                CompactInboxBar()
+                    .frame(width: cw, height: 36)
+            case .extended:
                 let itemCount = monitor.inboxItems.count
                 let (w, h) = inboxSize(itemCount: itemCount)
                 InboxView()
@@ -39,7 +46,7 @@ struct HUDRootView: View {
 /// Size of the inbox panel for given item count.
 func inboxSize(itemCount: Int) -> (CGFloat, CGFloat) {
     if itemCount == 0 {
-        return (400, 120)
+        return (280, 36)
     }
     let rows = min(CGFloat(itemCount), 10)
     let bodyHeight = max(60, rows * 38)
