@@ -116,7 +116,11 @@ enum ReplyDebtScorer {
             senderName: latestInbound.senderName,
             preview: String(text.prefix(80)),
             latestOutboundPreview: seed.latestOutbound.map { String($0.text.prefix(80)) },
-            timestamp: Date(timeIntervalSince1970: Double(latestInbound.createTime)),
+            // Use the more recent of message createTime and session lastTimestamp.
+            // WeChat's create_time can be stale for certain message types (bots,
+            // forwarded messages), but session.lastTimestamp is always updated
+            // when new activity happens.
+            timestamp: Date(timeIntervalSince1970: Double(max(latestInbound.createTime, seed.session.lastTimestamp))),
             priority: priority,
             score: score,
             unreadCount: seed.session.unreadCount,

@@ -213,6 +213,9 @@ enum ScanEngine {
                 _ = try? reader.refreshIfChanged(relPath: relPath)
             }
 
+            // Build session lookup for timestamp correction
+            let sessionMap = Dictionary(uniqueKeysWithValues: sessions.map { ($0.username, $0) })
+
             for entry in whitelist {
                 let messages: [MessageInfo]
                 do {
@@ -258,7 +261,11 @@ enum ScanEngine {
                         kind = .groupMessage
                     }
 
-                    let msgTime = Date(timeIntervalSince1970: Double(msg.createTime))
+                    // Use the more recent of message createTime and session lastTimestamp.
+                    // WeChat's create_time can be stale for bots/forwarded messages.
+                    let sessionTs = sessionMap[entry.id]?.lastTimestamp ?? msg.createTime
+                    let bestTime = max(msg.createTime, sessionTs)
+                    let msgTime = Date(timeIntervalSince1970: Double(bestTime))
                     let notif = HUDNotification(
                         chatUsername: msg.chatUsername,
                         chatName: msg.chatName,
