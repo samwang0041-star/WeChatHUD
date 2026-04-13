@@ -57,6 +57,8 @@ actor AutopilotService {
 
     /// Paused because user is actively using WeChat.
     private var pausedForUserActivity = false
+    /// Manually paused by user via UI button.
+    private(set) var manuallyPaused = false
 
     /// True while a send is in progress — prevents concurrent UI automation.
     private var isSending = false
@@ -106,9 +108,6 @@ actor AutopilotService {
 
     /// Whether autopilot has an active session.
     var isActive: Bool { sessionId != nil }
-
-    /// Whether autopilot is paused due to user activity.
-    var isPaused: Bool { pausedForUserActivity }
 
     /// True if there are buffered batches waiting to be flushed.
     /// ChatMonitor uses this to schedule a follow-up scan.
@@ -189,9 +188,24 @@ actor AutopilotService {
         sessionId = nil
     }
 
+    /// Whether autopilot is effectively paused (manual or auto).
+    var isPaused: Bool { pausedForUserActivity || manuallyPaused }
+
+    /// Manually pause autopilot (from UI button). Messages continue buffering.
+    func manualPause() {
+        manuallyPaused = true
+        print("[WCHUD] Autopilot: MANUALLY PAUSED by user")
+    }
+
+    /// Resume from manual pause.
+    func manualResume() {
+        manuallyPaused = false
+        print("[WCHUD] Autopilot: MANUALLY RESUMED by user")
+    }
+
     /// Called by ChatMonitor when WeChat becomes the frontmost app.
     func onUserBecameActive() {
-        guard !pausedForUserActivity else { return }
+        guard !isPaused else { return }
         pausedForUserActivity = true
         print("[WCHUD] Autopilot: PAUSED — user is using WeChat")
     }
@@ -424,11 +438,11 @@ actor AutopilotService {
         let representative = latest
 
         // --- Guard: don't act while user is actively using WeChat ---
-        if pausedForUserActivity {
+        if isPaused {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .skipped,
                 reply: nil, confidence: 0, risk: .low,
-                reasoning: "用户正在使用微信，暂停处理"
+                reasoning: isPaused ? "已暂停，暂不处理" : "用户正在使用微信"
             )
         }
 
@@ -584,7 +598,7 @@ actor AutopilotService {
             let readDelay = Double.random(in: 3...10)
             try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
             // Re-check pause state after delay
-            guard !pausedForUserActivity, self.sessionId != nil else {
+            guard !isPaused, self.sessionId != nil else {
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .skipped,
                     reply: nil, confidence: decision.confidence, risk: risk,
@@ -952,7 +966,7 @@ actor AutopilotService {
     /// Send a pending message immediately (skip remaining delay).
     func sendNow(id: UUID, config: AutopilotConfig) async {
         // Fix 3: don't remove from queue if paused — keep it safe
-        guard !pausedForUserActivity else {
+        guard !isPaused else {
             print("[WCHUD] Autopilot: sendNow blocked — user is active, message stays in queue")
             return
         }
@@ -971,7 +985,7 @@ actor AutopilotService {
                 return  // keep in queue, UI should show warning
             }
         }
-        guard !pausedForUserActivity else {
+        guard !isPaused else {
             print("[WCHUD] Autopilot: editAndSend blocked — user is active")
             return
         }
@@ -984,7 +998,7 @@ actor AutopilotService {
     /// Process pending queue — send items whose timer has expired.
     /// Called from ChatMonitor's 60s safety timer.
     func processPendingQueue(config: AutopilotConfig) async {
-        guard !pausedForUserActivity, sessionId != nil else { return }
+        guard !isPaused, sessionId != nil else { return }
         let now = Date()
         let expired = pendingSendQueue.filter { $0.scheduledSendTime <= now }
         for item in expired {
@@ -995,7 +1009,7 @@ actor AutopilotService {
 
     /// Execute a send from the queue.
     private func executeSend(item: PendingSend, config: AutopilotConfig) async {
-        guard !pausedForUserActivity, sessionId != nil else { return }
+        guard !isPaused, sessionId != nil else { return }
         let typingDelay = Self.estimateTypingDelay(for: item.replyText)
         let success = await serialSendWithRateLimit(
             chatName: item.chatName, chatUsername: item.chatUsername,
@@ -1019,7 +1033,7 @@ actor AutopilotService {
     /// Evaluate whitelist contacts and proactively message those who meet criteria.
     /// Called periodically by ChatMonitor (e.g., every 10 minutes during autopilot).
     func evaluateProactiveOutreach(config: AutopilotConfig) async {
-        guard config.proactiveEnabled, !pausedForUserActivity, sessionId != nil else { return }
+        guard config.proactiveEnabled, !isPaused, sessionId != nil else { return }
         guard proactiveSentCount < config.maxProactivePerSession else { return }
 
         // Don't initiate during late night

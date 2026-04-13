@@ -20,7 +20,7 @@ struct AutopilotTabView: View {
                 .padding(.bottom, 4)
 
             // ── Paused banner ──
-            if monitor.autopilotActive && monitor.autopilotPaused {
+            if monitor.autopilotActive && (monitor.autopilotPaused || monitor.autopilotManuallyPaused) {
                 pausedBanner
             }
 
@@ -79,6 +79,25 @@ struct AutopilotTabView: View {
             .buttonStyle(.plain)
 
             if monitor.autopilotActive {
+                // Pause/Resume button
+                Button(action: {
+                    Task {
+                        if monitor.autopilotManuallyPaused {
+                            await monitor.autopilotService?.manualResume()
+                        } else {
+                            await monitor.autopilotService?.manualPause()
+                        }
+                    }
+                }) {
+                    Image(systemName: monitor.autopilotManuallyPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(monitor.autopilotManuallyPaused ? .green : .yellow)
+                        .padding(3)
+                        .background((monitor.autopilotManuallyPaused ? Color.green : Color.yellow).opacity(0.15))
+                        .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+
                 // Session stats
                 HStack(spacing: 6) {
                     miniStat("✓", value: monitor.autopilotSessionSent, color: .green)
@@ -158,10 +177,10 @@ struct AutopilotTabView: View {
         HStack(spacing: 6) {
             Image(systemName: "pause.circle.fill")
                 .font(.system(size: 10))
-            Text("已暂停 — 检测到你正在使用微信")
+            Text(monitor.autopilotManuallyPaused ? "已手动暂停" : "已暂停 — 检测到你正在使用微信")
                 .font(.system(size: 10))
             Spacer()
-            Text("离开微信后自动恢复")
+            Text(monitor.autopilotManuallyPaused ? "点击恢复按钮继续" : "离开微信后自动恢复")
                 .font(.system(size: 9))
                 .foregroundColor(.white.opacity(0.4))
         }
