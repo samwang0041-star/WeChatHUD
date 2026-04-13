@@ -181,8 +181,10 @@ final class ChatMonitor: ObservableObject {
             await self.scan()
         }
 
-        // Safety fallback: cheap mtime-only check every 60s.
+        // Safety fallback: cheap mtime-only check at configurable interval.
         // If FSEvents delivers in time, this is a no-op.
+        let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
+        let scanEveryNTicks = max(1, syncCfg.intervalSeconds / 10)
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 guard let self = self else { return }
@@ -201,9 +203,9 @@ final class ChatMonitor: ObservableObject {
                     }
                 }
 
-                // Full scan every 6th tick (~60s)
+                // Full scan every Nth tick (interval from sync settings)
                 self.safetyTickCount += 1
-                if self.safetyTickCount % 6 == 0 {
+                if self.safetyTickCount % scanEveryNTicks == 0 {
                     await self.scan()
                 }
                 // Proactive outreach every 60th tick (~10 min)
