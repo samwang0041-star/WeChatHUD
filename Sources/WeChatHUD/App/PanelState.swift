@@ -14,6 +14,8 @@ final class PanelState: ObservableObject {
 
     /// Callback to open settings in a separate window.
     var onShowSettings: (() -> Void)?
+    /// Callback to open insight in a separate window.
+    var onShowInsight: (() -> Void)?
 
     /// Last time the user actively interacted (mouse entered extended).
     private var lastActiveAt = Date()

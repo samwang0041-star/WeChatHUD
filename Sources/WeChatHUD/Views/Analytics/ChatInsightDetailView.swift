@@ -4,7 +4,7 @@ import SwiftUI
 struct ChatInsightDetailView: View {
     let chatUsername: String
     let chatName: String
-    let result: ChatInsightResult
+    let result: ChatInsightResult?
 
     @EnvironmentObject var monitor: ChatMonitor
 
@@ -13,12 +13,14 @@ struct ChatInsightDetailView: View {
             // Header
             HStack {
                 Text(chatName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
                 Spacer()
-                Text(result.overallMood)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                if let result = result {
+                    Text(result.overallMood)
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.5))
+                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
@@ -26,6 +28,7 @@ struct ChatInsightDetailView: View {
 
             Divider().background(Color.white.opacity(0.08))
 
+            if let result = result {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     // Topics
@@ -151,8 +154,27 @@ struct ChatInsightDetailView: View {
 
                     Spacer().frame(height: 20)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
                 .padding(.top, 8)
+            }
+            } else {
+                // Loading state — AI analysis in progress
+                VStack(spacing: 12) {
+                    if monitor.insightLoading {
+                        ProgressView()
+                        Text(monitor.insightProgress.isEmpty ? "正在分析..." : monitor.insightProgress)
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.4))
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 24))
+                            .foregroundColor(.orange.opacity(0.3))
+                        Text("点击左侧聊天开始 AI 分析")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .background(Color(red: 0.08, green: 0.08, blue: 0.08))
