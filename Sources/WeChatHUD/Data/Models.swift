@@ -561,12 +561,25 @@ enum ContactRole: String, CaseIterable, Codable, Equatable {
 ///
 /// Always read this config via `HUDStore.loadAIConfig()` rather than
 /// constructing it directly.
+/// Unified AI configuration. Single source of truth for all AI services.
+/// Stored in the `ai` row of the `settings` table.
+/// Read via `HUDStore.loadAIConfig()`.
 struct AIConfig: Codable {
+    // Connection
     var baseURL: String = ""
     var model: String = ""
     var apiKey: String = ""
+
+    // Generation defaults (services may override per-call)
     var maxTokens: Int = 2048
     var temperature: Double = 0.3
+
+    // Capability toggles
+    var summaryEnabled: Bool = true
+    var suggestionsEnabled: Bool = true
+    var moodDetectionEnabled: Bool = true
+    var debtJudgeEnabled: Bool = true
+    var debtJudgeShadowMode: Bool = true
 }
 
 struct SyncConfig: Codable {
@@ -606,29 +619,6 @@ struct NotificationConfig: Codable {
 }
 
 // MARK: - AI Subsystem
-
-/// Configuration for the per-message ask classifier (Role 1 in the AI
-/// design doc).
-///
-/// **Source of truth at runtime is the `classifier` row in the `settings`
-/// table.** The field defaults below mirror the local OMLX baseline so
-/// tests and first-run call sites stay usable even before the settings
-/// row is read back; `HUDStore.seedAISettingsIfMissing()` still writes
-/// the canonical first-launch values and never overwrites customizations.
-///
-/// Always read this config via `HUDStore.loadClassifierConfig()` rather
-/// than constructing it directly — that helper is the single read point
-/// and guarantees post-seed values come back.
-///
-/// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
-struct AIClassifierConfig: Codable {
-    var baseURL: String = "http://127.0.0.1:8000/v1"
-    var model: String = "Qwen3.5-27B-6bit"
-    var apiKey: String = ""
-    var temperature: Double = 0.1
-    var maxTokens: Int = 256
-    var promptVersion: String = "classifier_v1"
-}
 
 /// Categories the classifier emits for what kind of action a message is
 /// asking the recipient to perform. `none` is the negative case.
