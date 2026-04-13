@@ -6,24 +6,26 @@ struct BriefingPanelView: View {
     @EnvironmentObject var monitor: ChatMonitor
     let item: InboxItem
 
+    @State private var briefing: InboxBriefing? = nil
     @State private var isLoading = true
-    @State private var suggestions: [AIReplySuggester.Suggestion] = []
     @State private var hasLoaded = false
-    @State private var copiedSuggestion: AIReplySuggester.Suggestion? = nil
+    @State private var copiedSuggestion: SuggestedReply? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Divider().background(Color.white.opacity(0.08))
 
             VStack(alignment: .leading, spacing: 8) {
-                // Context section (algorithm data — instant)
-                contextSection
-
-                // AI suggestions (loaded async)
                 if isLoading {
+                    // Show instant context while AI loads
+                    contextSection
                     loadingSection
-                } else if !suggestions.isEmpty {
-                    suggestionsSection
+                } else if let b = briefing {
+                    briefingSection(b)
+                } else {
+                    // AI unavailable — show context + error
+                    contextSection
+                    errorSection
                 }
 
                 // Always-available exit
@@ -36,8 +38,7 @@ struct BriefingPanelView: View {
         .task {
             guard !hasLoaded else { return }
             hasLoaded = true
-            let results = await monitor.loadReplySuggestions(for: item.toReplyDebtItem())
-            suggestions = results
+            briefing = await monitor.loadBriefing(for: item)
             isLoading = false
         }
     }
@@ -82,17 +83,59 @@ struct BriefingPanelView: View {
         .padding(.vertical, 4)
     }
 
+    // MARK: - Error
+
+    private var errorSection: some View {
+        Text("管家分析暂时不可用")
+            .font(.system(size: 10))
+            .foregroundColor(.white.opacity(0.35))
+            .padding(.vertical, 4)
+    }
+
+    // MARK: - Full briefing
+
+    private func briefingSection(_ b: InboxBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 📋 情况
+            VStack(alignment: .leading, spacing: 3) {
+                Text("📋 情况")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.35))
+                Text(b.situation)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // 💡 建议
+            VStack(alignment: .leading, spacing: 3) {
+                Text("💡 建议")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.35))
+                Text(b.suggestion)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Reply suggestions
+            if !b.replies.isEmpty {
+                repliesSection(b.replies)
+            }
+        }
+    }
+
     // MARK: - Reply suggestions
 
-    private var suggestionsSection: some View {
+    private func repliesSection(_ replies: [SuggestedReply]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("回复建议")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(.white.opacity(0.35))
                 .padding(.bottom, 2)
 
-            ForEach(Array(suggestions.enumerated()), id: \.offset) { index, suggestion in
-                suggestionRow(suggestion, isRecommended: index == 0)
+            ForEach(replies) { suggestion in
+                suggestionRow(suggestion)
 
                 if copiedSuggestion?.text == suggestion.text {
                     copiedBar
@@ -101,10 +144,14 @@ struct BriefingPanelView: View {
         }
     }
 
-    private func suggestionRow(_ suggestion: AIReplySuggester.Suggestion, isRecommended: Bool) -> some View {
+    private func suggestionRow(_ suggestion: SuggestedReply) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            if isRecommended {
+            if suggestion.recommended {
                 Text("\u{2705}")
+                    .font(.system(size: 10))
+            } else {
+                // Reserve space so text aligns
+                Text("   ")
                     .font(.system(size: 10))
             }
             toneBadge(suggestion.tone)
@@ -122,7 +169,7 @@ struct BriefingPanelView: View {
         }
         .padding(.vertical, 3)
         .padding(.horizontal, 4)
-        .background(isRecommended ? Color.white.opacity(0.04) : Color.clear)
+        .background(suggestion.recommended ? Color.white.opacity(0.04) : Color.clear)
         .cornerRadius(4)
     }
 
@@ -189,7 +236,7 @@ struct BriefingPanelView: View {
             .cornerRadius(3)
     }
 
-    private func copySuggestion(_ suggestion: AIReplySuggester.Suggestion) {
+    private func copySuggestion(_ suggestion: SuggestedReply) {
         WeChatLauncher.copyText(suggestion.text)
         copiedSuggestion = suggestion
     }
