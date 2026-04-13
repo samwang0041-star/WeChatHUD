@@ -124,21 +124,21 @@ class FloatingPanel: NSPanel {
     /// overlapping the menu bar region (真吸顶 — uses .frame, not .visibleFrame).
     func positionAtTop() {
         guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.frame
         let panelWidth = frame.width
-        let x = screenFrame.midX - panelWidth / 2
-        let y = screenFrame.maxY - frame.height  // flush with screen top
+        let visibleTop = screen.visibleFrame.maxY  // below menu bar / notch
+        let x = screen.frame.midX - panelWidth / 2
+        let y = visibleTop - frame.height
         setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    /// Animate the panel frame, keeping it anchored to the screen top.
+    /// Animate the panel frame, keeping it anchored below the menu bar.
     /// Uses AppKit's default animator — no custom duration or curve.
     func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil) {
         guard let screen = NSScreen.main else { return }
-        let screenFrame = screen.frame
+        let visibleTop = screen.visibleFrame.maxY  // below menu bar / notch
         let newWidth = width ?? frame.width
-        let x = screenFrame.midX - newWidth / 2
-        let y = screenFrame.maxY - newHeight
+        let x = screen.frame.midX - newWidth / 2
+        let y = visibleTop - newHeight
 
         animator().setFrame(
             NSRect(x: x, y: y, width: newWidth, height: newHeight),
