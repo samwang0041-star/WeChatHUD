@@ -1298,6 +1298,20 @@ final class ChatMonitor: ObservableObject {
         )
     }
 
+    /// Return active contacts not yet whitelisted — candidates for the
+    /// AI whitelist scan. Uses `topActiveContacts` from the WeChat DB so
+    /// the scan works even when there are no current unread items.
+    func scanCandidates(limit: Int = 50) -> [(username: String, displayName: String, isGroup: Bool)] {
+        let whitelisted = Set(store.loadContacts(level: nil).map(\.username))
+        guard let active = try? reader.topActiveContacts(limit: limit + whitelisted.count) else {
+            return []
+        }
+        return active
+            .filter { !whitelisted.contains($0.username) }
+            .prefix(limit)
+            .map { (username: $0.username, displayName: $0.displayName, isGroup: $0.isGroup) }
+    }
+
     /// Load recent messages for a chat as (sender, body) tuples — used by
     /// WhitelistScanView to give the AI categorizer real content.
     func recentMessages(chatUsername: String, limit: Int = 20) -> [(sender: String, body: String)] {
