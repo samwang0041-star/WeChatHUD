@@ -15,56 +15,71 @@ struct SettingsView: View {
         case data
         case sync
         case ignored
+        case dailyReport
+        case commitments
+        case autopilotDashboard
 
         var label: String {
             switch self {
-            case .contacts:     return "联系人"
-            case .aiEngine:     return "AI 引擎"
-            case .autopilot:    return "自动托管"
-            case .roleConfig:   return "角色配置"
-            case .notification: return "通知"
-            case .data:         return "数据"
-            case .sync:         return "同步"
-            case .ignored:      return "忽略列表"
+            case .contacts:             return "联系人"
+            case .aiEngine:             return "AI 引擎"
+            case .autopilot:            return "自动托管"
+            case .roleConfig:           return "角色配置"
+            case .notification:         return "通知"
+            case .data:                 return "数据"
+            case .sync:                 return "同步"
+            case .ignored:              return "忽略列表"
+            case .dailyReport:          return "日报"
+            case .commitments:          return "承诺"
+            case .autopilotDashboard:   return "托管面板"
             }
         }
 
         var icon: String {
             switch self {
-            case .contacts:     return "person.2.fill"
-            case .aiEngine:     return "cpu"
-            case .autopilot:    return "robot"
-            case .roleConfig:   return "slider.horizontal.3"
-            case .notification: return "bell.badge.fill"
-            case .data:         return "tray.full.fill"
-            case .sync:         return "arrow.triangle.2.circlepath"
-            case .ignored:      return "person.crop.circle.badge.xmark"
+            case .contacts:             return "person.2.fill"
+            case .aiEngine:             return "cpu"
+            case .autopilot:            return "robot"
+            case .roleConfig:           return "slider.horizontal.3"
+            case .notification:         return "bell.badge.fill"
+            case .data:                 return "tray.full.fill"
+            case .sync:                 return "arrow.triangle.2.circlepath"
+            case .ignored:              return "person.crop.circle.badge.xmark"
+            case .dailyReport:          return "doc.text.fill"
+            case .commitments:          return "checkmark.circle.fill"
+            case .autopilotDashboard:   return "robot"
             }
         }
 
         var tint: Color {
             switch self {
-            case .contacts:     return .blue
-            case .aiEngine:     return .purple
-            case .autopilot:    return .cyan
-            case .roleConfig:   return .indigo
-            case .notification: return .red
-            case .data:         return .green
-            case .sync:         return .teal
-            case .ignored:      return .orange
+            case .contacts:             return .blue
+            case .aiEngine:             return .purple
+            case .autopilot:            return .cyan
+            case .roleConfig:           return .indigo
+            case .notification:         return .red
+            case .data:                 return .green
+            case .sync:                 return .teal
+            case .ignored:              return .orange
+            case .dailyReport:          return .mint
+            case .commitments:          return .pink
+            case .autopilotDashboard:   return .cyan
             }
         }
 
         var subtitle: String {
             switch self {
-            case .contacts:     return "管理四级联系人：VIP 全域追踪、白名单按需分析、灰名单低优先级、陌生人忽略。"
-            case .aiEngine:     return "配置本地 AI 模型端点、分类器参数、审计日志与准确度监控。"
-            case .autopilot:    return "配置自动回复托管：信心阈值、频率限制、VIP 忙碌通知模板。"
-            case .roleConfig:   return "为每种身份角色设定回复窗口、通知级别、分类严格度与回复语气。"
-            case .notification: return "决定哪些消息弹出通知、通知时长与勿扰时段。"
-            case .data:         return "查看撤回消息记录、你的承诺追踪、待决事项管理。"
-            case .sync:         return "管理微信数据源、解密缓存策略与同步节奏。"
-            case .ignored:      return "管理被你直接忽略、不再计入未读和 VIP 提醒的人。"
+            case .contacts:             return "管理四级联系人：VIP 全域追踪、白名单按需分析、灰名单低优先级、陌生人忽略。"
+            case .aiEngine:             return "配置本地 AI 模型端点、分类器参数、审计日志与准确度监控。"
+            case .autopilot:            return "配置自动回复托管：信心阈值、频率限制、VIP 忙碌通知模板。"
+            case .roleConfig:           return "为每种身份角色设定回复窗口、通知级别、分类严格度与回复语气。"
+            case .notification:         return "决定哪些消息弹出通知、通知时长与勿扰时段。"
+            case .data:                 return "查看撤回消息记录、你的承诺追踪、待决事项管理。"
+            case .sync:                 return "管理微信数据源、解密缓存策略与同步节奏。"
+            case .ignored:              return "管理被你直接忽略、不再计入未读和 VIP 提醒的人。"
+            case .dailyReport:          return "查看日报和周报摘要。"
+            case .commitments:          return "追踪你和对方的承诺和待办。"
+            case .autopilotDashboard:   return "自动回复活动日志和会话统计。"
             }
         }
     }
@@ -165,6 +180,12 @@ struct SettingsView: View {
                     SettingsCard { SyncSettingsView() }
                 case .ignored:
                     SettingsCard { IgnoredSendersSettingsView() }
+                case .dailyReport:
+                    DailyReportTabView()
+                case .commitments:
+                    CommitmentTabView()
+                case .autopilotDashboard:
+                    AutopilotTabView()
                 }
             }
             .padding(.horizontal, 24)
