@@ -39,6 +39,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelState = PanelState()
         monitor = ChatMonitor(reader: reader, store: store, aiService: aiService)
 
+        // Wire up settings window callback
+        panelState.onShowSettings = { [weak self] in
+            guard let self = self else { return }
+            SettingsWindow.show(
+                panelState: self.panelState,
+                monitor: self.monitor,
+                store: self.store,
+                reader: self.reader
+            )
+        }
+
         // SwiftUI view — inject store and reader so settings views can
         // persist (store) and browse WeChat contacts (reader).
         let rootView = HUDRootView()
