@@ -122,32 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the extended state, the panel must resize too — otherwise a
         // silence action leaves a gap of empty chrome. These sinks fire
         // on every list mutation and re-run `panelSize` in-place.
-        monitor.$unreadItems
-            .dropFirst()
-            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
-            .store(in: &cancellables)
-
-        monitor.$suppressedItems
-            .dropFirst()
-            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
-            .store(in: &cancellables)
-
-        monitor.$recentNotifications
-            .dropFirst()
-            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
-            .store(in: &cancellables)
-
-        monitor.$replyDebtItems
-            .dropFirst()
-            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
-            .store(in: &cancellables)
-
-        monitor.$commitments
-            .dropFirst()
-            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
-            .store(in: &cancellables)
-
-        monitor.$recalledMessages
+        monitor.$inboxItems
             .dropFirst()
             .sink { [weak self] _ in self?.resizeExtendedIfActive() }
             .store(in: &cancellables)
@@ -187,10 +162,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 Task {
                     await self.aiService.updateConfig(cfg)
                 }
-                // I2 fix: propagate AI config changes to running autopilot
+                // Propagate AI config changes to all AI services
                 let classifierCfg = self.store.loadClassifierConfig()
                 Task {
                     await self.monitor.autopilotService?.updateConfig(classifierCfg)
+                    await self.monitor.refreshReplySuggesterConfig()
                 }
             }
             .store(in: &cancellables)
@@ -247,10 +223,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleHUD() {
         MainActor.assumeIsolated {
-            if panelState.currentState == .compact {
-                panelState.mouseEntered()
-            } else {
+            if panelState.currentState == .detail {
                 panelState.collapse()
+            } else {
+                panelState.showDetail()
             }
         }
     }
@@ -332,19 +308,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func panelSize(for state: HUDState) -> (CGFloat, CGFloat) {
         switch state {
-        case .extended:
-            let vip = monitor.recentNotifications.count
-            let visible = monitor.unreadItems.count
-            let suppressed = monitor.suppressedItems.count
-            let replyDebt = monitor.replyDebtItems.count
-            if vip == 0 && visible == 0 && suppressed == 0 && replyDebt == 0 {
-                return (PanelState.width(for: .extended), PanelState.height(for: .extended))
+        case .compact, .extended:
+            let count = monitor.inboxItems.count
+            if count == 0 {
+                return (400, 120)
             }
-            return extendedTabsSize(
-                vip: vip,
-                unread: max(visible, suppressed),
-                replyDebt: replyDebt
-            )
+            return inboxSize(itemCount: count)
         default:
             return (PanelState.width(for: state), PanelState.height(for: state))
         }
