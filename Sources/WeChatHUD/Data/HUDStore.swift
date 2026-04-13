@@ -1105,35 +1105,10 @@ final class HUDStore: ObservableObject {
     //
     // This section is the ONLY place in the codebase that knows the
     // factory values for AI endpoints and model names. Everywhere else
-    // reads via `loadClassifierConfig()` (or the existing settings-table
-    // accessor for `ai`). Editing the values below is the only way to
-    // change "what model do we ship with" — runtime managment after
-    // first launch happens through the settings table (or future UI).
+    // reads via `loadAIConfig()`. Editing the values below is the only
+    // way to change "what model do we ship with" — runtime management
+    // after first launch happens through the settings table (or future UI).
 
-    /// Factory defaults for the per-message ask classifier. These get
-    /// written to the `classifier` row in `settings` on first launch.
-    /// Edit values here to change what new installs ship with; existing
-    /// installs are unaffected (their settings row is preserved).
-    ///
-    /// `apiKey` is intentionally empty in factory defaults — never
-    /// commit a real key to source. Existing user installs preserve
-    /// whatever key is already in their `classifier` settings row;
-    /// new installs land with an empty key the user has to fill in
-    /// from the settings UI.
-    private static let factoryClassifierConfig: AIClassifierConfig = {
-        var cfg = AIClassifierConfig()
-        cfg.baseURL = "http://127.0.0.1:8000/v1"
-        cfg.model = "Qwen3.5-27B-6bit"
-        cfg.apiKey = ""
-        cfg.temperature = 0.1
-        cfg.maxTokens = 256
-        cfg.promptVersion = "classifier_v1"
-        return cfg
-    }()
-
-    /// Factory defaults for the general AIService (chat completions
-    /// used by the existing summary / replyDebt features). `apiKey`
-    /// stays empty — never commit a real key to source.
     private static let factoryAIConfig: AIConfig = {
         var cfg = AIConfig()
         cfg.baseURL = "http://127.0.0.1:8000/v1"
@@ -1144,35 +1119,25 @@ final class HUDStore: ObservableObject {
         return cfg
     }()
 
-    /// Insert factory defaults for AI configs into the settings table
-    /// if they don't already exist. Existing user customizations are
-    /// preserved. Called from `open()`.
-    ///
-    /// CRITICAL: use `getSetting` (raw row exists check), NOT
-    /// `getSettingJSON` (decode success check). When new fields are
-    /// added to AIClassifierConfig or AIConfig, old DB rows without
-    /// those fields would fail to decode under strict Codable — but
-    /// that is NOT a reason to overwrite the user's persisted
-    /// customization with factory defaults. The decode failure should
-    /// surface as nil at the read point and let the caller handle it,
-    /// not silently revert the row.
     func seedAISettingsIfMissing() {
-        if getSetting("classifier") == nil {
-            do {
-                try setSettingJSON("classifier", value: HUDStore.factoryClassifierConfig)
-                print("[WCHUD] seeded settings.classifier (first launch)")
-            } catch {
-                print("[WCHUD] failed to seed classifier config: \(error)")
-            }
-        }
+        // Migrate: if old "classifier" key exists but "ai" doesn't,
+        // copy connection params from classifier to the unified config.
         if getSetting("ai") == nil {
-            do {
-                try setSettingJSON("ai", value: HUDStore.factoryAIConfig)
+            if let oldCls = getSetting("classifier"),
+               let data = oldCls.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                var cfg = HUDStore.factoryAIConfig
+                if let url = json["baseURL"] as? String { cfg.baseURL = url }
+                if let model = json["model"] as? String { cfg.model = model }
+                if let key = json["apiKey"] as? String { cfg.apiKey = key }
+                try? setSettingJSON("ai", value: cfg)
+                print("[WCHUD] migrated classifier config → unified ai config")
+            } else {
+                try? setSettingJSON("ai", value: HUDStore.factoryAIConfig)
                 print("[WCHUD] seeded settings.ai (first launch)")
-            } catch {
-                print("[WCHUD] failed to seed ai config: \(error)")
             }
         }
+
         if getSetting("role_configs") == nil {
             let configs: [String: RoleConfig] = [
                 "boss": RoleConfig(replyWindow: 30, notifyLevel: "strong", classifierStrictness: "high", replyTone: "reporting", vipTrackDimensions: ["decisions", "mood", "dissatisfaction", "directives"]),
@@ -1201,17 +1166,8 @@ final class HUDStore: ObservableObject {
         }
     }
 
-    /// Single read point for the classifier config. Always returns a
-    /// usable config (post-seed) or, in the should-not-happen case
-    /// where the seed didn't run, the empty struct defaults — which
-    /// will fail loudly at the first HTTP call with a clear "invalid
-    /// URL" error rather than silently using a baked-in fallback.
-    func loadClassifierConfig() -> AIClassifierConfig {
-        getSettingJSON("classifier", as: AIClassifierConfig.self) ?? AIClassifierConfig()
-    }
-
-    /// Single read point for the general AI service config. Same
-    /// contract as `loadClassifierConfig()`.
+    /// Single read point for the unified AI config. Always returns a
+    /// usable config (post-seed) or the empty struct defaults.
     func loadAIConfig() -> AIConfig {
         getSettingJSON("ai", as: AIConfig.self) ?? AIConfig()
     }
