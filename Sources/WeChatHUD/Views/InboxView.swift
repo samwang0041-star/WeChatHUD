@@ -59,7 +59,7 @@ struct InboxView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            PixelBuddyView(mood: extendedBuddyMood)
+            AIBuddyOverlay(mood: extendedBuddyMood)
                 .padding(.trailing, 12)
                 .padding(.bottom, 10)
         }

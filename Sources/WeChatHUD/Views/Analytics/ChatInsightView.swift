@@ -27,11 +27,12 @@ struct ChatInsightView: View {
     var body: some View {
         HSplitView {
             sidebar
-                .frame(minWidth: 220, maxWidth: 280)
+                .frame(minWidth: 220, maxWidth: 300)
             detailArea
-                .frame(minWidth: 500)
+                .frame(minWidth: 540)
         }
-        .frame(minWidth: 800, minHeight: 550)
+        .frame(minWidth: 900, minHeight: 620)
+        .padding(.bottom, 16)
         .task {
             computeAllStats()
         }

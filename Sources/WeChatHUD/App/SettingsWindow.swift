@@ -29,7 +29,7 @@ class SettingsWindow: NSWindow {
         let hostingView = NSHostingView(rootView: rootView)
 
         let window = SettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 780),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false

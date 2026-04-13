@@ -171,6 +171,9 @@ actor ChatAnalyzer {
     // MARK: - HTTP call
 
     private func call(_ userPrompt: String) async -> String {
+        let trackID = "chatanalyzer:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "聊天分析")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             print("[WCHUD] ChatAnalyzer: invalid URL: \(config.baseURL)")

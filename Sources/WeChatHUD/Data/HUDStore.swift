@@ -1179,30 +1179,47 @@ final class HUDStore: ObservableObject {
 
     private static let factoryAIConfig: AIConfig = {
         var cfg = AIConfig()
-        cfg.baseURL = "http://127.0.0.1:8000/v1"
-        cfg.model = "Qwen3.5-27B-6bit"
-        cfg.apiKey = ""
+        cfg.localProvider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://127.0.0.1:8000/v1",
+            model: "Qwen3.5-27B-6bit",
+            apiKey: ""
+        )
+        cfg.cloudProvider = AIProviderSlot(
+            providerID: "dashscope",
+            baseURL: "https://dashscope.aliyuncs.com/compatible-mode",
+            model: "qwen-plus",
+            apiKey: ""
+        )
+        cfg.activeMode = .local
         cfg.maxTokens = 2048
         cfg.temperature = 0.3
         return cfg
     }()
 
     func seedAISettingsIfMissing() {
-        // Migrate: if old "classifier" key exists but "ai" doesn't,
-        // copy connection params from classifier to the unified config.
         if getSetting("ai") == nil {
+            // First launch or migrate from "classifier" key
             if let oldCls = getSetting("classifier"),
                let data = oldCls.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 var cfg = HUDStore.factoryAIConfig
-                if let url = json["baseURL"] as? String { cfg.baseURL = url }
-                if let model = json["model"] as? String { cfg.model = model }
-                if let key = json["apiKey"] as? String { cfg.apiKey = key }
+                if let url = json["baseURL"] as? String { cfg.localProvider.baseURL = url }
+                if let model = json["model"] as? String { cfg.localProvider.model = model }
+                if let key = json["apiKey"] as? String { cfg.localProvider.apiKey = key }
                 try? setSettingJSON("ai", value: cfg)
-                print("[WCHUD] migrated classifier config → unified ai config")
+                print("[WCHUD] migrated classifier config → dual-provider ai config")
             } else {
                 try? setSettingJSON("ai", value: HUDStore.factoryAIConfig)
                 print("[WCHUD] seeded settings.ai (first launch)")
+            }
+        } else {
+            // Existing config — migrate from single-provider to dual-provider if needed
+            var cfg = loadAIConfig()
+            if cfg.localProvider.baseURL.isEmpty, let url = cfg._legacyBaseURL, !url.isEmpty {
+                cfg.migrateIfNeeded()
+                try? setSettingJSON("ai", value: cfg)
+                print("[WCHUD] migrated single-provider → dual-provider ai config")
             }
         }
 

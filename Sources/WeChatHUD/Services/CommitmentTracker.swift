@@ -93,6 +93,9 @@ actor CommitmentTracker {
     }
 
     private func callModel(prompt: String, config: AIConfig) async -> String? {
+        let trackID = "commitment:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "承诺分析")
+        defer { AIActivityTracker.shared.end(trackID) }
         let base = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(base)/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 30)

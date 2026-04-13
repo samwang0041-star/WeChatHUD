@@ -13,6 +13,11 @@ actor AIGroupCatchup {
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
+    func updateConfig(_ newConfig: AIConfig) {
+        var c = newConfig; c.maxTokens = 768; c.temperature = 0.2
+        self.config = c
+    }
+
     init(
         store: HUDStore,
         config: AIConfig,
@@ -111,6 +116,9 @@ actor AIGroupCatchup {
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
+        let trackID = "catchup:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "群聊追赶")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")

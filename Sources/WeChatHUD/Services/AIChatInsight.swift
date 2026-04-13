@@ -7,6 +7,11 @@ actor AIChatInsight {
     private var config: AIConfig
     private let promptLoader: PromptLoader
 
+    func updateConfig(_ newConfig: AIConfig) {
+        var c = newConfig; c.maxTokens = 2048; c.temperature = 0.2
+        self.config = c
+    }
+
     init(
         store: HUDStore,
         config: AIConfig,
@@ -187,6 +192,9 @@ actor AIChatInsight {
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
+        let trackID = "insight:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "对话洞察")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")

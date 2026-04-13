@@ -165,39 +165,47 @@ struct SettingsView: View {
 
     // MARK: - Content
 
+    @ViewBuilder
     private var content: some View {
-        ScrollView {
+        // Contacts tab uses its own List which needs full height — no ScrollView.
+        // Other tabs are form-based and need ScrollView.
+        if selectedTab == .contacts {
             VStack(alignment: .leading, spacing: 16) {
                 heroHeader
-
-                // The tab body lives directly below the hero — each tab view
-                // renders its own controls. We wrap AI / sync / notification in
-                // a grouped card to get the native "rounded section" look.
-                // Whitelist has its own full list UI so it opts out of the card.
-                switch selectedTab {
-                case .contacts:
-                    ContactsSettingsView()
-                case .aiButler:
-                    SettingsCard { AISettingsView() }
-                case .autopilot:
-                    SettingsCard { AutopilotSettingsView() }
-                case .system:
-                    SettingsCard { SyncSettingsView() }
-                case .insight:
-                    // Auto-open insight window and show placeholder
-                    Color.clear
-                        .onAppear { panelState.onShowInsight?() }
-                case .dailyReport:
-                    DailyReportTabView()
-                case .commitments:
-                    CommitmentTabView()
-                case .autopilotDashboard:
-                    AutopilotTabView()
-                }
+                ContactsSettingsView()
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    heroHeader
+
+                    switch selectedTab {
+                    case .contacts:
+                        EmptyView() // handled above
+                    case .aiButler:
+                        SettingsCard { AISettingsView() }
+                    case .autopilot:
+                        SettingsCard { AutopilotSettingsView() }
+                    case .system:
+                        SettingsCard { SyncSettingsView() }
+                    case .insight:
+                        Color.clear
+                            .onAppear { panelState.onShowInsight?() }
+                    case .dailyReport:
+                        DailyReportTabView()
+                    case .commitments:
+                        CommitmentTabView()
+                    case .autopilotDashboard:
+                        AutopilotTabView()
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 

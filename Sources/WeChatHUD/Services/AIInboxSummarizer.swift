@@ -108,6 +108,9 @@ actor AIInboxSummarizer {
     }
 
     private func call(_ userPrompt: String) async -> CallResult {
+        let trackID = "inbox:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "收件摘要")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return CallResult(text: nil, error: "invalid url: \(config.baseURL)")
