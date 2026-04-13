@@ -106,23 +106,25 @@ struct CompactInboxBar: View {
 
     // MARK: - Sync state helpers
 
+    /// Normal operating states — don't disturb the user.
     private var syncIsOK: Bool {
         switch monitor.stats.syncStatus {
-        case .ok: return true
+        case .ok, .idle, .syncing: return true
         default: return false
         }
     }
 
+    /// Only shown when something is actually wrong.
     private var syncErrorText: String {
         switch monitor.stats.syncStatus {
-        case .ok, .idle, .syncing:
-            return "同步中"
         case .stale:
             return "未同步"
         case .waitingForWeChat:
             return "微信未运行"
         case .error(let msg):
             return msg.localizedCaseInsensitiveContains("WeChat") ? "微信未运行" : "未同步"
+        default:
+            return ""
         }
     }
 }
