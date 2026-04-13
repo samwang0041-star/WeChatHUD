@@ -286,30 +286,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         // Esc → collapse to compact
-        if event.keyCode == 53 {  // Esc
+        if event.keyCode == 53 {
             panelState.collapse()
             return true
         }
 
-        // Cmd+number → switch tabs (only when extended)
-        guard event.modifierFlags.contains(.command),
-              panelState.currentState == .extended else { return false }
+        guard event.modifierFlags.contains(.command) else { return false }
 
         switch event.charactersIgnoringModifiers {
-        case "1":
-            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 0])
-            return true
-        case "2":
-            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 1])
-            return true
-        case "3":
-            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 2])
-            return true
-        case "4":
-            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 3])
-            return true
-        case "5":
-            NotificationCenter.default.post(name: .hudSwitchTab, object: nil, userInfo: ["index": 4])
+        case ",":
+            panelState.showDetail()
             return true
         default:
             return false
