@@ -63,7 +63,7 @@ private struct ContactsListSubView: View {
                 contactSection(level: .greylist, title: "灰名单", color: .gray)
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
-            .frame(minHeight: 300)
+            .frame(maxHeight: .infinity)
         }
         .onAppear { if !didLoad { reload(); didLoad = true } }
         .sheet(item: $editingContact) { contact in
@@ -191,7 +191,7 @@ private struct BlockRulesSubView: View {
                     ForEach(ignoredSenders) { rule in ignoredSenderRow(rule) }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
-                .frame(minHeight: 200)
+                .frame(maxHeight: .infinity)
             }
         }
         .onAppear { if !didLoad { reload(); didLoad = true } }
@@ -236,6 +236,12 @@ struct ContactEditSheet: View {
     @State private var selectedRole: ContactRole
     @State private var roleNote: String
     @State private var replyWindow: Int
+    @State private var relProfile: RelationshipProfile? = nil
+    @State private var relRelationship: String = ""
+    @State private var relHierarchy: RelationshipProfile.Hierarchy = .peer
+    @State private var relTone: RelationshipProfile.TonePreference = .formal
+    @State private var relNote: String = ""
+    @State private var isInferring = false
 
     init(contact: ContactEntry, store: HUDStore, onSave: @escaping () -> Void) {
         self.contact = contact
@@ -295,18 +301,75 @@ struct ContactEditSheet: View {
                             .foregroundColor(.secondary).font(.caption)
                     }
                 }
+                Section("AI 关系画像") {
+                    if let profile = relProfile {
+                        LabeledContent("关系") {
+                            TextField("", text: $relRelationship)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+                        }
+                        Picker("层级", selection: $relHierarchy) {
+                            ForEach(RelationshipProfile.Hierarchy.allCases, id: \.self) { h in
+                                Text(h.label).tag(h)
+                            }
+                        }
+                        Picker("沟通风格", selection: $relTone) {
+                            ForEach(RelationshipProfile.TonePreference.allCases, id: \.self) { t in
+                                Text(t.label).tag(t)
+                            }
+                        }
+                        LabeledContent("备注") {
+                            TextField("", text: $relNote)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 160)
+                        }
+                        HStack(spacing: 8) {
+                            Text("置信度: \(Int(profile.confidence * 100))%")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("重新推断") { }
+                                .buttonStyle(.bordered).controlSize(.small)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("尚未推断").font(.caption).foregroundColor(.secondary)
+                            Spacer()
+                            Button("开始推断") { }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                        }
+                    }
+                }
                 Section { Text(selectedRole.roleDescription).font(.caption).foregroundColor(.secondary) }
                     header: { Text("角色说明") }
             }
             .formStyle(.grouped)
+            .onAppear {
+                relProfile = store.getRelationshipProfile(username: contact.username)
+                if let p = relProfile {
+                    relRelationship = p.relationship
+                    relHierarchy = p.hierarchy
+                    relTone = p.tonePreference
+                    relNote = p.userNote ?? ""
+                }
+            }
         }
-        .frame(width: 420, height: 440)
+        .frame(width: 420, height: 580)
     }
 
     private func save() {
         try? store.upsertContact(username: contact.username, displayName: contact.displayName,
                                   attentionLevel: selectedLevel, role: selectedRole,
                                   roleNote: roleNote, replyWindowMinutes: replyWindow)
+        if relProfile != nil {
+            try? store.updateRelationshipProfileUserFields(
+                username: contact.username,
+                relationship: relRelationship,
+                hierarchy: relHierarchy,
+                tonePreference: relTone,
+                userNote: relNote.isEmpty ? nil : relNote
+            )
+        }
         onSave()
         dismiss()
     }
