@@ -5,13 +5,15 @@ import Foundation
 enum InboxContextBuilder {
 
     /// Determine how many context messages to fetch based on trigger message length.
-    /// Shorter messages carry less information → need more context.
+    /// Always fetch enough context for accurate AI analysis.
     static func contextWindowSize(messageLength: Int) -> Int {
+        // Use a generous window — AI needs sufficient context to understand
+        // the conversation accurately, regardless of trigger message length.
         switch messageLength {
-        case ...5:   return 15
-        case 6...20: return 10
-        case 21...50: return 6
-        default:     return 3
+        case ...5:   return 30
+        case 6...20: return 25
+        case 21...50: return 20
+        default:     return 15
         }
     }
 

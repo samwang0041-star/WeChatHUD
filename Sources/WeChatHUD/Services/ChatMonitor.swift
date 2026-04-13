@@ -1624,9 +1624,11 @@ final class ChatMonitor: ObservableObject {
                     continue
                 }
 
-                // Build InboxContext
-                let msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 1)) ?? []
-                guard let triggerMsg = msgs.first else { continue }
+                // Build InboxContext — use 50 messages within 48h for accurate summaries
+                let msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+                let cutoff48h = Date().addingTimeInterval(-48 * 3600)
+                let filtered = msgs.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff48h }
+                guard let triggerMsg = filtered.first else { continue }
 
                 let context = InboxContextBuilder.build(
                     chatUsername: item.chatUsername,
