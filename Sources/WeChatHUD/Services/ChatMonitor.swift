@@ -62,6 +62,8 @@ final class ChatMonitor: ObservableObject {
     @Published var autopilotLog: [AutopilotLogEntry] = []
     @Published var autopilotSessionSent = 0
     @Published var autopilotSessionPending = 0
+    @Published var autopilotPendingSendQueue: [PendingSend] = []
+    @Published var autopilotSessionStats = AutopilotService.SessionStats()
     /// The autopilot service instance. Initialized lazily on first toggle.
     private(set) var autopilotService: AutopilotService?
     private let recentLimit = 10
@@ -177,14 +179,29 @@ final class ChatMonitor: ObservableObject {
 
         // Safety fallback: cheap mtime-only check every 60s.
         // If FSEvents delivers in time, this is a no-op.
-        safetyTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { [weak self] in
-                await self?.scan()
-                // Proactive outreach check every ~10 minutes (10th tick)
                 guard let self = self else { return }
+                // Process pending send queue every 10s (fast enough for UI countdown accuracy)
+                let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+                await self.autopilotService?.processPendingQueue(config: config)
+                // Sync queue and stats to UI
+                if let svc = self.autopilotService {
+                    let queue = await svc.pendingSendQueue
+                    let stats = await svc.sessionStats
+                    await MainActor.run {
+                        self.autopilotPendingSendQueue = queue
+                        self.autopilotSessionStats = stats
+                    }
+                }
+
+                // Full scan every 6th tick (~60s)
                 self.safetyTickCount += 1
-                if self.safetyTickCount % 10 == 0 {
-                    let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+                if self.safetyTickCount % 6 == 0 {
+                    await self.scan()
+                }
+                // Proactive outreach every 60th tick (~10 min)
+                if self.safetyTickCount % 60 == 0 {
                     await self.autopilotService?.evaluateProactiveOutreach(config: config)
                 }
             }

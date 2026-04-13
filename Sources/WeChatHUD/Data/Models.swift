@@ -1109,6 +1109,28 @@ enum AutopilotReplyStyle: String, Codable, CaseIterable {
     }
 }
 
+// MARK: - Pending Send Queue
+
+/// A message queued for delayed sending. Visible to UI for cancel/edit/send-now.
+struct PendingSend: Identifiable {
+    let id: UUID = UUID()
+    let chatUsername: String
+    let chatName: String
+    let senderName: String
+    var replyText: String
+    let confidence: Double
+    let risk: AutopilotRisk
+    let reasoning: String
+    let styleScore: Int
+    let scheduledSendTime: Date
+    let createdAt: Date = Date()
+
+    /// Remaining seconds until scheduled send.
+    var remainingSeconds: Int {
+        max(0, Int(scheduledSendTime.timeIntervalSinceNow))
+    }
+}
+
 /// Persisted autopilot configuration.
 struct AutopilotConfig: Codable {
     var enabled: Bool = false
