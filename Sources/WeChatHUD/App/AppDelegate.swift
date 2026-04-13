@@ -161,11 +161,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let cfg = self.store.loadAIConfig()
                 Task {
                     await self.aiService.updateConfig(cfg)
-                }
-                // Propagate AI config changes to all AI services
-                let classifierCfg = self.store.loadAIConfig()
-                Task {
-                    await self.monitor.autopilotService?.updateConfig(classifierCfg)
+                    await self.monitor.autopilotService?.updateConfig(cfg)
                     await self.monitor.refreshReplySuggesterConfig()
                 }
             }
