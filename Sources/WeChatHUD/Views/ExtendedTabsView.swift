@@ -28,6 +28,7 @@ struct ExtendedTabsView: View {
         case commitments
         case dailyReport
         case autopilot
+        case insight
     }
 
     /// Sub-filter inside the 未读 tab. Default `.needsReply` — the most
@@ -80,6 +81,7 @@ struct ExtendedTabsView: View {
                     case .commitments: CommitmentTabView()
                     case .dailyReport: DailyReportTabView()
                     case .autopilot:   AutopilotTabView()
+                    case .insight:     ChatInsightView()
                     }
                 }
             }
@@ -133,6 +135,7 @@ struct ExtendedTabsView: View {
                 tabButton(.commitments, label: "承诺", count: monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count)
             }
             tabButton(.dailyReport, label: "日报", count: 0)
+            tabButton(.insight, label: "洞察", count: 0)
             tabButton(.autopilot, label: monitor.autopilotActive ? "🤖托管" : "托管", count: monitor.autopilotSessionPending)
             Spacer()
             Button(action: { panelState.showDetail() }) {
