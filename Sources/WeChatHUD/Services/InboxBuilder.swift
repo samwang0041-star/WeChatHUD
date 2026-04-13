@@ -2,22 +2,39 @@ import Foundation
 
 enum InboxBuilder {
 
+    /// Result of building the inbox — separates active from handled items.
+    struct BuildResult {
+        let active: [InboxItem]     // items shown in main list
+        let handled: [InboxItem]    // items in handled section (dismissed/snoozed/silenced)
+    }
+
     /// Merge reply-debt items and whitelist notifications into a single
     /// priority-sorted inbox. Deduplicates by chatUsername — debt items
     /// take precedence over pure notifications.
     static func build(
         replyDebtItems: [ReplyDebtItem],
         notifications: [HUDNotification],
-        dismissed: [String: Int64]
-    ) -> [InboxItem] {
+        dismissed: [String: Int64],
+        snoozed: [String: Date] = [:],
+        silenced: Set<String> = []
+    ) -> BuildResult {
+        let now = Date()
         var seen = Set<String>()
         var actionItems: [InboxItem] = []
         var infoItems: [InboxItem] = []
+        var handledItems: [InboxItem] = []
 
-        // 1. ReplyDebtItems → always actionRequired, always reactivate
+        // 1. ReplyDebtItems → always actionRequired
         for debt in replyDebtItems {
             seen.insert(debt.chatUsername)
-            let item = InboxItem(
+
+            // Compute overdue status
+            let suggestedMinutes = debt.suggestedReplyMinutes ?? 0
+            let minutesSinceMessage = now.timeIntervalSince(debt.timestamp) / 60.0
+            let isOverdue = suggestedMinutes > 0 && Int(minutesSinceMessage) > suggestedMinutes
+            let overdueMinutes = isOverdue ? Int(minutesSinceMessage) - suggestedMinutes : 0
+
+            var item = InboxItem(
                 id: debt.chatUsername,
                 chatUsername: debt.chatUsername,
                 chatName: debt.chatName,
@@ -33,10 +50,30 @@ enum InboxBuilder {
                 isAtMention: debt.isAtMention,
                 askType: .none,
                 reasons: debt.reasons,
-                suggestedReplyMinutes: debt.suggestedReplyMinutes ?? 0,
+                suggestedReplyMinutes: suggestedMinutes,
                 status: .active,
-                dismissedAtMsgId: nil
+                dismissedAtMsgId: nil,
+                isOverdue: isOverdue,
+                overdueMinutes: overdueMinutes
             )
+
+            // Check silenced
+            if silenced.contains(debt.chatUsername) {
+                item.status = .silenced
+                item.silenced = true
+                handledItems.append(item)
+                continue
+            }
+
+            // Check snoozed (only if snooze hasn't expired)
+            if let snoozeExpiry = snoozed[debt.chatUsername], snoozeExpiry > now {
+                item.status = .snoozed
+                item.snoozedUntil = snoozeExpiry
+                handledItems.append(item)
+                continue
+            }
+
+            // Active debt item (reactivates even if dismissed — debt = newer message)
             actionItems.append(item)
         }
 
@@ -44,9 +81,6 @@ enum InboxBuilder {
         for notif in notifications {
             guard !seen.contains(notif.chatUsername) else { continue }
             seen.insert(notif.chatUsername)
-
-            // Skip dismissed pure notifications
-            if dismissed[notif.chatUsername] != nil { continue }
 
             let isAction = notif.isAtMention
             let priority: InboxPriority
@@ -58,7 +92,7 @@ enum InboxBuilder {
                 priority = .p2
             }
 
-            let item = InboxItem(
+            var item = InboxItem(
                 id: notif.chatUsername,
                 chatUsername: notif.chatUsername,
                 chatName: notif.chatName,
@@ -79,6 +113,29 @@ enum InboxBuilder {
                 dismissedAtMsgId: nil
             )
 
+            // Check silenced
+            if silenced.contains(notif.chatUsername) {
+                item.status = .silenced
+                item.silenced = true
+                handledItems.append(item)
+                continue
+            }
+
+            // Check snoozed (only if snooze hasn't expired)
+            if let snoozeExpiry = snoozed[notif.chatUsername], snoozeExpiry > now {
+                item.status = .snoozed
+                item.snoozedUntil = snoozeExpiry
+                handledItems.append(item)
+                continue
+            }
+
+            // Check dismissed (only for notifications, not debt items)
+            if dismissed[notif.chatUsername] != nil {
+                item.status = .dismissed
+                handledItems.append(item)
+                continue
+            }
+
             if isAction {
                 actionItems.append(item)
             } else {
@@ -96,7 +153,28 @@ enum InboxBuilder {
         infoItems.sort { $0.timestamp > $1.timestamp }
         let cappedInfo = Array(infoItems.prefix(5))
 
-        return actionItems + cappedInfo
+        // 5. Sort handled items by timestamp (most recent first)
+        handledItems.sort { $0.timestamp > $1.timestamp }
+
+        return BuildResult(active: actionItems + cappedInfo, handled: handledItems)
+    }
+
+    // MARK: - Legacy convenience (returns only active items)
+
+    /// Legacy overload for call sites that only need active items.
+    static func build(
+        replyDebtItems: [ReplyDebtItem],
+        notifications: [HUDNotification],
+        dismissed: [String: Int64]
+    ) -> [InboxItem] {
+        let result = build(
+            replyDebtItems: replyDebtItems,
+            notifications: notifications,
+            dismissed: dismissed,
+            snoozed: [:],
+            silenced: []
+        )
+        return result.active
     }
 
     private static func mapPriority(_ p: ReplyDebtPriority) -> InboxPriority {

@@ -22,6 +22,15 @@ struct InboxItem: Identifiable {
 
     var status: InboxStatus
     var dismissedAtMsgId: Int64?
+
+    // Enhanced fields for Plan C
+    var aiSummary: String?           // AI summary (Plan B populates, UI displays)
+    var moodEmoji: String?           // VIP mood (Plan B populates)
+    var isOverdue: Bool = false      // overdue based on reply window
+    var overdueMinutes: Int = 0      // how many minutes overdue
+    var replied: Bool = false        // user already replied (pending removal)
+    var snoozedUntil: Date?          // snooze expiry
+    var silenced: Bool = false       // permanently muted
 }
 
 enum InboxPriority: Int, Comparable {
@@ -37,6 +46,8 @@ enum InboxPriority: Int, Comparable {
 enum InboxStatus {
     case active
     case dismissed
+    case snoozed
+    case silenced
 }
 
 extension InboxItem {
