@@ -54,6 +54,7 @@ enum ScanEngine {
                 sessions = []
             }
             let myUname = reader.myUsername()
+            let myDisplayName = reader.displayName(for: myUname)
             let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
@@ -65,6 +66,7 @@ enum ScanEngine {
                 chatActions: chatActions,
                 ignoredSenderMap: ignoredSenderMap,
                 myUsername: myUname,
+                myDisplayName: myDisplayName,
                 whitelistSet: whitelistSet,
                 vipSet: vipSet,
                 contactMap: contactMap,
@@ -99,7 +101,7 @@ enum ScanEngine {
                 )) ?? []
 
                 let latestSelfTime: Int = recentMsgs
-                    .filter { MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname) }
+                    .filter { MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName) }
                     .map { $0.createTime }
                     .max() ?? 0
 
@@ -134,7 +136,7 @@ enum ScanEngine {
 
                 if !session.isGroup {
                     guard let msg = recentMsgs.first(where: {
-                        !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname)
+                        !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName)
                     }) else { continue }
                     let item = makeItem(msg, kind: .privateChat)
                     if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
@@ -240,7 +242,7 @@ enum ScanEngine {
 
                 for msg in newMessages {
                     // Collect self messages for commitment tracking BEFORE skipping
-                    if MessageHelpers.isFromSelf(msg, chatUsername: entry.id, myUsername: myUname) {
+                    if MessageHelpers.isFromSelf(msg, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName) {
                         let recipientName = reader.displayName(for: entry.id)
                         selfOutgoingMessages.append((
                             msg: msg, chatUsername: entry.id,
@@ -445,6 +447,7 @@ enum ScanEngine {
         chatActions: [String: HUDStore.ChatActionState],
         ignoredSenderMap: [String: Set<String>],
         myUsername: String,
+        myDisplayName: String = "",
         whitelistSet: Set<String>,
         vipSet: Set<String>,
         contactMap: [String: ContactEntry],  // NEW
@@ -462,24 +465,24 @@ enum ScanEngine {
             guard !recentMsgs.isEmpty else { return nil }
 
             let latestInbound = recentMsgs.first {
-                !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName)
                     && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
             }
             guard let inbound = latestInbound else { return nil }
 
             let latestOutbound = recentMsgs.first {
-                MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName)
             }
             let inboundCountSinceLastOutbound: Int
             if let outbound = latestOutbound {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
-                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName)
                         && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
                         && $0.createTime > outbound.createTime
                 }.count
             } else {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
-                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername)
+                    !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName)
                         && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
                 }.count
             }
