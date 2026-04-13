@@ -65,17 +65,16 @@ struct InboxView: View {
     private var header: some View {
         HStack {
             let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
-            Text("收件箱")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.85))
-            Text("\(actionCount)")
-                .font(.system(size: 10, weight: .semibold))
-                .monospacedDigit()
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(actionCount > 0 ? Color.red.opacity(0.3) : Color.white.opacity(0.08))
-                .foregroundColor(actionCount > 0 ? .red : .white.opacity(0.5))
-                .cornerRadius(3)
+            if actionCount > 0 {
+                Text("\(actionCount)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .monospacedDigit()
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.red.opacity(0.3))
+                    .foregroundColor(.red)
+                    .cornerRadius(3)
+            }
             Spacer()
             if let syncAt = monitor.stats.lastSyncAt {
                 Text(syncLabel(syncAt))

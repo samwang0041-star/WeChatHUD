@@ -16,7 +16,6 @@ struct CompactInboxBar: View {
         HStack(spacing: 6) {
             statusContent
             Spacer(minLength: 0)
-            gearButton
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
