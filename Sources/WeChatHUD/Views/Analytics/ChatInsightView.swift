@@ -12,6 +12,17 @@ struct ChatInsightView: View {
     @State private var selectedDate = Date()
     @State private var allStats: [String: ChatStatsData] = [:]
     @State private var statsLoaded = false
+    /// All active sessions (including non-whitelisted), sorted by last message time
+    @State private var otherActiveSessions: [SessionEntry] = []
+
+    /// Lightweight entry for non-whitelisted active chats
+    struct SessionEntry: Identifiable {
+        let id: String  // username
+        let displayName: String
+        let isGroup: Bool
+        let lastTimestamp: Int
+        let messageCount: Int
+    }
 
     var body: some View {
         HSplitView {
@@ -30,8 +41,11 @@ struct ChatInsightView: View {
 
     private func computeAllStats() {
         let whitelist = store.getWhitelist()
+        let whitelistIds = Set(whitelist.map { $0.id })
         let selfUsername = reader.myUsername()
         var stats: [String: ChatStatsData] = [:]
+
+        // Stats for whitelisted chats
         for entry in whitelist {
             do {
                 let messages = try reader.getMessages(chatUsername: entry.id, limit: 200)
@@ -44,11 +58,42 @@ struct ChatInsightView: View {
                     category: entry.category
                 )
                 stats[entry.id] = s
-            } catch {
-                // Skip chats that fail to read
+            } catch {}
+        }
+
+        // Load all sessions to find non-whitelisted active chats
+        let todayStart = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        var others: [SessionEntry] = []
+        if let sessions = try? reader.getSessions() {
+            for s in sessions {
+                guard !whitelistIds.contains(s.username) else { continue }
+                guard s.lastTimestamp > todayStart else { continue }
+                // Filter out system accounts
+                guard !s.username.hasPrefix("gh_"),
+                      !s.username.contains("@app"),
+                      s.username != "filehelper",
+                      s.username != "floatbottle",
+                      !s.username.hasPrefix("fake_") else { continue }
+
+                let name = reader.displayName(for: s.username)
+                // Quick message count for today
+                let msgCount = (try? reader.getMessages(chatUsername: s.username, limit: 50))?.filter {
+                    $0.createTime > todayStart
+                }.count ?? 0
+                guard msgCount > 0 else { continue }
+
+                others.append(SessionEntry(
+                    id: s.username,
+                    displayName: name,
+                    isGroup: s.isGroup,
+                    lastTimestamp: s.lastTimestamp,
+                    messageCount: msgCount
+                ))
             }
         }
+
         allStats = stats
+        otherActiveSessions = others.sorted { $0.lastTimestamp > $1.lastTimestamp }
         statsLoaded = true
     }
 
@@ -77,20 +122,21 @@ struct ChatInsightView: View {
             // Chat list
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    // Whitelisted chats — sorted by most recent message
                     let whitelist = filteredWhitelist()
-                    let groups = whitelist.filter { $0.isGroup }
-                    let privates = whitelist.filter { !$0.isGroup }
-
-                    if !groups.isEmpty {
-                        sidebarSection("群聊", icon: "person.3", count: groups.count)
-                        ForEach(groups, id: \.id) { entry in
+                    if !whitelist.isEmpty {
+                        sidebarSection("关注", icon: "star", count: whitelist.count)
+                        ForEach(whitelist, id: \.id) { entry in
                             sidebarRow(entry)
                         }
                     }
-                    if !privates.isEmpty {
-                        sidebarSection("私聊", icon: "person", count: privates.count)
-                        ForEach(privates, id: \.id) { entry in
-                            sidebarRow(entry)
+
+                    // Other active chats today (not in whitelist)
+                    let others = filteredOthers()
+                    if !others.isEmpty {
+                        sidebarSection("其他活跃", icon: "clock", count: others.count)
+                        ForEach(others) { session in
+                            otherSessionRow(session)
                         }
                     }
                 }
@@ -126,12 +172,65 @@ struct ChatInsightView: View {
         } else {
             filtered = all.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
         }
-        // Sort by stats score (most active first)
+        // Sort by most recent message time (newest first)
         return filtered.sorted { a, b in
-            let sa = allStats[a.id]?.messageCount ?? 0
-            let sb = allStats[b.id]?.messageCount ?? 0
-            return sa > sb
+            let ta = allStats[a.id]?.messagesByHour.isEmpty == false ? 1 : 0
+            let tb = allStats[b.id]?.messagesByHour.isEmpty == false ? 1 : 0
+            let ma = allStats[a.id]?.messageCount ?? 0
+            let mb = allStats[b.id]?.messageCount ?? 0
+            if ta != tb { return ta > tb }  // chats with messages first
+            return ma > mb
         }
+    }
+
+    private func filteredOthers() -> [SessionEntry] {
+        if searchText.isEmpty { return otherActiveSessions }
+        return otherActiveSessions.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private func otherSessionRow(_ session: SessionEntry) -> some View {
+        let isSelected = selectedChat == session.id
+
+        return Button(action: {
+            selectedChat = session.id
+        }) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.gray.opacity(0.1))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: session.isGroup ? "person.3" : "person")
+                        .font(.system(size: 10))
+                        .foregroundColor(.gray)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(session.displayName)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    Text("\(session.messageCount)条消息")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+
+                Spacer()
+
+                Text("\(session.messageCount)")
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(4)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
     }
 
     private func sidebarSection(_ title: String, icon: String, count: Int) -> some View {
@@ -241,22 +340,52 @@ struct ChatInsightView: View {
 
     @ViewBuilder
     private var detailArea: some View {
-        if let chatId = selectedChat,
-           let entry = store.getWhitelist().first(where: { $0.id == chatId }) {
-            ChatInsightDetailView(
-                chatUsername: chatId,
-                chatName: entry.displayName,
-                isGroup: entry.isGroup,
-                category: entry.category,
-                stats: allStats[chatId],
-                result: monitor.chatInsights[chatId],
-                selectedDate: $selectedDate
-            )
-            .environmentObject(monitor)
-            .id(chatId)
+        if let chatId = selectedChat {
+            if let entry = store.getWhitelist().first(where: { $0.id == chatId }) {
+                // Whitelisted chat
+                ChatInsightDetailView(
+                    chatUsername: chatId,
+                    chatName: entry.displayName,
+                    isGroup: entry.isGroup,
+                    category: entry.category,
+                    stats: allStats[chatId],
+                    result: monitor.chatInsights[chatId],
+                    selectedDate: $selectedDate
+                )
+                .environmentObject(monitor)
+                .id(chatId)
+            } else if let session = otherActiveSessions.first(where: { $0.id == chatId }) {
+                // Non-whitelisted active chat — compute stats on the fly
+                let stats = computeStatsForSession(session)
+                ChatInsightDetailView(
+                    chatUsername: chatId,
+                    chatName: session.displayName,
+                    isGroup: session.isGroup,
+                    category: .other,
+                    stats: stats,
+                    result: nil,
+                    selectedDate: $selectedDate
+                )
+                .environmentObject(monitor)
+                .id(chatId)
+            } else {
+                overviewDashboard
+            }
         } else {
             overviewDashboard
         }
+    }
+
+    private func computeStatsForSession(_ session: SessionEntry) -> ChatStatsData? {
+        guard let messages = try? reader.getMessages(chatUsername: session.id, limit: 200) else { return nil }
+        return ChatInsightEngine.computeStats(
+            messages: messages,
+            selfUsername: reader.myUsername(),
+            chatUsername: session.id,
+            chatName: session.displayName,
+            isGroup: session.isGroup,
+            category: .other
+        )
     }
 
     // MARK: - Overview Dashboard (no chat selected)
