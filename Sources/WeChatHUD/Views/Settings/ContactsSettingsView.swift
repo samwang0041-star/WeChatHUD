@@ -4,8 +4,10 @@ import SwiftUI
 /// Redesigned to match macOS System Settings interaction patterns.
 struct ContactsSettingsView: View {
     @EnvironmentObject private var store: HUDStore
+    @EnvironmentObject private var monitor: ChatMonitor
 
     @State private var contacts: [ContactEntry] = []
+    @State private var ignoredSenders: [IgnoredSenderRule] = []
     @State private var searchText = ""
     @State private var editingContact: ContactEntry?
     @State private var showAddSheet = false
@@ -50,6 +52,10 @@ struct ContactsSettingsView: View {
             Divider()
 
             WhitelistScanView()
+
+            Divider().padding(.vertical, 8)
+
+            ignoredSendersSection
         }
         .onAppear {
             if !didLoad {
@@ -191,10 +197,77 @@ struct ContactsSettingsView: View {
         }
     }
 
+    // MARK: - Ignored senders section
+
+    private var ignoredSendersSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("忽略的发送人")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("通过消息右键菜单添加的忽略规则。被忽略的人不会进入未读统计。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+
+            if ignoredSenders.isEmpty {
+                Text("没有忽略的发送人")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(ignoredSenders) { rule in
+                        ignoredSenderRow(rule)
+                    }
+                }
+            }
+        }
+    }
+
+    private func ignoredSenderRow(_ rule: IgnoredSenderRule) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(rule.senderName)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(rule.chatName)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                if !rule.senderUsername.isEmpty {
+                    Text(rule.senderUsername)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            Button("取消忽略") {
+                monitor.unignoreSender(
+                    chatUsername: rule.chatUsername,
+                    senderUsername: rule.senderUsername,
+                    senderName: rule.senderName
+                )
+                reloadIgnoredSenders()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
+    }
+
     // MARK: - Helpers
 
     private func reload() {
         contacts = store.loadContacts(level: nil)
+        reloadIgnoredSenders()
+    }
+
+    private func reloadIgnoredSenders() {
+        ignoredSenders = store.loadIgnoredSenders()
     }
 }
 
