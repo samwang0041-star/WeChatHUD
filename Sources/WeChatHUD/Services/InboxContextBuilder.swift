@@ -135,6 +135,22 @@ enum InboxContextBuilder {
             ? Array(recentMessages.filter { $0.baseType == 1 }.prefix(5))
             : []
 
+        // Link content extraction (baseType=49)
+        let linkTitle: String?
+        let linkDesc: String?
+        let linkURL: String?
+        let linkBody: String? = nil  // Web fetch is async — done separately in ChatMonitor
+        if triggerMessage.baseType == 49,
+           let meta = LinkExtractor.extractMetadata(from: triggerMessage.text) {
+            linkTitle = meta.title
+            linkDesc = meta.description.isEmpty ? nil : meta.description
+            linkURL = meta.url.isEmpty ? nil : meta.url
+        } else {
+            linkTitle = nil
+            linkDesc = nil
+            linkURL = nil
+        }
+
         return InboxContext(
             triggerMessage: triggerMessage,
             triggerMessageText: text,
@@ -161,10 +177,10 @@ enum InboxContextBuilder {
             mediaType: mediaType,
             mediaFilePath: nil,  // Phase B: WeChat file system mapping
             mediaContextMessages: mediaContext,
-            linkTitle: nil,       // Phase B: XML extraction
-            linkDescription: nil,
-            linkURL: nil,
-            linkBodyText: nil
+            linkTitle: linkTitle,
+            linkDescription: linkDesc,
+            linkURL: linkURL,
+            linkBodyText: linkBody
         )
     }
 }
