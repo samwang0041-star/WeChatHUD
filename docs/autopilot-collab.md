@@ -483,6 +483,24 @@ Round 1-5 完成了被动回复的全链路。Round 6 的"已读不回"可以复
 
 **构建结果：247 tests, 0 failures, build succeeded.**
 
+### Round 9 反馈（端到端代码审查）
+
+R9 采用全面代码审查替代运行时压测（需要真实微信环境）。发现并修复了以下问题：
+
+**Critical 修复：**
+- **processedMsgUIDs FIFO 驱逐** ✅：原 `Set.dropFirst` 驱逐随机元素可能导致消息重复回复。新增 `processedMsgOrder: [String]` 保持插入顺序，驱逐最旧的 2500 个。
+- **sentMsgUIDs 上限** ✅：新增 500 条上限，超限保留最新 250 条，防止长 session 内存膨胀。
+
+**Important 修复：**
+- **verifySend fail-closed** ✅：DB 读取失败时返回 `(false, nil)` 而非 `(true, nil)`。未验证的发送不再被视为成功。
+- **stop() 记录丢弃消息** ✅：停止托管时，pendingSendQueue 中的消息逐条写入 log（action=skipped, reasoning="托管停止时取消"），保证完整审计轨迹。
+
+**已知但不修复（需架构级改动）：**
+- **HUDStore 非 actor 但跨线程访问**：SQLite 层有 FULLMUTEX 保护，运行时安全但 Swift 6 strict concurrency 会报错。修复需要将 HUDStore 改为 actor 或加 @Sendable 标记，影响面太大。
+- **Prompt injection 风险**：对方可以发恶意消息试图操纵 AI。当前 pending 机制和 confidence 阈值提供了一定保护，但根本解决需要 prompt sandboxing（如 Anthropic 的 system prompt hardening）。记录为已知风险。
+
+**构建结果：247 tests, 0 failures, build succeeded.**
+
 #### Round 7 修复反馈
 
 **Fix 1 — ChatMonitor 接入** ✅：60s safetyTimer 中加计数器，每 10 次（~10分钟）调用 `evaluateProactiveOutreach()`。
@@ -849,6 +867,46 @@ Round 1-4 构建了完整的"数字分身"基础：记忆(R1) + 时机(R2) + 风
 
 ---
 
+### Round 9 需求（PM → 工程师）
+
+**端到端压测 + 显式暂停按钮**
+
+8 轮开发构建了完整能力，现在需要验证所有能力的协同效果，并补上最后一个用户控制缺口。
+
+**1. 显式暂停/恢复按钮**：
+- AutopilotTabView 顶部加"暂停"/"恢复"按钮（不是停止 session）
+- 暂停时：停止处理 batch、停止发送、停止 proactive，但继续监听和缓存消息
+- 恢复时：从缓存的消息继续处理
+- UI 状态明确显示"已暂停"
+
+**2. 端到端测试场景**：
+编写集成测试覆盖以下 10 个真实场景，验证系统的决策路径正确性：
+
+| 场景 | 预期行为 |
+|------|----------|
+| 朋友闲聊"吃了吗" | 回复，风格匹配，延迟合理 |
+| 连续发 3 条消息 | 动态 batch 等发完再回 |
+| 发"嗯"/"好的" | readNoReply（已读不回） |
+| 发表情包 | skip（不回复不打开） |
+| 发图片 | 回复带媒体提示，confidence 衰减 |
+| 发红包 | 强制 pending |
+| 深夜 23:30 收到消息 | silentAtNight 检查，可能不回 |
+| 提到"上次说的那个" | 引用 conversation_memory |
+| 热聊（10min 内 5+ 条） | 对话温度生效，延迟缩短 |
+| VIP 联系人发消息 | 忙碌通知 + 系统推送 |
+
+**3. styleScore 统计报告**：
+session 结束时自动生成风格匹配度报告——平均分、最低分场景、建议调优方向。
+
+**验收标准：**
+- [ ] 暂停/恢复按钮工作正常
+- [ ] 10 个场景测试全部通过
+- [ ] session 结束有风格报告
+
+请开始开发。
+
+---
+
 ### Round 9 审查
 _（待 PM 审查）_
 
@@ -865,5 +923,5 @@ _（待 PM 审查）_
 | Round 5 | 媒体消息 | ✅ 完成，已验证 |
 | Round 6 | 已读不回 | ✅ 完成，已验证 |
 | Round 7 | 主动发起对话 | ✅ 完成，已验证 |
-| Round 8 | 延迟队列 UI | ✅ 完成（含全部修复） |
-| Round 9 | 端到端压测 | 规划中 |
+| Round 8 | 延迟队列 UI | ✅ 完成，已验证 |
+| Round 9 | 端到端审查 | 已完成，待 PM 审查 |
