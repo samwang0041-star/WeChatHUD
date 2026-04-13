@@ -74,6 +74,10 @@ final class ChatMonitor: ObservableObject {
     @Published var globalBriefing: GlobalBriefing? = nil
     /// True while insight analysis is running.
     @Published var insightLoading: Bool = false
+    /// Insight progress: "正在分析 3/12..."
+    @Published var insightProgress: String = ""
+    /// Insight progress fraction 0-1
+    @Published var insightProgressFraction: Double = 0
     /// Tracks dismissed inbox items: chatUsername → timestamp at time of dismiss.
     private var dismissedInbox: [String: Int64] = [:]
     /// Tracks snoozed inbox items: chatUsername → snooze expiry date.
@@ -1145,8 +1149,33 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Load chat insight analysis for all whitelisted chats.
+    /// Analyze a single chat on-demand (triggered by user clicking into a chat).
+    func analyzeOneChat(chatUsername: String) async {
+        guard chatInsights[chatUsername] == nil else { return }  // already analyzed
+        insightLoading = true
+        insightProgress = "正在分析..."
+
+        guard let entry = store.getWhitelist().first(where: { $0.id == chatUsername }) else {
+            insightLoading = false
+            return
+        }
+
+        let selfUsername = reader.myUsername()
+        let selfDisplayName = reader.displayName(for: selfUsername)
+
+        guard let result = await analyzeEntry(entry, selfUsername: selfUsername, selfDisplayName: selfDisplayName) else {
+            insightLoading = false
+            insightProgress = ""
+            return
+        }
+
+        chatInsights[chatUsername] = result
+        insightLoading = false
+        insightProgress = ""
+    }
+
+    /// Full insight load with progress reporting.
     func loadInsight(force: Bool = false) async {
-        // Skip if already loading or recently loaded (within 30 min)
         guard !insightLoading else { return }
         if !force, let briefing = globalBriefing {
             let age = Date().timeIntervalSince(
@@ -1156,106 +1185,117 @@ final class ChatMonitor: ObservableObject {
         }
 
         insightLoading = true
+        insightProgress = "正在准备..."
+        insightProgressFraction = 0
 
         let whitelist = store.getWhitelist()
         let selfUsername = reader.myUsername()
         let selfDisplayName = reader.displayName(for: selfUsername)
         let dateStr = ISO8601DateFormatter().string(from: Date())
-        let timeRange = "今天"
 
+        // Filter to chats with today's messages
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        var activeEntries: [WhitelistEntry] = []
+        for entry in whitelist {
+            guard let messages = try? reader.getMessages(chatUsername: entry.id, limit: 50) else { continue }
+            let hasToday = messages.contains { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
+            if hasToday { activeEntries.append(entry) }
+        }
+
+        let total = activeEntries.count
         var results: [String: ChatInsightResult] = [:]
         var statsResults: [ChatStatsData] = []
 
-        // Analyze each whitelisted chat
-        for entry in whitelist {
-            let messages: [MessageInfo]
-            do {
-                messages = try reader.getMessages(chatUsername: entry.id, limit: 200)
-            } catch { continue }
+        for (i, entry) in activeEntries.enumerated() {
+            insightProgress = "正在分析 \(i + 1)/\(total) \(entry.displayName)..."
+            insightProgressFraction = Double(i) / Double(max(total, 1))
 
-            // Filter to today's messages
-            let todayStart = Calendar.current.startOfDay(for: Date())
-            let todayMessages = messages.filter {
-                Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart
-            }
-            guard !todayMessages.isEmpty else { continue }
-
-            // Pure stats
-            let stats = ChatInsightEngine.computeStats(
-                messages: todayMessages,
-                selfUsername: selfUsername,
-                chatUsername: entry.id,
-                chatName: entry.displayName,
-                isGroup: entry.isGroup,
-                category: entry.category
-            )
-            statsResults.append(stats)
-
-            // Format messages for AI
-            let formatted = todayMessages
-                .sorted { $0.createTime < $1.createTime }
-                .map { (sender: $0.senderName, body: $0.text, time: $0.createTime) }
-
-            // Get recalled messages for this chat
-            let recalled = recalledMessages
-                .filter { $0.chatUsername == entry.id }
-                .map { (sender: $0.senderName, content: $0.originalText) }
-
-            // Get conversation memory
-            let memoryStr = store.loadConversationMemory(chatUsername: entry.id)?
-                .formatForPrompt() ?? ""
-
-            // AI analysis
-            if let result = await chatInsightService.analyzeChat(
-                chatUsername: entry.id,
-                chatName: entry.displayName,
-                chatType: entry.isGroup ? "group" : "private",
-                category: entry.category.rawValue,
-                selfName: selfDisplayName,
-                timeRange: timeRange,
-                messages: formatted,
-                recalledMessages: recalled,
-                memory: memoryStr
-            ) {
+            if let result = await analyzeEntry(entry, selfUsername: selfUsername, selfDisplayName: selfDisplayName) {
                 results[entry.id] = result
+            }
+
+            // Also compute stats
+            if let messages = try? reader.getMessages(chatUsername: entry.id, limit: 200) {
+                let todayMessages = messages.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
+                if !todayMessages.isEmpty {
+                    let stats = ChatInsightEngine.computeStats(
+                        messages: todayMessages, selfUsername: selfUsername,
+                        chatUsername: entry.id, chatName: entry.displayName,
+                        isGroup: entry.isGroup, category: entry.category
+                    )
+                    statsResults.append(stats)
+                }
             }
         }
 
-        // Compute global stats
+        insightProgress = "正在生成全局简报..."
+        insightProgressFraction = 0.95
+
+        // Global briefing
         let totalMessages = statsResults.reduce(0) { $0 + $1.messageCount }
         let myMessages = statsResults.reduce(0) { $0 + $1.myMessageCount }
         let activeGroups = statsResults.filter { $0.isGroup }.count
         let totalGroups = whitelist.filter { $0.isGroup }.count
         let activePrivate = statsResults.filter { !$0.isGroup }.count
-        let workMessages = statsResults
-            .filter { $0.category == .work }
-            .reduce(0) { $0 + $1.messageCount }
-        let workRatio = totalMessages > 0 ? Double(workMessages) / Double(totalMessages) : 0
+        let workMsgs = statsResults.filter { $0.category == .work }.reduce(0) { $0 + $1.messageCount }
+        let workRatio = totalMessages > 0 ? Double(workMsgs) / Double(totalMessages) : 0
 
         let globalStats = BriefingStats(
-            totalMessages: totalMessages,
-            myMessages: myMessages,
-            activeGroups: activeGroups,
-            totalGroups: totalGroups,
-            activePrivateChats: activePrivate,
-            workRatio: workRatio
+            totalMessages: totalMessages, myMessages: myMessages,
+            activeGroups: activeGroups, totalGroups: totalGroups,
+            activePrivateChats: activePrivate, workRatio: workRatio
         )
 
         let insightPairs = results.compactMap { (key, value) -> (chatName: String, result: ChatInsightResult)? in
-            guard let entry = whitelist.first(where: { $0.id == key }) else { return nil }
-            return (chatName: entry.displayName, result: value)
+            guard let e = whitelist.first(where: { $0.id == key }) else { return nil }
+            return (chatName: e.displayName, result: value)
         }
 
         let briefing = await chatInsightService.generateGlobalBriefing(
-            selfName: selfDisplayName,
-            date: dateStr,
-            chatInsights: insightPairs,
-            globalStats: globalStats
+            selfName: selfDisplayName, date: dateStr,
+            chatInsights: insightPairs, globalStats: globalStats
         )
 
         chatInsights = results
         globalBriefing = briefing
         insightLoading = false
+        insightProgress = ""
+        insightProgressFraction = 1.0
+    }
+
+    /// Analyze a single whitelist entry — shared by analyzeOneChat and loadInsight.
+    private func analyzeEntry(
+        _ entry: WhitelistEntry,
+        selfUsername: String,
+        selfDisplayName: String
+    ) async -> ChatInsightResult? {
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        guard let messages = try? reader.getMessages(chatUsername: entry.id, limit: 200) else { return nil }
+        let todayMessages = messages.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
+        guard !todayMessages.isEmpty else { return nil }
+
+        let formatted = todayMessages
+            .sorted { $0.createTime < $1.createTime }
+            .map { (sender: $0.senderName, body: $0.text, time: $0.createTime) }
+
+        let recalled = recalledMessages
+            .filter { $0.chatUsername == entry.id }
+            .map { (sender: $0.senderName, content: $0.originalText) }
+
+        let memoryStr = store.loadConversationMemory(chatUsername: entry.id)?
+            .formatForPrompt() ?? ""
+
+        return await chatInsightService.analyzeChat(
+            chatUsername: entry.id,
+            chatName: entry.displayName,
+            chatType: entry.isGroup ? "group" : "private",
+            category: entry.category.rawValue,
+            selfName: selfDisplayName,
+            timeRange: "今天",
+            messages: formatted,
+            recalledMessages: recalled,
+            memory: memoryStr
+        )
     }
 
     /// Load recent messages for a chat as (sender, body) tuples — used by

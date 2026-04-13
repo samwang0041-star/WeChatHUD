@@ -39,10 +39,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelState = PanelState()
         monitor = ChatMonitor(reader: reader, store: store, aiService: aiService)
 
-        // Wire up settings window callback
+        // Wire up window callbacks
         panelState.onShowSettings = { [weak self] in
             guard let self = self else { return }
             SettingsWindow.show(
+                panelState: self.panelState,
+                monitor: self.monitor,
+                store: self.store,
+                reader: self.reader
+            )
+        }
+        panelState.onShowInsight = { [weak self] in
+            guard let self = self else { return }
+            InsightWindow.show(
                 panelState: self.panelState,
                 monitor: self.monitor,
                 store: self.store,

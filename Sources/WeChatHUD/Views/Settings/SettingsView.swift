@@ -4,6 +4,7 @@ import SwiftUI
 /// rounded-square icon + label rows, content pane on the right with a hero
 /// header (icon + title + description) followed by the tab body.
 struct SettingsView: View {
+    @EnvironmentObject var panelState: PanelState
     @State private var selectedTab: Tab = .contacts
 
     enum Tab: Hashable, CaseIterable {
@@ -183,7 +184,21 @@ struct SettingsView: View {
                 case .system:
                     SettingsCard { SyncSettingsView() }
                 case .insight:
-                    ChatInsightView()
+                    // Insight opens in its own large window
+                    VStack(spacing: 12) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.system(size: 32))
+                            .foregroundColor(.orange.opacity(0.4))
+                        Text("聊天洞察需要更大的展示空间")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                        Button("打开洞察窗口") {
+                            panelState.onShowInsight?()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .dailyReport:
                     DailyReportTabView()
                 case .commitments:
