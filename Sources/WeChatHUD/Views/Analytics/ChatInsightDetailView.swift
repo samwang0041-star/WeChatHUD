@@ -87,7 +87,7 @@ struct ChatInsightDetailView: View {
                                         Spacer()
                                         attitudeBadge(att.attitude)
                                     }
-                                    Text("\u{201C}\(att.evidence)\u{201D}")
+                                    Text("「\(att.evidence)」")
                                         .font(.system(size: 9))
                                         .foregroundColor(.white.opacity(0.35))
                                         .italic()
