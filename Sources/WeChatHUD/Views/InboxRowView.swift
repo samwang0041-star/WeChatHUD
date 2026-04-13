@@ -1,60 +1,32 @@
 import SwiftUI
 
 /// A single row in the unified inbox list.
+/// Shows priority dot, contact info, status labels, and hover actions.
 struct InboxRowView: View {
     let item: InboxItem
     let onDismiss: () -> Void
+    var onSnooze: ((Date) -> Void)? = nil
+
     @State private var hovered = false
     @State private var expanded = false
+    @State private var showSnoozePopover = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
-                priorityBadge
+                priorityDot
+                    .padding(.top, 4)
+
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(item.chatName)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.9))
-                        if item.isVIP {
-                            Text("VIP")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.orange)
-                                .padding(.horizontal, 3)
-                                .padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.15))
-                                .cornerRadius(2)
-                        }
-                        if item.isGroup {
-                            Text("群聊")
-                                .font(.system(size: 9))
-                                .foregroundColor(.white.opacity(0.35))
-                        }
-                        Spacer()
-                        Text(timeAgo(item.timestamp))
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.35))
-                    }
-                    HStack(spacing: 4) {
-                        if item.isGroup {
-                            Text(item.senderName + ":")
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.5))
-                        }
-                        Text(item.preview)
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.65))
-                            .lineLimit(1)
-                    }
+                    // First line: name + badges + status + time
+                    firstLine
+                    // Second line: summary or preview
+                    secondLine
                 }
+
                 if hovered {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 2)
+                    hoverButtons
+                        .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 14)
@@ -70,31 +42,189 @@ struct InboxRowView: View {
         }
     }
 
-    private var priorityBadge: some View {
-        let (color, label) = priorityDisplay(item.priority, actionRequired: item.actionRequired)
-        return Text(label)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(color)
-            .frame(width: 22, height: 16)
-            .background(color.opacity(0.15))
-            .cornerRadius(3)
-    }
+    // MARK: - First Line
 
-    private func priorityDisplay(_ p: InboxPriority, actionRequired: Bool) -> (Color, String) {
-        guard actionRequired else { return (.white.opacity(0.3), "📋") }
-        switch p {
-        case .p0: return (.red, "P0")
-        case .p1: return (.yellow, "P1")
-        case .p2: return (.white.opacity(0.5), "P2")
+    private var firstLine: some View {
+        HStack(spacing: 4) {
+            Text(item.chatName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
+
+            if item.isVIP {
+                Text("VIP")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(2)
+            }
+
+            if item.isVIP, let mood = item.moodEmoji, !mood.isEmpty {
+                Text(mood)
+                    .font(.system(size: 11))
+            }
+
+            if item.isOverdue {
+                Text("超时")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(Color.red.opacity(0.12))
+                    .cornerRadius(2)
+            }
+
+            if item.replied {
+                Text("已回复")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(Color.green.opacity(0.12))
+                    .cornerRadius(2)
+            }
+
+            Spacer()
+
+            Text(relativeTime(item.timestamp))
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.35))
         }
     }
 
-    private func timeAgo(_ date: Date) -> String {
+    // MARK: - Second Line
+
+    private var secondLine: some View {
+        HStack(spacing: 0) {
+            if item.isGroup, !item.senderName.isEmpty {
+                Text(item.senderName + ": ")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+
+            if let summary = item.aiSummary, !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.65))
+                    .lineLimit(1)
+            } else {
+                Text(item.preview)
+                    .font(.system(size: 11).italic())
+                    .foregroundColor(.white.opacity(0.45))
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    // MARK: - Priority Dot
+
+    private var priorityDot: some View {
+        Circle()
+            .fill(priorityColor)
+            .frame(width: 8, height: 8)
+    }
+
+    private var priorityColor: Color {
+        guard item.actionRequired else { return .white.opacity(0.2) }
+        switch item.priority {
+        case .p0: return .red
+        case .p1: return .yellow
+        case .p2: return .white.opacity(0.35)
+        }
+    }
+
+    // MARK: - Hover Buttons
+
+    private var hoverButtons: some View {
+        HStack(spacing: 6) {
+            if !item.replied {
+                Button(action: { showSnoozePopover = true }) {
+                    Text("\u{23F0}")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showSnoozePopover, arrowEdge: .bottom) {
+                    SnoozePopoverContent { date in
+                        showSnoozePopover = false
+                        onSnooze?(date)
+                    }
+                }
+            }
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func relativeTime(_ date: Date) -> String {
         let minutes = Int(Date().timeIntervalSince(date) / 60)
         if minutes < 1 { return "刚刚" }
-        if minutes < 60 { return "\(minutes)分钟前" }
+        if minutes < 60 { return "\(minutes)分" }
         let hours = minutes / 60
-        if hours < 24 { return "\(hours)小时前" }
-        return "\(hours / 24)天前"
+        if hours < 24 { return "\(hours)小时" }
+        return "\(hours / 24)天"
+    }
+}
+
+// MARK: - Snooze Popover Content
+
+struct SnoozePopoverContent: View {
+    let onSelect: (Date) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            snoozeButton(label: "30 分钟后", date: Date().addingTimeInterval(30 * 60))
+            Divider().opacity(0.2)
+            snoozeButton(label: "2 小时后", date: Date().addingTimeInterval(2 * 3600))
+            Divider().opacity(0.2)
+            snoozeButton(label: "今晚 20:00", date: tonightAt20())
+            Divider().opacity(0.2)
+            snoozeButton(label: "明早 09:00", date: tomorrowAt09())
+        }
+        .padding(.vertical, 4)
+        .frame(width: 140)
+    }
+
+    private func snoozeButton(label: String, date: Date) -> some View {
+        Button(action: { onSelect(date) }) {
+            Text(label)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tonightAt20() -> Date {
+        let cal = Calendar.current
+        let now = Date()
+        var components = cal.dateComponents([.year, .month, .day], from: now)
+        components.hour = 20
+        components.minute = 0
+        components.second = 0
+        let tonight = cal.date(from: components) ?? now
+        // If already past 20:00 today, use tomorrow
+        return tonight > now ? tonight : cal.date(byAdding: .day, value: 1, to: tonight) ?? tonight
+    }
+
+    private func tomorrowAt09() -> Date {
+        let cal = Calendar.current
+        let now = Date()
+        var components = cal.dateComponents([.year, .month, .day], from: now)
+        components.hour = 9
+        components.minute = 0
+        components.second = 0
+        let today9 = cal.date(from: components) ?? now
+        return cal.date(byAdding: .day, value: 1, to: today9) ?? now
     }
 }
