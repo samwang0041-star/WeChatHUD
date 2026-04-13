@@ -110,7 +110,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .detail:
                     self.panel.allowsBecomeKey = true
                     self.panel.makeKey()
-                    self.panel.setDetailAppearance(true)
+                    // Use light appearance for settings, dark for conversation detail
+                    let isSettings = self.panelState.selectedChatUsername == nil
+                    self.panel.setDetailAppearance(isSettings)
                 case .extended:
                     self.panel.allowsBecomeKey = true
                     self.panel.setDetailAppearance(false)
