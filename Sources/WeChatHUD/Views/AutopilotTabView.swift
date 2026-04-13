@@ -567,7 +567,7 @@ struct PendingSendRow: View {
                 HStack(spacing: 6) {
                     Button("发送") {
                         Task {
-                            let config = AutopilotConfig()
+                            let config = monitor.loadAutopilotConfig()
                             await monitor.autopilotService?.editAndSend(id: item.id, newText: editText, config: config)
                         }
                         isEditing = false
@@ -594,7 +594,7 @@ struct PendingSendRow: View {
 
                 Button("立即发送") {
                     Task {
-                        let config = AutopilotConfig()
+                        let config = monitor.loadAutopilotConfig()
                         await monitor.autopilotService?.sendNow(id: item.id, config: config)
                     }
                 }
