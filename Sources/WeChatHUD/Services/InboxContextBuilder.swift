@@ -135,6 +135,18 @@ enum InboxContextBuilder {
             ? Array(recentMessages.filter { $0.baseType == 1 }.prefix(5))
             : []
 
+        // Image file resolution (best-effort — may return nil if not accessible)
+        let mediaFilePath: String?
+        if mediaType == .image {
+            mediaFilePath = ImageResolver.resolve(
+                chatUsername: chatUsername,
+                messageId: triggerMessage.id,
+                dbDir: reader.dbDir
+            )
+        } else {
+            mediaFilePath = nil
+        }
+
         // Link content extraction (baseType=49)
         let linkTitle: String?
         let linkDesc: String?
@@ -175,7 +187,7 @@ enum InboxContextBuilder {
             hasAskSignal: hasAsk,
             inboundCountSinceMyLastReply: inboundSinceReply,
             mediaType: mediaType,
-            mediaFilePath: nil,  // Phase B: WeChat file system mapping
+            mediaFilePath: mediaFilePath,
             mediaContextMessages: mediaContext,
             linkTitle: linkTitle,
             linkDescription: linkDesc,
