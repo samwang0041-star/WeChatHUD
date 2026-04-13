@@ -59,6 +59,7 @@ final class ChatMonitor: ObservableObject {
     /// Autopilot state — exposed for UI.
     @Published var autopilotActive = false
     @Published var autopilotPaused = false
+    @Published var autopilotManuallyPaused = false
     @Published var autopilotLog: [AutopilotLogEntry] = []
     @Published var autopilotSessionSent = 0
     @Published var autopilotSessionPending = 0
@@ -189,9 +190,11 @@ final class ChatMonitor: ObservableObject {
                 if let svc = self.autopilotService {
                     let queue = await svc.pendingSendQueue
                     let stats = await svc.sessionStats
+                    let manPaused = await svc.manuallyPaused
                     await MainActor.run {
                         self.autopilotPendingSendQueue = queue
                         self.autopilotSessionStats = stats
+                        self.autopilotManuallyPaused = manPaused
                     }
                 }
 
