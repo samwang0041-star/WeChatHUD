@@ -63,38 +63,34 @@ struct InboxView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
-            let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
-            if actionCount > 0 {
-                Text("\(actionCount)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.red.opacity(0.3))
-                    .foregroundColor(.red)
-                    .cornerRadius(3)
-            }
+        let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
+        return HStack(spacing: 6) {
             Spacer()
             if let syncAt = monitor.stats.lastSyncAt {
                 Text(syncLabel(syncAt))
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.3))
+                    .foregroundColor(.white.opacity(0.25))
+            }
+            if actionCount > 0 {
+                Text("\(actionCount)")
+                    .font(.system(size: 9, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.red)
+                    .cornerRadius(3)
             }
             Button(action: { panelState.showDetail() }) {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.72))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(5)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 28)  // clear menu bar (~25px) at screen top
-        .padding(.bottom, 6)
+        .padding(.horizontal, 10)
+        .padding(.top, 26)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Undo Bar
