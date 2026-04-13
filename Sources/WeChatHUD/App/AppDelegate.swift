@@ -148,10 +148,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // for the same sync reason as the state observer above.
         monitor.$latestNotification
             .compactMap { $0 }
-            .sink { [weak self] _ in
+            .sink { [weak self] notif in
                 guard let self = self else { return }
-                let duration = self.store.getSettingJSON("notification", as: NotificationConfig.self)?.durationSeconds ?? 3
-                self.panelState.showNotification(duration: TimeInterval(duration))
+                let cfg = self.store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
+
+                // Apply notification filter toggles
+                let shouldNotify: Bool
+                switch notif.kind {
+                case .groupAt:
+                    shouldNotify = cfg.atMention
+                case .privateChat:
+                    if notif.attentionLevel == .vip {
+                        shouldNotify = cfg.important
+                    } else {
+                        shouldNotify = cfg.allWhitelist
+                    }
+                case .groupMessage:
+                    shouldNotify = cfg.allWhitelist
+                }
+
+                guard shouldNotify else { return }
+                self.panelState.showNotification(duration: TimeInterval(cfg.durationSeconds))
             }
             .store(in: &cancellables)
 
