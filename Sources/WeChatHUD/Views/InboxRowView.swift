@@ -70,8 +70,8 @@ struct InboxRowView: View {
                 }
             }
 
-            if expanded && item.actionRequired {
-                BriefingPanelView(item: item)
+            if expanded {
+                ActionPanelView(item: item)
             }
         }
     }

@@ -121,6 +121,12 @@ final class ChatMonitor: ObservableObject {
     private lazy var briefingGenerator: AIBriefingGenerator = {
         AIBriefingGenerator(store: store, config: store.loadAIConfig())
     }()
+    private lazy var chatAnalyzer: ChatAnalyzer = {
+        ChatAnalyzer(store: store, config: store.loadAIConfig())
+    }()
+    private lazy var relationshipInferrer: RelationshipInferrer = {
+        RelationshipInferrer(store: store, config: store.loadAIConfig())
+    }()
     private lazy var inboxSummarizer: AIInboxSummarizer = {
         AIInboxSummarizer(store: store, config: store.loadAIConfig())
     }()
@@ -1490,6 +1496,8 @@ final class ChatMonitor: ObservableObject {
     func refreshReplySuggesterConfig() async {
         let cfg = store.loadAIConfig()
         await replySuggester.updateConfig(cfg)
+        await chatAnalyzer.updateConfig(cfg)
+        await relationshipInferrer.updateConfig(cfg)
     }
 
     /// Dismiss an inbox item. It will reactivate if a new message arrives
@@ -1672,6 +1680,70 @@ final class ChatMonitor: ObservableObject {
             : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
 
         return await briefingGenerator.generate(context, styleHint: styleHint)
+    }
+
+    // MARK: - On-demand chat analysis
+
+    func analyzeGroupChat(item: InboxItem) async -> ChatAnalyzer.GroupAnalysis? {
+        let messages = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+        let cutoff = Date().addingTimeInterval(-48 * 3600)
+        let filtered = messages.filter {
+            Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
+        }
+        guard !filtered.isEmpty else { return nil }
+        return await chatAnalyzer.analyzeGroup(
+            chatUsername: item.chatUsername,
+            chatName: item.chatName,
+            messages: filtered,
+            myUsername: reader.myUsername(),
+            myName: "我"
+        )
+    }
+
+    func analyzePrivateChat(item: InboxItem) async -> ChatAnalyzer.PrivateAnalysis? {
+        let messages = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+        let cutoff = Date().addingTimeInterval(-48 * 3600)
+        let filtered = messages.filter {
+            Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
+        }
+        guard !filtered.isEmpty else { return nil }
+        return await chatAnalyzer.analyzePrivate(
+            chatUsername: item.chatUsername,
+            contactName: item.chatName,
+            messages: filtered,
+            myUsername: reader.myUsername(),
+            myName: "我"
+        )
+    }
+
+    func loadReplySuggestions(for item: InboxItem) async -> [SuggestedReply]? {
+        guard let profile = store.getRelationshipProfile(username: item.chatUsername) else {
+            return nil
+        }
+        let relationship = "\(profile.relationship) (\(profile.hierarchy.label))"
+        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        let styleHint = style.isEmpty
+            ? nil
+            : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
+
+        let input = AIReplySuggester.Input(
+            messageBody: item.preview,
+            senderName: item.senderName,
+            chatName: item.chatName,
+            isGroup: item.isGroup,
+            askType: item.askType,
+            relationship: relationship,
+            styleHint: styleHint
+        )
+
+        guard let suggestions = await replySuggester.suggest(input) else { return nil }
+        return suggestions.map { s in
+            SuggestedReply(text: s.text, tone: s.tone, recommended: false)
+        }
+    }
+
+    func hasRelationshipProfile(for username: String) -> Bool {
+        store.getRelationshipProfile(username: username) != nil
     }
 
     // MARK: - Autopilot
