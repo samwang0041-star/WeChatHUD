@@ -730,6 +730,7 @@ enum AIRole: String, Codable {
     case groupDigestor     = "group_digestor"
     case recallAnalyzer    = "recall_analyzer"
     case autopilot         = "autopilot"
+    case summarizer        = "summarizer"
 }
 
 enum AIAuditStatus: String, Codable {
