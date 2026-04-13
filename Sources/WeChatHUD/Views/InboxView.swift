@@ -62,10 +62,17 @@ struct InboxView: View {
 
     // MARK: - Header
 
+    private var extendedBuddyMood: BuddyMood {
+        let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
+        let isProcessing = { if case .syncing = monitor.stats.syncStatus { return true }; return false }()
+        return deriveExtendedMood(actionItemCount: actionCount, isAIProcessing: isProcessing)
+    }
+
     private var header: some View {
         let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
         return HStack(spacing: 6) {
             Spacer()
+            PixelBuddyView(mood: extendedBuddyMood)
             if let syncAt = monitor.stats.lastSyncAt {
                 Text(syncLabel(syncAt))
                     .font(.system(size: 9))
