@@ -13,12 +13,22 @@ enum MessageHelpers {
     }
 
     /// Classify whether a message is from the user themselves.
+    /// In group chats, WeChat DB sometimes stores senderUsername as a display
+    /// name rather than wxid when the name2id lookup fails. Pass myDisplayName
+    /// so we can catch that fallback case.
     static func isFromSelf(
         _ msg: MessageInfo,
         chatUsername: String,
-        myUsername: String
+        myUsername: String,
+        myDisplayName: String = ""
     ) -> Bool {
         if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
+        // Group chat fallback: senderUsername might be a display name instead of wxid
+        if chatUsername.contains("@chatroom") && !myDisplayName.isEmpty {
+            if msg.senderUsername == myDisplayName || msg.senderName == myDisplayName {
+                return true
+            }
+        }
         if !chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty {
             if msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername {
                 return true
