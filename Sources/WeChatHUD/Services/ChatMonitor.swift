@@ -66,8 +66,14 @@ final class ChatMonitor: ObservableObject {
     @Published var autopilotPendingSendQueue: [PendingSend] = []
     @Published var autopilotSessionStats = AutopilotService.SessionStats()
     @Published var inboxItems: [InboxItem] = []
+    /// Published handled items for the UI (dismissed/snoozed/silenced).
+    @Published var handledItems: [InboxItem] = []
     /// Tracks dismissed inbox items: chatUsername → timestamp at time of dismiss.
     private var dismissedInbox: [String: Int64] = [:]
+    /// Tracks snoozed inbox items: chatUsername → snooze expiry date.
+    private var snoozedInbox: [String: Date] = [:]
+    /// Tracks silenced (permanently muted) chats.
+    private var silencedInbox: Set<String> = []
     /// The autopilot service instance. Initialized lazily on first toggle.
     private(set) var autopilotService: AutopilotService?
     private let recentLimit = 10
@@ -814,11 +820,7 @@ final class ChatMonitor: ObservableObject {
             latestNotification = latest
         }
         // Build unified inbox from scan results
-        inboxItems = InboxBuilder.build(
-            replyDebtItems: replyDebtItems,
-            notifications: recentNotifications,
-            dismissed: dismissedInbox
-        )
+        rebuildInbox()
         reader.purgeEphemeralCache()
         reloadAIData()
         runPostScanAI(o)
@@ -1292,11 +1294,46 @@ final class ChatMonitor: ObservableObject {
     /// (ScanEngine produces a new ReplyDebtItem for the chat).
     func dismissInboxItem(_ item: InboxItem) {
         dismissedInbox[item.chatUsername] = Int64(item.timestamp.timeIntervalSince1970)
-        inboxItems = InboxBuilder.build(
+        rebuildInbox()
+    }
+
+    /// Snooze an inbox item until a specific date.
+    func snoozeInboxItem(_ item: InboxItem, until: Date) {
+        snoozedInbox[item.chatUsername] = until
+        rebuildInbox()
+    }
+
+    /// Permanently silence a chat from the inbox.
+    func silenceInboxItem(_ item: InboxItem) {
+        silencedInbox.insert(item.chatUsername)
+        rebuildInbox()
+    }
+
+    /// Restore a handled item back to the active inbox.
+    func restoreInboxItem(_ item: InboxItem) {
+        dismissedInbox.removeValue(forKey: item.chatUsername)
+        snoozedInbox.removeValue(forKey: item.chatUsername)
+        silencedInbox.remove(item.chatUsername)
+        rebuildInbox()
+    }
+
+    /// Unsilence a chat (remove from silenced set).
+    func unsilenceInboxItem(_ item: InboxItem) {
+        silencedInbox.remove(item.chatUsername)
+        rebuildInbox()
+    }
+
+    /// Rebuild the inbox from current state. Used by all inbox mutation methods.
+    private func rebuildInbox() {
+        let result = InboxBuilder.build(
             replyDebtItems: replyDebtItems,
             notifications: recentNotifications,
-            dismissed: dismissedInbox
+            dismissed: dismissedInbox,
+            snoozed: snoozedInbox,
+            silenced: silencedInbox
         )
+        inboxItems = result.active
+        handledItems = result.handled
     }
 
     /// Generate reply suggestions for a reply debt item.
