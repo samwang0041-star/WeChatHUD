@@ -26,8 +26,13 @@ class InsightWindow: NSWindow {
 
         let hostingView = NSHostingView(rootView: rootView)
 
+        // 80% of screen size
+        let screen = NSScreen.main ?? NSScreen.screens[0]
+        let w = screen.frame.width * 0.8
+        let h = screen.frame.height * 0.8
+
         let window = InsightWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: w, height: h),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false

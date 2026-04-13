@@ -184,21 +184,9 @@ struct SettingsView: View {
                 case .system:
                     SettingsCard { SyncSettingsView() }
                 case .insight:
-                    // Insight opens in its own large window
-                    VStack(spacing: 12) {
-                        Image(systemName: "waveform.badge.magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundColor(.orange.opacity(0.4))
-                        Text("聊天洞察需要更大的展示空间")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                        Button("打开洞察窗口") {
-                            panelState.onShowInsight?()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Auto-open insight window and show placeholder
+                    Color.clear
+                        .onAppear { panelState.onShowInsight?() }
                 case .dailyReport:
                     DailyReportTabView()
                 case .commitments:
