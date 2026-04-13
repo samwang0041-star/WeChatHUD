@@ -19,6 +19,7 @@ enum InboxBuilder {
         silenced: Set<String> = []
     ) -> BuildResult {
         let now = Date()
+        let maxAge: TimeInterval = 24 * 60 * 60  // 24h — older items don't belong in inbox
         var seen = Set<String>()
         var actionItems: [InboxItem] = []
         var infoItems: [InboxItem] = []
@@ -26,6 +27,8 @@ enum InboxBuilder {
 
         // 1. ReplyDebtItems → always actionRequired
         for debt in replyDebtItems {
+            // Skip stale items (>24h old)
+            guard now.timeIntervalSince(debt.timestamp) < maxAge else { continue }
             seen.insert(debt.chatUsername)
 
             // Compute overdue status
@@ -80,6 +83,8 @@ enum InboxBuilder {
         // 2. Notifications not already covered by debt items
         for notif in notifications {
             guard !seen.contains(notif.chatUsername) else { continue }
+            // Skip stale notifications (>24h old)
+            guard now.timeIntervalSince(notif.timestamp) < maxAge else { continue }
             seen.insert(notif.chatUsername)
 
             let isAction = notif.isAtMention
