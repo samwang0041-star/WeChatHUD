@@ -5,6 +5,7 @@ struct ContactsSettingsView: View {
         case contacts = "通讯录"
         case aiScan = "AI 扫描"
         case blockRules = "屏蔽规则"
+        case silenced = "静音管理"
     }
 
     @State private var selectedSubTab: SubTab = .contacts
@@ -23,6 +24,7 @@ struct ContactsSettingsView: View {
             case .contacts: ContactsListSubView()
             case .aiScan: WhitelistScanView()
             case .blockRules: BlockRulesSubView()
+            case .silenced: SilencedChatsView()
             }
         }
     }

@@ -68,6 +68,10 @@ final class ChatMonitor: ObservableObject {
     @Published var inboxItems: [InboxItem] = []
     /// Published handled items for the UI (dismissed/snoozed/silenced).
     @Published var handledItems: [InboxItem] = []
+    /// All currently silenced inbox items (for management UI).
+    var silencedItems: [InboxItem] {
+        handledItems.filter { $0.status == .silenced }
+    }
     /// Chat insight analysis results keyed by chatUsername.
     @Published var chatInsights: [String: ChatInsightResult] = [:]
     /// Global briefing across all whitelisted chats.
