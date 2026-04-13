@@ -38,3 +38,34 @@ enum InboxStatus {
     case active
     case dismissed
 }
+
+extension InboxItem {
+    /// Convert to ReplyDebtItem for compatibility with ReplyDebtExpandedView.
+    func toReplyDebtItem() -> ReplyDebtItem {
+        ReplyDebtItem(
+            id: chatUsername,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            senderName: senderName,
+            preview: preview,
+            latestOutboundPreview: nil,
+            timestamp: timestamp,
+            priority: {
+                switch priority {
+                case .p0: return .p0
+                case .p1: return .p1
+                case .p2: return .p2
+                }
+            }(),
+            score: priority == .p0 ? 9 : priority == .p1 ? 6 : 3,
+            unreadCount: unreadCount,
+            isGroup: isGroup,
+            isWhitelisted: isWhitelisted,
+            isVIP: isVIP,
+            isAtMention: isAtMention,
+            inboundCountSinceLastOutbound: 1,
+            reasons: reasons,
+            suggestedReplyMinutes: suggestedReplyMinutes
+        )
+    }
+}
