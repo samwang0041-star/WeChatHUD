@@ -719,4 +719,30 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertFalse(cfg.baseURL.isEmpty)
         XCTAssertFalse(cfg.model.isEmpty)
     }
+
+    func testScanDismissedRoundTrip() throws {
+        try store.dismissScanResult(username: "alice", displayName: "Alice")
+        Thread.sleep(forTimeInterval: 1.1)
+        try store.dismissScanResult(username: "bob", displayName: "Bob")
+
+        let all = store.loadDismissedScanResults()
+        XCTAssertEqual(all.count, 2)
+        XCTAssertEqual(all[0].username, "bob")  // most recent first
+
+        let set = store.dismissedScanUsernames()
+        XCTAssertTrue(set.contains("alice"))
+        XCTAssertTrue(set.contains("bob"))
+
+        try store.undismissScanResult(username: "alice")
+        XCTAssertEqual(store.loadDismissedScanResults().count, 1)
+        XCTAssertFalse(store.dismissedScanUsernames().contains("alice"))
+    }
+
+    func testScanDismissedUpsert() throws {
+        try store.dismissScanResult(username: "alice", displayName: "Alice")
+        try store.dismissScanResult(username: "alice", displayName: "Alice Updated")
+        let all = store.loadDismissedScanResults()
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all[0].displayName, "Alice Updated")
+    }
 }

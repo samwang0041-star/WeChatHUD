@@ -276,6 +276,13 @@ struct HUDNotification: Identifiable {
     }
 }
 
+struct ScanDismissedEntry: Identifiable {
+    var id: String { username }
+    let username: String
+    let displayName: String
+    let dismissedAt: Date
+}
+
 struct IgnoredSenderRule: Identifiable, Equatable {
     let chatUsername: String
     let chatName: String

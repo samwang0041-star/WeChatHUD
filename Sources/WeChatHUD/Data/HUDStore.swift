@@ -146,6 +146,14 @@ final class HUDStore: ObservableObject {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_ignored_senders_created_at ON ignored_senders(created_at DESC)")
 
+        try exec("""
+            CREATE TABLE IF NOT EXISTS scan_dismissed (
+                username     TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL DEFAULT '',
+                dismissed_at INTEGER NOT NULL
+            )
+        """)
+
         // AI subsystem tables. See:
         //   docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md
         //
@@ -725,6 +733,49 @@ final class HUDStore: ObservableObject {
         let identifier = HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
         sqlite3_bind_text(stmt, 2, identifier, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    // MARK: - Scan Dismissed
+
+    func dismissScanResult(username: String, displayName: String) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT OR REPLACE INTO scan_dismissed(username, display_name, dismissed_at)
+            VALUES(?,?,?)
+        """, params: [username, displayName, "\(now)"])
+    }
+
+    func undismissScanResult(username: String) throws {
+        try exec("DELETE FROM scan_dismissed WHERE username=?", params: [username])
+    }
+
+    func loadDismissedScanResults() -> [ScanDismissedEntry] {
+        var results: [ScanDismissedEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT username, display_name, dismissed_at
+            FROM scan_dismissed ORDER BY dismissed_at DESC
+        """, -1, &stmt, nil) == SQLITE_OK else { return results }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(ScanDismissedEntry(
+                username: String(cString: sqlite3_column_text(stmt, 0)),
+                displayName: String(cString: sqlite3_column_text(stmt, 1)),
+                dismissedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 2)))
+            ))
+        }
+        return results
+    }
+
+    func dismissedScanUsernames() -> Set<String> {
+        var result = Set<String>()
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT username FROM scan_dismissed", -1, &stmt, nil) == SQLITE_OK else { return result }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.insert(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return result
     }
 
     // MARK: - AI: pending_asks
