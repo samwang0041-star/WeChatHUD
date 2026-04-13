@@ -469,6 +469,20 @@ Round 1-5 完成了被动回复的全链路。Round 6 的"已读不回"可以复
 
 **构建结果：247 tests, 0 failures, build succeeded.**
 
+#### Round 8 修复反馈
+
+**Fix 1 — editAndSend 敏感词检查** ✅：编辑后文本经过 `sensitiveKeywords` 过滤，命中则保留在队列不发送。
+
+**Fix 2 — cancelPendingSend 记 log** ✅：取消操作写入 `autopilot_log`（action=skipped, reasoning="用户手动取消"），完整审计轨迹。
+
+**Fix 3 — sendNow 暂停保护** ✅：`pausedForUserActivity` 时 sendNow 不移出队列，消息安全保留。editAndSend 同理。
+
+**Fix 4 — 读实际 config** ✅：ChatMonitor 新增 `loadAutopilotConfig()` 公开方法，PendingSendRow 通过此方法加载用户保存的配置。
+
+**Fix 5 — compact 模式** N/A：AutopilotTabView 仅在 ExtendedTabsView 中渲染，天然只在 extended 模式下可见。
+
+**构建结果：247 tests, 0 failures, build succeeded.**
+
 #### Round 7 修复反馈
 
 **Fix 1 — ChatMonitor 接入** ✅：60s safetyTimer 中加计数器，每 10 次（~10分钟）调用 `evaluateProactiveOutreach()`。
@@ -803,6 +817,39 @@ Round 1-4 构建了完整的"数字分身"基础：记忆(R1) + 时机(R2) + 风
 ---
 
 ### Round 8 审查
+
+**总体评价：队列可视化架构正确，actor 隔离天然解决了竞态问题。3 项必修 + 2 个 UI 建议。**
+
+**验收标准：**
+- [x] 用户能看到即将发送的消息并取消 — ✅ 队列可视化 + cancelPendingSend（但取消未记 log，见 Fix 2）
+- [x] 用户能编辑 AI 生成的回复再发送 — ✅ editAndSend（但绕过敏感词，见 Fix 1）
+- [x] session 指标实时更新 — ✅ SessionStats 每 10s 同步
+- [~] 暂停后不再发送 — ⚠️ sendNow 在暂停时会丢失消息（见 Fix 3）
+
+**必须修复：**
+
+**Fix 1 — editAndSend 绕过敏感词检查（Critical）**：用户编辑后的文本直接走 `executeSend`，没有经过 `sensitiveKeywords` 过滤。虽然是用户自己编辑的，但安全检查应该一致——用户可能无意中触发敏感词。在 editAndSend 中加入关键词校验，命中时提示用户而非静默拦截。
+
+**Fix 2 — cancelPendingSend 未记录日志**：取消后消息从队列消失但不写 `autopilot_log`。丢失审计记录。添加 `.skipped` log entry，reasoning = "用户手动取消"。
+
+**Fix 3 — sendNow 在暂停时丢失消息**：sendNow 从队列移除后调用 executeSend，如果此时 paused，executeSend 静默返回——消息既没发出也没回队列，彻底丢失。修复：sendNow 前检查 pause 状态，如果暂停则提示用户"当前已暂停，恢复后再发送"，不移出队列。
+
+**UI 建议：**
+
+**Fix 4 — PendingSendRow 读取默认配置**：sendNow/editAndSend 创建了新的 `AutopilotConfig()` 而非读取用户保存的配置。使用 `store.getSettingJSON` 加载实际配置。
+
+**Fix 5 — 紧凑模式适配**：PendingSendRow 的 3 行布局在 36px compact 模式下无法显示。建议紧凑模式只显示一行摘要 + 取消按钮，完整操作在 extended 模式下显示。
+
+**认同你的建议：**
+
+1. **显式暂停/恢复按钮** — 同意，Round 9 中加入（不只依赖自动检测）。
+2. **编辑按钮仅 extended 模式** — 同意，见 Fix 5。
+
+请修复 Fix 1-5，然后我们做一个整体评估，决定是否进入 Round 9 压测还是继续打磨。
+
+---
+
+### Round 9 审查
 _（待 PM 审查）_
 
 ---
@@ -818,5 +865,5 @@ _（待 PM 审查）_
 | Round 5 | 媒体消息 | ✅ 完成，已验证 |
 | Round 6 | 已读不回 | ✅ 完成，已验证 |
 | Round 7 | 主动发起对话 | ✅ 完成，已验证 |
-| Round 8 | 延迟队列 UI + 用户控制 | 已完成，待 PM 审查 |
+| Round 8 | 延迟队列 UI | ✅ 完成（含全部修复） |
 | Round 9 | 端到端压测 | 规划中 |

@@ -901,13 +901,31 @@ actor AutopilotService {
 
     // MARK: - Pending send queue operations
 
-    /// Cancel a pending send by ID.
+    /// Cancel a pending send by ID. Logs as skipped for audit trail.
     func cancelPendingSend(id: UUID) {
+        guard let item = pendingSendQueue.first(where: { $0.id == id }) else { return }
         pendingSendQueue.removeAll { $0.id == id }
+        // Fix 2: record cancellation in audit log
+        let logEntry = AutopilotLogEntry(
+            id: 0, sessionId: sessionId ?? 0,
+            chatUsername: item.chatUsername, chatName: item.chatName,
+            senderUsername: "", senderName: item.senderName,
+            triggerMsgUID: "queue-\(item.id)", triggerText: "",
+            generatedReply: item.replyText, confidence: item.confidence,
+            riskLevel: item.risk, action: .skipped,
+            aiReasoning: "用户手动取消",
+            sentAt: nil, createdAt: Date()
+        )
+        try? store.insertAutopilotLog(logEntry)
     }
 
     /// Send a pending message immediately (skip remaining delay).
     func sendNow(id: UUID, config: AutopilotConfig) async {
+        // Fix 3: don't remove from queue if paused — keep it safe
+        guard !pausedForUserActivity else {
+            print("[WCHUD] Autopilot: sendNow blocked — user is active, message stays in queue")
+            return
+        }
         guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
         let item = pendingSendQueue.remove(at: idx)
         await executeSend(item: item, config: config)
@@ -915,6 +933,18 @@ actor AutopilotService {
 
     /// Edit and send a pending message.
     func editAndSend(id: UUID, newText: String, config: AutopilotConfig) async {
+        // Fix 1: sensitive keyword check on edited text
+        if !config.sensitiveKeywords.isEmpty {
+            let lower = newText.lowercased()
+            if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+                print("[WCHUD] Autopilot: editAndSend blocked — contains sensitive keyword '\(keyword)'")
+                return  // keep in queue, UI should show warning
+            }
+        }
+        guard !pausedForUserActivity else {
+            print("[WCHUD] Autopilot: editAndSend blocked — user is active")
+            return
+        }
         guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
         var item = pendingSendQueue.remove(at: idx)
         item.replyText = newText

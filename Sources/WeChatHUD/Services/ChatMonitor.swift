@@ -1138,6 +1138,10 @@ final class ChatMonitor: ObservableObject {
         store.loadConversationMemory(chatUsername: chatUsername)
     }
 
+    func loadAutopilotConfig() -> AutopilotConfig {
+        store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+    }
+
     /// Compute relationship strength score (0-100) for a contact.
     func relationshipStrength(chatUsername: String) -> RelationshipStrength {
         let trend = chatTrend(chatUsername: chatUsername)
