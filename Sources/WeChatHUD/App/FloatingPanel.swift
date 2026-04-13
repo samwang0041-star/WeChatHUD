@@ -120,10 +120,28 @@ class FloatingPanel: NSPanel {
         positionAtTop()
     }
 
-    /// Position the panel centered at the very top of the main screen,
+    /// Which screen preference to use — updated from settings.
+    var displayScreen: DisplayScreen = .builtIn
+
+    /// Resolve the target screen based on the displayScreen preference.
+    private var targetScreen: NSScreen {
+        let screens = NSScreen.screens
+        switch displayScreen {
+        case .builtIn:
+            // Built-in display has localizedName containing "Built-in" or is the first screen
+            return screens.first { $0.localizedName.contains("Built") || $0.localizedName.contains("内置") }
+                ?? NSScreen.main ?? screens[0]
+        case .external:
+            // External = any screen that is NOT built-in
+            return screens.first { !$0.localizedName.contains("Built") && !$0.localizedName.contains("内置") }
+                ?? NSScreen.main ?? screens[0]
+        }
+    }
+
+    /// Position the panel centered at the very top of the target screen,
     /// overlapping the menu bar region (真吸顶 — uses .frame, not .visibleFrame).
     func positionAtTop() {
-        guard let screen = NSScreen.main else { return }
+        let screen = targetScreen
         let screenFrame = screen.frame
         let panelWidth = frame.width
         let x = screenFrame.midX - panelWidth / 2
@@ -134,7 +152,7 @@ class FloatingPanel: NSPanel {
     /// Animate the panel frame, keeping it anchored to the screen top.
     /// Uses AppKit's default animator — no custom duration or curve.
     func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil) {
-        guard let screen = NSScreen.main else { return }
+        let screen = targetScreen
         let screenFrame = screen.frame
         let newWidth = width ?? frame.width
         let x = screenFrame.midX - newWidth / 2

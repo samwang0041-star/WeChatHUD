@@ -8,6 +8,7 @@ struct SyncSettingsView: View {
     @State private var dbPath = "auto"
     @State private var interval = 30
     @State private var cacheStrategy: CacheStrategy = .temporary
+    @State private var displayScreen: DisplayScreen = .builtIn
     @State private var detectedPath = ""
     @State private var showSaved = false
 
@@ -86,6 +87,20 @@ struct SyncSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: interval) { save() }
+            }
+
+            // Display screen
+            VStack(alignment: .leading, spacing: 4) {
+                Text("显示屏幕")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Picker("", selection: $displayScreen) {
+                    ForEach(DisplayScreen.allCases, id: \.self) { s in
+                        Text(s.label).tag(s)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: displayScreen) { save() }
             }
 
             Divider()
@@ -175,6 +190,7 @@ struct SyncSettingsView: View {
         dbPath = cfg.wechatDBPath
         interval = cfg.intervalSeconds
         cacheStrategy = cfg.cacheStrategy
+        displayScreen = cfg.displayScreen
         if let path = WeChatReader.autoDetectDBDir() {
             detectedPath = path
         }
@@ -184,7 +200,8 @@ struct SyncSettingsView: View {
         let cfg = SyncConfig(
             intervalSeconds: interval,
             wechatDBPath: dbPath,
-            cacheStrategy: cacheStrategy
+            cacheStrategy: cacheStrategy,
+            displayScreen: displayScreen
         )
         try? store.setSettingJSON("sync", value: cfg)
         showSaved = true

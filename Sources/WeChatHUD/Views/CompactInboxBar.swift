@@ -23,7 +23,8 @@ struct CompactInboxBar: View {
             PixelBuddyView(mood: buddyMood)
                 .padding(.trailing, 2)
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 20)
+        .padding(.trailing, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             idleSince = Date()
@@ -64,15 +65,10 @@ struct CompactInboxBar: View {
                     .foregroundColor(.yellow.opacity(0.8))
             }
         } else {
-            // State 1: All clear
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.green.opacity(0.7))
-                    .frame(width: 6, height: 6)
-                Text("一切正常")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.45))
-            }
+            // State 1: All clear — just the green dot, buddy is on the right
+            Circle()
+                .fill(Color.green.opacity(0.7))
+                .frame(width: 6, height: 6)
         }
     }
 
@@ -184,5 +180,5 @@ func compactBarWidth(inboxItems: [InboxItem], syncStatus: SyncStatus) -> CGFloat
     let hasUrgent = inboxItems.contains { $0.priority != .p2 }
     if hasUrgent { return 410 }
     if !inboxItems.isEmpty { return 270 }
-    return 230
+    return 200  // ≈ MacBook Pro notch width + small margin
 }

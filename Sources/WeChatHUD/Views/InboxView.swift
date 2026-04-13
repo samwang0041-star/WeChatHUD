@@ -58,6 +58,11 @@ struct InboxView: View {
                 }
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            PixelBuddyView(mood: extendedBuddyMood)
+                .padding(.trailing, 12)
+                .padding(.bottom, 10)
+        }
     }
 
     // MARK: - Header
@@ -72,7 +77,6 @@ struct InboxView: View {
         let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
         return HStack(spacing: 6) {
             Spacer()
-            PixelBuddyView(mood: extendedBuddyMood)
             if let syncAt = monitor.stats.lastSyncAt {
                 Text(syncLabel(syncAt))
                     .font(.system(size: 9))

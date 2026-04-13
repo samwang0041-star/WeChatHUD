@@ -55,6 +55,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
         panel = FloatingPanel(contentView: hostingView)
+        panel.displayScreen = syncCfg.displayScreen
+        panel.positionAtTop()
         panel.orderFrontRegardless()
 
         // Hook mouse enter/exit to PanelState. PillContainerView handles
@@ -86,6 +88,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelState.$currentState
             .sink { [weak self] state in
                 guard let self = self else { return }
+                // Re-read display screen preference on every state change
+                let latestSync = self.store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
+                self.panel.displayScreen = latestSync.displayScreen
+
                 let (w, h) = self.panelSize(for: state)
                 self.panel.animateHeight(to: h, width: w)
 

@@ -586,6 +586,20 @@ struct SyncConfig: Codable {
     var intervalSeconds: Int = 30
     var wechatDBPath: String = "auto"
     var cacheStrategy: CacheStrategy = .temporary
+    var displayScreen: DisplayScreen = .builtIn
+}
+
+/// Which screen to show the floating panel on.
+enum DisplayScreen: String, Codable, CaseIterable {
+    case builtIn  = "builtin"
+    case external = "external"
+
+    var label: String {
+        switch self {
+        case .builtIn:  return "原生屏幕"
+        case .external: return "扩展屏"
+        }
+    }
 }
 
 /// Where decrypted WeChat DBs are cached.
