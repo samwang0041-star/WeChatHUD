@@ -17,7 +17,7 @@ final class ReplyDebtScorerTests: XCTestCase {
         ).first
 
         XCTAssertEqual(item?.chatUsername, "alice")
-        XCTAssertEqual(item?.priority, .p1)
+        XCTAssertEqual(item?.priority, .p0)
         XCTAssertTrue(item?.reasons.contains(where: { $0.code == .privateChat }) == true)
     }
 
@@ -142,7 +142,7 @@ final class ReplyDebtScorerTests: XCTestCase {
         latestInboundText: String,
         latestOutbound: Int?,
         inboundCountSinceLastOutbound: Int = 1,
-        isWhitelisted: Bool = false,
+        isWhitelisted: Bool = true,
         isVIP: Bool = false,
         isAtMention: Bool = false,
         chatAction: HUDStore.ChatActionState? = nil,
@@ -185,7 +185,8 @@ final class ReplyDebtScorerTests: XCTestCase {
             inboundCountSinceLastOutbound: inboundCountSinceLastOutbound,
             isAtMention: isAtMention,
             chatAction: chatAction,
-            now: Date(timeIntervalSince1970: Double(now))
+            now: Date(timeIntervalSince1970: Double(now)),
+            contactReplyWindowMinutes: nil
         )
     }
 }

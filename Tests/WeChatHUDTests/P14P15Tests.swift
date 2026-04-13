@@ -153,7 +153,8 @@ final class P14P15Tests: XCTestCase {
             inboundCountSinceLastOutbound: 0,
             isAtMention: isAtMention,
             chatAction: nil,
-            now: Date()
+            now: Date(),
+            contactReplyWindowMinutes: nil
         )
     }
 }
