@@ -130,6 +130,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in self?.resizeExtendedIfActive() }
             .store(in: &cancellables)
 
+        monitor.$handledItems
+            .dropFirst()
+            .sink { [weak self] _ in self?.resizeExtendedIfActive() }
+            .store(in: &cancellables)
+
         // First-launch onboarding
         if store.getSetting("onboarded") == nil {
             showOnboarding()
@@ -201,6 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Set up menu bar status item with unread badge.
+    @MainActor
     private func setupMenuBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateMenuBarIcon()
@@ -214,25 +220,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
 
-        // Update badge when unread count changes — use same pattern as
-        // other Combine sinks in this file (synchronous on @Published setter).
-        monitor.objectWillChange
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                MainActor.assumeIsolated {
-                    self.updateMenuBarIcon(unread: self.monitor.stats.unreadCount)
+        // Update badge when inbox items change — show p0/p1 count, fall back
+        // to total, hide badge when empty.
+        monitor.$inboxItems
+            .sink { [weak self] items in
+                guard let self = self, let button = self.statusItem?.button else { return }
+                let p0p1 = items.filter { $0.priority != .p2 }.count
+                let total = items.count
+                if p0p1 > 0 {
+                    button.title = " \(p0p1)"
+                } else if total > 0 {
+                    button.title = " \(total)"
+                } else {
+                    button.title = ""
                 }
             }
             .store(in: &cancellables)
     }
 
-    private func updateMenuBarIcon(unread: Int = 0) {
+    private func updateMenuBarIcon() {
         guard let button = statusItem?.button else { return }
-        if unread > 0 {
-            button.title = " \(unread)"
-        } else {
-            button.title = ""
-        }
+        button.title = ""
         button.image = NSImage(systemSymbolName: "message.badge.fill", accessibilityDescription: "WeChatHUD")
         button.image?.size = NSSize(width: 18, height: 18)
     }
@@ -311,12 +319,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func panelSize(for state: HUDState) -> (CGFloat, CGFloat) {
         switch state {
         case .compact:
-            return (280, 36)
+            // Dynamic compact width based on inbox urgency
+            let items = monitor.inboxItems
+            let hasUrgent = items.contains { $0.priority != .p2 }
+            if hasUrgent {
+                return (380, 36)
+            } else if !items.isEmpty {
+                return (240, 36)
+            } else {
+                return (200, 36)
+            }
         case .extended:
             let count = monitor.inboxItems.count
-            if count == 0 {
-                return (280, 36)
-            }
             return inboxSize(itemCount: count)
         default:
             return (PanelState.width(for: state), PanelState.height(for: state))

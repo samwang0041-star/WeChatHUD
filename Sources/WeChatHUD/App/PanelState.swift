@@ -93,7 +93,7 @@ final class PanelState: ObservableObject {
         currentState = .detail
     }
 
-    /// Dismiss the detail view back to the compact pill.
+    /// Dismiss the detail view back to the compact bar.
     func collapse() {
         currentState = .compact
     }
@@ -125,7 +125,7 @@ final class PanelState: ObservableObject {
 
     static func width(for state: HUDState) -> CGFloat {
         switch state {
-        case .compact: return 208
+        case .compact: return 280
         case .extended: return 340
         case .notification: return 420
         case .detail: return 700
