@@ -36,8 +36,8 @@ class InsightWindow: NSWindow {
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1)
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = .windowBackgroundColor
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
