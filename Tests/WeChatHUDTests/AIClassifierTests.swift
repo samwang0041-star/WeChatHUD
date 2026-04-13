@@ -30,10 +30,15 @@ final class AIClassifierTests: XCTestCase {
     // MARK: - Config defaults
 
     func testClassifierConfigDefaults() {
+        // AIConfig defaults are empty — factory values come from HUDStore seed.
+        // Verify the struct defaults are sane (empty connection, reasonable generation params).
         let cfg = AIConfig()
-        XCTAssertEqual(cfg.baseURL, "http://127.0.0.1:8000/v1")
-        XCTAssertEqual(cfg.model, "Qwen3.5-27B-6bit")
-        XCTAssertLessThanOrEqual(cfg.temperature, 0.2)
+        XCTAssertEqual(cfg.baseURL, "")
+        XCTAssertEqual(cfg.model, "")
+        XCTAssertEqual(cfg.temperature, 0.3)
+        XCTAssertEqual(cfg.maxTokens, 2048)
+        XCTAssertTrue(cfg.summaryEnabled)
+        XCTAssertTrue(cfg.suggestionsEnabled)
     }
 
     // MARK: - Prompt loader
