@@ -25,7 +25,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Cache strategy comes from persisted settings (default = persistent).
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        reader = WeChatReader(cacheStrategy: syncCfg.cacheStrategy)
+        let customDBDir: String? = (syncCfg.wechatDBPath != "auto" && !syncCfg.wechatDBPath.isEmpty)
+            ? syncCfg.wechatDBPath
+            : nil
+        reader = WeChatReader(dbDir: customDBDir, cacheStrategy: syncCfg.cacheStrategy)
 
         // AI config comes from the settings table — seeded on first launch
         // by HUDStore.open(). Source code never carries the endpoint URL
