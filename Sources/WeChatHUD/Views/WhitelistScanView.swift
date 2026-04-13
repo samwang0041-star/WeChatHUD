@@ -34,7 +34,8 @@ struct WhitelistScanView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Pinned toolbar — always visible
             HStack {
                 Button(action: startScan) {
                     HStack(spacing: 6) {
@@ -54,47 +55,55 @@ struct WhitelistScanView: View {
                 Spacer()
 
                 if !pendingResults.isEmpty {
+                    Text("\(pendingResults.count) 条待处理")
+                        .font(.system(size: 11)).foregroundColor(.secondary)
                     Button("全部接受") { acceptAll() }
                         .buttonStyle(.borderedProminent).controlSize(.small)
                     Button("全部忽略") { dismissAll() }
                         .buttonStyle(.bordered).controlSize(.small)
                 }
             }
+            .padding(.bottom, 12)
 
-            if !results.isEmpty && pendingResults.isEmpty && !isScanning {
-                Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
-                    .font(.system(size: 12)).foregroundColor(.secondary)
-            }
+            // Scrollable results
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !results.isEmpty && pendingResults.isEmpty && !isScanning {
+                        Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
+                            .font(.system(size: 12)).foregroundColor(.secondary)
+                    }
 
-            ForEach(groupedResults, id: \.0) { category, items in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Circle().fill(colorFor(category)).frame(width: 8, height: 8)
-                        Text(labelFor(category))
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("(\(items.count))")
-                            .font(.system(size: 11)).foregroundColor(.secondary)
+                    ForEach(groupedResults, id: \.0) { category, items in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Circle().fill(colorFor(category)).frame(width: 8, height: 8)
+                                Text(labelFor(category))
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("(\(items.count))")
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                            }
+                            VStack(spacing: 1) {
+                                ForEach(items) { item in resultRow(item) }
+                            }
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .cornerRadius(8)
+                        }
                     }
-                    VStack(spacing: 1) {
-                        ForEach(items) { item in resultRow(item) }
-                    }
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(8)
-                }
-            }
 
-            if !dismissed.isEmpty {
-                Divider()
-                DisclosureGroup(isExpanded: $showDismissed) {
-                    VStack(spacing: 1) {
-                        ForEach(dismissed) { entry in dismissedRow(entry) }
+                    if !dismissed.isEmpty {
+                        Divider()
+                        DisclosureGroup(isExpanded: $showDismissed) {
+                            VStack(spacing: 1) {
+                                ForEach(dismissed) { entry in dismissedRow(entry) }
+                            }
+                            .background(Color(nsColor: .controlBackgroundColor))
+                            .cornerRadius(8)
+                        } label: {
+                            Text("已忽略 (\(dismissed.count))")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(8)
-                } label: {
-                    Text("已忽略 (\(dismissed.count))")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
                 }
             }
         }

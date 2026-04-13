@@ -571,11 +571,34 @@ enum ContactRole: String, CaseIterable, Codable, Equatable {
 /// Unified AI configuration. Single source of truth for all AI services.
 /// Stored in the `ai` row of the `settings` table.
 /// Read via `HUDStore.loadAIConfig()`.
-struct AIConfig: Codable {
-    // Connection
+/// Per-slot provider connection info (cloud or local).
+struct AIProviderSlot: Codable, Equatable {
+    var providerID: String = "custom"
     var baseURL: String = ""
     var model: String = ""
     var apiKey: String = ""
+}
+
+/// Which provider to use for requests.
+enum AIActiveMode: String, Codable, CaseIterable {
+    case cloud  = "cloud"     // cloud only
+    case local  = "local"     // local only
+    case auto   = "auto"      // fallback mode (priority determined by autoCloudFirst)
+}
+
+struct AIConfig: Codable {
+    // Dual-provider slots
+    var cloudProvider: AIProviderSlot = AIProviderSlot()
+    var localProvider: AIProviderSlot = AIProviderSlot()
+    var activeMode: AIActiveMode = .local
+    var autoCloudFirst: Bool = true   // auto mode: true = cloud→local, false = local→cloud
+
+    // Legacy single-provider fields — migration only, encoded as _legacy* to
+    // avoid clashing with the computed compatibility shims below.
+    var _legacyBaseURL: String?
+    var _legacyModel: String?
+    var _legacyApiKey: String?
+    var _legacyProviderID: String?
 
     // Generation defaults (services may override per-call)
     var maxTokens: Int = 2048
@@ -587,6 +610,145 @@ struct AIConfig: Codable {
     var moodDetectionEnabled: Bool = true
     var debtJudgeEnabled: Bool = true
     var debtJudgeShadowMode: Bool = true
+
+    // ── Compatibility shims ──
+    // All existing services read `config.baseURL` / `.model` / `.apiKey`.
+    // These resolve to the active (primary) slot so nothing else needs to change.
+    var baseURL: String {
+        get { primarySlot.baseURL }
+        set { /* no-op — use slot setters */ }
+    }
+    var model: String {
+        get { primarySlot.model }
+        set { /* no-op */ }
+    }
+    var apiKey: String {
+        get { primarySlot.apiKey }
+        set { /* no-op */ }
+    }
+
+    /// The primary provider slot for the current mode.
+    var primarySlot: AIProviderSlot {
+        switch activeMode {
+        case .cloud: return cloudProvider
+        case .local: return localProvider
+        case .auto: return autoCloudFirst ? cloudProvider : localProvider
+        }
+    }
+
+    /// Fallback slot (only used in .auto mode).
+    var fallbackSlot: AIProviderSlot? {
+        guard activeMode == .auto else { return nil }
+        return autoCloudFirst ? localProvider : cloudProvider
+    }
+
+    /// Migrate from old single-provider format if needed.
+    mutating func migrateIfNeeded() {
+        if let url = _legacyBaseURL, !url.isEmpty, localProvider.baseURL.isEmpty {
+            localProvider.baseURL = url
+            localProvider.model = _legacyModel ?? ""
+            localProvider.apiKey = _legacyApiKey ?? ""
+            localProvider.providerID = _legacyProviderID ?? "custom"
+            _legacyBaseURL = nil
+            _legacyModel = nil
+            _legacyApiKey = nil
+            _legacyProviderID = nil
+        }
+    }
+
+    // Custom coding keys — decode old "baseURL"/"model"/"apiKey" into _legacy*
+    enum CodingKeys: String, CodingKey {
+        case cloudProvider, localProvider, activeMode, autoCloudFirst
+        case _legacyBaseURL = "baseURL"
+        case _legacyModel = "model"
+        case _legacyApiKey = "apiKey"
+        case _legacyProviderID = "providerID"
+        case maxTokens, temperature
+        case summaryEnabled, suggestionsEnabled, moodDetectionEnabled
+        case debtJudgeEnabled, debtJudgeShadowMode
+    }
+}
+
+// MARK: - AI Provider Presets
+
+struct AIProvider: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let baseURL: String
+    let models: [String]       // first is default
+    let requiresKey: Bool
+    let signupURL: String      // where to get an API key
+
+    static let builtIn: [AIProvider] = [
+        AIProvider(
+            id: "dashscope",
+            name: "阿里百炼 (DashScope)",
+            baseURL: "https://dashscope.aliyuncs.com/compatible-mode",
+            models: ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-long"],
+            requiresKey: true,
+            signupURL: "https://bailian.console.aliyun.com/"
+        ),
+        AIProvider(
+            id: "deepseek",
+            name: "DeepSeek",
+            baseURL: "https://api.deepseek.com",
+            models: ["deepseek-chat", "deepseek-reasoner"],
+            requiresKey: true,
+            signupURL: "https://platform.deepseek.com/"
+        ),
+        AIProvider(
+            id: "siliconflow",
+            name: "硅基流动 (SiliconFlow)",
+            baseURL: "https://api.siliconflow.cn",
+            models: ["Qwen/Qwen2.5-72B-Instruct", "deepseek-ai/DeepSeek-V3", "Pro/Qwen/Qwen2.5-Coder-32B-Instruct"],
+            requiresKey: true,
+            signupURL: "https://cloud.siliconflow.cn/"
+        ),
+        AIProvider(
+            id: "moonshot",
+            name: "月之暗面 (Kimi)",
+            baseURL: "https://api.moonshot.cn",
+            models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+            requiresKey: true,
+            signupURL: "https://platform.moonshot.cn/"
+        ),
+        AIProvider(
+            id: "zhipu",
+            name: "智谱 (GLM)",
+            baseURL: "https://open.bigmodel.cn/api/paas",
+            models: ["glm-4-flash", "glm-4", "glm-4-plus"],
+            requiresKey: true,
+            signupURL: "https://open.bigmodel.cn/"
+        ),
+        AIProvider(
+            id: "openai",
+            name: "OpenAI",
+            baseURL: "https://api.openai.com",
+            models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano"],
+            requiresKey: true,
+            signupURL: "https://platform.openai.com/"
+        ),
+        AIProvider(
+            id: "ollama",
+            name: "Ollama (本地)",
+            baseURL: "http://127.0.0.1:11434",
+            models: ["qwen2.5:14b", "qwen2.5:7b", "llama3.1:8b", "deepseek-r1:14b"],
+            requiresKey: false,
+            signupURL: ""
+        ),
+        AIProvider(
+            id: "custom",
+            name: "自定义",
+            baseURL: "",
+            models: [],
+            requiresKey: false,
+            signupURL: ""
+        ),
+    ]
+
+    static func find(_ id: String) -> AIProvider? {
+        builtIn.first { $0.id == id }
+    }
 }
 
 struct SyncConfig: Codable {

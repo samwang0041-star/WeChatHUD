@@ -25,9 +25,14 @@ final class HUDStoreTests: XCTestCase {
     }
 
     func testSettingsJSONRoundTrip() throws {
-        let cfg = AIConfig(baseURL: "http://test:8080/v1", model: "test-model")
+        var cfg = AIConfig()
+        cfg.localProvider = AIProviderSlot(providerID: "custom", baseURL: "http://test:8080/v1", model: "test-model", apiKey: "")
+        cfg.activeMode = .local
         try store.setSettingJSON("ai", value: cfg)
         let loaded = store.getSettingJSON("ai", as: AIConfig.self)
+        XCTAssertEqual(loaded?.localProvider.baseURL, "http://test:8080/v1")
+        XCTAssertEqual(loaded?.localProvider.model, "test-model")
+        // Compatibility shims should resolve correctly
         XCTAssertEqual(loaded?.baseURL, "http://test:8080/v1")
         XCTAssertEqual(loaded?.model, "test-model")
     }

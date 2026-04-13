@@ -1,6 +1,62 @@
 // Sources/WeChatHUD/Views/PixelBuddyView.swift
 import SwiftUI
 
+// MARK: - AI Buddy Overlay (hover shows AI activity)
+
+struct AIBuddyOverlay: View {
+    let mood: BuddyMood
+    @ObservedObject private var tracker = AIActivityTracker.shared
+    @State private var isHovering = false
+
+    var body: some View {
+        PixelBuddyView(mood: tracker.isActive ? .analyzing : mood)
+            .onHover { isHovering = $0 }
+            .popover(isPresented: $isHovering, arrowEdge: .leading) {
+                aiActivityPopover
+            }
+    }
+
+    private var aiActivityPopover: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(tracker.isActive ? Color.green : Color.gray)
+                    .frame(width: 6, height: 6)
+                Text(tracker.isActive ? "AI 运行中" : "AI 空闲")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+
+            if tracker.taskList.isEmpty {
+                Text("当前没有 AI 任务在运行")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(tracker.taskList) { task in
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 10, height: 10)
+                        Text(task.label)
+                            .font(.system(size: 10, weight: .medium))
+                        Spacer()
+                        Text(elapsedText(since: task.startedAt))
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(minWidth: 160)
+    }
+
+    private func elapsedText(since date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 { return "\(seconds)s" }
+        return "\(seconds / 60)m\(seconds % 60)s"
+    }
+}
+
 // MARK: - Pixel Color Palette
 
 enum PixelColor: UInt32 {

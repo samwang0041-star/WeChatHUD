@@ -1502,6 +1502,12 @@ final class ChatMonitor: ObservableObject {
         await replySuggester.updateConfig(cfg)
         await chatAnalyzer.updateConfig(cfg)
         await relationshipInferrer.updateConfig(cfg)
+        await aiClassifier.updateConfig(cfg)
+        await briefingGenerator.updateConfig(cfg)
+        await inboxSummarizer.updateConfig(cfg)
+        await dailyRetrospector.updateConfig(cfg)
+        await chatInsightService.updateConfig(cfg)
+        await aiGroupCatchup.updateConfig(cfg)
     }
 
     /// Dismiss an inbox item. It will reactivate if a new message arrives

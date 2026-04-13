@@ -115,6 +115,9 @@ actor AIClassifier {
     /// config — we want a clean separation between the user-facing AI for
     /// summary/AI-chat features and the classifier infrastructure.
     private func callModel(userPrompt: String) async -> ModelResponse {
+        let trackID = "classifier:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "消息分类")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")

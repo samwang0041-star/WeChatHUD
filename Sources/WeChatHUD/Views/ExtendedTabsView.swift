@@ -81,7 +81,10 @@ struct ExtendedTabsView: View {
                     case .commitments: CommitmentTabView()
                     case .dailyReport: DailyReportTabView()
                     case .autopilot:   AutopilotTabView()
-                    case .insight:     ChatInsightView()
+                    case .insight:
+                        Color.clear
+                            .frame(height: 0)
+                            .onAppear { panelState.onShowInsight?() }
                     }
                 }
             }

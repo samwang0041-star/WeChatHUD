@@ -97,6 +97,9 @@ actor ContextAnalyzer {
     }
 
     private func callModel(prompt: String, config: AIConfig) async -> String? {
+        let trackID = "context:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "上下文分析")
+        defer { AIActivityTracker.shared.end(trackID) }
         guard let url = URL(string: normalizeURL(config.baseURL) + "/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 45)
         request.httpMethod = "POST"

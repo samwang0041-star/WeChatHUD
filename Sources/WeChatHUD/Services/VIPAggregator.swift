@@ -147,6 +147,9 @@ actor VIPAggregator {
     // MARK: - Private helpers
 
     private func callModel(prompt: String, config: AIConfig) async -> String? {
+        let trackID = "vip:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "VIP 分析")
+        defer { AIActivityTracker.shared.end(trackID) }
         guard let url = URL(string: "\(normalizeURL(config.baseURL))/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "POST"

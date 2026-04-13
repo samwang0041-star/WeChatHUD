@@ -16,27 +16,56 @@ actor AIService {
     }
 
     func isConfigured() -> Bool {
-        !config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !config.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let slot = config.primarySlot
+        return !slot.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Send a chat completion request and return the response text.
+    /// Send a chat completion request. In `.auto` mode, tries the primary
+    /// slot first and falls back to the other on failure.
     func complete(system: String, user: String) async throws -> String {
-        let baseURL = normalizeURL(config.baseURL)
+        let primary = config.primarySlot
+        let fallback = config.fallbackSlot
+
+        do {
+            return try await send(slot: primary, system: system, user: user)
+        } catch {
+            if let fb = fallback, !fb.baseURL.isEmpty {
+                print("[WCHUD-AI] primary failed (\(error.localizedDescription)), trying fallback…")
+                return try await send(slot: fb, system: system, user: user)
+            }
+            throw error
+        }
+    }
+
+    /// Test a specific slot's connection.
+    func testSlot(_ slot: AIProviderSlot) async throws -> String {
+        try await send(slot: slot, system: "Reply with OK.", user: "Test")
+    }
+
+    /// Test the connection to the AI provider.
+    func testConnection() async throws -> String {
+        try await testSlot(config.primarySlot)
+    }
+
+    // MARK: - Helpers
+
+    private func send(slot: AIProviderSlot, system: String, user: String) async throws -> String {
+        let baseURL = normalizeURL(slot.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            throw AIError.invalidURL(config.baseURL)
+            throw AIError.invalidURL(slot.baseURL)
         }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if !slot.apiKey.isEmpty {
+            request.setValue("Bearer \(slot.apiKey)", forHTTPHeaderField: "Authorization")
         }
         request.timeoutInterval = 120
 
         let body: [String: Any] = [
-            "model": config.model,
+            "model": slot.model,
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user]
@@ -66,14 +95,6 @@ actor AIService {
 
         return stripThinking(content)
     }
-
-    /// Test the connection to the AI provider.
-    func testConnection() async throws -> String {
-        let result = try await complete(system: "Reply with OK.", user: "Test")
-        return result
-    }
-
-    // MARK: - Helpers
 
     private func normalizeURL(_ url: String) -> String {
         var u = url

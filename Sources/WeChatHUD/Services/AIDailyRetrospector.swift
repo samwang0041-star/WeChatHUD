@@ -17,6 +17,11 @@ actor AIDailyRetrospector {
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
+    func updateConfig(_ newConfig: AIConfig) {
+        var c = newConfig; c.maxTokens = 1024; c.temperature = 0.3
+        self.config = c
+    }
+
     init(
         store: HUDStore,
         config: AIConfig,
@@ -173,6 +178,9 @@ actor AIDailyRetrospector {
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
+        let trackID = "daily:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "日报生成")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")

@@ -148,6 +148,9 @@ actor AIReplySuggester {
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
+        let trackID = "reply:\(UUID().uuidString.prefix(8))"
+        AIActivityTracker.shared.begin(trackID, label: "回复建议")
+        defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")
