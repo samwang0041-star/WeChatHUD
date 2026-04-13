@@ -6,10 +6,10 @@ import SwiftUI
 enum PixelColor: UInt32 {
     case clear  = 0x00000000
     case skin   = 0xFFD4A574
-    case hair   = 0xFF2C2C2C
-    case shirt  = 0xFF4A90D9
-    case pants  = 0xFF3C3C3C
-    case eye    = 0xFF1A1A1A
+    case hair   = 0xFF8B6F5E
+    case shirt  = 0xFF5BA0E8
+    case pants  = 0xFF6B7B8D
+    case eye    = 0xFFE8E8E8
     case accent = 0xFFFF6B6B
 
     var swiftUIColor: Color {
@@ -288,32 +288,35 @@ func framesForMood(_ mood: BuddyMood) -> [Frame] {
 struct PixelBuddyView: View {
     let mood: BuddyMood
 
+    /// Crop region — only render the interesting part of the 24x24 grid
+    private static let cropTop = 8
+    private static let cropBottom = 20
+    private static let cropLeft = 7
+    private static let cropRight = 19
+    private static let cropRows = cropBottom - cropTop  // 12
+    private static let cropCols = cropRight - cropLeft  // 12
+
     @State private var frameIndex = 0
     @State private var timer: Timer?
 
     private var frames: [Frame] { framesForMood(mood) }
 
     var body: some View {
-        Canvas { context, size in
-            let currentFrame = frames[frameIndex % frames.count]
-            let pixelW = size.width / 24
-            let pixelH = size.height / 24
-            for row in 0..<min(currentFrame.count, 24) {
-                let cols = currentFrame[row]
-                for col in 0..<min(cols.count, 24) {
-                    let color = cols[col]
-                    guard color != .clear else { continue }
-                    let rect = CGRect(
-                        x: CGFloat(col) * pixelW,
-                        y: CGFloat(row) * pixelH,
-                        width: pixelW,
-                        height: pixelH
-                    )
-                    context.fill(Path(rect), with: .color(color.swiftUIColor))
+        let currentFrame = frames[frameIndex % frames.count]
+        let pxSize: CGFloat = 1.5  // each pixel = 1.5pt
+
+        VStack(spacing: 0) {
+            ForEach(Self.cropTop..<Self.cropBottom, id: \.self) { row in
+                HStack(spacing: 0) {
+                    ForEach(Self.cropLeft..<Self.cropRight, id: \.self) { col in
+                        let color = currentFrame[row][col]
+                        Rectangle()
+                            .fill(color.swiftUIColor)
+                            .frame(width: pxSize, height: pxSize)
+                    }
                 }
             }
         }
-        .frame(width: 24, height: 24)
         .onChange(of: mood) {
             frameIndex = 0
         }
