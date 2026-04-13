@@ -22,7 +22,7 @@ actor AutopilotService {
     private let reader: WeChatReader
     private let generator: AutoReplyGenerator
     private let styleProfiler: StyleProfiler
-    private var aiConfig: AIClassifierConfig
+    private var aiConfig: AIConfig
 
     /// Messages already processed (by msgUID), avoids double-handling.
     private var processedMsgUIDs: Set<String> = []
@@ -88,7 +88,7 @@ actor AutopilotService {
         var duration: TimeInterval { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
     }
 
-    init(store: HUDStore, reader: WeChatReader, config: AIClassifierConfig) {
+    init(store: HUDStore, reader: WeChatReader, config: AIConfig) {
         self.store = store
         self.reader = reader
         self.aiConfig = config
@@ -380,7 +380,7 @@ actor AutopilotService {
         try? store.updateAutopilotLogAction(id: logId, action: .skipped)
     }
 
-    func updateConfig(_ config: AIClassifierConfig) async {
+    func updateConfig(_ config: AIConfig) async {
         self.aiConfig = config
         await generator.updateConfig(config)
     }

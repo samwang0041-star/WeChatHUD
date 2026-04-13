@@ -31,7 +31,7 @@ actor RecallAnalyzer {
     /// Analyze a recalled message. Returns nil when AI is unavailable or parsing fails.
     /// On success writes the analysis back to the DB and emits an audit log entry.
     func analyze(recalled: RecalledMessage, context: [MessageInfo]) async -> AnalysisResult? {
-        let config = store.loadClassifierConfig()
+        let config = store.loadAIConfig()
         guard !config.baseURL.isEmpty else { return nil }
 
         let template: String
@@ -112,7 +112,7 @@ actor RecallAnalyzer {
 
     // MARK: - Model call
 
-    private func callModel(prompt: String, config: AIClassifierConfig) async -> String? {
+    private func callModel(prompt: String, config: AIConfig) async -> String? {
         guard let url = URL(string: "\(normalizeURL(config.baseURL))/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 30)
         request.httpMethod = "POST"

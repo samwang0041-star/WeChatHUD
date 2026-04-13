@@ -5,17 +5,17 @@ import Foundation
 /// context menu, or automatically when the user opens a group with
 /// > N unread messages since their last visit.
 ///
-/// Pure service. Reads its config from `loadClassifierConfig()` so
+/// Pure service. Reads its config from `loadAIConfig()` so
 /// it tracks whatever model the user has set.
 actor AIGroupCatchup {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
     init(
         store: HUDStore,
-        config: AIClassifierConfig,
+        config: AIConfig,
         promptLoader: PromptLoader = PromptLoader(),
         promptVersion: String = "group_catchup_v1"
     ) {

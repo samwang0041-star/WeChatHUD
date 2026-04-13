@@ -27,6 +27,7 @@ enum ReplyDebtScorer {
     }
 
     private static func buildItem(seed: Seed, config: ReplyDebtConfig) -> ReplyDebtItem? {
+        guard seed.isWhitelisted else { return nil }
         guard let latestInbound = seed.latestInbound else { return nil }
         if let latestOutbound = seed.latestOutbound, latestOutbound.createTime >= latestInbound.createTime {
             return nil

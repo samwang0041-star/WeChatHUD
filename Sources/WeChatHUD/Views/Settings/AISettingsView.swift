@@ -304,6 +304,16 @@ struct AISettingsView: View {
         guard didLoad else { return }
         let cfg = AIConfig(baseURL: baseURL, model: model, apiKey: apiKey)
         try? store.setSettingJSON("ai", value: cfg)
+
+        // Sync connection params to the classifier config so all AI
+        // services (classifier, reply suggester, etc.) use the same
+        // endpoint the user configured.
+        var cls = store.loadAIConfig()
+        cls.baseURL = baseURL
+        cls.model = model
+        cls.apiKey = apiKey
+        try? store.setSettingJSON("ai", value: cls)
+
         NotificationCenter.default.post(name: .hudAIConfigDidChange, object: nil)
         showSaved = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }

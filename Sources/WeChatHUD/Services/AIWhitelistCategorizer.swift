@@ -6,17 +6,17 @@ import Foundation
 /// power batch suggestions when the user opens settings for the first
 /// time.
 ///
-/// Pure service. Reads its config from `loadClassifierConfig()` so
+/// Pure service. Reads its config from `loadAIConfig()` so
 /// it tracks whatever model the user has set.
 actor AIWhitelistCategorizer {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
     init(
         store: HUDStore,
-        config: AIClassifierConfig,
+        config: AIConfig,
         promptLoader: PromptLoader = PromptLoader(),
         promptVersion: String = "whitelist_categorizer_v1"
     ) {

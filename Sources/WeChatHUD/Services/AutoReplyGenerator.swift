@@ -5,10 +5,10 @@ import Foundation
 /// one reply with confidence/risk assessment for autonomous sending.
 actor AutoReplyGenerator {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, config: AIClassifierConfig, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, config: AIConfig, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
         var inflated = config
         inflated.maxTokens = 512
@@ -158,7 +158,7 @@ actor AutoReplyGenerator {
         return nil
     }
 
-    func updateConfig(_ config: AIClassifierConfig) {
+    func updateConfig(_ config: AIConfig) {
         var inflated = config
         inflated.maxTokens = 512
         inflated.temperature = 0.3

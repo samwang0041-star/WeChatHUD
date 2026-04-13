@@ -6,20 +6,20 @@ import Foundation
 /// one-click a reply without typing.
 ///
 /// Pure service. No DB writes (apart from audit log via the shared
-/// HUDStore). Reads its config from `loadClassifierConfig()` so it
+/// HUDStore). Reads its config from `loadAIConfig()` so it
 /// always tracks whatever model the user has set.
 ///
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`
 /// for the role definitions and gating.
 actor AIReplySuggester {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
     init(
         store: HUDStore,
-        config: AIClassifierConfig,
+        config: AIConfig,
         promptLoader: PromptLoader = PromptLoader(),
         promptVersion: String = "reply_suggester_v1"
     ) {
@@ -32,6 +32,14 @@ actor AIReplySuggester {
         self.config = inflated
         self.promptLoader = promptLoader
         self.promptVersion = promptVersion
+    }
+
+    /// Hot-reload connection params when the user changes AI settings.
+    func updateConfig(_ newConfig: AIConfig) {
+        var inflated = newConfig
+        inflated.maxTokens = 512
+        inflated.temperature = 0.4
+        self.config = inflated
     }
 
     /// One reply suggestion. `tone` matches the prompt's friendly /

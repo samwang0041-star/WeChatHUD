@@ -79,7 +79,7 @@ final class ChatMonitor: ObservableObject {
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
     private lazy var aiClassifier: AIClassifier = {
-        AIClassifier(store: store, config: store.loadClassifierConfig())
+        AIClassifier(store: store, config: store.loadAIConfig())
     }()
     private lazy var commitmentTracker: CommitmentTracker = {
         CommitmentTracker(store: store)
@@ -91,7 +91,7 @@ final class ChatMonitor: ObservableObject {
         RecallAnalyzer(store: store)
     }()
     private lazy var replySuggester: AIReplySuggester = {
-        AIReplySuggester(store: store, config: store.loadClassifierConfig())
+        AIReplySuggester(store: store, config: store.loadAIConfig())
     }()
     private lazy var styleProfiler: StyleProfiler = {
         StyleProfiler(reader: reader, store: store)
@@ -100,7 +100,7 @@ final class ChatMonitor: ObservableObject {
         ProactiveAlertEngine(store: store)
     }()
     private lazy var dailyRetrospector: AIDailyRetrospector = {
-        AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
+        AIDailyRetrospector(store: store, config: store.loadAIConfig())
     }()
     private var safetyTimer: Timer?
     private var safetyTickCount = 0
@@ -154,7 +154,7 @@ final class ChatMonitor: ObservableObject {
             store: store,
             client: aiService
         )
-        let classifierConfig = store.loadClassifierConfig()
+        let classifierConfig = store.loadAIConfig()
         self.aiGroupCatchup = AIGroupCatchup(store: store, config: classifierConfig)
         self.contextAnalyzer = ContextAnalyzer(store: store)
     }
@@ -1282,7 +1282,7 @@ final class ChatMonitor: ObservableObject {
     /// Refresh the reply suggester's config from the settings DB.
     /// Called by AppDelegate when the user changes AI settings.
     func refreshReplySuggesterConfig() async {
-        let cfg = store.loadClassifierConfig()
+        let cfg = store.loadAIConfig()
         await replySuggester.updateConfig(cfg)
     }
 
@@ -1344,7 +1344,7 @@ final class ChatMonitor: ObservableObject {
 
     func startAutopilot() {
         if autopilotService == nil {
-            let config = store.loadClassifierConfig()
+            let config = store.loadAIConfig()
             autopilotService = AutopilotService(store: store, reader: reader, config: config)
         }
         let service = autopilotService

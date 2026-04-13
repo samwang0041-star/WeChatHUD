@@ -709,7 +709,7 @@ final class HUDStoreTests: XCTestCase {
     // MARK: - Config loading
 
     func testLoadClassifierConfigReturnsSeededDefaults() {
-        let cfg = store.loadClassifierConfig()
+        let cfg = store.loadAIConfig()
         XCTAssertFalse(cfg.baseURL.isEmpty)
         XCTAssertFalse(cfg.model.isEmpty)
     }

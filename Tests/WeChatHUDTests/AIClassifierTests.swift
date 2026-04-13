@@ -30,7 +30,7 @@ final class AIClassifierTests: XCTestCase {
     // MARK: - Config defaults
 
     func testClassifierConfigDefaults() {
-        let cfg = AIClassifierConfig()
+        let cfg = AIConfig()
         XCTAssertEqual(cfg.baseURL, "http://127.0.0.1:8000/v1")
         XCTAssertEqual(cfg.model, "Qwen3.5-27B-6bit")
         XCTAssertEqual(cfg.promptVersion, "classifier_v1")
@@ -151,7 +151,7 @@ final class AIClassifierTests: XCTestCase {
     /// cannot actually serve a chat completion, so this test stays
     /// green on machines that don't have a healthy local model server.
     func testClassifierAgainstFixturesLive() async throws {
-        let cfg = AIClassifierConfig()
+        let cfg = AIConfig()
         let availability = await probeClassifierAvailability(config: cfg)
         guard availability.isUsable else {
             throw XCTSkip("omlx endpoint \(cfg.baseURL) unavailable for live classifier test: \(availability.reason)")
@@ -276,7 +276,7 @@ final class AIClassifierTests: XCTestCase {
     /// the live fixture test out of the way when the endpoint is up but
     /// out of storage, out of memory, mis-keyed, or otherwise unable to
     /// execute a real request.
-    private func probeClassifierAvailability(config: AIClassifierConfig) async -> (isUsable: Bool, reason: String) {
+    private func probeClassifierAvailability(config: AIConfig) async -> (isUsable: Bool, reason: String) {
         var url = config.baseURL
         while url.hasSuffix("/") { url.removeLast() }
         if !url.hasSuffix("/v1") { url += "/v1" }

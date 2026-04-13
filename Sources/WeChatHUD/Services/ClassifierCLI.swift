@@ -476,7 +476,7 @@ enum ClassifierCLI {
         }
 
         let store = makeStore()
-        let suggester = AIReplySuggester(store: store, config: store.loadClassifierConfig())
+        let suggester = AIReplySuggester(store: store, config: store.loadAIConfig())
         let askType = AskType(rawValue: typeStr) ?? .info
         let senderName = sender
         let chatName = chat
@@ -562,7 +562,7 @@ enum ClassifierCLI {
         let chatName = msgs.first?.chatName ?? chatUsername
         let selfName = reader.displayName(for: reader.myUsername())
 
-        let catchup = AIGroupCatchup(store: store, config: store.loadClassifierConfig())
+        let catchup = AIGroupCatchup(store: store, config: store.loadAIConfig())
         let started = Date()
         let result = runAsync {
             await catchup.summarize(.init(chatName: chatName, selfName: selfName, messages: usable))
@@ -643,7 +643,7 @@ enum ClassifierCLI {
         let isGroup = chatUsername.contains("@chatroom")
         let contactName = msgs.first?.chatName ?? chatUsername
 
-        let categorizer = AIWhitelistCategorizer(store: store, config: store.loadClassifierConfig())
+        let categorizer = AIWhitelistCategorizer(store: store, config: store.loadAIConfig())
         let started = Date()
         let result = runAsync {
             await categorizer.categorize(.init(contactName: contactName, isGroup: isGroup, messages: usable))
@@ -690,7 +690,7 @@ enum ClassifierCLI {
         let todayStart = cal.startOfDay(for: Date())
         let handledToday = allDone.filter { $0.updatedAt >= todayStart }
 
-        let retrospector = AIDailyRetrospector(store: store, config: store.loadClassifierConfig())
+        let retrospector = AIDailyRetrospector(store: store, config: store.loadAIConfig())
         let reportDate = date
 
         // For overnight build we don't have message_count or focus
@@ -750,10 +750,10 @@ enum ClassifierCLI {
         return AIClassifier(store: store, config: makeClassifierConfig(store: store))
     }
 
-    /// Always reads via `HUDStore.loadClassifierConfig()` so the CLI
+    /// Always reads via `HUDStore.loadAIConfig()` so the CLI
     /// never carries an inline endpoint URL or model name.
-    private static func makeClassifierConfig(store: HUDStore) -> AIClassifierConfig {
-        store.loadClassifierConfig()
+    private static func makeClassifierConfig(store: HUDStore) -> AIConfig {
+        store.loadAIConfig()
     }
 
     /// Park the current (non-async) thread on a semaphore until the

@@ -57,7 +57,7 @@ actor VIPAggregator {
         let traces = store.loadUnbatchedVIPTraces(vipUsername: vipUsername)
         guard !traces.isEmpty else { return nil }
 
-        let config = store.loadClassifierConfig()
+        let config = store.loadAIConfig()
         guard !config.baseURL.isEmpty else { return nil }
 
         let template: String
@@ -146,7 +146,7 @@ actor VIPAggregator {
 
     // MARK: - Private helpers
 
-    private func callModel(prompt: String, config: AIClassifierConfig) async -> String? {
+    private func callModel(prompt: String, config: AIConfig) async -> String? {
         guard let url = URL(string: "\(normalizeURL(config.baseURL))/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "POST"
