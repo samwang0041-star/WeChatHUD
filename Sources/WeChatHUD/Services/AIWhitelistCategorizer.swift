@@ -107,6 +107,78 @@ actor AIWhitelistCategorizer {
         return nil
     }
 
+    // MARK: - Batch categorization
+
+    struct BatchItem {
+        let index: Int
+        let contactName: String
+        let isGroup: Bool
+        let recentCount: Int
+        let messages: [(sender: String, body: String)]
+    }
+
+    struct BatchResult: Decodable {
+        let index: Int
+        let category: String
+        let shouldWhitelist: Bool
+        let reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case index, category, reason
+            case shouldWhitelist = "should_whitelist"
+        }
+    }
+
+    func categorizeBatch(_ items: [BatchItem]) async -> [BatchResult] {
+        guard !items.isEmpty else { return [] }
+
+        let template: String
+        do {
+            template = try promptLoader.load(version: "whitelist_batch_v1")
+        } catch {
+            print("[WCHUD] AIWhitelistCategorizer: batch prompt load failed: \(error)")
+            return []
+        }
+
+        let candidatesText = items.map { item in
+            let msgs = item.messages.prefix(5)
+                .map { "[\(clean($0.sender))] \(clean($0.body))" }
+                .joined(separator: "\n")
+            let groupLabel = item.isGroup ? "群聊" : "个人"
+            return """
+            \(item.index). \(clean(item.contactName)) (\(groupLabel), 近45天\(item.recentCount)条)
+            最近消息:
+            \(msgs)
+            """
+        }.joined(separator: "\n---\n")
+
+        let userPrompt = template
+            .replacingOccurrences(of: "{candidates}", with: candidatesText)
+
+        let response = await call(userPrompt)
+        guard !response.text.isEmpty else { return [] }
+        return parseBatch(response.text)
+    }
+
+    private func parseBatch(_ raw: String) -> [BatchResult] {
+        var cleaned = raw
+        if let fenceRange = cleaned.range(of: "```") {
+            cleaned = String(cleaned[fenceRange.upperBound...])
+            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
+            if let endFence = cleaned.range(of: "```") {
+                cleaned = String(cleaned[..<endFence.lowerBound])
+            }
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.hasPrefix("[") {
+            if let lo = cleaned.firstIndex(of: "["), let hi = cleaned.lastIndex(of: "]") {
+                cleaned = String(cleaned[lo...hi])
+            }
+        }
+        guard let data = cleaned.data(using: .utf8) else { return [] }
+        return (try? JSONDecoder().decode([BatchResult].self, from: data)) ?? []
+    }
+
     // MARK: - Model call
 
     private struct ModelResponse {
