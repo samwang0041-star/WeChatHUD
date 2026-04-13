@@ -12,13 +12,27 @@ struct CompactInboxBar: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
 
+    @State private var idleSince: Date? = nil
+    @State private var idleMinutes: Int = 0
+    @State private var idleTimer: Timer? = nil
+
     var body: some View {
         HStack(spacing: 6) {
             statusContent
             Spacer(minLength: 0)
+            PixelBuddyView(mood: buddyMood)
+                .padding(.trailing, 2)
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            idleSince = Date()
+            startIdleTimer()
+        }
+        .onDisappear {
+            idleTimer?.invalidate()
+            idleTimer = nil
+        }
     }
 
     @ViewBuilder
@@ -127,6 +141,40 @@ struct CompactInboxBar: View {
             return ""
         }
     }
+
+    private var buddyMood: BuddyMood {
+        let actionItems = monitor.inboxItems.filter { $0.actionRequired }
+        let hasUrgent = actionItems.contains { $0.priority == .p0 }
+        let hasPending = !actionItems.isEmpty
+        return deriveCompactMood(
+            syncStatus: monitor.stats.syncStatus,
+            hasUrgent: hasUrgent,
+            hasPending: hasPending,
+            idleMinutes: idleMinutes
+        )
+    }
+
+    private func startIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            DispatchQueue.main.async {
+                let baseMood = deriveCompactMood(
+                    syncStatus: monitor.stats.syncStatus,
+                    hasUrgent: monitor.inboxItems.contains { $0.priority == .p0 },
+                    hasPending: monitor.inboxItems.contains { $0.actionRequired },
+                    idleMinutes: 0
+                )
+                if baseMood == .idle {
+                    if let since = idleSince {
+                        idleMinutes = Int(Date().timeIntervalSince(since) / 60)
+                    }
+                } else {
+                    idleSince = Date()
+                    idleMinutes = 0
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Compact width helper
@@ -134,7 +182,7 @@ struct CompactInboxBar: View {
 /// Compute the appropriate compact bar width based on inbox state.
 func compactBarWidth(inboxItems: [InboxItem], syncStatus: SyncStatus) -> CGFloat {
     let hasUrgent = inboxItems.contains { $0.priority != .p2 }
-    if hasUrgent { return 380 }
-    if !inboxItems.isEmpty { return 240 }
-    return 200
+    if hasUrgent { return 410 }
+    if !inboxItems.isEmpty { return 270 }
+    return 230
 }
