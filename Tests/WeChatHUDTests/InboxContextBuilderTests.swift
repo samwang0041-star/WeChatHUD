@@ -6,43 +6,43 @@ final class InboxContextBuilderTests: XCTestCase {
     // MARK: - contextWindowSize
 
     func testContextWindowSizeVeryShort() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 2), 15)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 2), 30)
     }
 
     func testContextWindowSizeShort() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 15), 10)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 15), 25)
     }
 
     func testContextWindowSizeMedium() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 35), 6)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 35), 20)
     }
 
     func testContextWindowSizeLong() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 80), 3)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 80), 15)
     }
 
     func testContextWindowSizeBoundaryAt5() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 5), 15)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 5), 30)
     }
 
     func testContextWindowSizeBoundaryAt6() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 6), 10)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 6), 25)
     }
 
     func testContextWindowSizeBoundaryAt20() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 20), 10)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 20), 25)
     }
 
     func testContextWindowSizeBoundaryAt21() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 21), 6)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 21), 20)
     }
 
     func testContextWindowSizeBoundaryAt50() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 50), 6)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 50), 20)
     }
 
     func testContextWindowSizeBoundaryAt51() {
-        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 51), 3)
+        XCTAssertEqual(InboxContextBuilder.contextWindowSize(messageLength: 51), 15)
     }
 
     // MARK: - calculateTrend

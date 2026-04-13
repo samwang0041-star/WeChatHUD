@@ -51,9 +51,9 @@ actor AIInboxSummarizer {
             return nil
         }
 
-        // Build context messages string (last N messages as "sender: text" lines)
-        let contextStr = context.recentMessages.prefix(5).map { msg in
-            "\(msg.senderName): \(String(msg.text.prefix(60)))"
+        // Build context messages string — use up to 20 messages for accurate summaries
+        let contextStr = context.recentMessages.prefix(20).map { msg in
+            "\(msg.senderName): \(msg.text)"
         }.joined(separator: "\n")
 
         let commitmentsStr = context.pendingCommitments.isEmpty
