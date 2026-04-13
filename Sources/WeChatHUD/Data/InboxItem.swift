@@ -50,6 +50,23 @@ enum InboxStatus {
     case silenced
 }
 
+/// AI-generated briefing for an expanded inbox item.
+/// Contains situation analysis, recommended action, and reply suggestions.
+struct InboxBriefing: Decodable {
+    let situation: String
+    let suggestion: String
+    let replies: [SuggestedReply]
+}
+
+/// One reply suggestion within an InboxBriefing.
+struct SuggestedReply: Decodable, Identifiable {
+    let text: String
+    let tone: String
+    let recommended: Bool
+
+    var id: String { text }
+}
+
 extension InboxItem {
     /// Convert to ReplyDebtItem for compatibility with ReplyDebtExpandedView.
     func toReplyDebtItem() -> ReplyDebtItem {
