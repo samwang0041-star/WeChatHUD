@@ -410,6 +410,23 @@ final class HUDStore: ObservableObject {
                 last_updated     INTEGER NOT NULL DEFAULT 0
             )
         """)
+
+        // Relationship profiles — AI-inferred + user-edited relationship metadata
+        try exec("""
+            CREATE TABLE IF NOT EXISTS relationship_profiles (
+                username         TEXT PRIMARY KEY,
+                display_name     TEXT NOT NULL,
+                relationship     TEXT NOT NULL,
+                hierarchy        TEXT NOT NULL,
+                tone_preference  TEXT NOT NULL,
+                context          TEXT,
+                confidence       REAL NOT NULL,
+                user_note        TEXT,
+                user_edited      INTEGER NOT NULL DEFAULT 0,
+                inferred_at      INTEGER NOT NULL,
+                updated_at       INTEGER NOT NULL
+            )
+        """)
     }
 
     // MARK: - Settings
@@ -2050,6 +2067,103 @@ final class HUDStore: ObservableObject {
     func clearAutopilotHistory() throws {
         try exec("DELETE FROM autopilot_log")
         try exec("DELETE FROM autopilot_sessions")
+    }
+
+    // MARK: - Relationship Profiles
+
+    func upsertRelationshipProfile(_ profile: RelationshipProfile) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT INTO relationship_profiles(
+                username, display_name, relationship, hierarchy,
+                tone_preference, context, confidence, user_note,
+                user_edited, inferred_at, updated_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(username) DO UPDATE SET
+                display_name = excluded.display_name,
+                relationship = excluded.relationship,
+                hierarchy = excluded.hierarchy,
+                tone_preference = excluded.tone_preference,
+                context = excluded.context,
+                confidence = excluded.confidence,
+                user_note = CASE WHEN relationship_profiles.user_edited = 1
+                            THEN relationship_profiles.user_note
+                            ELSE excluded.user_note END,
+                user_edited = CASE WHEN relationship_profiles.user_edited = 1
+                              THEN 1 ELSE excluded.user_edited END,
+                updated_at = excluded.updated_at
+        """, params: [
+            profile.username, profile.displayName, profile.relationship,
+            profile.hierarchy.rawValue, profile.tonePreference.rawValue,
+            profile.context ?? "", "\(profile.confidence)",
+            profile.userNote ?? "", profile.userEdited ? "1" : "0",
+            "\(Int(profile.inferredAt.timeIntervalSince1970))", "\(now)"
+        ])
+    }
+
+    func getRelationshipProfile(username: String) -> RelationshipProfile? {
+        let sql = "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles WHERE username = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return parseRelationshipRow(stmt)
+    }
+
+    func loadAllRelationshipProfiles() -> [RelationshipProfile] {
+        let sql = "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles ORDER BY updated_at DESC"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var results: [RelationshipProfile] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(parseRelationshipRow(stmt))
+        }
+        return results
+    }
+
+    func updateRelationshipProfileUserFields(
+        username: String,
+        relationship: String,
+        hierarchy: RelationshipProfile.Hierarchy,
+        tonePreference: RelationshipProfile.TonePreference,
+        userNote: String?
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE relationship_profiles SET
+                relationship = ?, hierarchy = ?, tone_preference = ?,
+                user_note = ?, user_edited = 1, updated_at = ?
+            WHERE username = ?
+        """, params: [relationship, hierarchy.rawValue, tonePreference.rawValue,
+                      userNote ?? "", "\(now)", username])
+    }
+
+    func deleteRelationshipProfile(username: String) throws {
+        try exec("DELETE FROM relationship_profiles WHERE username = ?", params: [username])
+    }
+
+    private func parseRelationshipRow(_ stmt: OpaquePointer?) -> RelationshipProfile {
+        RelationshipProfile(
+            username: String(cString: sqlite3_column_text(stmt, 0)),
+            displayName: String(cString: sqlite3_column_text(stmt, 1)),
+            relationship: String(cString: sqlite3_column_text(stmt, 2)),
+            hierarchy: RelationshipProfile.Hierarchy(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .peer,
+            tonePreference: RelationshipProfile.TonePreference(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .formal,
+            context: {
+                let s = String(cString: sqlite3_column_text(stmt, 5))
+                return s.isEmpty ? nil : s
+            }(),
+            confidence: sqlite3_column_double(stmt, 6),
+            userNote: {
+                let s = String(cString: sqlite3_column_text(stmt, 7))
+                return s.isEmpty ? nil : s
+            }(),
+            userEdited: sqlite3_column_int(stmt, 8) != 0,
+            inferredAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 9))),
+            updatedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10)))
+        )
     }
 
     // MARK: - Migration
