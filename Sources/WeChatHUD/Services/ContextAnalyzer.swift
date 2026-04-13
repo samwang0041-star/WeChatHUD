@@ -47,7 +47,7 @@ actor ContextAnalyzer {
         senderProfile: String,
         userCommitments: String
     ) async -> AnalysisResult? {
-        let config = store.loadClassifierConfig()
+        let config = store.loadAIConfig()
         guard !config.baseURL.isEmpty else { return nil }
 
         let template: String
@@ -87,7 +87,7 @@ actor ContextAnalyzer {
         Int(Date().timeIntervalSince(start) * 1000)
     }
 
-    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?, config: AIClassifierConfig) {
+    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?, config: AIConfig) {
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .contextAnalyzer,
             model: config.model, promptVersion: "context_analyzer_v1",
@@ -96,7 +96,7 @@ actor ContextAnalyzer {
         ))
     }
 
-    private func callModel(prompt: String, config: AIClassifierConfig) async -> String? {
+    private func callModel(prompt: String, config: AIConfig) async -> String? {
         guard let url = URL(string: normalizeURL(config.baseURL) + "/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 45)
         request.httpMethod = "POST"

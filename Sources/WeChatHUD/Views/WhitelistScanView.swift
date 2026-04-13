@@ -248,7 +248,7 @@ struct WhitelistScanView: View {
 
             let categorizer = AIWhitelistCategorizer(
                 store: store,
-                config: store.loadClassifierConfig()
+                config: store.loadAIConfig()
             )
 
             await MainActor.run {

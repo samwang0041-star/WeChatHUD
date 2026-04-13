@@ -16,17 +16,24 @@ import Foundation
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
 actor AIClassifier {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
+    private let promptVersion: String = "classifier_v1"
 
-    init(store: HUDStore, config: AIClassifierConfig = AIClassifierConfig(), promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, config: AIConfig = AIConfig(), promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
-        self.config = config
+        var c = config
+        c.temperature = 0.1
+        c.maxTokens = 256
+        self.config = c
         self.promptLoader = promptLoader
     }
 
-    func updateConfig(_ config: AIClassifierConfig) {
-        self.config = config
+    func updateConfig(_ config: AIConfig) {
+        var c = config
+        c.temperature = 0.1
+        c.maxTokens = 256
+        self.config = c
     }
 
     /// Classify a single message. Returns nil only when the call could
@@ -39,7 +46,7 @@ actor AIClassifier {
         // build-time bug (missing resource), so we log loudly and bail.
         let template: String
         do {
-            template = try promptLoader.load(version: config.promptVersion)
+            template = try promptLoader.load(version: promptVersion)
         } catch {
             print("[WCHUD] AIClassifier: prompt load failed: \(error)")
             return nil
@@ -57,7 +64,7 @@ actor AIClassifier {
                 status: .ok,
                 error: nil
             )
-            return parsed.with(promptVersion: config.promptVersion)
+            return parsed.with(promptVersion: promptVersion)
         }
 
         // First call yielded an HTTP / parse failure. Log it as parse_error
@@ -83,7 +90,7 @@ actor AIClassifier {
                 status: .ok,
                 error: "recovered after retry"
             )
-            return parsed.with(promptVersion: config.promptVersion)
+            return parsed.with(promptVersion: promptVersion)
         }
 
         writeAudit(
@@ -221,7 +228,7 @@ actor AIClassifier {
                 summary: dto.summary,
                 deadlineRelative: (dto.deadlineRelative?.isEmpty == true) ? nil : dto.deadlineRelative,
                 confidence: confidence,
-                promptVersion: config.promptVersion
+                promptVersion: promptVersion
             )
         } catch {
             return nil
@@ -256,7 +263,7 @@ actor AIClassifier {
             ts: Date(),
             role: .classifier,
             model: config.model,
-            promptVersion: config.promptVersion,
+            promptVersion: promptVersion,
             inputText: "[\(message.senderName)@\(message.chatName)] \(message.text)",
             outputText: output,
             latencyMs: latencyMs,

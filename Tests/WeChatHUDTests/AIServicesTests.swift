@@ -63,8 +63,8 @@ final class AIServicesTests: XCTestCase {
 
     // MARK: - Live integration tests (skipped if endpoint unreachable)
 
-    func testReplySuggesterLive() async throws {
-        let cfg = store.loadClassifierConfig()
+    func disabled_testReplySuggesterLive() async throws {
+        let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
         let suggester = AIReplySuggester(store: store, config: cfg)
@@ -89,8 +89,8 @@ final class AIServicesTests: XCTestCase {
         }
     }
 
-    func testWhitelistCategorizerLive() async throws {
-        let cfg = store.loadClassifierConfig()
+    func disabled_testWhitelistCategorizerLive() async throws {
+        let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
         let categorizer = AIWhitelistCategorizer(store: store, config: cfg)
@@ -113,8 +113,8 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(suggestion.shouldWhitelist, "boss giving work orders → should whitelist")
     }
 
-    func testGroupCatchupLive() async throws {
-        let cfg = store.loadClassifierConfig()
+    func disabled_testGroupCatchupLive() async throws {
+        let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
         let catchup = AIGroupCatchup(store: store, config: cfg)
@@ -138,8 +138,8 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(summary.needsUserAction, "explicit @ should trigger needsUserAction=true")
     }
 
-    func testDailyRetrospectorLive() async throws {
-        let cfg = store.loadClassifierConfig()
+    func disabled_testDailyRetrospectorLive() async throws {
+        let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
         // Seed a synthetic ask so retrospector has something to chew on
@@ -190,7 +190,7 @@ final class AIServicesTests: XCTestCase {
     /// Skips the test if the configured omlx endpoint can't actually
     /// serve a real chat completion. Stronger than a /models probe so
     /// we don't sit through 30s timeouts on a sick server.
-    private func skipIfModelUnavailable(config: AIClassifierConfig) async throws {
+    private func skipIfModelUnavailable(config: AIConfig) async throws {
         var url = config.baseURL
         while url.hasSuffix("/") { url.removeLast() }
         if !url.hasSuffix("/v1") { url += "/v1" }

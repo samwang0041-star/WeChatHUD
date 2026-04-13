@@ -38,7 +38,7 @@ actor CommitmentTracker {
         recipientName: String,
         recipientRole: ContactRole
     ) async -> CommitmentResult? {
-        let config = store.loadClassifierConfig()
+        let config = store.loadAIConfig()
         guard !config.baseURL.isEmpty else { return nil }
 
         let template: String
@@ -92,7 +92,7 @@ actor CommitmentTracker {
         return result
     }
 
-    private func callModel(prompt: String, config: AIClassifierConfig) async -> String? {
+    private func callModel(prompt: String, config: AIConfig) async -> String? {
         let base = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(base)/chat/completions") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 30)

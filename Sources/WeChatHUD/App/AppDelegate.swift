@@ -163,7 +163,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await self.aiService.updateConfig(cfg)
                 }
                 // Propagate AI config changes to all AI services
-                let classifierCfg = self.store.loadClassifierConfig()
+                let classifierCfg = self.store.loadAIConfig()
                 Task {
                     await self.monitor.autopilotService?.updateConfig(classifierCfg)
                     await self.monitor.refreshReplySuggesterConfig()
@@ -308,10 +308,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func panelSize(for state: HUDState) -> (CGFloat, CGFloat) {
         switch state {
-        case .compact, .extended:
+        case .compact:
+            return (280, 36)
+        case .extended:
             let count = monitor.inboxItems.count
             if count == 0 {
-                return (400, 120)
+                return (280, 36)
             }
             return inboxSize(itemCount: count)
         default:

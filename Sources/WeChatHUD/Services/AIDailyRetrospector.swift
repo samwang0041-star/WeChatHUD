@@ -9,17 +9,17 @@ import Foundation
 /// existing audit data, and producing structured output the user can
 /// glance at or paste into WeChat.
 ///
-/// Pure service. Reads its config from `loadClassifierConfig()` so it
+/// Pure service. Reads its config from `loadAIConfig()` so it
 /// tracks whatever model the user has set.
 actor AIDailyRetrospector {
     private let store: HUDStore
-    private var config: AIClassifierConfig
+    private var config: AIConfig
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
     init(
         store: HUDStore,
-        config: AIClassifierConfig,
+        config: AIConfig,
         promptLoader: PromptLoader = PromptLoader(),
         promptVersion: String = "daily_retrospect_v1"
     ) {
