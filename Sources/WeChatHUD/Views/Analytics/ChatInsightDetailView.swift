@@ -1,11 +1,13 @@
 import SwiftUI
 
 /// Detail view for a single chat — macOS native style with card modules.
+/// Shows pure-algorithm stats immediately, AI results overlay when available.
 struct ChatInsightDetailView: View {
     let chatUsername: String
     let chatName: String
     let isGroup: Bool
     let category: WhitelistCategory
+    let stats: ChatStatsData?
     let result: ChatInsightResult?
     @Binding var selectedDate: Date
 
@@ -16,8 +18,8 @@ struct ChatInsightDetailView: View {
             headerBar
             Divider()
 
-            if let result = result {
-                analysisContent(result)
+            if result != nil || stats != nil {
+                analysisContent
             } else {
                 loadingState
             }
@@ -29,21 +31,25 @@ struct ChatInsightDetailView: View {
 
     private var headerBar: some View {
         HStack(spacing: 12) {
-            // Back breadcrumb
-            Button(action: {}) {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 10))
+            // Chat name + category badge
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(categoryColor.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Text(String(chatName.prefix(1)))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(categoryColor)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
                     Text(chatName)
                         .font(.system(size: 14, weight: .semibold))
+                    Text(dateLabel)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
-                .foregroundColor(.primary)
             }
-            .buttonStyle(.plain)
-
-            Text(dateLabel)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
 
             Spacer()
 
@@ -52,10 +58,28 @@ struct ChatInsightDetailView: View {
                 .datePickerStyle(.compact)
                 .labelsHidden()
                 .frame(width: 120)
+
+            // AI status
+            if result != nil {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
+            } else if monitor.insightLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var categoryColor: Color {
+        switch category {
+        case .work: return .blue
+        case .life: return .green
+        case .other: return .orange
+        }
     }
 
     private var dateLabel: String {
@@ -90,25 +114,29 @@ struct ChatInsightDetailView: View {
     // MARK: - Analysis content
 
     @ViewBuilder
-    private func analysisContent(_ r: ChatInsightResult) -> some View {
+    private var analysisContent: some View {
+        let msgCount = result.map { r in r.topics.reduce(0) { $0 + $1.messageCount } } ?? stats?.messageCount ?? 0
+        let partCount = result?.participants?.count ?? stats?.participantCount ?? 1
+        let myCount = stats?.myMessageCount ?? 0
+
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
 
                 // Row 1: Stats cards
                 HStack(spacing: 12) {
                     statCard(
-                        value: "\(r.topics.reduce(0) { $0 + $1.messageCount })",
+                        value: "\(msgCount)",
                         label: "消息数",
                         icon: "bubble.left.and.bubble.right",
                         color: .blue
                     )
                     statCard(
-                        value: "\(r.participants?.count ?? 1)",
+                        value: "\(partCount)",
                         label: "发言人数",
                         icon: "person.2",
                         color: .purple
                     )
-                    if let top = r.participants?.first {
+                    if let top = result?.participants?.first {
                         VStack(spacing: 4) {
                             Text(top.name)
                                 .font(.system(size: 14, weight: .bold))
@@ -121,122 +149,199 @@ struct ChatInsightDetailView: View {
                         .padding(.vertical, 16)
                         .background(Color(nsColor: .controlBackgroundColor))
                         .cornerRadius(10)
-                    }
-                }
-
-                // Row 2: Mood + Signal noise + Decision
-                HStack(spacing: 12) {
-                    moduleCard("群氛围", icon: "face.smiling") {
-                        HStack(spacing: 8) {
-                            moodIcon(r.overallMood)
-                            Text(r.overallMood)
-                                .font(.system(size: 14, weight: .medium))
-                        }
-                        if let shift = r.moodShift {
-                            Text("\(shift.from) → \(shift.to)")
-                                .font(.system(size: 11))
+                    } else if let topSender = stats?.topSenders.first {
+                        VStack(spacing: 4) {
+                            Text(topSender.name)
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundColor(.orange)
-                            Text(shift.trigger)
+                                .lineLimit(1)
+                            Text("最活跃 (\(topSender.count)条)")
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .cornerRadius(10)
+                    }
+                }
+
+                // Row 2: Hourly chart + Donut
+                HStack(alignment: .top, spacing: 12) {
+                    // Hourly bar chart
+                    if let hourly = stats?.messagesByHour {
+                        moduleCard("消息时段分布", icon: "clock") {
+                            hourlyBarChart(hourly)
+                                .frame(height: 100)
+                        }
                     }
 
-                    moduleCard("信息质量", icon: "chart.bar") {
-                        // Signal noise ratio as a visual bar
-                        HStack(spacing: 8) {
-                            signalBar(r.signalNoiseRatio)
-                            Text("\(Int(r.signalNoiseRatio * 100))%")
-                                .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                .foregroundColor(r.signalNoiseRatio > 0.6 ? .green : .orange)
+                    // Message ratio donut
+                    moduleCard("消息类型分布", icon: "chart.pie") {
+                        HStack(spacing: 16) {
+                            messageDonut(my: myCount, total: msgCount)
+                            VStack(alignment: .leading, spacing: 4) {
+                                legendRow(color: .blue, label: "我的消息", count: myCount)
+                                legendRow(color: .blue.opacity(0.15), label: "其他人", count: msgCount - myCount)
+                                if let avgResp = stats?.avgResponseTimeSeconds, avgResp > 0 {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "timer")
+                                            .font(.system(size: 9))
+                                            .foregroundColor(.secondary)
+                                        Text("平均回复 \(formatResponseTime(avgResp))")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.top, 4)
+                                }
+                            }
                         }
-                        Text("决策效率: \(r.decisionEfficiency)")
-                            .font(.system(size: 10))
+                    }
+                }
+
+                // Row 3: AI-powered sections (only when result available)
+                if let r = result {
+                    // Mood + Signal noise + Relevance
+                    HStack(spacing: 12) {
+                        moduleCard("群氛围", icon: "face.smiling") {
+                            HStack(spacing: 8) {
+                                moodIcon(r.overallMood)
+                                Text(r.overallMood)
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            if let shift = r.moodShift {
+                                Text("\(shift.from) → \(shift.to)")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                                Text(shift.trigger)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        moduleCard("信息质量", icon: "chart.bar") {
+                            HStack(spacing: 8) {
+                                signalBar(r.signalNoiseRatio)
+                                Text("\(Int(r.signalNoiseRatio * 100))%")
+                                    .font(.system(size: 16, weight: .bold).monospacedDigit())
+                                    .foregroundColor(r.signalNoiseRatio > 0.6 ? .green : .orange)
+                            }
+                            Text("决策效率: \(r.decisionEfficiency)")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+
+                        moduleCard("与我相关", icon: "at") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("@我").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(r.mentionsMe)次").font(.system(size: 12, weight: .medium))
+                                }
+                                HStack {
+                                    Text("等回复").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(r.waitingForMe.count)项")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(r.waitingForMe.isEmpty ? .primary : .red)
+                                }
+                                HStack {
+                                    Text("我的承诺").font(.system(size: 10)).foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(r.myCommitments.count)项").font(.system(size: 12, weight: .medium))
+                                }
+                            }
+                        }
+                    }
+
+                    // Topics
+                    moduleCardFull("话题讨论", icon: "text.bubble") {
+                        ForEach(Array(r.topics.enumerated()), id: \.offset) { _, topic in
+                            topicCard(topic)
+                        }
+                    }
+
+                    // Attitudes
+                    if let attitudes = r.attitudes, !attitudes.isEmpty {
+                        moduleCardFull("态度信号", icon: "person.crop.circle.badge.questionmark") {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                                ForEach(Array(attitudes.enumerated()), id: \.offset) { _, att in
+                                    attitudeCard(att)
+                                }
+                            }
+                        }
+                    }
+
+                    // Participants
+                    if let participants = r.participants, !participants.isEmpty {
+                        moduleCardFull("成员参与度", icon: "person.3") {
+                            ForEach(Array(participants.enumerated()), id: \.offset) { _, p in
+                                participantRow(p, maxCount: participants.first?.messageCount ?? 1)
+                            }
+                        }
+                    }
+
+                    // Dark signals
+                    if hasDarkSignals(r) {
+                        moduleCardFull("暗信号", icon: "eye.slash") {
+                            if let tones = r.toneChanges {
+                                ForEach(Array(tones.enumerated()), id: \.offset) { _, t in
+                                    darkSignalRow(icon: "waveform", color: .orange,
+                                                title: "\(t.person): \(t.change)",
+                                                detail: t.interpretation)
+                                }
+                            }
+                            if let ignored = r.ignoredNotes {
+                                ForEach(Array(ignored.enumerated()), id: \.offset) { _, ig in
+                                    darkSignalRow(icon: "bubble.left.and.exclamationmark.bubble.right", color: .gray,
+                                                title: "\(ig.person) 的消息被忽略",
+                                                detail: ig.interpretation)
+                                }
+                            }
+                        }
+                    }
+
+                    // Insight + Suggestion
+                    HStack(spacing: 12) {
+                        moduleCard("洞察", icon: "lightbulb") {
+                            Text(r.insight)
+                                .font(.system(size: 12))
+                                .foregroundColor(.primary)
+                        }
+                        moduleCard("行动建议", icon: "arrow.right.circle") {
+                            Text(r.suggestion)
+                                .font(.system(size: 12))
+                                .foregroundColor(.green)
+                        }
+                    }
+                } else {
+                    // No AI result yet — show participants from stats
+                    if let topSenders = stats?.topSenders, !topSenders.isEmpty {
+                        moduleCardFull("成员参与度", icon: "person.3") {
+                            ForEach(Array(topSenders.prefix(8).enumerated()), id: \.offset) { _, sender in
+                                statsParticipantRow(name: sender.name, count: sender.count, maxCount: topSenders.first?.count ?? 1)
+                            }
+                        }
+                    }
+
+                    // Waiting for AI
+                    HStack(spacing: 8) {
+                        if monitor.insightLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 12))
+                                .foregroundColor(.orange)
+                        }
+                        Text("AI 深度分析将在完成后显示更多洞察")
+                            .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }
-
-                    moduleCard("与我相关", icon: "at") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("@我").font(.system(size: 10)).foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(r.mentionsMe)次").font(.system(size: 12, weight: .medium))
-                            }
-                            HStack {
-                                Text("等回复").font(.system(size: 10)).foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(r.waitingForMe.count)项")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(r.waitingForMe.isEmpty ? .primary : .red)
-                            }
-                            HStack {
-                                Text("我的承诺").font(.system(size: 10)).foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(r.myCommitments.count)项").font(.system(size: 12, weight: .medium))
-                            }
-                        }
-                    }
-                }
-
-                // Row 3: Topics
-                moduleCardFull("话题讨论", icon: "text.bubble") {
-                    ForEach(Array(r.topics.enumerated()), id: \.offset) { _, topic in
-                        topicCard(topic)
-                    }
-                }
-
-                // Row 4: Attitudes
-                if let attitudes = r.attitudes, !attitudes.isEmpty {
-                    moduleCardFull("态度信号", icon: "person.crop.circle.badge.questionmark") {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                            ForEach(Array(attitudes.enumerated()), id: \.offset) { _, att in
-                                attitudeCard(att)
-                            }
-                        }
-                    }
-                }
-
-                // Row 5: Participants (group)
-                if let participants = r.participants, !participants.isEmpty {
-                    moduleCardFull("成员参与度", icon: "person.3") {
-                        ForEach(Array(participants.enumerated()), id: \.offset) { _, p in
-                            participantRow(p, maxCount: participants.first?.messageCount ?? 1)
-                        }
-                    }
-                }
-
-                // Row 6: Dark signals
-                if hasDarkSignals(r) {
-                    moduleCardFull("暗信号", icon: "eye.slash") {
-                        if let tones = r.toneChanges {
-                            ForEach(Array(tones.enumerated()), id: \.offset) { _, t in
-                                darkSignalRow(icon: "waveform", color: .orange,
-                                            title: "\(t.person): \(t.change)",
-                                            detail: t.interpretation)
-                            }
-                        }
-                        if let ignored = r.ignoredNotes {
-                            ForEach(Array(ignored.enumerated()), id: \.offset) { _, ig in
-                                darkSignalRow(icon: "bubble.left.and.exclamationmark.bubble.right", color: .gray,
-                                            title: "\(ig.person) 的消息被忽略",
-                                            detail: ig.interpretation)
-                            }
-                        }
-                    }
-                }
-
-                // Row 7: Insight + Suggestion
-                HStack(spacing: 12) {
-                    moduleCard("洞察", icon: "lightbulb") {
-                        Text(r.insight)
-                            .font(.system(size: 12))
-                            .foregroundColor(.primary)
-                    }
-                    moduleCard("行动建议", icon: "arrow.right.circle") {
-                        Text(r.suggestion)
-                            .font(.system(size: 12))
-                            .foregroundColor(.green)
-                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.05))
+                    .cornerRadius(8)
                 }
 
                 Spacer().frame(height: 20)
@@ -245,7 +350,101 @@ struct ChatInsightDetailView: View {
         }
     }
 
-    // MARK: - Components
+    // MARK: - Chart Components
+
+    private func hourlyBarChart(_ messagesByHour: [Int]) -> some View {
+        let maxVal = messagesByHour.max() ?? 1
+        return HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<24, id: \.self) { hour in
+                VStack(spacing: 2) {
+                    Spacer(minLength: 0)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.blue.opacity(hour >= 9 && hour <= 18 ? 0.7 : 0.4))
+                        .frame(width: 12, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
+                    if hour % 3 == 0 {
+                        Text("\(hour)")
+                            .font(.system(size: 8))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("")
+                            .font(.system(size: 8))
+                    }
+                }
+            }
+        }
+    }
+
+    private func messageDonut(my: Int, total: Int) -> some View {
+        let fraction = total > 0 ? Double(my) / Double(total) : 0
+        return ZStack {
+            Circle().stroke(Color.blue.opacity(0.15), lineWidth: 12)
+            Circle().trim(from: 0, to: fraction)
+                .stroke(Color.blue, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            VStack(spacing: 0) {
+                Text("\(Int(fraction * 100))%")
+                    .font(.system(size: 14, weight: .bold))
+                Text("我的消息")
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(width: 80, height: 80)
+    }
+
+    private func legendRow(color: Color, label: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+        }
+    }
+
+    private func formatResponseTime(_ seconds: Double) -> String {
+        if seconds <= 0 { return "--" }
+        if seconds < 60 { return "\(Int(seconds))秒" }
+        if seconds < 3600 { return "\(Int(seconds / 60))分钟" }
+        return "\(String(format: "%.1f", seconds / 3600))小时"
+    }
+
+    private func statsParticipantRow(name: String, count: Int, maxCount: Int) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.1))
+                    .frame(width: 26, height: 26)
+                Text(String(name.prefix(1)))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.blue)
+            }
+
+            Text(name)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                GeometryReader { geo in
+                    let fraction = maxCount > 0 ? CGFloat(count) / CGFloat(maxCount) : 0
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.blue.opacity(0.3))
+                        .frame(width: geo.size.width * fraction)
+                }
+                .frame(width: 60, height: 6)
+                Text("\(count)")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    // MARK: - Existing Components
 
     private func statCard(value: String, label: String, icon: String, color: Color) -> some View {
         VStack(spacing: 6) {
@@ -360,7 +559,7 @@ struct ChatInsightDetailView: View {
             Text(att.topic)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            Text("「\(att.evidence)」")
+            Text("\"\(att.evidence)\"")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary.opacity(0.6))
                 .italic()
@@ -374,7 +573,6 @@ struct ChatInsightDetailView: View {
 
     private func participantRow(_ p: ParticipantRole, maxCount: Int) -> some View {
         HStack(spacing: 10) {
-            // Avatar
             ZStack {
                 Circle()
                     .fill(roleColor(p.role).opacity(0.15))
@@ -404,7 +602,6 @@ struct ChatInsightDetailView: View {
 
             Spacer()
 
-            // Message count bar
             HStack(spacing: 4) {
                 GeometryReader { geo in
                     let fraction = maxCount > 0 ? CGFloat(p.messageCount) / CGFloat(maxCount) : 0
