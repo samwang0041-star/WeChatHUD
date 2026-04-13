@@ -13,27 +13,29 @@ struct InboxView: View {
                 smartDigestBanner
             }
             header
-            Divider().background(Color.white.opacity(0.08))
-            if monitor.inboxItems.isEmpty {
-                emptyState
-            } else {
+            if !monitor.inboxItems.isEmpty {
+                Divider().background(Color.white.opacity(0.08))
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         let actionItems = monitor.inboxItems.filter { $0.actionRequired }
                         let infoItems = monitor.inboxItems.filter { !$0.actionRequired }
 
                         ForEach(actionItems) { item in
-                            InboxRowView(item: item) {
+                            InboxRowView(item: item, onDismiss: {
                                 monitor.dismissInboxItem(item)
-                            }
+                            }, onSnooze: { date in
+                                monitor.snoozeInboxItem(item, until: date)
+                            })
                         }
 
                         if !infoItems.isEmpty {
                             infoSectionHeader
                             ForEach(infoItems) { item in
-                                InboxRowView(item: item) {
+                                InboxRowView(item: item, onDismiss: {
                                     monitor.dismissInboxItem(item)
-                                }
+                                }, onSnooze: { date in
+                                    monitor.snoozeInboxItem(item, until: date)
+                                })
                             }
                         }
                     }
