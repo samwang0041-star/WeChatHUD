@@ -93,7 +93,7 @@ struct InboxView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .padding(.top, 28)  // clear menu bar (~25px) at screen top
         .padding(.bottom, 6)
     }
 
