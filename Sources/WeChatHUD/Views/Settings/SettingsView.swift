@@ -7,79 +7,69 @@ struct SettingsView: View {
     @State private var selectedTab: Tab = .contacts
 
     enum Tab: Hashable, CaseIterable {
+        // Settings
         case contacts
-        case aiEngine
+        case aiButler
         case autopilot
-        case roleConfig
-        case notification
-        case data
-        case sync
-        case ignored
+        case system
+        // Dashboards
         case dailyReport
         case commitments
         case autopilotDashboard
 
         var label: String {
             switch self {
-            case .contacts:             return "联系人"
-            case .aiEngine:             return "AI 引擎"
-            case .autopilot:            return "自动托管"
-            case .roleConfig:           return "角色配置"
-            case .notification:         return "通知"
-            case .data:                 return "数据"
-            case .sync:                 return "同步"
-            case .ignored:              return "忽略列表"
-            case .dailyReport:          return "日报"
-            case .commitments:          return "承诺"
-            case .autopilotDashboard:   return "托管面板"
+            case .contacts:           return "联系人"
+            case .aiButler:           return "AI 管家"
+            case .autopilot:          return "自动托管"
+            case .system:             return "系统"
+            case .dailyReport:        return "日报"
+            case .commitments:        return "承诺"
+            case .autopilotDashboard: return "托管日志"
             }
         }
 
         var icon: String {
             switch self {
-            case .contacts:             return "person.2.fill"
-            case .aiEngine:             return "cpu"
-            case .autopilot:            return "robot"
-            case .roleConfig:           return "slider.horizontal.3"
-            case .notification:         return "bell.badge.fill"
-            case .data:                 return "tray.full.fill"
-            case .sync:                 return "arrow.triangle.2.circlepath"
-            case .ignored:              return "person.crop.circle.badge.xmark"
-            case .dailyReport:          return "doc.text.fill"
-            case .commitments:          return "checkmark.circle.fill"
-            case .autopilotDashboard:   return "robot"
+            case .contacts:           return "person.2.fill"
+            case .aiButler:           return "brain.head.profile"
+            case .autopilot:          return "arrow.triangle.2.circlepath"
+            case .system:             return "gearshape.2.fill"
+            case .dailyReport:        return "doc.text.fill"
+            case .commitments:        return "checkmark.circle.fill"
+            case .autopilotDashboard: return "list.bullet.rectangle.fill"
             }
         }
 
         var tint: Color {
             switch self {
-            case .contacts:             return .blue
-            case .aiEngine:             return .purple
-            case .autopilot:            return .cyan
-            case .roleConfig:           return .indigo
-            case .notification:         return .red
-            case .data:                 return .green
-            case .sync:                 return .teal
-            case .ignored:              return .orange
-            case .dailyReport:          return .mint
-            case .commitments:          return .pink
-            case .autopilotDashboard:   return .cyan
+            case .contacts:           return .blue
+            case .aiButler:           return .purple
+            case .autopilot:          return .cyan
+            case .system:             return .green
+            case .dailyReport:        return .mint
+            case .commitments:        return .pink
+            case .autopilotDashboard: return .cyan
             }
         }
 
         var subtitle: String {
             switch self {
-            case .contacts:             return "管理四级联系人：VIP 全域追踪、白名单按需分析、灰名单低优先级、陌生人忽略。"
-            case .aiEngine:             return "配置本地 AI 模型端点、分类器参数、审计日志与准确度监控。"
-            case .autopilot:            return "配置自动回复托管：信心阈值、频率限制、VIP 忙碌通知模板。"
-            case .roleConfig:           return "为每种身份角色设定回复窗口、通知级别、分类严格度与回复语气。"
-            case .notification:         return "决定哪些消息弹出通知、通知时长与勿扰时段。"
-            case .data:                 return "查看撤回消息记录、你的承诺追踪、待决事项管理。"
-            case .sync:                 return "管理微信数据源、解密缓存策略与同步节奏。"
-            case .ignored:              return "管理被你直接忽略、不再计入未读和 VIP 提醒的人。"
-            case .dailyReport:          return "查看日报和周报摘要。"
-            case .commitments:          return "追踪你和对方的承诺和待办。"
-            case .autopilotDashboard:   return "自动回复活动日志和会话统计。"
+            case .contacts:           return "管理联系人级别、角色配置和忽略规则。"
+            case .aiButler:           return "AI 服务连接、管家行为和通知过滤。"
+            case .autopilot:          return "自动回复的安全护栏和行为设置。"
+            case .system:             return "同步间隔、数据管理和系统信息。"
+            case .dailyReport:        return "查看日报和周报摘要。"
+            case .commitments:        return "追踪你和对方的承诺和待办。"
+            case .autopilotDashboard: return "自动回复活动日志和会话统计。"
+            }
+        }
+
+        /// Whether this tab is a dashboard (read-only) vs settings (configurable)
+        var isDashboard: Bool {
+            switch self {
+            case .dailyReport, .commitments, .autopilotDashboard: return true
+            default: return false
             }
         }
     }
@@ -113,7 +103,22 @@ struct SettingsView: View {
 
             // Tab rows
             VStack(spacing: 2) {
-                ForEach(Tab.allCases, id: \.self) { tab in
+                // Settings section
+                ForEach(Tab.allCases.filter { !$0.isDashboard }, id: \.self) { tab in
+                    sidebarRow(tab)
+                }
+
+                Divider()
+                    .padding(.vertical, 6)
+
+                Text("面板")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+
+                // Dashboard section
+                ForEach(Tab.allCases.filter { $0.isDashboard }, id: \.self) { tab in
                     sidebarRow(tab)
                 }
             }
@@ -166,20 +171,12 @@ struct SettingsView: View {
                 switch selectedTab {
                 case .contacts:
                     ContactsSettingsView()
-                case .aiEngine:
+                case .aiButler:
                     SettingsCard { AISettingsView() }
                 case .autopilot:
                     SettingsCard { AutopilotSettingsView() }
-                case .roleConfig:
-                    RoleConfigSettingsView()
-                case .notification:
-                    SettingsCard { NotificationSettingsBody() }
-                case .data:
-                    DataSettingsView()
-                case .sync:
+                case .system:
                     SettingsCard { SyncSettingsView() }
-                case .ignored:
-                    SettingsCard { IgnoredSendersSettingsView() }
                 case .dailyReport:
                     DailyReportTabView()
                 case .commitments:
