@@ -108,6 +108,14 @@ final class ChatMonitor: ObservableObject {
     private lazy var dailyRetrospector: AIDailyRetrospector = {
         AIDailyRetrospector(store: store, config: store.loadAIConfig())
     }()
+    private lazy var briefingGenerator: AIBriefingGenerator = {
+        AIBriefingGenerator(store: store, config: store.loadAIConfig())
+    }()
+    private lazy var inboxSummarizer: AIInboxSummarizer = {
+        AIInboxSummarizer(store: store, config: store.loadAIConfig())
+    }()
+    /// Cache: chatUsername + msgTimestamp → AI summary string
+    private var summaryCache: [String: String] = [:]
     private var safetyTimer: Timer?
     private var safetyTickCount = 0
     private var scanInProgress = false
@@ -825,6 +833,9 @@ final class ChatMonitor: ObservableObject {
         reloadAIData()
         runPostScanAI(o)
 
+        // Generate AI summaries for new inbox items (async, progressive)
+        generateSummaries()
+
         // Proactive alerts — evaluate rules after state update
         alertEngine.evaluate(
             unreadItems: unreadItems,
@@ -1334,6 +1345,17 @@ final class ChatMonitor: ObservableObject {
         )
         inboxItems = result.active
         handledItems = result.handled
+
+        // Apply cached AI summaries
+        for i in inboxItems.indices {
+            let key = "\(inboxItems[i].chatUsername)_\(Int(inboxItems[i].timestamp.timeIntervalSince1970))"
+            if let cached = summaryCache[key] {
+                inboxItems[i].aiSummary = cached
+            }
+        }
+
+        // Prune stale cache entries
+        cleanSummaryCache()
     }
 
     /// Generate reply suggestions for a reply debt item.
@@ -1368,6 +1390,97 @@ final class ChatMonitor: ObservableObject {
             feedbackContext: feedbackHint
         )
         return await replySuggester.suggest(input) ?? []
+    }
+
+    /// Generate AI summaries for inbox items that don't have cached summaries.
+    /// Called after scan. Runs async, updates inboxItems progressively.
+    private func generateSummaries() {
+        let items = inboxItems.filter { $0.aiSummary == nil }
+        guard !items.isEmpty else { return }
+
+        // Sort by priority — P0 summaries first
+        let sorted = items.sorted { $0.priority < $1.priority }
+
+        let readerRef = reader
+        let storeRef = store
+        let summarizer = inboxSummarizer
+
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            for item in sorted {
+                // Check cache first
+                let cacheKey = "\(item.chatUsername)_\(Int(item.timestamp.timeIntervalSince1970))"
+                if let cached = self.summaryCache[cacheKey] {
+                    self.updateItemSummary(chatUsername: item.chatUsername, summary: cached)
+                    continue
+                }
+
+                // Build InboxContext
+                let msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 1)) ?? []
+                guard let triggerMsg = msgs.first else { continue }
+
+                let context = InboxContextBuilder.build(
+                    chatUsername: item.chatUsername,
+                    triggerMessage: triggerMsg,
+                    reader: readerRef,
+                    store: storeRef,
+                    myUsername: readerRef.myUsername(),
+                    contactEntry: storeRef.getContact(username: item.chatUsername),
+                    whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
+                )
+
+                // Call AI
+                let summary = await summarizer.summarize(context)
+                guard let summary = summary else { continue }
+
+                // Cache + update UI
+                self.summaryCache[cacheKey] = summary
+                self.updateItemSummary(chatUsername: item.chatUsername, summary: summary)
+            }
+        }
+    }
+
+    /// Update a single inbox item's aiSummary without rebuilding the entire list.
+    private func updateItemSummary(chatUsername: String, summary: String) {
+        if let idx = inboxItems.firstIndex(where: { $0.chatUsername == chatUsername }) {
+            inboxItems[idx].aiSummary = summary
+        }
+    }
+
+    /// Clean summary cache entries not matching any current inbox item.
+    private func cleanSummaryCache() {
+        let activeKeys = Set(inboxItems.map { "\($0.chatUsername)_\(Int($0.timestamp.timeIntervalSince1970))" })
+        summaryCache = summaryCache.filter { activeKeys.contains($0.key) }
+    }
+
+    /// Generate a structured AI briefing for an inbox item (situation + suggestion + replies).
+    /// Called when the user expands an inbox row. Returns nil on failure.
+    func loadBriefing(for item: InboxItem) async -> InboxBriefing? {
+        // Re-fetch the latest message from the reader to build full context
+        guard let latestMessage = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 1))?.first else {
+            return nil
+        }
+
+        let contactEntry = store.getContact(username: item.chatUsername)
+        let whitelistEntry = store.getWhitelistEntry(username: item.chatUsername)
+
+        let context = InboxContextBuilder.build(
+            chatUsername: item.chatUsername,
+            triggerMessage: latestMessage,
+            reader: reader,
+            store: store,
+            myUsername: reader.myUsername(),
+            contactEntry: contactEntry,
+            whitelistEntry: whitelistEntry
+        )
+
+        // Get style profile for personalized replies
+        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        let styleHint = style.isEmpty
+            ? nil
+            : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
+
+        return await briefingGenerator.generate(context, styleHint: styleHint)
     }
 
     // MARK: - Autopilot
