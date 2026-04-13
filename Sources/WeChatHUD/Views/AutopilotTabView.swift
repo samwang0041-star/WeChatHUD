@@ -27,6 +27,21 @@ struct AutopilotTabView: View {
             if !monitor.autopilotActive && monitor.autopilotLog.isEmpty {
                 emptyState
             } else {
+                // ── Sending queue (countdown) ──
+                if !monitor.autopilotPendingSendQueue.isEmpty {
+                    sectionHeader("即将发送", icon: "arrow.up.circle.fill", color: .cyan, count: monitor.autopilotPendingSendQueue.count)
+                    ForEach(monitor.autopilotPendingSendQueue) { item in
+                        PendingSendRow(item: item, monitor: monitor)
+                    }
+                    Divider().padding(.horizontal, 12).padding(.vertical, 4)
+                }
+
+                // ── Session dashboard ──
+                if monitor.autopilotActive {
+                    sessionDashboard
+                    Divider().padding(.horizontal, 12).padding(.vertical, 4)
+                }
+
                 // ── Pending review queue ──
                 let pending = monitor.autopilotLog.filter { $0.action == .pending }
                 if !pending.isEmpty {
@@ -109,6 +124,32 @@ struct AutopilotTabView: View {
         let m = (seconds % 3600) / 60
         if h > 0 { return "\(h)h\(m)m" }
         return "\(m)m"
+    }
+
+    // MARK: - Session dashboard
+
+    private var sessionDashboard: some View {
+        let stats = monitor.autopilotSessionStats
+        return HStack(spacing: 12) {
+            dashStat("发送", value: "\(stats.totalSent)", color: .green)
+            dashStat("已读", value: "\(stats.totalReadNoReply)", color: .blue)
+            dashStat("风格", value: "\(stats.avgStyleScore)", color: stats.avgStyleScore >= 70 ? .green : .orange)
+            dashStat("延迟", value: "\(stats.avgDelay)s", color: .white.opacity(0.6))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func dashStat(_ label: String, value: String, color: Color) -> some View {
+        VStack(spacing: 1) {
+            Text(value)
+                .font(.system(size: 11, weight: .bold))
+                .monospacedDigit()
+                .foregroundColor(color)
+            Text(label)
+                .font(.system(size: 8))
+                .foregroundColor(.white.opacity(0.4))
+        }
     }
 
     // MARK: - Paused banner
@@ -487,5 +528,90 @@ private struct ActivityRow: View {
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(diff / 60)m" }
         return "\(diff / 3600)h"
+    }
+}
+
+// MARK: - Pending Send Row
+
+struct PendingSendRow: View {
+    let item: PendingSend
+    @ObservedObject var monitor: ChatMonitor
+    @State private var isEditing = false
+    @State private var editText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(item.chatName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                Spacer()
+                // Countdown
+                Text("\(item.remainingSeconds)s")
+                    .font(.system(size: 10, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.cyan)
+                // Style score badge
+                Text("S:\(item.styleScore)")
+                    .font(.system(size: 8))
+                    .foregroundColor(item.styleScore >= 70 ? .green : .orange)
+            }
+
+            if isEditing {
+                TextField("编辑回复", text: $editText)
+                    .font(.system(size: 10))
+                    .textFieldStyle(.plain)
+                    .padding(4)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(3)
+                HStack(spacing: 6) {
+                    Button("发送") {
+                        Task {
+                            let config = AutopilotConfig()
+                            await monitor.autopilotService?.editAndSend(id: item.id, newText: editText, config: config)
+                        }
+                        isEditing = false
+                    }
+                    .font(.system(size: 9)).foregroundColor(.green)
+                    .buttonStyle(.plain)
+                    Button("取消") { isEditing = false }
+                        .font(.system(size: 9)).foregroundColor(.gray)
+                        .buttonStyle(.plain)
+                }
+            } else {
+                Text(item.replyText)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.7))
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 8) {
+                Button("取消") {
+                    Task { await monitor.autopilotService?.cancelPendingSend(id: item.id) }
+                }
+                .font(.system(size: 9)).foregroundColor(.red)
+                .buttonStyle(.plain)
+
+                Button("立即发送") {
+                    Task {
+                        let config = AutopilotConfig()
+                        await monitor.autopilotService?.sendNow(id: item.id, config: config)
+                    }
+                }
+                .font(.system(size: 9)).foregroundColor(.green)
+                .buttonStyle(.plain)
+
+                Button("编辑") {
+                    editText = item.replyText
+                    isEditing = true
+                }
+                .font(.system(size: 9)).foregroundColor(.blue)
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 }

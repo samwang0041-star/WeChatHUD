@@ -62,6 +62,28 @@ actor AutopilotService {
     /// All msgUIDs of messages sent by autopilot — used for style isolation.
     private var sentMsgUIDs: Set<String> = []
 
+    /// Pending send queue — visible to UI. Messages wait here before being sent.
+    private(set) var pendingSendQueue: [PendingSend] = []
+
+    /// Session statistics for UI dashboard.
+    private(set) var sessionStats = SessionStats()
+
+    struct SessionStats {
+        var totalSent = 0
+        var totalReadNoReply = 0
+        var totalPending = 0
+        var totalSkipped = 0
+        var styleScoreSum = 0
+        var styleScoreCount = 0
+        var delaySum: Double = 0
+        var delayCount = 0
+        var startedAt: Date?
+
+        var avgStyleScore: Int { styleScoreCount > 0 ? styleScoreSum / styleScoreCount : 0 }
+        var avgDelay: Int { delayCount > 0 ? Int(delaySum / Double(delayCount)) : 0 }
+        var duration: TimeInterval { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
+    }
+
     init(store: HUDStore, reader: WeChatReader, config: AIClassifierConfig) {
         self.store = store
         self.reader = reader
@@ -106,6 +128,8 @@ actor AutopilotService {
         sentMsgUIDs.removeAll()
         proactiveSentCount = 0
         proactiveContactsSent.removeAll()
+        pendingSendQueue.removeAll()
+        sessionStats = SessionStats(startedAt: Date())
         pausedForUserActivity = false
         print("[WCHUD] Autopilot started — session #\(id)")
 
@@ -640,46 +664,35 @@ actor AutopilotService {
         let scaledDelay = rawDelay * config.replySpeedMultiplier
         // Clamp: min 5s (don't look robotic), max 300s (don't leave them hanging)
         let replyDelay = max(5, min(300, scaledDelay))
-        let delayNanos = UInt64(replyDelay * 1_000_000_000)
 
-        let capturedSessionId = sessionId
-        print("[WCHUD] Autopilot: delaying reply to '\(representative.chatName)' by \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat))")
-        try? await Task.sleep(nanoseconds: delayNanos)
-
-        // Check if same autopilot session is still active after delay
-        // (guards against stop→restart producing stale sends from old session)
-        guard self.sessionId == capturedSessionId else {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .skipped,
-                reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "延迟期间托管 session 已变更"
-            )
-        }
-
-        // --- Estimate typing time based on reply length ---
-        let typingDelay = Self.estimateTypingDelay(for: replyText)
-
-        // --- Send through serial queue with verification ---
-        let success = await serialSendWithRateLimit(
-            chatName: representative.chatName, chatUsername: representative.chatUsername,
-            text: replyText, config: config, typingDelay: typingDelay
+        // --- Enqueue for delayed sending (visible to UI) ---
+        let sendTime = Date().addingTimeInterval(replyDelay)
+        let pendingItem = PendingSend(
+            chatUsername: representative.chatUsername,
+            chatName: representative.chatName,
+            senderName: representative.senderName,
+            replyText: replyText,
+            confidence: decision.confidence,
+            risk: risk,
+            reasoning: decision.reasoning,
+            styleScore: styleScore,
+            scheduledSendTime: sendTime
         )
+        pendingSendQueue.append(pendingItem)
 
-        // sentMsgUIDs is now tracked inside serialSend via verifySend
+        // Update session stats
+        sessionStats.styleScoreSum += styleScore
+        sessionStats.styleScoreCount += 1
+        sessionStats.delaySum += replyDelay
+        sessionStats.delayCount += 1
 
-        // Trigger memory update after successful send (runs within actor isolation)
-        if success {
-            await refreshMemoryAfterSend(
-                chatUsername: representative.chatUsername,
-                chatName: representative.chatName
-            )
-        }
+        print("[WCHUD] Autopilot: queued reply to '\(representative.chatName)' — sends in \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat), style=\(styleScore))")
 
-        let reasoningWithScore = "\(decision.reasoning) [style:\(styleScore)/100]"
+        let reasoningWithScore = "\(decision.reasoning) [style:\(styleScore)/100, delay:\(Int(replyDelay))s]"
 
         return makeLogEntry(
             sessionId: sessionId, msg: representative,
-            action: success ? .sent : .failed,
+            action: .pending, // queued, not sent yet
             reply: replyText, confidence: decision.confidence, risk: risk,
             reasoning: reasoningWithScore
         )
@@ -884,6 +897,56 @@ actor AutopilotService {
         )
         try? store.upsertConversationMemory(memory)
         print("[WCHUD] Autopilot: memory updated for '\(chatName)'")
+    }
+
+    // MARK: - Pending send queue operations
+
+    /// Cancel a pending send by ID.
+    func cancelPendingSend(id: UUID) {
+        pendingSendQueue.removeAll { $0.id == id }
+    }
+
+    /// Send a pending message immediately (skip remaining delay).
+    func sendNow(id: UUID, config: AutopilotConfig) async {
+        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
+        let item = pendingSendQueue.remove(at: idx)
+        await executeSend(item: item, config: config)
+    }
+
+    /// Edit and send a pending message.
+    func editAndSend(id: UUID, newText: String, config: AutopilotConfig) async {
+        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
+        var item = pendingSendQueue.remove(at: idx)
+        item.replyText = newText
+        await executeSend(item: item, config: config)
+    }
+
+    /// Process pending queue — send items whose timer has expired.
+    /// Called from ChatMonitor's 60s safety timer.
+    func processPendingQueue(config: AutopilotConfig) async {
+        guard !pausedForUserActivity, sessionId != nil else { return }
+        let now = Date()
+        let expired = pendingSendQueue.filter { $0.scheduledSendTime <= now }
+        for item in expired {
+            pendingSendQueue.removeAll { $0.id == item.id }
+            await executeSend(item: item, config: config)
+        }
+    }
+
+    /// Execute a send from the queue.
+    private func executeSend(item: PendingSend, config: AutopilotConfig) async {
+        guard !pausedForUserActivity, sessionId != nil else { return }
+        let typingDelay = Self.estimateTypingDelay(for: item.replyText)
+        let success = await serialSendWithRateLimit(
+            chatName: item.chatName, chatUsername: item.chatUsername,
+            text: item.replyText, config: config, typingDelay: typingDelay
+        )
+        if success {
+            sessionStats.totalSent += 1
+            sessionSent += 1
+            // Refresh memory after send
+            await refreshMemoryAfterSend(chatUsername: item.chatUsername, chatName: item.chatName)
+        }
     }
 
     // MARK: - Proactive messaging
