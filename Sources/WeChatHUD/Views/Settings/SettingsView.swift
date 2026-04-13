@@ -13,6 +13,7 @@ struct SettingsView: View {
         case autopilot
         case system
         // Dashboards
+        case insight
         case dailyReport
         case commitments
         case autopilotDashboard
@@ -23,6 +24,7 @@ struct SettingsView: View {
             case .aiButler:           return "AI 管家"
             case .autopilot:          return "自动托管"
             case .system:             return "系统"
+            case .insight:            return "洞察"
             case .dailyReport:        return "日报"
             case .commitments:        return "承诺"
             case .autopilotDashboard: return "托管日志"
@@ -35,6 +37,7 @@ struct SettingsView: View {
             case .aiButler:           return "brain.head.profile"
             case .autopilot:          return "arrow.triangle.2.circlepath"
             case .system:             return "gearshape.2.fill"
+            case .insight:            return "waveform.badge.magnifyingglass"
             case .dailyReport:        return "doc.text.fill"
             case .commitments:        return "checkmark.circle.fill"
             case .autopilotDashboard: return "list.bullet.rectangle.fill"
@@ -47,6 +50,7 @@ struct SettingsView: View {
             case .aiButler:           return .purple
             case .autopilot:          return .cyan
             case .system:             return .green
+            case .insight:            return .orange
             case .dailyReport:        return .mint
             case .commitments:        return .pink
             case .autopilotDashboard: return .cyan
@@ -59,6 +63,7 @@ struct SettingsView: View {
             case .aiButler:           return "AI 服务连接、管家行为和通知过滤。"
             case .autopilot:          return "自动回复的安全护栏和行为设置。"
             case .system:             return "同步间隔、数据管理和系统信息。"
+            case .insight:            return "聊天态势分析、情绪洞察和暗信号。"
             case .dailyReport:        return "查看日报和周报摘要。"
             case .commitments:        return "追踪你和对方的承诺和待办。"
             case .autopilotDashboard: return "自动回复活动日志和会话统计。"
@@ -68,7 +73,7 @@ struct SettingsView: View {
         /// Whether this tab is a dashboard (read-only) vs settings (configurable)
         var isDashboard: Bool {
             switch self {
-            case .dailyReport, .commitments, .autopilotDashboard: return true
+            case .insight, .dailyReport, .commitments, .autopilotDashboard: return true
             default: return false
             }
         }
@@ -177,6 +182,8 @@ struct SettingsView: View {
                     SettingsCard { AutopilotSettingsView() }
                 case .system:
                     SettingsCard { SyncSettingsView() }
+                case .insight:
+                    ChatInsightView()
                 case .dailyReport:
                     DailyReportTabView()
                 case .commitments:
