@@ -1,11 +1,14 @@
 import SwiftUI
+import AppKit
 
 /// A single row in the unified inbox list.
 /// Shows priority dot, contact info, status labels, and hover actions.
 struct InboxRowView: View {
+    @EnvironmentObject var panelState: PanelState
     let item: InboxItem
     let onDismiss: () -> Void
     var onSnooze: ((Date) -> Void)? = nil
+    var onSilence: (() -> Void)? = nil
 
     @State private var hovered = false
     @State private var expanded = false
@@ -35,9 +38,40 @@ struct InboxRowView: View {
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
             .onTapGesture { expanded.toggle() }
+            .contextMenu {
+                Button("复制消息原文") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(item.preview, forType: .string)
+                }
+                Button("在微信中打开") {
+                    WeChatLauncher.openChat(named: item.chatName)
+                }
+                Divider()
+                Button("查看对话详情") {
+                    panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+                }
+                Divider()
+                Button("静音此对话") {
+                    onSilence?()
+                }
+                if item.isVIP {
+                    Button("降为普通关注") {
+                        // Demote VIP — requires store access, defer to monitor
+                    }
+                } else if item.isWhitelisted {
+                    Button("设为 VIP") {
+                        // Promote to VIP — requires store access
+                    }
+                }
+                if item.isGroup {
+                    Button("忽略此发送人") {
+                        // Add to ignored senders — not yet implemented
+                    }
+                }
+            }
 
             if expanded && item.actionRequired {
-                ReplyDebtExpandedView(item: item.toReplyDebtItem())
+                BriefingPanelView(item: item)
             }
         }
     }
