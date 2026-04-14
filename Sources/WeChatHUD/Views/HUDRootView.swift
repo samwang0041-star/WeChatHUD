@@ -45,12 +45,16 @@ struct HUDRootView: View {
 
 /// Size of the inbox panel for given item count.
 func inboxSize(itemCount: Int) -> (CGFloat, CGFloat) {
+    // Width adapts to screen: 55% of screen width, clamped to [580, 800]
+    let screenWidth = NSScreen.main?.frame.width ?? 1440
+    let width = min(max(screenWidth * 0.55, 580), 800)
+
     if itemCount == 0 {
         return (260, 100)  // compact empty state
     }
     let rows = min(CGFloat(itemCount), 10)
-    let bodyHeight = max(60, rows * 48)
-    let handledHeight: CGFloat = 30
-    let height: CGFloat = min(38 + 1 + bodyHeight + handledHeight + 6, 500)
-    return (480, height)
+    let bodyHeight = max(60, rows * 64)   // ~64pt per row (padding + 2 lines + badges)
+    let handledHeight: CGFloat = 36
+    let height: CGFloat = min(38 + 1 + bodyHeight + handledHeight + 8, 600)
+    return (width, height)
 }

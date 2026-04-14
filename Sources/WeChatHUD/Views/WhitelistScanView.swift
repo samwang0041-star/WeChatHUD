@@ -209,7 +209,7 @@ struct WhitelistScanView: View {
         results = []
 
         Task {
-            let candidates = monitor.scanCandidates(limit: 50)
+            let candidates = monitor.scanCandidates(limit: 500)
             guard !candidates.isEmpty else {
                 await MainActor.run { isScanning = false }
                 return
