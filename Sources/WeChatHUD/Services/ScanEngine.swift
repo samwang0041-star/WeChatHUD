@@ -266,7 +266,7 @@ enum ScanEngine {
                         attentionLevel: entry.attentionLevel,
                         messageID: msg.id,
                         rawText: msg.text,
-                        snippet: String(msg.text.prefix(80)),
+                        snippet: Self.deduplicateSenderInSnippet(msg.text, senderName: msg.senderName),
                         isAtMention: isAt,
                         timestamp: msgTime,
                         kind: kind
@@ -429,6 +429,21 @@ enum ScanEngine {
             print("[WCHUD] performScan error: \(error)")
             return nil
         }
+    }
+
+    /// Strip leading sender name from snippet to avoid "亮🌸: 亮🌸让你..." duplication.
+    private static func deduplicateSenderInSnippet(_ text: String, senderName: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let snippet = String(trimmed.prefix(80))
+        guard !senderName.isEmpty else { return snippet }
+        // Check if text starts with "senderName" followed by common separators
+        for sep in ["：", ":", " ", ""] {
+            let prefix = senderName + sep
+            if snippet.hasPrefix(prefix) {
+                return String(snippet.dropFirst(prefix.count).prefix(80))
+            }
+        }
+        return snippet
     }
 
     static func buildReplyDebtItems(
