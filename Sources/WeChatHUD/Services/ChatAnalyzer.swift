@@ -82,17 +82,28 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{my_name}", with: myName.isEmpty ? myUsername : myName)
             .replacingOccurrences(of: "{messages}", with: formatted)
 
+        print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(messages.count) messages")
         let raw = await call(userPrompt)
-        guard !raw.isEmpty else { return nil }
+        if raw.isEmpty {
+            print("[WCHUD] ChatAnalyzer: group analysis got empty response")
+            return nil
+        }
 
         if let result: GroupAnalysis = parseJSON(raw) {
+            print("[WCHUD] ChatAnalyzer: group analysis success for \(chatName)")
             return result
         }
+        print("[WCHUD] ChatAnalyzer: group analysis parse failed, retrying. Raw: \(raw.prefix(200))")
 
         // Retry with stricter instruction
         let strict = userPrompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
         let raw2 = await call(strict)
-        return parseJSON(raw2)
+        if let result: GroupAnalysis = parseJSON(raw2) {
+            print("[WCHUD] ChatAnalyzer: group analysis retry success")
+            return result
+        }
+        print("[WCHUD] ChatAnalyzer: group analysis retry also failed. Raw2: \(raw2.prefix(200))")
+        return nil
     }
 
     /// Analyze a private chat. `messages` come newest-first from the reader.
@@ -186,7 +197,7 @@ actor ChatAnalyzer {
         if !config.apiKey.isEmpty {
             req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         }
-        req.timeoutInterval = 60
+        req.timeoutInterval = 120
 
         let body: [String: Any] = [
             "model": config.model,

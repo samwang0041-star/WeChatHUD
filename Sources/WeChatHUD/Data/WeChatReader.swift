@@ -18,6 +18,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     private var keys: [String: Data] = [:]           // relative path → 32-byte key
     private var contactCache: [String: String] = [:] // username → display name
+    /// All known aliases for the current user (wxid, nicknames from contact.db,
+    /// and senderHint names learned from group messages where name2id failed).
+    /// Used by isFromSelf to catch group chat messages where the sender is
+    /// stored as a display name instead of wxid.
+    private(set) var mySelfNames: Set<String> = []
     private var decryptedCache: [String: String] = [:] // relative path → decrypted file path
     private var mainMtimes: [String: Date] = [:]     // relative path → last-seen enc DB mtime
     private var walMtimes: [String: Date] = [:]      // relative path → last-seen WAL mtime
@@ -246,6 +251,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             let display = remark.isEmpty ? (nickName.isEmpty ? username : nickName) : remark
             contactCache[username] = display
         }
+
+        // Build self-name aliases: wxid + any display name from contact.db
+        let me = myUsername()
+        if !me.isEmpty {
+            mySelfNames = [me]
+            if let myDisplay = contactCache[me], myDisplay != me {
+                mySelfNames.insert(myDisplay)
+            }
+            print("[WCHUD] mySelfNames: \(mySelfNames)")
+        }
     }
 
     func displayName(for username: String) -> String {
@@ -386,7 +401,22 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 let contentStr = WeChatParser.decodeContent(contentRaw, ct: ct)
                 let parsed = WeChatParser.renderMessage(content: contentStr, baseType: baseType, isGroup: isGroup)
 
-                let senderUsername = name2id[realSenderId] ?? parsed.senderHint
+                var senderUsername = name2id[realSenderId] ?? parsed.senderHint
+                // In group chats, name2id lookup can fail for the user's own
+                // messages, falling back to the display name from XML (e.g. "哆啦"
+                // instead of wxid). Detect this: if name2id failed AND the hint
+                // is not a known contact, it's almost certainly the user.
+                if isGroup && name2id[realSenderId] == nil {
+                    let hint = parsed.senderHint
+                    if mySelfNames.contains(hint) || contactCache[hint] == nil {
+                        // Learn this alias for future detection
+                        if !hint.isEmpty && !mySelfNames.contains(hint) {
+                            mySelfNames.insert(hint)
+                            print("[WCHUD] learned self alias from group: '\(hint)'")
+                        }
+                        senderUsername = myUsername()
+                    }
+                }
                 let senderName = displayName(for: senderUsername)
 
                 let uid = "\(relPath)/\(tableName)/\(localId)"
