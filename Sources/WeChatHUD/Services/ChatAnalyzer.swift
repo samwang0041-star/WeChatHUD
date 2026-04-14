@@ -60,7 +60,8 @@ actor ChatAnalyzer {
         chatName: String,
         messages: [MessageInfo],
         myUsername: String,
-        myName: String
+        myName: String,
+        myDisplayName: String = ""
     ) async -> GroupAnalysis? {
         let template: String
         do {
@@ -74,7 +75,8 @@ actor ChatAnalyzer {
             messages,
             chatUsername: chatUsername,
             myUsername: myUsername,
-            myName: myName
+            myName: myName,
+            myDisplayName: myDisplayName
         )
 
         let userPrompt = template
@@ -112,7 +114,8 @@ actor ChatAnalyzer {
         contactName: String,
         messages: [MessageInfo],
         myUsername: String,
-        myName: String
+        myName: String,
+        myDisplayName: String = ""
     ) async -> PrivateAnalysis? {
         let template: String
         do {
@@ -126,7 +129,8 @@ actor ChatAnalyzer {
             messages,
             chatUsername: chatUsername,
             myUsername: myUsername,
-            myName: myName
+            myName: myName,
+            myDisplayName: myDisplayName
         )
 
         // Resolve relationship description from store
@@ -165,11 +169,12 @@ actor ChatAnalyzer {
         _ messages: [MessageInfo],
         chatUsername: String,
         myUsername: String,
-        myName: String
+        myName: String,
+        myDisplayName: String = ""
     ) -> String {
         let chronological = messages.reversed()
         return chronological.map { msg in
-            let isSelf = MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername)
+            let isSelf = MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
             let sender = isSelf
                 ? (myName.isEmpty ? "我" : myName)
                 : (msg.senderName.isEmpty ? msg.senderUsername : msg.senderName)
@@ -202,7 +207,7 @@ actor ChatAnalyzer {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个消息分析助手，严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个消息分析助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

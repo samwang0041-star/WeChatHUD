@@ -18,7 +18,7 @@ actor AIDailyRetrospector {
     private let promptVersion: String
 
     func updateConfig(_ newConfig: AIConfig) {
-        var c = newConfig; c.maxTokens = 1024; c.temperature = 0.3
+        var c = newConfig; c.maxTokens = 768; c.temperature = 0.2
         self.config = c
     }
 
@@ -31,8 +31,8 @@ actor AIDailyRetrospector {
         self.store = store
         var inflated = config
         // Daily report is the longest output of any role; bump tokens.
-        inflated.maxTokens = 1024
-        inflated.temperature = 0.3
+        inflated.maxTokens = 768
+        inflated.temperature = 0.2
         self.config = inflated
         self.promptLoader = promptLoader
         self.promptVersion = promptVersion
@@ -197,7 +197,7 @@ actor AIDailyRetrospector {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个工作日复盘助手，严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个工作日复盘助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

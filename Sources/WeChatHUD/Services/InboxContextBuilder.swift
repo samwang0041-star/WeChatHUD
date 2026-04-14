@@ -54,6 +54,7 @@ enum InboxContextBuilder {
     ) -> InboxContext {
         let text = triggerMessage.text
         let windowSize = contextWindowSize(messageLength: text.count)
+        let myDisplayName = reader.displayName(for: myUsername)
 
         // Fetch recent messages for context
         let recentMessages = (try? reader.getMessages(
@@ -63,7 +64,7 @@ enum InboxContextBuilder {
 
         // Find my last reply
         let myLastReply = recentMessages.first {
-            MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername)
+            MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
         }
         let timeSinceMyLastReply: TimeInterval? = myLastReply.map {
             Date().timeIntervalSince(Date(timeIntervalSince1970: Double($0.createTime)))
@@ -73,12 +74,12 @@ enum InboxContextBuilder {
         let inboundSinceReply: Int
         if let outbound = myLastReply {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername)
+                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
                 && $0.createTime > outbound.createTime
             }.count
         } else {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername)
+                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
             }.count
         }
 

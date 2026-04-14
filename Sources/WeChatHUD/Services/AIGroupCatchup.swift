@@ -14,7 +14,7 @@ actor AIGroupCatchup {
     private let promptVersion: String
 
     func updateConfig(_ newConfig: AIConfig) {
-        var c = newConfig; c.maxTokens = 768; c.temperature = 0.2
+        var c = newConfig; c.maxTokens = 512; c.temperature = 0.15
         self.config = c
     }
 
@@ -29,8 +29,8 @@ actor AIGroupCatchup {
         // bump max_tokens accordingly. Temperature stays low so the
         // summary is faithful to the messages, not creative.
         var inflated = config
-        inflated.maxTokens = 768
-        inflated.temperature = 0.2
+        inflated.maxTokens = 512
+        inflated.temperature = 0.15
         self.config = inflated
         self.promptLoader = promptLoader
         self.promptVersion = promptVersion
@@ -135,7 +135,7 @@ actor AIGroupCatchup {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个群聊补课助手，严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个群聊补课助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

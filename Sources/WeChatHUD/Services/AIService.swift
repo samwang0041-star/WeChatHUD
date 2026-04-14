@@ -64,10 +64,13 @@ actor AIService {
         }
         request.timeoutInterval = 120
 
+        // Qwen3.5 optimization: suppress thinking mode to save tokens and latency
+        let effectiveSystem = system + "\n\n不要进入 thinking 模式，不要输出 <think> 标签或思维过程。"
+
         let body: [String: Any] = [
             "model": slot.model,
             "messages": [
-                ["role": "system", "content": system],
+                ["role": "system", "content": effectiveSystem],
                 ["role": "user", "content": user]
             ],
             "temperature": config.temperature,

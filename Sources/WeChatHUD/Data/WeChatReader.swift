@@ -403,17 +403,20 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
                 var senderUsername = name2id[realSenderId] ?? parsed.senderHint
                 // In group chats, name2id lookup can fail for the user's own
-                // messages, falling back to the display name from XML (e.g. "哆啦"
-                // instead of wxid). Detect this: if name2id failed AND the hint
-                // is not a known contact, it's almost certainly the user.
+                // messages because Name2Id only stores *other* members. Two
+                // detection strategies, in order of confidence:
+                //   1. hint is already a known self alias (wxid / contact name /
+                //      previously-learned group nickname).
+                //   2. realSenderId == 0 — WeChat stores 0 for the user's own
+                //      messages in Name2Id-indexed group tables.
+                // When either matches, learn the hint so future lookups are fast.
                 if isGroup && name2id[realSenderId] == nil {
                     let hint = parsed.senderHint
-                    if mySelfNames.contains(hint) || contactCache[hint] == nil {
-                        // Learn this alias for future detection
-                        if !hint.isEmpty && !mySelfNames.contains(hint) {
-                            mySelfNames.insert(hint)
-                            print("[WCHUD] learned self alias from group: '\(hint)'")
-                        }
+                    if mySelfNames.contains(hint) {
+                        senderUsername = myUsername()
+                    } else if realSenderId == 0 && !hint.isEmpty {
+                        mySelfNames.insert(hint)
+                        print("[WCHUD] learned self alias from group: '\(hint)'")
                         senderUsername = myUsername()
                     }
                 }

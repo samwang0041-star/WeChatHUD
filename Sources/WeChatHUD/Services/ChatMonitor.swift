@@ -812,7 +812,6 @@ final class ChatMonitor: ObservableObject {
         let currentRecent = recentNotifications
         let rLimit = recentLimit
         let replyDebtConfig = store.getSettingJSON("replyDebt", as: ReplyDebtConfig.self) ?? ReplyDebtConfig()
-        let replyDebtAIConfig = store.getSettingJSON("replyDebtAI", as: ReplyDebtAIConfig.self) ?? ReplyDebtAIConfig()
         let aiRef = aiService
 
         let outcome = await Task.detached(priority: .userInitiated) {
@@ -823,7 +822,6 @@ final class ChatMonitor: ObservableObject {
                 changedRelPaths: cp,
                 thresholds: th,
                 replyDebtConfig: replyDebtConfig,
-                replyDebtAIConfig: replyDebtAIConfig,
                 currentRecent: currentRecent,
                 recentLimit: rLimit
             )
@@ -1129,6 +1127,8 @@ final class ChatMonitor: ObservableObject {
                     try? storeRef.upsertConversationMemory(memory)
                 }
         }
+
+        // 7. ReplyDebt AI re-ranking removed — rule scoring + time sort is sufficient
     }
 
     /// Resolve a relative deadline string like "+30m", "+2h", "+1d" to a Date.
@@ -1341,6 +1341,25 @@ final class ChatMonitor: ObservableObject {
     func recentMessages(chatUsername: String, limit: Int = 20) -> [(sender: String, body: String)] {
         (try? reader.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil))?
             .map { (sender: $0.senderName, body: $0.text) } ?? []
+    }
+
+    /// All WeChat contacts (username → displayName) from the encrypted DB.
+    func wechatContacts() -> [String: String] {
+        reader.allContacts()
+    }
+
+    /// Run AI relationship inference for a contact, using the shared inferrer.
+    func inferRelationship(contactUsername: String, contactName: String) async -> RelationshipProfile? {
+        let msgs = (try? reader.getMessages(chatUsername: contactUsername, limit: 50)) ?? []
+        let myUname = reader.myUsername()
+        return await relationshipInferrer.infer(
+            contactUsername: contactUsername,
+            contactName: contactName,
+            isGroup: contactUsername.contains("@chatroom"),
+            messages: msgs,
+            myUsername: myUname,
+            myDisplayName: reader.displayName(for: myUname)
+        )
     }
 
     /// Save a reply draft for later sending.
@@ -1709,12 +1728,14 @@ final class ChatMonitor: ObservableObject {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
         }
         if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        let myUname = reader.myUsername()
         let result = await chatAnalyzer.analyzeGroup(
             chatUsername: item.chatUsername,
             chatName: item.chatName,
             messages: filtered,
-            myUsername: reader.myUsername(),
-            myName: "我"
+            myUsername: myUname,
+            myName: "我",
+            myDisplayName: reader.displayName(for: myUname)
         )
         return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }
@@ -1732,12 +1753,14 @@ final class ChatMonitor: ObservableObject {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
         }
         if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        let myUname = reader.myUsername()
         let result = await chatAnalyzer.analyzePrivate(
             chatUsername: item.chatUsername,
             contactName: item.chatName,
             messages: filtered,
-            myUsername: reader.myUsername(),
-            myName: "我"
+            myUsername: myUname,
+            myName: "我",
+            myDisplayName: reader.displayName(for: myUname)
         )
         return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }

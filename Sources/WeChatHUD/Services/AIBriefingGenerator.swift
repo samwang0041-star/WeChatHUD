@@ -148,7 +148,7 @@ actor AIBriefingGenerator {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是用户的微信消息管家。严格按要求输出 JSON，不要任何其他内容。"],
+                ["role": "system", "content": "你是用户的微信消息管家。严格按要求输出 JSON，不要任何其他内容。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

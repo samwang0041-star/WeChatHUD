@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// Full autopilot settings panel — matches macOS System Settings style.
 struct AutopilotSettingsView: View {
     @EnvironmentObject private var store: HUDStore
 
-    // Config fields
     @State private var confidenceThreshold: Double = 0.8
     @State private var maxRepliesPerHour: Int = 20
     @State private var batchWindowSeconds: Int = 10
@@ -14,9 +12,7 @@ struct AutopilotSettingsView: View {
     @State private var replyStyle: AutopilotReplyStyle = .auto
     @State private var excludedContacts: [String] = []
 
-    // UI state
     @State private var didLoad = false
-    @State private var showSaved = false
     @State private var showClearConfirm = false
     @State private var sessions: [AutopilotSession] = []
     @State private var allContacts: [ContactEntry] = []
@@ -26,30 +22,14 @@ struct AutopilotSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if showSaved {
-                Text("已保存")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.green)
-                    .transition(.opacity)
-            }
-
-            replyStyleSection
-            Divider()
-            confidenceSection
-            Divider()
-            rateLimitSection
-            Divider()
+            styleSection
+            thresholdSection
+            limitsSection
             vipSection
-            Divider()
             exclusionSection
-            Divider()
             advancedSection
-            Divider()
             historySection
         }
-        .font(.system(size: 12))
-        .foregroundColor(.primary)
-        .toggleStyle(.switch)
         .onAppear {
             guard !didLoad else { return }
             didLoad = true
@@ -57,54 +37,43 @@ struct AutopilotSettingsView: View {
         }
     }
 
-    // MARK: - Reply style
+    // MARK: - Style
 
-    private var replyStyleSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("回复风格")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-
-            Picker("", selection: $replyStyle) {
-                ForEach(AutopilotReplyStyle.allCases, id: \.self) { style in
-                    Text(style.label).tag(style)
+    private var styleSection: some View {
+        SettingsSection("回复风格") {
+            SettingsRow("风格", subtitle: replyStyle.hint, icon: "text.bubble", iconColor: .purple) {
+                Picker("", selection: $replyStyle) {
+                    ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
+                .pickerStyle(.menu)
+                .frame(width: 100)
+                .onChange(of: replyStyle) { save() }
             }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 300)
-            .onChange(of: replyStyle) { save() }
-
-            Text(replyStyle.hint)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
         }
     }
 
     // MARK: - Confidence
 
-    private var confidenceSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("自动发送信心阈值")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text("\(Int(confidenceThreshold * 100))%")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(confidenceColor)
-                    .monospacedDigit()
+    private var thresholdSection: some View {
+        SettingsSection("自动发送") {
+            VStack(spacing: 4) {
+                HStack {
+                    Text("信心阈值")
+                        .font(.system(size: 12))
+                    Spacer()
+                    Text("\(Int(confidenceThreshold * 100))%")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(confidenceColor)
+                }
+                Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
+                    .onChange(of: confidenceThreshold) { save() }
+                HStack {
+                    Text("更多自动").font(.system(size: 9)).foregroundColor(.secondary)
+                    Spacer()
+                    Text("更多人工").font(.system(size: 9)).foregroundColor(.secondary)
+                }
             }
-            Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
-                .onChange(of: confidenceThreshold) { save() }
-            HStack {
-                Text("← 更多自动回复")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-                Spacer()
-                Text("更多人工审核 →")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
         }
     }
 
@@ -114,132 +83,99 @@ struct AutopilotSettingsView: View {
         return .red
     }
 
-    // MARK: - Rate limit
+    // MARK: - Rate limits
 
-    private var rateLimitSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("频率限制")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("每小时最大回复")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Picker("", selection: $maxRepliesPerHour) {
-                        ForEach(replyLimits, id: \.self) { limit in
-                            Text("\(limit)条").tag(limit)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 200)
-                    .onChange(of: maxRepliesPerHour) { save() }
+    private var limitsSection: some View {
+        SettingsSection("频率限制") {
+            SettingsRow("每小时最大回复", icon: "gauge.with.dots.needle.33percent", iconColor: .orange) {
+                Picker("", selection: $maxRepliesPerHour) {
+                    ForEach(replyLimits, id: \.self) { Text("\($0)条").tag($0) }
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("消息合并窗口")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Picker("", selection: $batchWindowSeconds) {
-                        ForEach(batchOptions, id: \.self) { sec in
-                            Text("\(sec)秒").tag(sec)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 200)
-                    .onChange(of: batchWindowSeconds) { save() }
-                }
+                .pickerStyle(.menu)
+                .frame(width: 70)
+                .onChange(of: maxRepliesPerHour) { save() }
             }
-            Text("同一对话在合并窗口内的多条消息会被合并为一次回复")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+            SettingsRowDivider()
+            SettingsRow("消息合并窗口", subtitle: "窗口内多条消息合并为一次回复", icon: "timer", iconColor: .orange) {
+                Picker("", selection: $batchWindowSeconds) {
+                    ForEach(batchOptions, id: \.self) { Text("\($0)秒").tag($0) }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 70)
+                .onChange(of: batchWindowSeconds) { save() }
+            }
         }
     }
 
     // MARK: - VIP
 
     private var vipSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle("VIP 联系人自动发送忙碌通知", isOn: $vipAutoNotify)
+        SettingsSection("VIP 通知") {
+            SettingsToggleRow("VIP 自动忙碌通知", subtitle: "VIP 消息同时推送系统通知", isOn: $vipAutoNotify)
                 .onChange(of: vipAutoNotify) { save() }
-
             if vipAutoNotify {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("忙碌通知模板")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    TextField("VIP 忙碌通知内容", text: $vipBusyTemplate)
+                SettingsRowDivider()
+                SettingsRow("通知模板") {
+                    TextField("忙碌通知内容", text: $vipBusyTemplate)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11))
+                        .frame(maxWidth: 180)
                         .onSubmit { save() }
-                    Text("VIP 消息会同时推送 macOS 系统通知提醒你")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
                 }
             }
         }
     }
 
-    // MARK: - Exclusion list
+    // MARK: - Exclusion
 
     private var exclusionSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("排除联系人")
-                    .font(.system(size: 11, weight: .medium))
+        SettingsSection("排除联系人 (\(excludedContacts.count))") {
+            if excludedContacts.isEmpty {
+                Text("无排除项，所有白名单联系人均可自动回复")
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                Spacer()
-                Text("\(excludedContacts.count) 人")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            Text("以下联系人的消息不会被自动回复，即使在白名单中")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-
-            // Current exclusions
-            if !excludedContacts.isEmpty {
-                VStack(spacing: 2) {
-                    ForEach(excludedContacts, id: \.self) { username in
-                        HStack {
-                            let name = contactDisplayName(username)
-                            Text(name)
-                                .font(.system(size: 11))
-                                .foregroundColor(.primary)
-                            Spacer()
-                            Button(action: {
-                                excludedContacts.removeAll { $0 == username }
-                                save()
-                            }) {
-                                Image(systemName: "minus.circle.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.red.opacity(0.6))
-                            }
-                            .buttonStyle(.plain)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+            } else {
+                ForEach(Array(excludedContacts.enumerated()), id: \.element) { idx, username in
+                    if idx > 0 { SettingsRowDivider() }
+                    HStack {
+                        Text(contactDisplayName(username))
+                            .font(.system(size: 12))
+                        Spacer()
+                        Button {
+                            excludedContacts.removeAll { $0 == username }
+                            save()
+                        } label: {
+                            Image(systemName: "minus.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(.red.opacity(0.6))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                        .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 12).padding(.vertical, 5)
                 }
-                .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-                .cornerRadius(6)
             }
 
-            // Add contact picker
             let available = allContacts.filter { !excludedContacts.contains($0.username) }
             if !available.isEmpty {
-                Menu {
-                    ForEach(available, id: \.username) { contact in
-                        Button("\(contact.role.icon) \(contact.displayName)") {
-                            excludedContacts.append(contact.username)
-                            save()
+                SettingsRowDivider()
+                HStack {
+                    Spacer()
+                    Menu {
+                        ForEach(available, id: \.username) { contact in
+                            Button("\(contact.role.icon) \(contact.displayName)") {
+                                excludedContacts.append(contact.username)
+                                save()
+                            }
                         }
+                    } label: {
+                        Label("添加", systemImage: "plus.circle")
+                            .font(.system(size: 11))
                     }
-                } label: {
-                    Label("添加排除", systemImage: "plus.circle")
-                        .font(.system(size: 11))
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 70)
                 }
-                .menuStyle(.borderlessButton)
-                .frame(maxWidth: 120)
+                .padding(.horizontal, 12).padding(.vertical, 6)
             }
         }
     }
@@ -247,25 +183,33 @@ struct AutopilotSettingsView: View {
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("处理群聊 @消息（当前仅记录）", isOn: $handleGroupAt)
-                .onChange(of: handleGroupAt) { save() }
-            Text("开启后群聊 @消息也会出现在托管日志中，但不会自动回复")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+        SettingsSection("高级") {
+            SettingsToggleRow(
+                "群聊 @消息",
+                subtitle: "记录但不自动回复",
+                isOn: $handleGroupAt
+            )
+            .onChange(of: handleGroupAt) { save() }
         }
     }
 
-    // MARK: - Session history
+    // MARK: - History
 
     private var historySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("托管历史")
-                    .font(.system(size: 11, weight: .medium))
+        SettingsSection("托管历史") {
+            if sessions.isEmpty {
+                Text("暂无记录")
+                    .font(.system(size: 11))
                     .foregroundColor(.secondary)
-                Spacer()
-                if !sessions.isEmpty {
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+            } else {
+                ForEach(Array(sessions.enumerated()), id: \.element.id) { idx, session in
+                    if idx > 0 { SettingsRowDivider() }
+                    sessionRow(session)
+                }
+                SettingsRowDivider()
+                HStack {
+                    Spacer()
                     Button("清除历史") { showClearConfirm = true }
                         .font(.system(size: 10))
                         .foregroundColor(.red.opacity(0.7))
@@ -277,63 +221,36 @@ struct AutopilotSettingsView: View {
                             }
                         }
                 }
-            }
-
-            if sessions.isEmpty {
-                Text("暂无托管记录")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(sessions) { session in
-                        sessionRow(session)
-                    }
-                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
             }
         }
     }
 
     private func sessionRow(_ session: AutopilotSession) -> some View {
         HStack(spacing: 8) {
-            // Date
             Text(formatDate(session.startedAt))
-                .font(.system(size: 10))
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.primary)
-                .frame(width: 65, alignment: .leading)
-
-            // Duration
             Text(sessionDuration(session))
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
-                .frame(width: 45, alignment: .leading)
-
-            // Stats
+            Spacer()
             HStack(spacing: 6) {
                 Label("\(session.totalSent)", systemImage: "checkmark.circle")
-                    .font(.system(size: 9))
-                    .foregroundColor(.green)
+                    .font(.system(size: 9)).foregroundColor(.green)
                 Label("\(session.totalPending)", systemImage: "clock")
-                    .font(.system(size: 9))
-                    .foregroundColor(.orange)
-                Label("\(session.totalHandled)", systemImage: "tray")
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 9)).foregroundColor(.orange)
             }
-
-            Spacer()
-
-            // Running indicator
             if session.endedAt == nil {
                 Text("运行中")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(.green)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(session.endedAt == nil ? Color.green.opacity(0.05) : Color.clear)
-        .cornerRadius(4)
+        .padding(.horizontal, 12).padding(.vertical, 5)
     }
+
+    // MARK: - Helpers
 
     private func formatDate(_ date: Date) -> String {
         let f = DateFormatter()
@@ -343,11 +260,8 @@ struct AutopilotSettingsView: View {
 
     private func sessionDuration(_ session: AutopilotSession) -> String {
         let end = session.endedAt ?? Date()
-        let seconds = Int(end.timeIntervalSince(session.startedAt))
-        let h = seconds / 3600
-        let m = (seconds % 3600) / 60
-        if h > 0 { return "\(h)h\(m)m" }
-        return "\(m)m"
+        let s = Int(end.timeIntervalSince(session.startedAt))
+        return s >= 3600 ? "\(s/3600)h\((s%3600)/60)m" : "\(s/60)m"
     }
 
     private func contactDisplayName(_ username: String) -> String {
@@ -384,7 +298,5 @@ struct AutopilotSettingsView: View {
             replyStyle: replyStyle
         )
         try? store.setSettingJSON("autopilot", value: cfg)
-        showSaved = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { showSaved = false }
     }
 }

@@ -41,7 +41,8 @@ actor RelationshipInferrer {
         contactName: String,
         isGroup: Bool,
         messages: [MessageInfo],
-        myUsername: String
+        myUsername: String,
+        myDisplayName: String = ""
     ) async -> RelationshipProfile? {
         guard !messages.isEmpty else { return nil }
 
@@ -54,7 +55,7 @@ actor RelationshipInferrer {
         }
 
         let formatted = messages.prefix(50).map { msg in
-            let isMe = MessageHelpers.isFromSelf(msg, chatUsername: contactUsername, myUsername: myUsername)
+            let isMe = MessageHelpers.isFromSelf(msg, chatUsername: contactUsername, myUsername: myUsername, myDisplayName: myDisplayName)
             let sender = isMe ? "用户" : (msg.senderName.isEmpty ? contactName : msg.senderName)
             return "\(sender): \(msg.text)"
         }.joined(separator: "\n")

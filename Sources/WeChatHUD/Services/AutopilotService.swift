@@ -899,7 +899,7 @@ actor AutopilotService {
         let body: [String: Any] = [
             "model": aiConfig.model,
             "messages": [
-                ["role": "system", "content": "你是对话摘要助手。只输出JSON。"],
+                ["role": "system", "content": "你是对话摘要助手。只输出JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": prompt]
             ],
             "temperature": 0.2,
@@ -1102,7 +1102,7 @@ actor AutopilotService {
             let body: [String: Any] = [
                 "model": aiConfig.model,
                 "messages": [
-                    ["role": "system", "content": "你是微信用户的主动聊天助手。只输出消息文本。"],
+                    ["role": "system", "content": "你是微信用户的主动聊天助手。只输出消息文本。不要进入 thinking 模式，不要输出 <think> 标签。"],
                     ["role": "user", "content": prompt]
                 ],
                 "temperature": 0.5,

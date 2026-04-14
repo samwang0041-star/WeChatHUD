@@ -125,8 +125,8 @@ actor RecallAnalyzer {
         }
         let payload: [String: Any] = [
             "model": config.model,
-            "messages": [["role": "user", "content": prompt]],
-            "temperature": 0.1,
+            "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
+            "temperature": 0.05,
             "max_tokens": 256,
             "stream": false
         ]

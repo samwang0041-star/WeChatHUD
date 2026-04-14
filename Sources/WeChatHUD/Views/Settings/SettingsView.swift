@@ -186,11 +186,11 @@ struct SettingsView: View {
                     case .contacts:
                         EmptyView() // handled above
                     case .aiButler:
-                        SettingsCard { AISettingsView() }
+                        AISettingsView()
                     case .autopilot:
-                        SettingsCard { AutopilotSettingsView() }
+                        AutopilotSettingsView()
                     case .system:
-                        SettingsCard { SyncSettingsView() }
+                        SyncSettingsView()
                     case .insight:
                         Color.clear
                             .onAppear { panelState.onShowInsight?() }
@@ -233,88 +233,3 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Grouped card wrapper
-
-/// Wraps a settings subview in the native "rounded grouped section" look:
-/// system control background fill, 10 pt corner radius, subtle border.
-struct SettingsCard<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        content()
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
-            )
-    }
-}
-
-// MARK: - Notification settings body
-
-/// Notification settings with persistent toggles.
-struct NotificationSettingsBody: View {
-    @EnvironmentObject private var store: HUDStore
-
-    @State private var atMention = true
-    @State private var vipMessage = true
-    @State private var whitelistMessage = false
-    @State private var durationSeconds = 3
-    @State private var didLoad = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("@提到我时弹出通知", isOn: $atMention)
-                .onChange(of: atMention) { save() }
-            Toggle("VIP 消息弹出通知", isOn: $vipMessage)
-                .onChange(of: vipMessage) { save() }
-            Toggle("白名单消息也弹出", isOn: $whitelistMessage)
-                .onChange(of: whitelistMessage) { save() }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("通知停留时长")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                Picker("", selection: $durationSeconds) {
-                    Text("3 秒").tag(3)
-                    Text("5 秒").tag(5)
-                    Text("8 秒").tag(8)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
-                .onChange(of: durationSeconds) { save() }
-            }
-        }
-        .font(.system(size: 12))
-        .foregroundColor(.primary)
-        .toggleStyle(.switch)
-        .onAppear {
-            if !didLoad {
-                if let cfg = store.getSettingJSON("notification", as: NotificationConfig.self) {
-                    atMention = cfg.atMention
-                    vipMessage = cfg.important
-                    whitelistMessage = cfg.allWhitelist
-                    durationSeconds = cfg.durationSeconds
-                }
-                didLoad = true
-            }
-        }
-    }
-
-    private func save() {
-        let cfg = NotificationConfig(
-            atMention: atMention,
-            important: vipMessage,
-            allWhitelist: whitelistMessage,
-            durationSeconds: durationSeconds
-        )
-        try? store.setSettingJSON("notification", value: cfg)
-    }
-}
