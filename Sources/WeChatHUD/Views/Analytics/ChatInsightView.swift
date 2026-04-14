@@ -88,66 +88,86 @@ struct ChatInsightView: View {
         let whitelist = store.getWhitelist()
         let whitelistIds = Set(whitelist.map { $0.id })
         let whitelistMap = Dictionary(uniqueKeysWithValues: whitelist.map { ($0.id, $0) })
-        let selfUsername = reader.myUsername()
-        let selfDisplayName = reader.displayName(for: selfUsername)
         let selfNames = reader.mySelfNames
         let nowTs = Int(Date().timeIntervalSince1970)
         let cutoff = selectedWindow.seconds.map { nowTs - $0 } ?? 0
-        let limit = selectedWindow.fetchLimit
-        var stats: [String: ChatStatsData] = [:]
-        var others: [SessionEntry] = []
 
         guard let sessions = try? reader.getSessions() else {
             statsLoaded = true
             return
         }
 
-        for s in sessions {
-            // Filter system accounts
+        // Filter sessions
+        let filteredSessions = sessions.filter { s in
             guard !s.username.hasPrefix("gh_"),
                   !s.username.contains("@app"),
                   s.username != "filehelper",
                   s.username != "floatbottle",
                   !s.username.hasPrefix("fake_"),
-                  !selfNames.contains(s.username) else { continue }
+                  !selfNames.contains(s.username) else { return false }
+            if selectedScope == .whitelist && !whitelistIds.contains(s.username) { return false }
+            if cutoff > 0 && s.lastTimestamp < cutoff { return false }
+            return true
+        }
 
-            // Scope filter
-            if selectedScope == .whitelist && !whitelistIds.contains(s.username) { continue }
+        // Bulk scan — one SQL pass per DB file, no per-chat overhead
+        let bulkStats = reader.bulkMessageStats(
+            chatUsernames: filteredSessions.map(\.username),
+            selfNames: selfNames,
+            sinceTsEpoch: cutoff
+        )
 
-            // Time window filter on session level
-            guard cutoff == 0 || s.lastTimestamp > cutoff else { continue }
+        var stats: [String: ChatStatsData] = [:]
+        var others: [SessionEntry] = []
+        let sessionMap = Dictionary(uniqueKeysWithValues: filteredSessions.map { ($0.username, $0) })
 
-            let messages: [MessageInfo]
-            do {
-                let raw = try reader.getMessages(chatUsername: s.username, limit: limit)
-                messages = cutoff > 0 ? raw.filter { $0.createTime >= cutoff } : raw
-            } catch { continue }
-            guard !messages.isEmpty else { continue }
-
-            let isWhitelisted = whitelistIds.contains(s.username)
-            let entry = whitelistMap[s.username]
-            let name = entry?.displayName ?? reader.displayName(for: s.username)
+        for (chatUsername, bulk) in bulkStats {
+            let session = sessionMap[chatUsername]
+            let isGroup = session?.isGroup ?? chatUsername.contains("@chatroom")
+            let isWhitelisted = whitelistIds.contains(chatUsername)
+            let entry = whitelistMap[chatUsername]
+            let name = entry?.displayName ?? reader.displayName(for: chatUsername)
             let category = entry?.category ?? .other
 
-            let st = ChatInsightEngine.computeStats(
-                messages: messages,
-                selfUsername: selfUsername,
-                selfDisplayName: selfDisplayName,
-                selfNames: selfNames,
-                chatUsername: s.username,
+            let topSenders = bulk.senderCounts
+                .sorted { $0.value > $1.value }
+                .map { (name: reader.displayName(for: $0.key), count: $0.value) }
+
+            let myCount = bulk.selfCount
+            let othersCount = bulk.totalCount - myCount
+            let symRatio: Double
+            if bulk.totalCount == 0 { symRatio = 1.0 }
+            else {
+                let minC = Double(min(myCount, othersCount))
+                let maxC = Double(max(myCount, othersCount))
+                symRatio = maxC > 0 ? minC / maxC : 1.0
+            }
+
+            let st = ChatStatsData(
+                chatUsername: chatUsername,
                 chatName: name,
-                isGroup: s.isGroup,
-                category: category
+                isGroup: isGroup,
+                category: category,
+                messageCount: bulk.totalCount,
+                myMessageCount: myCount,
+                participantCount: bulk.senderCounts.count,
+                messagesByHour: bulk.hourlyBuckets,
+                avgResponseTimeSeconds: 0,  // skip for bulk — too expensive
+                symmetryRatio: symRatio,
+                trend7d: 0,
+                topSenders: topSenders,
+                silentMembers: [],
+                ignoredMessages: []
             )
-            stats[s.username] = st
+            stats[chatUsername] = st
 
             if !isWhitelisted {
                 others.append(SessionEntry(
-                    id: s.username,
+                    id: chatUsername,
                     displayName: name,
-                    isGroup: s.isGroup,
-                    lastTimestamp: s.lastTimestamp,
-                    messageCount: st.messageCount
+                    isGroup: isGroup,
+                    lastTimestamp: session?.lastTimestamp ?? 0,
+                    messageCount: bulk.totalCount
                 ))
             }
         }

@@ -450,6 +450,90 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         return results.sorted { $0.createTime > $1.createTime }
     }
 
+    /// Bulk stats across all message tables for given chat usernames.
+    /// Much faster than calling getMessages per chat — scans each DB file once.
+    struct BulkChatStats {
+        let chatUsername: String
+        let totalCount: Int
+        let selfCount: Int
+        let senderCounts: [String: Int]  // senderUsername → count
+        let hourlyBuckets: [Int]         // 24 hours
+    }
+
+    func bulkMessageStats(
+        chatUsernames: [String],
+        selfNames: Set<String>,
+        sinceTsEpoch: Int = 0
+    ) -> [String: BulkChatStats] {
+        // Build chatUsername → (tableName, chatUsername) map
+        let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
+            ($0, "Msg_\(md5Hex($0))")
+        }
+        // Group by table name for O(1) lookup
+        let tableToChat = Dictionary(uniqueKeysWithValues: chatToTable.map { ($0.tableName, $0.chatUsername) })
+        let targetTables = Set(chatToTable.map(\.tableName))
+
+        let msgDBs = findMessageDBs()
+        var result: [String: BulkChatStats] = [:]
+
+        for relPath in msgDBs {
+            guard let decPath = try? getDecryptedDB(relativePath: relPath) else { continue }
+            var db: OpaquePointer?
+            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            defer { sqlite3_close(db) }
+
+            // Find which target tables exist in this DB
+            var tableStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'", -1, &tableStmt, nil) == SQLITE_OK else { continue }
+            defer { sqlite3_finalize(tableStmt) }
+
+            var foundTables: [String] = []
+            while sqlite3_step(tableStmt) == SQLITE_ROW {
+                let name = String(cString: sqlite3_column_text(tableStmt, 0))
+                if targetTables.contains(name) { foundTables.append(name) }
+            }
+            guard !foundTables.isEmpty else { continue }
+
+            let name2id = loadName2Id(db: db)
+
+            for table in foundTables {
+                guard let chatUsername = tableToChat[table] else { continue }
+                let whereClause = sinceTsEpoch > 0 ? "WHERE create_time >= \(sinceTsEpoch)" : ""
+
+                let sql = "SELECT real_sender_id, create_time FROM [\(table)] \(whereClause)"
+                var sStmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &sStmt, nil) == SQLITE_OK else { continue }
+                defer { sqlite3_finalize(sStmt) }
+
+                var senderCounts: [String: Int] = [:]
+                var hourly = Array(repeating: 0, count: 24)
+                var total = 0
+                var selfCount = 0
+
+                while sqlite3_step(sStmt) == SQLITE_ROW {
+                    let senderId = Int(sqlite3_column_int64(sStmt, 0))
+                    let createTime = Int(sqlite3_column_int64(sStmt, 1))
+                    let senderKey = name2id[senderId] ?? "id_\(senderId)"
+                    senderCounts[senderKey, default: 0] += 1
+                    if selfNames.contains(senderKey) || senderId == 0 { selfCount += 1 }
+                    let hour = Calendar.current.component(.hour, from: Date(timeIntervalSince1970: Double(createTime)))
+                    hourly[hour] += 1
+                    total += 1
+                }
+                guard total > 0 else { continue }
+
+                result[chatUsername] = BulkChatStats(
+                    chatUsername: chatUsername,
+                    totalCount: total,
+                    selfCount: selfCount,
+                    senderCounts: senderCounts,
+                    hourlyBuckets: hourly
+                )
+            }
+        }
+        return result
+    }
+
     func countNewMessages(relPath: String, tableName: String, sinceLocalId: Int) throws -> Int {
         let decPath = try getDecryptedDB(relativePath: relPath)
         var db: OpaquePointer?
