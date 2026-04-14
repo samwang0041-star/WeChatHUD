@@ -8,7 +8,7 @@ final class ChatInsightEngineTests: XCTestCase {
     private func msg(_ sender: String, _ text: String, _ time: Int) -> MessageInfo {
         MessageInfo(
             id: UUID().uuidString,
-            chatUsername: "test_chat",
+            chatUsername: "test_chat@chatroom",
             chatName: "Test",
             senderUsername: sender,
             senderName: sender,
@@ -30,7 +30,7 @@ final class ChatInsightEngineTests: XCTestCase {
         ]
         let stats = ChatInsightEngine.computeStats(
             messages: messages, selfUsername: selfUsername,
-            chatUsername: "test_chat", chatName: "Test", isGroup: true, category: .work
+            chatUsername: "test_chat@chatroom", chatName: "Test", isGroup: true, category: .work
         )
         XCTAssertEqual(stats.messageCount, 4)
         XCTAssertEqual(stats.myMessageCount, 2)
@@ -82,7 +82,7 @@ final class ChatInsightEngineTests: XCTestCase {
         ]
         let stats = ChatInsightEngine.computeStats(
             messages: messages, selfUsername: selfUsername,
-            chatUsername: "test", chatName: "Test", isGroup: false, category: .life
+            chatUsername: "wxid_a", chatName: "Test", isGroup: false, category: .life
         )
         XCTAssertEqual(stats.symmetryRatio, 1.0, accuracy: 0.01)
     }
@@ -94,7 +94,7 @@ final class ChatInsightEngineTests: XCTestCase {
         ]
         let stats = ChatInsightEngine.computeStats(
             messages: messages, selfUsername: selfUsername,
-            chatUsername: "test", chatName: "Test", isGroup: false, category: .life
+            chatUsername: "wxid_a", chatName: "Test", isGroup: false, category: .life
         )
         XCTAssertEqual(stats.symmetryRatio, 0.333, accuracy: 0.01)
     }
@@ -104,7 +104,7 @@ final class ChatInsightEngineTests: XCTestCase {
     func testEmptyMessages_returnsZeros() {
         let stats = ChatInsightEngine.computeStats(
             messages: [], selfUsername: selfUsername,
-            chatUsername: "test", chatName: "Test", isGroup: false, category: .other
+            chatUsername: "wxid_a", chatName: "Test", isGroup: false, category: .other
         )
         XCTAssertEqual(stats.messageCount, 0)
         XCTAssertEqual(stats.myMessageCount, 0)
@@ -123,7 +123,7 @@ final class ChatInsightEngineTests: XCTestCase {
         ]
         let stats = ChatInsightEngine.computeStats(
             messages: messages, selfUsername: selfUsername,
-            chatUsername: "test", chatName: "Test", isGroup: false, category: .work
+            chatUsername: "wxid_a", chatName: "Test", isGroup: false, category: .work
         )
         XCTAssertEqual(stats.avgResponseTimeSeconds, 90, accuracy: 0.1)
     }
