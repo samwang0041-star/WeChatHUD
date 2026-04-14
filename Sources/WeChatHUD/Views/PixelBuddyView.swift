@@ -7,53 +7,124 @@ struct AIBuddyOverlay: View {
     let mood: BuddyMood
     @ObservedObject private var tracker = AIActivityTracker.shared
     @State private var isHovering = false
+    @State private var now = Date()
+    @State private var refreshTimer: Timer?
 
     var body: some View {
-        PixelBuddyView(mood: tracker.isActive ? .analyzing : mood)
-            .onHover { isHovering = $0 }
-            .popover(isPresented: $isHovering, arrowEdge: .leading) {
-                aiActivityPopover
+        ZStack(alignment: .bottomTrailing) {
+            // Activity panel — anchored to the left of the buddy, real-time
+            if isHovering || tracker.isActive {
+                activityPanel(now: now)
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .offset(x: -24)
             }
+
+            PixelBuddyView(mood: tracker.isActive ? .analyzing : mood)
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) { isHovering = hovering }
+                }
+        }
+        .onAppear { startRefresh() }
+        .onDisappear { stopRefresh() }
     }
 
-    private var aiActivityPopover: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func startRefresh() {
+        stopRefresh()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            DispatchQueue.main.async { now = Date() }
+        }
+    }
+
+    private func stopRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    private func activityPanel(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Header
             HStack(spacing: 5) {
                 Circle()
-                    .fill(tracker.isActive ? Color.green : Color.gray)
-                    .frame(width: 6, height: 6)
-                Text(tracker.isActive ? "AI 运行中" : "AI 空闲")
-                    .font(.system(size: 11, weight: .semibold))
+                    .fill(tracker.isActive ? Color.green : Color.gray.opacity(0.5))
+                    .frame(width: 5, height: 5)
+                Text(tracker.isActive ? "AI \(tracker.taskList.count) 个任务" : "AI 空闲")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(tracker.isActive ? .primary : .secondary)
             }
 
-            if tracker.taskList.isEmpty {
-                Text("当前没有 AI 任务在运行")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(tracker.taskList) { task in
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                            .frame(width: 10, height: 10)
-                        Text(task.label)
-                            .font(.system(size: 10, weight: .medium))
-                        Spacer()
-                        Text(elapsedText(since: task.startedAt))
-                            .font(.system(size: 9, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
+            // Active tasks
+            ForEach(tracker.taskList) { task in
+                activeRow(task, now: now)
+            }
+
+            // Recent completed (dimmed)
+            if !tracker.recentCompleted.isEmpty && isHovering {
+                Divider().opacity(0.3)
+                ForEach(tracker.recentCompleted.prefix(5)) { task in
+                    completedRow(task, now: now)
                 }
             }
         }
-        .padding(10)
-        .frame(minWidth: 160)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.95))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.gray.opacity(0.2), lineWidth: 0.5)
+        )
+        .fixedSize()  // allow natural width, can exceed panel bounds
     }
 
-    private func elapsedText(since date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "\(seconds)s" }
-        return "\(seconds / 60)m\(seconds % 60)s"
+    private func activeRow(_ task: AIActivityTracker.TaskInfo, now: Date) -> some View {
+        HStack(spacing: 5) {
+            ProgressView()
+                .scaleEffect(0.4)
+                .frame(width: 8, height: 8)
+            Text(task.label)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(.primary)
+            if !task.detail.isEmpty {
+                Text(task.detail)
+                    .font(.system(size: 8))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Text(elapsedText(task.elapsed(now: now)))
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundColor(.orange)
+        }
+    }
+
+    private func completedRow(_ task: AIActivityTracker.TaskInfo, now: Date) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 6, weight: .bold))
+                .foregroundColor(.green.opacity(0.6))
+                .frame(width: 8, height: 8)
+            Text(task.label)
+                .font(.system(size: 8))
+                .foregroundColor(.secondary)
+            if !task.detail.isEmpty {
+                Text(task.detail)
+                    .font(.system(size: 7))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .lineLimit(1)
+            }
+            if let ended = task.endedAt {
+                Text(String(format: "%.1fs", ended.timeIntervalSince(task.startedAt)))
+                    .font(.system(size: 7, design: .monospaced))
+                    .foregroundColor(.secondary.opacity(0.6))
+            }
+        }
+    }
+
+    private func elapsedText(_ interval: TimeInterval) -> String {
+        let s = Int(interval)
+        if s < 60 { return "\(s)s" }
+        return "\(s / 60)m\(s % 60)s"
     }
 }
 

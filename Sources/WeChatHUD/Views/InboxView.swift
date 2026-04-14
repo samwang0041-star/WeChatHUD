@@ -24,7 +24,7 @@ struct InboxView: View {
                 emptyState
             } else {
                 Divider().background(Color.white.opacity(0.08))
-                ScrollView {
+                ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(actionItems) { item in
                             InboxRowView(item: item, onDismiss: {

@@ -141,6 +141,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.panel.setDetailAppearance(isSettings)
                 case .extended:
                     self.panel.allowsBecomeKey = true
+                    self.panel.makeKey()
                     self.panel.setDetailAppearance(false)
                 case .compact, .notification:
                     self.panel.allowsBecomeKey = false
