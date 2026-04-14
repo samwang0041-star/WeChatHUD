@@ -1,64 +1,15 @@
-你是微信关系分析助手。根据以下对话记录，推断用户与对方的关系。
+根据对话记录推断用户与对方的关系。只输出 JSON，不要任何其它文字。
 
-输出**必须**是单个 JSON 对象，**不要**包含 markdown 围栏或任何其它文本。
+JSON 格式（严格遵守）:
+{"relationship":"从以下选一个:直属领导|上级领导|同事|下属|客户|供应商|合作方|家人|朋友|同学|其他","hierarchy":"superior|peer|subordinate|external|personal","tone_preference":"formal|casual|brief","context":"≤20字具体关系描述","confidence":0.0到1.0}
 
-JSON schema:
-{
-  "relationship": "关系描述",
-  "hierarchy": "superior|peer|subordinate|external|personal",
-  "tone_preference": "formal|casual|brief",
-  "context": "关系背景（≤30字）",
-  "confidence": 0.85
-}
-
-# 推断规则
-
-1. **从称呼推断**：
-   - "x总"/"领导"/"老板" → superior
-   - "x哥"/"x姐" → peer 或 superior（看语气恭敬程度）
-   - "亲"/"宝" → personal
-   - 直呼其名且语气随意 → peer 或 personal
-
-2. **从内容推断**：
-   - 审批/指示/分配任务 → superior
-   - 汇报/请示/等审批 → subordinate（对方视角）
-   - 讨论/协作/对等交流 → peer
-   - 报价/合同/商务 → external
-   - 家庭/生活/情感 → personal
-
-3. **从语气推断 tone_preference**：
-   - 用户历史回复偏正式（"您"、完整句子） → formal
-   - 用户历史回复偏随意（口语、表情包） → casual
-   - 用户历史回复极简（"OK"、"收到"） → brief
-
-4. **confidence 规则**：
-   - 消息 < 5 条 → confidence ≤ 0.4
-   - 只有单方向消息（对方说用户没回） → confidence ≤ 0.5
-   - 有多轮互动且模式清晰 → confidence ≥ 0.7
-
-5. **context 要具体**，不要"工作关系" — 而是"负责审批我的方案"、"项目 A 的合作方对接人"
-
-# few-shot
-
-对话：
-林总: 明天上午把预算单发给我
-用户: 好的林总，明天上午发您
-林总: 顺便把上个月的也整理一下
-用户: 收到，一起发您
-
-输出: {"relationship":"直属领导","hierarchy":"superior","tone_preference":"formal","context":"管理用户日常工作，审批预算","confidence":0.85}
-
-对话：
-小李: 今晚一起吃饭吗
-用户: 行啊 几点
-小李: 7点老地方
-用户: OK
-
-输出: {"relationship":"朋友","hierarchy":"personal","tone_preference":"casual","context":"经常约饭的朋友","confidence":0.75}
-
-# 现在分析以下对话
+关键规则：
+1. relationship 只能从给定选项中选，禁止自创。
+2. 从称呼判断："x总/领导/老板"→上级，直呼名字+随意语气→朋友/同事，"亲/宝/老公/老婆"→家人。
+3. 从内容判断：审批/指示→上级，汇报/请示→下属，对等讨论→同事，商务/报价→客户/供应商，生活/家庭→家人/朋友。
+4. tone_preference 看用户自己的回复风格："您"+完整句→formal，口语+表情包→casual，"OK/收到"→brief。
+5. confidence：消息<5条→≤0.4，单方向→≤0.5，多轮互动清晰→≥0.7。
+6. context 要具体，如"审批预算的直属领导"、"项目A对接人"，不要写"工作关系"这种空话。
 
 对话方: {contact_name}（{chat_kind}）
 {messages}
-
-只输出 JSON，不要任何其它文字。

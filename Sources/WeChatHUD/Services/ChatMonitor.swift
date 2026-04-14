@@ -1230,6 +1230,7 @@ final class ChatMonitor: ObservableObject {
                 if !todayMessages.isEmpty {
                     let stats = ChatInsightEngine.computeStats(
                         messages: todayMessages, selfUsername: selfUsername,
+                        selfDisplayName: selfDisplayName, selfNames: reader.mySelfNames,
                         chatUsername: entry.id, chatName: entry.displayName,
                         isGroup: entry.isGroup, category: entry.category
                     )
@@ -1360,6 +1361,19 @@ final class ChatMonitor: ObservableObject {
             myUsername: myUname,
             myDisplayName: reader.displayName(for: myUname)
         )
+    }
+
+    /// Batch-infer relationship profiles for all contacts.
+    /// Returns the number of successfully inferred profiles.
+    func inferAllRelationships(contacts: [ContactEntry], progress: @MainActor @escaping (Int, Int) -> Void) async -> Int {
+        guard !contacts.isEmpty else { return 0 }
+        var count = 0
+        for (i, contact) in contacts.enumerated() {
+            await progress(i + 1, contacts.count)
+            let result = await inferRelationship(contactUsername: contact.username, contactName: contact.displayName)
+            if result != nil { count += 1 }
+        }
+        return count
     }
 
     /// Save a reply draft for later sending.

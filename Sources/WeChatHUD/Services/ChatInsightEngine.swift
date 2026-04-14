@@ -5,13 +5,18 @@ enum ChatInsightEngine {
     static func computeStats(
         messages: [MessageInfo],
         selfUsername: String,
+        selfDisplayName: String = "",
+        selfNames: Set<String> = [],
         chatUsername: String,
         chatName: String,
         isGroup: Bool,
         category: WhitelistCategory
     ) -> ChatStatsData {
         let messageCount = messages.count
-        let myMessageCount = messages.filter { $0.senderUsername == selfUsername }.count
+        let isSelf: (MessageInfo) -> Bool = { msg in
+            MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: selfUsername, myDisplayName: selfDisplayName, mySelfNames: selfNames)
+        }
+        let myMessageCount = messages.filter(isSelf).count
         let participants = Set(messages.map { $0.senderUsername })
         let participantCount = participants.count
 
@@ -37,7 +42,7 @@ enum ChatInsightEngine {
             symmetryRatio = maxC > 0 ? minC / maxC : 1.0
         }
 
-        let avgResponse = computeAvgResponseTime(messages: messages, selfUsername: selfUsername)
+        let avgResponse = computeAvgResponseTime(messages: messages, isSelf: isSelf)
 
         return ChatStatsData(
             chatUsername: chatUsername,
@@ -59,14 +64,14 @@ enum ChatInsightEngine {
 
     private static func computeAvgResponseTime(
         messages: [MessageInfo],
-        selfUsername: String
+        isSelf: (MessageInfo) -> Bool
     ) -> Double {
         let sorted = messages.sorted { $0.createTime < $1.createTime }
         var responseTimes: [Double] = []
         var lastOtherTime: Int?
 
         for m in sorted {
-            if m.senderUsername != selfUsername {
+            if !isSelf(m) {
                 lastOtherTime = m.createTime
             } else if let otherTime = lastOtherTime {
                 let delta = Double(m.createTime - otherTime)

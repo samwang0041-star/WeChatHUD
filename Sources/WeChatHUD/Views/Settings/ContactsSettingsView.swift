@@ -40,6 +40,8 @@ private struct ContactsListSubView: View {
     @State private var showAddPopover = false
     @State private var addSearchText = ""
     @State private var didLoad = false
+    @State private var batchInferring = false
+    @State private var batchProgress = ""
 
     private var filtered: [ContactEntry] {
         guard !searchText.isEmpty else { return contacts }
@@ -62,6 +64,31 @@ private struct ContactsListSubView: View {
                 Spacer()
 
                 statsChips
+
+                Button {
+                    batchInferring = true
+                    batchProgress = "准备中…"
+                    Task {
+                        let count = await monitor.inferAllRelationships(contacts: contacts) { done, total in
+                            batchProgress = "\(done)/\(total)"
+                        }
+                        batchProgress = "完成 \(count) 个"
+                        batchInferring = false
+                    }
+                } label: {
+                    if batchInferring {
+                        HStack(spacing: 3) {
+                            ProgressView().controlSize(.mini)
+                            Text(batchProgress).font(.system(size: 10))
+                        }
+                    } else {
+                        Image(systemName: "sparkles")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(batchInferring)
+                .help("批量推断关系画像")
 
                 Button {
                     addSearchText = ""
@@ -440,10 +467,11 @@ struct ContactEditSheet: View {
 
                 Section("AI 关系画像") {
                     if let profile = relProfile {
-                        LabeledContent("关系") {
-                            TextField("", text: $relRelationship)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 160)
+                        Picker("关系", selection: $relRelationship) {
+                            ForEach(Self.relationshipOptions, id: \.self) { Text($0).tag($0) }
+                            if !Self.relationshipOptions.contains(relRelationship) && !relRelationship.isEmpty {
+                                Text(relRelationship).tag(relRelationship)
+                            }
                         }
                         Picker("层级", selection: $relHierarchy) {
                             ForEach(RelationshipProfile.Hierarchy.allCases, id: \.self) {
@@ -455,14 +483,17 @@ struct ContactEditSheet: View {
                                 Text($0.label).tag($0)
                             }
                         }
-                        LabeledContent("备注") {
-                            TextField("", text: $relNote)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 160)
-                        }
-                        HStack {
-                            Text("置信度 \(Int(profile.confidence * 100))%")
+                        TextField("备注", text: $relNote)
+                        if let ctx = profile.context, !ctx.isEmpty {
+                            Text(ctx)
                                 .font(.caption).foregroundColor(.secondary)
+                        }
+                        HStack(spacing: 8) {
+                            ProgressView(value: profile.confidence)
+                                .frame(maxWidth: 80)
+                            Text("\(Int(profile.confidence * 100))%")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
                             Spacer()
                             Button("重新推断") { runInference() }
                                 .controlSize(.small)
@@ -526,6 +557,11 @@ struct ContactEditSheet: View {
         onSave()
         dismiss()
     }
+
+    private static let relationshipOptions = [
+        "直属领导", "上级领导", "同事", "下属", "客户", "供应商",
+        "合作方", "家人", "朋友", "同学", "其他"
+    ]
 
     private func rolesForLevel(_ level: AttentionLevel) -> [ContactRole] {
         switch level {
