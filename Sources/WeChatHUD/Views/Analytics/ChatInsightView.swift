@@ -34,6 +34,7 @@ struct ChatInsightView: View {
         .frame(minWidth: 900, minHeight: 620)
         .padding(.bottom, 16)
         .task {
+            fixStaleDisplayNames()
             computeAllStats()
         }
     }
@@ -44,6 +45,8 @@ struct ChatInsightView: View {
         let whitelist = store.getWhitelist()
         let whitelistIds = Set(whitelist.map { $0.id })
         let selfUsername = reader.myUsername()
+        let selfDisplayName = reader.displayName(for: selfUsername)
+        let selfNames = reader.mySelfNames
         var stats: [String: ChatStatsData] = [:]
 
         // Stats for whitelisted chats
@@ -53,6 +56,8 @@ struct ChatInsightView: View {
                 let s = ChatInsightEngine.computeStats(
                     messages: messages,
                     selfUsername: selfUsername,
+                    selfDisplayName: selfDisplayName,
+                    selfNames: selfNames,
                     chatUsername: entry.id,
                     chatName: entry.displayName,
                     isGroup: entry.isGroup,
@@ -96,6 +101,26 @@ struct ChatInsightView: View {
         allStats = stats
         otherActiveSessions = others.sorted { $0.lastTimestamp > $1.lastTimestamp }
         statsLoaded = true
+    }
+
+    /// Fix whitelist entries whose displayName is a raw chatroom ID or wxid.
+    private func fixStaleDisplayNames() {
+        let whitelist = store.getWhitelist()
+        for entry in whitelist {
+            let name = entry.displayName
+            if name.contains("@chatroom") || name.hasPrefix("wxid_") {
+                let resolved = reader.displayName(for: entry.id)
+                if resolved != entry.id && resolved != name {
+                    try? store.addToWhitelist(
+                        username: entry.id,
+                        displayName: resolved,
+                        isGroup: entry.isGroup,
+                        category: entry.category,
+                        attentionLevel: entry.attentionLevel
+                    )
+                }
+            }
+        }
     }
 
     // MARK: - Sidebar
@@ -379,9 +404,12 @@ struct ChatInsightView: View {
 
     private func computeStatsForSession(_ session: SessionEntry) -> ChatStatsData? {
         guard let messages = try? reader.getMessages(chatUsername: session.id, limit: 200) else { return nil }
+        let me = reader.myUsername()
         return ChatInsightEngine.computeStats(
             messages: messages,
-            selfUsername: reader.myUsername(),
+            selfUsername: me,
+            selfDisplayName: reader.displayName(for: me),
+            selfNames: reader.mySelfNames,
             chatUsername: session.id,
             chatName: session.displayName,
             isGroup: session.isGroup,
