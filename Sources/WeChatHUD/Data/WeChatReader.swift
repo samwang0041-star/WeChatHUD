@@ -256,6 +256,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let me = myUsername()
         if !me.isEmpty {
             mySelfNames = [me]
+            // WeChat DB Name2Id may store the legacy short ID (without _xxxx suffix).
+            // Add it so isFromSelf can match group messages using the old format.
+            if let underscoreRange = me.range(of: "_", options: .backwards),
+               me[underscoreRange.upperBound...].count == 4,
+               me[underscoreRange.upperBound...].allSatisfy({ $0.isHexDigit }) {
+                let shortId = String(me[..<underscoreRange.lowerBound])
+                if !shortId.isEmpty { mySelfNames.insert(shortId) }
+            }
             if let myDisplay = contactCache[me], myDisplay != me {
                 mySelfNames.insert(myDisplay)
             }

@@ -18,6 +18,42 @@ enum ReplyDebtScorer {
     private static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
     private static let askSignals = ["?", "？", "麻烦", "请", "帮忙", "发我", "确认", "看看"]
 
+    /// Messages that don't warrant a reply — ack words, emoji, stickers, media-only.
+    private static let ackPatterns: [String] = [
+        "好", "好的", "嗯", "嗯嗯", "收到", "ok", "OK", "Ok", "行", "哈哈",
+        "哈哈哈", "哈哈哈哈", "嗯嗯嗯", "谢谢", "感谢", "👍", "🙏", "666",
+        "了解", "明白", "知道了", "没问题", "可以"
+    ]
+
+    /// Returns true if the message is a short ack that doesn't need a reply.
+    private static func isAckMessage(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        // Media-only messages from WeChat parser
+        if trimmed.hasPrefix("[表情]") || trimmed.hasPrefix("[图片]")
+            || trimmed.hasPrefix("[视频]") || trimmed.hasPrefix("[语音]")
+            || trimmed.hasPrefix("[动画表情]") || trimmed.hasPrefix("[通话]")
+            || trimmed.hasPrefix("[链接]") || trimmed.hasPrefix("[文件]")
+            || trimmed.hasPrefix("[位置]") || trimmed.hasPrefix("[名片]") { return true }
+        // Unparsed XML messages (files, mini-programs, etc.)
+        if trimmed.hasPrefix("<?xml") || trimmed.hasPrefix("<msg>") { return true }
+        // "null" from parser failures
+        if trimmed == "null" { return true }
+        // Exact match on ack words (case-insensitive for english)
+        if ackPatterns.contains(where: { trimmed.caseInsensitiveCompare($0) == .orderedSame }) { return true }
+        // Very short text (<=3 chars) with no ask signal
+        if trimmed.count <= 3 && !askSignals.contains(where: { trimmed.contains($0) }) { return true }
+        return false
+    }
+
+    /// Grace period: if user replied and counterpart responds within N seconds,
+    /// treat the conversation as "done" (no new debt).
+    private static let postReplyGraceSeconds = 120
+
+    /// If both sides are silent for this long after the last inbound,
+    /// the conversation is considered naturally ended (no debt).
+    private static let conversationEndedSeconds = 7200  // 2 hours
+
     static func build(seeds: [Seed], config: ReplyDebtConfig) -> [ReplyDebtItem] {
         seeds.compactMap { buildItem(seed: $0, config: config) }
             .sorted { lhs, rhs in
@@ -34,7 +70,24 @@ enum ReplyDebtScorer {
             return nil
         }
 
+        // After user replied, if counterpart's follow-up is just an ack ("好"、表情等)
+        // or arrives within grace period, don't create new debt.
+        if let latestOutbound = seed.latestOutbound {
+            let gap = latestInbound.createTime - latestOutbound.createTime
+            if gap > 0 && gap <= postReplyGraceSeconds { return nil }
+            if gap > 0 && isAckMessage(latestInbound.text) { return nil }
+        }
+
+        // Conversation naturally ended: if both sides are silent for a long time
+        // after the last inbound, the conversation is done — no debt.
         let nowTs = Int(seed.now.timeIntervalSince1970)
+        let silenceSinceInbound = nowTs - latestInbound.createTime
+        if let latestOutbound = seed.latestOutbound, latestOutbound.createTime < latestInbound.createTime {
+            // User replied earlier, counterpart followed up, then silence.
+            // If silence > 2h, conversation is naturally concluded.
+            if silenceSinceInbound > conversationEndedSeconds { return nil }
+        }
+
         if let action = seed.chatAction {
             if action.snoozedUntil > nowTs { return nil }
             if action.silencedAt >= latestInbound.createTime { return nil }

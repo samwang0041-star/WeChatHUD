@@ -20,9 +20,12 @@ enum MessageHelpers {
         _ msg: MessageInfo,
         chatUsername: String,
         myUsername: String,
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
     ) -> Bool {
         if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
+        // Check against learned self aliases (covers wxid variants, nicknames)
+        if !mySelfNames.isEmpty && mySelfNames.contains(msg.senderUsername) { return true }
         // Group chat fallback: senderUsername might be a display name instead of wxid
         if chatUsername.contains("@chatroom") && !myDisplayName.isEmpty {
             if msg.senderUsername == myDisplayName || msg.senderName == myDisplayName {
