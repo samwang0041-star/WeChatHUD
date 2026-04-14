@@ -200,15 +200,19 @@ final class ChatInsightEngineTests: XCTestCase {
             chatUsername: "w", chatName: "Work", isGroup: true, category: .work,
             messageCount: 10, myMessageCount: 0, participantCount: 1,
             messagesByHour: Array(repeating: 0, count: 24),
+            messagesByWeekday: [], typeCounts: [:],
             avgResponseTimeSeconds: 0, symmetryRatio: 1.0, trend7d: 0,
-            topSenders: [], silentMembers: [], ignoredMessages: []
+            topSenders: [], silentMembers: [], ignoredMessages: [],
+            selfInitiated: false, earliestTs: 0, latestTs: 0
         )
         let lifeStats = ChatStatsData(
             chatUsername: "l", chatName: "Life", isGroup: true, category: .life,
             messageCount: 10, myMessageCount: 0, participantCount: 1,
             messagesByHour: Array(repeating: 0, count: 24),
+            messagesByWeekday: [], typeCounts: [:],
             avgResponseTimeSeconds: 0, symmetryRatio: 1.0, trend7d: 0,
-            topSenders: [], silentMembers: [], ignoredMessages: []
+            topSenders: [], silentMembers: [], ignoredMessages: [],
+            selfInitiated: false, earliestTs: 0, latestTs: 0
         )
         XCTAssertGreaterThan(
             ChatInsightEngine.sortingScore(workStats, hasActionForMe: false),
@@ -221,8 +225,10 @@ final class ChatInsightEngineTests: XCTestCase {
             chatUsername: "t", chatName: "Test", isGroup: true, category: .other,
             messageCount: 1, myMessageCount: 0, participantCount: 1,
             messagesByHour: Array(repeating: 0, count: 24),
+            messagesByWeekday: [], typeCounts: [:],
             avgResponseTimeSeconds: 0, symmetryRatio: 1.0, trend7d: 0,
-            topSenders: [], silentMembers: [], ignoredMessages: []
+            topSenders: [], silentMembers: [], ignoredMessages: [],
+            selfInitiated: false, earliestTs: 0, latestTs: 0
         )
         let withAction = ChatInsightEngine.sortingScore(stats, hasActionForMe: true)
         let withoutAction = ChatInsightEngine.sortingScore(stats, hasActionForMe: false)

@@ -302,10 +302,15 @@ struct ChatStatsData {
     let myMessageCount: Int
     let participantCount: Int
     let messagesByHour: [Int]
+    let messagesByWeekday: [Int]        // 7 buckets: Sun=0..Sat=6
+    let typeCounts: [Int: Int]          // baseType → count
     let avgResponseTimeSeconds: Double
     let symmetryRatio: Double
     let trend7d: Double
     let topSenders: [(name: String, count: Int)]
     let silentMembers: [(name: String, usualDaily: Int, today: Int)]
     let ignoredMessages: [(sender: String, text: String, time: Int)]
+    let selfInitiated: Bool             // first message in window is from self
+    let earliestTs: Int
+    let latestTs: Int
 }
