@@ -152,12 +152,17 @@ struct ChatInsightView: View {
                 myMessageCount: myCount,
                 participantCount: bulk.senderCounts.count,
                 messagesByHour: bulk.hourlyBuckets,
-                avgResponseTimeSeconds: 0,  // skip for bulk — too expensive
+                messagesByWeekday: bulk.weekdayBuckets,
+                typeCounts: bulk.typeCounts,
+                avgResponseTimeSeconds: 0,
                 symmetryRatio: symRatio,
                 trend7d: 0,
                 topSenders: topSenders,
                 silentMembers: [],
-                ignoredMessages: []
+                ignoredMessages: [],
+                selfInitiated: bulk.selfInitiated,
+                earliestTs: bulk.earliestTs,
+                latestTs: bulk.latestTs
             )
             stats[chatUsername] = st
 
@@ -178,13 +183,21 @@ struct ChatInsightView: View {
         let contacts = store.loadContacts()
         let commitments = store.loadCommitments(status: nil)
         let vipSet = Set(store.loadVIPUsernames())
+        let pendingAsks = store.loadPendingAsks(bucket: nil, status: .pending).count
+        let urgentAsks = store.loadPendingAsks(bucket: nil, status: .pending).filter { $0.urgency == .urgent }.count
+        let recalledMsgs = store.loadRecalledMessages(since: cutoff, limit: 1000).count
+        let days = selectedWindow.seconds.map { $0 / 86400 } ?? 365
         overview = ChatInsightEngine.computeGlobalOverview(
             allStats: stats,
             contacts: contacts,
             commitments: commitments,
             replyDebtItems: monitor.replyDebtItems,
             vipUsernames: vipSet,
-            selfUsernames: selfNames
+            selfUsernames: selfNames,
+            pendingAskCount: pendingAsks,
+            urgentAskCount: urgentAsks,
+            recalledMessageCount: recalledMsgs,
+            windowDays: days
         )
         statsLoaded = true
     }
@@ -539,6 +552,8 @@ struct ChatInsightView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
     }
 
+    private let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+
     @ViewBuilder
     private var overviewStatsContent: some View {
         if let o = overview {
@@ -554,23 +569,15 @@ struct ChatInsightView: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
                     Picker("", selection: $selectedScope) {
-                        ForEach(Scope.allCases, id: \.self) { s in
-                            Text(s.rawValue).tag(s)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 160)
+                        ForEach(Scope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented).frame(width: 160)
                     Picker("", selection: $selectedWindow) {
-                        ForEach(TimeWindow.allCases, id: \.self) { w in
-                            Text(w.rawValue).tag(w)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 280)
+                        ForEach(TimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented).frame(width: 280)
                 }
             }
 
-            // Row 1: Core stats
+            // ===== D1: Communication Profile =====
             HStack(spacing: 12) {
                 overviewStatCard("消息总数", "\(o.totalMessages)", "bubble.left.and.bubble.right", .blue)
                 overviewStatCard("活跃聊天", "\(o.activeChats)/\(o.totalChats)", "message", .purple)
@@ -578,18 +585,31 @@ struct ChatInsightView: View {
                 overviewStatCard("我的消息", "\(o.myMessages)", "pencil.line", .orange)
             }
 
-            // Row 2: Response health + commitments
             HStack(spacing: 12) {
-                overviewStatCard("平均响应", formatResponseTime(o.avgResponseSeconds), "timer", .green)
-                overviewStatCard("回复率", "\(Int(o.responseRate * 100))%", "arrowshape.turn.up.left", .teal)
-                overviewStatCard("待回超时", "\(o.overdueChats)", "exclamationmark.circle", o.overdueChats > 0 ? .red : .gray)
-                overviewStatCard("待办承诺", "\(o.pendingCommitments)", "checkmark.circle", o.overdueCommitments > 0 ? .red : .green)
+                overviewStatCard("发起率", "\(Int(o.initiationRate * 100))%", "arrow.up.right", .teal)
+                overviewStatCard("群聊", "\(o.groupChats)个/\(o.groupMessages)条", "person.3", .indigo)
+                overviewStatCard("私聊", "\(o.privateChats)个/\(o.privateMessages)条", "person", .mint)
+                overviewStatCard("我的占比", "\(Int(o.myRatio * 100))%", "chart.pie", .blue)
             }
 
-            // Hourly chart
-            moduleCardFull("消息时段分布", icon: "clock") {
-                hourlyBarChart(o.messagesByHour)
-                    .frame(height: 100)
+            // Message type distribution
+            if !o.typeDistribution.isEmpty {
+                moduleCardFull("消息类型", icon: "doc.text") {
+                    HStack(spacing: 12) {
+                        ForEach(o.typeDistribution.prefix(5), id: \.type) { item in
+                            VStack(spacing: 2) {
+                                Text("\(item.count)").font(.system(size: 12, weight: .bold).monospacedDigit())
+                                Text(item.type).font(.system(size: 9)).foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+
+            // ===== D2: Time Patterns =====
+            moduleCardFull("时段分布", icon: "clock") {
+                hourlyBarChart(o.messagesByHour).frame(height: 100)
                 HStack(spacing: 16) {
                     timeSlotChip("早间 6-9", count: o.morningMessages, color: .orange)
                     timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
@@ -602,95 +622,161 @@ struct ChatInsightView: View {
                 }
             }
 
-            // Row 3: My ratio + category + chat type
+            // Weekday distribution
+            if o.messagesByWeekday.contains(where: { $0 > 0 }) {
+                moduleCardFull("星期分布", icon: "calendar") {
+                    HStack(spacing: 4) {
+                        ForEach(0..<7, id: \.self) { i in
+                            let val = o.messagesByWeekday[i]
+                            let maxVal = max(o.messagesByWeekday.max() ?? 1, 1)
+                            VStack(spacing: 4) {
+                                Spacer(minLength: 0)
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill((i == 0 || i == 6) ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6))
+                                    .frame(width: 30, height: CGFloat(val) / CGFloat(maxVal) * 60)
+                                Text(weekdayNames[i]).font(.system(size: 9)).foregroundColor(.secondary)
+                            }
+                        }
+                    }.frame(height: 80)
+                    HStack {
+                        Text("工作日 \(o.weekdayTotal)条").font(.system(size: 10)).foregroundColor(.blue)
+                        Spacer()
+                        Text("周末 \(o.weekendTotal)条").font(.system(size: 10)).foregroundColor(.orange)
+                        Spacer()
+                        Text("最忙 \(weekdayNames[o.busiestWeekday])").font(.system(size: 10)).foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            // ===== D3: Response Health =====
             HStack(spacing: 12) {
-                moduleCard("我的消息占比", icon: "chart.pie") {
-                    HStack(spacing: 16) {
-                        messageDonut(my: o.myMessages, total: o.totalMessages)
-                        VStack(alignment: .leading, spacing: 4) {
-                            legendRow(color: .blue, label: "我的消息", count: o.myMessages)
-                            legendRow(color: .blue.opacity(0.15), label: "其他人", count: o.totalMessages - o.myMessages)
+                overviewStatCard("平均响应", formatResponseTime(o.avgResponseSeconds), "timer", .green)
+                overviewStatCard("回复率", "\(Int(o.responseRate * 100))%", "arrowshape.turn.up.left", .teal)
+                overviewStatCard("待回超时", "\(o.overdueChats)", "exclamationmark.circle", o.overdueChats > 0 ? .red : .gray)
+                overviewStatCard("待办承诺", "\(o.pendingCommitments)", "checkmark.circle", o.overdueCommitments > 0 ? .red : .green)
+            }
+
+            // ===== D4: Relationship Network =====
+            HStack(spacing: 12) {
+                moduleCard("联系人层级", icon: "person.3") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(o.tierDistribution, id: \.tier) { item in
+                            HStack { Text(item.tier).font(.system(size: 11)).foregroundColor(.secondary); Spacer(); Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit()) }
                         }
                     }
                 }
+                moduleCard("角色分布", icon: "person.text.rectangle") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(o.roleDistribution.prefix(6), id: \.role) { item in
+                            HStack { Text(item.role).font(.system(size: 11)).foregroundColor(.secondary); Spacer(); Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit()) }
+                        }
+                    }
+                }
+            }
 
-                moduleCard("消息分布", icon: "folder") {
+            if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
+                HStack(spacing: 12) {
+                    moduleCard("沟通最均衡", icon: "equal.circle") {
+                        VStack(alignment: .leading, spacing: 2) { Text(sym.name).font(.system(size: 12, weight: .medium)); Text("对等度 \(Int(sym.ratio * 100))%").font(.system(size: 10)).foregroundColor(.green) }
+                    }
+                    moduleCard("沟通最失衡", icon: "arrow.left.arrow.right") {
+                        VStack(alignment: .leading, spacing: 2) { Text(asym.name).font(.system(size: 12, weight: .medium)); Text("对等度 \(Int(asym.ratio * 100))%").font(.system(size: 10)).foregroundColor(.orange) }
+                    }
+                }
+            }
+
+            // ===== D5: Work/Life Balance =====
+            HStack(spacing: 12) {
+                moduleCard("工作/生活", icon: "briefcase") {
                     VStack(alignment: .leading, spacing: 6) {
                         categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
                         categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
                         categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
-                        Divider().padding(.vertical, 2)
-                        categoryBar("群聊", count: o.groupMessages, total: o.totalMessages, color: .purple)
-                        categoryBar("私聊", count: o.privateMessages, total: o.totalMessages, color: .cyan)
+                    }
+                }
+                moduleCard("边界健康", icon: "shield.checkered") {
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle().stroke(Color.gray.opacity(0.2), lineWidth: 8)
+                            Circle().trim(from: 0, to: Double(o.boundaryScore) / 100)
+                                .stroke(o.boundaryScore >= 70 ? Color.green : o.boundaryScore >= 40 ? Color.orange : Color.red, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                            Text("\(o.boundaryScore)").font(.system(size: 16, weight: .bold))
+                        }.frame(width: 60, height: 60)
+                        Text("非工时工作 \(o.workAfterHoursCount)条")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
                     }
                 }
             }
 
-            // Row 4: Relationship network
-            if !o.tierDistribution.isEmpty || !o.roleDistribution.isEmpty {
+            // ===== D6: Influence =====
+            moduleCardFull("影响力分布", icon: "chart.bar") {
                 HStack(spacing: 12) {
-                    moduleCard("联系人层级", icon: "person.3") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(o.tierDistribution, id: \.tier) { item in
-                                HStack {
-                                    Text(item.tier).font(.system(size: 11)).foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
-                                }
+                    influencePill("上级", count: o.superiorMessages, color: .red)
+                    influencePill("同级", count: o.peerMessages, color: .blue)
+                    influencePill("外部", count: o.externalMessages, color: .orange)
+                    influencePill("私人", count: o.personalMessages, color: .green)
+                    Spacer()
+                    Text("活跃群 \(o.activeGroupCount)个 · @我 \(o.atMentionChats)次")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+            }
+
+            // ===== D7: Commitment Reliability =====
+            if o.pendingCommitments + o.overdueCommitments + o.fulfilledCommitments > 0 {
+                moduleCardFull("承诺可靠性", icon: "checkmark.shield") {
+                    HStack(spacing: 16) {
+                        commitmentPill("待办", count: o.pendingCommitments, color: .blue)
+                        commitmentPill("超期", count: o.overdueCommitments, color: .red)
+                        commitmentPill("已完成", count: o.fulfilledCommitments, color: .green)
+                        Spacer()
+                        Text("完成率 \(Int(o.commitmentCompletionRate * 100))%")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(o.commitmentCompletionRate >= 0.8 ? .green : .orange)
+                    }
+                }
+            }
+
+            // ===== D8: Attention Distribution =====
+            moduleCardFull("注意力分配", icon: "eye") {
+                HStack(spacing: 16) {
+                    VStack(spacing: 2) {
+                        Text("\(Int(o.vipMessageRatio * 100))%").font(.system(size: 14, weight: .bold))
+                        Text("VIP 占比").font(.system(size: 9)).foregroundColor(.secondary)
+                    }
+                    Divider().frame(height: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(o.topTimeBlackHoles.prefix(3), id: \.name) { item in
+                            HStack {
+                                Text(item.name).font(.system(size: 11)).lineLimit(1)
+                                Spacer()
+                                Text("\(item.count)条").font(.system(size: 10).monospacedDigit()).foregroundColor(.secondary)
                             }
                         }
                     }
-                    moduleCard("角色分布", icon: "person.text.rectangle") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(o.roleDistribution.prefix(6), id: \.role) { item in
-                                HStack {
-                                    Text(item.role).font(.system(size: 11)).foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
-                                }
-                            }
-                        }
+                }
+                if !o.neglectedHighValue.isEmpty {
+                    Divider()
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle").font(.system(size: 10)).foregroundColor(.orange)
+                        Text("被忽略的重要联系人：\(o.neglectedHighValue.map(\.name).prefix(3).joined(separator: "、"))")
+                            .font(.system(size: 10)).foregroundColor(.orange)
                     }
                 }
             }
 
-            // Row 5: Communication balance
-            if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
-                HStack(spacing: 12) {
-                    moduleCard("沟通最均衡", icon: "equal.circle") {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(sym.name).font(.system(size: 12, weight: .medium))
-                            Text("对等度 \(Int(sym.ratio * 100))%")
-                                .font(.system(size: 10)).foregroundColor(.green)
-                        }
-                    }
-                    moduleCard("沟通最失衡", icon: "arrow.left.arrow.right") {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(asym.name).font(.system(size: 12, weight: .medium))
-                            Text("对等度 \(Int(asym.ratio * 100))%")
-                                .font(.system(size: 10)).foregroundColor(.orange)
-                        }
-                    }
-                }
-            }
-
-            // Row 6: One-way chats (mostly them talking)
+            // ===== D9: One-way + Top chats =====
             if !o.oneWayChats.isEmpty {
                 moduleCardFull("单向沟通 (对方远多于你)", icon: "arrow.down.circle") {
                     ForEach(o.oneWayChats.prefix(3), id: \.name) { chat in
                         HStack {
-                            Text(chat.name).font(.system(size: 12)).lineLimit(1)
-                            Spacer()
-                            Text("对方 \(chat.theirCount) / 你 \(chat.myCount)")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 2)
+                            Text(chat.name).font(.system(size: 12)).lineLimit(1); Spacer()
+                            Text("对方 \(chat.theirCount) / 你 \(chat.myCount)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                        }.padding(.vertical, 2)
                     }
                 }
             }
 
-            // Row 7: Top chats
             moduleCardFull("最活跃聊天", icon: "flame") {
                 let sorted = allStats.values.sorted { $0.messageCount > $1.messageCount }
                 ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
@@ -698,14 +784,20 @@ struct ChatInsightView: View {
                 }
             }
 
-            // Row 8: Commitments detail
-            if o.pendingCommitments + o.overdueCommitments + o.fulfilledCommitments > 0 {
-                moduleCardFull("承诺追踪", icon: "checkmark.shield") {
-                    HStack(spacing: 16) {
-                        commitmentPill("待办", count: o.pendingCommitments, color: .blue)
-                        commitmentPill("超期", count: o.overdueCommitments, color: .red)
-                        commitmentPill("已完成", count: o.fulfilledCommitments, color: .green)
-                        Spacer()
+            // ===== D10: Pressure Signals =====
+            moduleCardFull("压力信号", icon: "waveform.path.ecg") {
+                HStack(spacing: 16) {
+                    pressurePill("待处理请求", count: o.pendingAsks, threshold: 5)
+                    pressurePill("紧急请求", count: o.urgentAsks, threshold: 1)
+                    pressurePill("撤回消息", count: o.recalledMessages, threshold: 3)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        let density = o.recentDensityRatio
+                        Text(density > 1.3 ? "近期偏忙" : density < 0.7 ? "近期偏闲" : "节奏正常")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(density > 1.3 ? .red : density < 0.7 ? .green : .secondary)
+                        Text("7日/均值 \(String(format: "%.0f%%", density * 100))")
+                            .font(.system(size: 9)).foregroundColor(.secondary)
                     }
                 }
             }
@@ -713,17 +805,11 @@ struct ChatInsightView: View {
             // Hint for AI analysis
             if monitor.globalBriefing == nil {
                 HStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 12))
-                        .foregroundColor(.orange)
-                    Text("点击左下方「全局分析」可生成 AI 全景简报")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                    Image(systemName: "sparkles").font(.system(size: 12)).foregroundColor(.orange)
+                    Text("点击左下方「全局分析」可生成 AI 全景简报").font(.system(size: 12)).foregroundColor(.secondary)
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.05))
-                .cornerRadius(8)
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.05)).cornerRadius(8)
             }
         }
     }
@@ -734,6 +820,22 @@ struct ChatInsightView: View {
             Text("\(label) \(count)")
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
+        }
+    }
+
+    private func influencePill(_ label: String, count: Int, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text("\(count)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundColor(color)
+            Text(label).font(.system(size: 9)).foregroundColor(.secondary)
+        }
+    }
+
+    private func pressurePill(_ label: String, count: Int, threshold: Int) -> some View {
+        VStack(spacing: 2) {
+            Text("\(count)")
+                .font(.system(size: 12, weight: .bold).monospacedDigit())
+                .foregroundColor(count >= threshold ? .red : .secondary)
+            Text(label).font(.system(size: 9)).foregroundColor(.secondary)
         }
     }
 

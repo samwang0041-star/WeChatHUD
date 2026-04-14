@@ -458,6 +458,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let selfCount: Int
         let senderCounts: [String: Int]  // senderUsername → count
         let hourlyBuckets: [Int]         // 24 hours
+        let weekdayBuckets: [Int]        // 7 days (0=Sun, 1=Mon, ..., 6=Sat)
+        let typeCounts: [Int: Int]       // baseType → count
+        let selfInitiated: Bool          // first message in window is from self
+        let earliestTs: Int
+        let latestTs: Int
     }
 
     func bulkMessageStats(
@@ -500,24 +505,41 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 guard let chatUsername = tableToChat[table] else { continue }
                 let whereClause = sinceTsEpoch > 0 ? "WHERE create_time >= \(sinceTsEpoch)" : ""
 
-                let sql = "SELECT real_sender_id, create_time FROM [\(table)] \(whereClause)"
+                let sql = "SELECT real_sender_id, create_time, local_type FROM [\(table)] \(whereClause) ORDER BY create_time ASC"
                 var sStmt: OpaquePointer?
                 guard sqlite3_prepare_v2(db, sql, -1, &sStmt, nil) == SQLITE_OK else { continue }
                 defer { sqlite3_finalize(sStmt) }
 
+                let cal = Calendar.current
                 var senderCounts: [String: Int] = [:]
                 var hourly = Array(repeating: 0, count: 24)
+                var weekday = Array(repeating: 0, count: 7)
+                var typeCounts: [Int: Int] = [:]
                 var total = 0
                 var selfCount = 0
+                var firstSenderIsSelf = false
+                var earliestTs = Int.max
+                var latestTs = 0
 
                 while sqlite3_step(sStmt) == SQLITE_ROW {
                     let senderId = Int(sqlite3_column_int64(sStmt, 0))
                     let createTime = Int(sqlite3_column_int64(sStmt, 1))
+                    let localType = Int(sqlite3_column_int64(sStmt, 2))
+                    let baseType = localType & 0xFFFFFFFF
+
                     let senderKey = name2id[senderId] ?? "id_\(senderId)"
+                    let isSelf = selfNames.contains(senderKey) || senderId == 0
                     senderCounts[senderKey, default: 0] += 1
-                    if selfNames.contains(senderKey) || senderId == 0 { selfCount += 1 }
-                    let hour = Calendar.current.component(.hour, from: Date(timeIntervalSince1970: Double(createTime)))
-                    hourly[hour] += 1
+                    if isSelf { selfCount += 1 }
+                    if total == 0 { firstSenderIsSelf = isSelf }
+
+                    let date = Date(timeIntervalSince1970: Double(createTime))
+                    hourly[cal.component(.hour, from: date)] += 1
+                    weekday[cal.component(.weekday, from: date) - 1] += 1  // 1=Sun→0
+                    typeCounts[baseType, default: 0] += 1
+
+                    if createTime < earliestTs { earliestTs = createTime }
+                    if createTime > latestTs { latestTs = createTime }
                     total += 1
                 }
                 guard total > 0 else { continue }
@@ -527,7 +549,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     totalCount: total,
                     selfCount: selfCount,
                     senderCounts: senderCounts,
-                    hourlyBuckets: hourly
+                    hourlyBuckets: hourly,
+                    weekdayBuckets: weekday,
+                    typeCounts: typeCounts,
+                    selfInitiated: firstSenderIsSelf,
+                    earliestTs: earliestTs,
+                    latestTs: latestTs
                 )
             }
         }
