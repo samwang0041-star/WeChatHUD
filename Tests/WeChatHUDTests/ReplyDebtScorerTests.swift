@@ -7,10 +7,10 @@ final class ReplyDebtScorerTests: XCTestCase {
             seeds: [
                 makeSeed(
                     unreadCount: 0,
-                    latestInbound: 200,
+                    latestInbound: 500,
                     latestInboundText: "方案你定了吗？",
                     latestOutbound: 100,
-                    now: 260
+                    now: 560
                 )
             ],
             config: ReplyDebtConfig()
@@ -119,11 +119,11 @@ final class ReplyDebtScorerTests: XCTestCase {
             seeds: [
                 makeSeed(
                     unreadCount: 1,
-                    latestInbound: 200,
+                    latestInbound: 500,
                     latestInboundText: "你看下？",
                     latestOutbound: 100,
-                    chatAction: .init(silencedAt: 0, snoozedUntil: 250),
-                    now: 300
+                    chatAction: .init(silencedAt: 0, snoozedUntil: 550),
+                    now: 600
                 )
             ],
             config: ReplyDebtConfig()
