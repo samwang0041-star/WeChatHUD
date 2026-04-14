@@ -1696,36 +1696,50 @@ final class ChatMonitor: ObservableObject {
 
     // MARK: - On-demand chat analysis
 
-    func analyzeGroupChat(item: InboxItem) async -> ChatAnalyzer.GroupAnalysis? {
-        let messages = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+    func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
+        let messages: [MessageInfo]
+        do {
+            messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
+        } catch {
+            return (nil, "读取消息失败: \(error.localizedDescription)")
+        }
+        if messages.isEmpty { return (nil, "没有找到消息记录") }
         let cutoff = Date().addingTimeInterval(-48 * 3600)
         let filtered = messages.filter {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
         }
-        guard !filtered.isEmpty else { return nil }
-        return await chatAnalyzer.analyzeGroup(
+        if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        let result = await chatAnalyzer.analyzeGroup(
             chatUsername: item.chatUsername,
             chatName: item.chatName,
             messages: filtered,
             myUsername: reader.myUsername(),
             myName: "我"
         )
+        return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }
 
-    func analyzePrivateChat(item: InboxItem) async -> ChatAnalyzer.PrivateAnalysis? {
-        let messages = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+    func analyzePrivateChat(item: InboxItem) async -> (ChatAnalyzer.PrivateAnalysis?, String?) {
+        let messages: [MessageInfo]
+        do {
+            messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
+        } catch {
+            return (nil, "读取消息失败: \(error.localizedDescription)")
+        }
+        if messages.isEmpty { return (nil, "没有找到消息记录") }
         let cutoff = Date().addingTimeInterval(-48 * 3600)
         let filtered = messages.filter {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
         }
-        guard !filtered.isEmpty else { return nil }
-        return await chatAnalyzer.analyzePrivate(
+        if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        let result = await chatAnalyzer.analyzePrivate(
             chatUsername: item.chatUsername,
             contactName: item.chatName,
             messages: filtered,
             myUsername: reader.myUsername(),
             myName: "我"
         )
+        return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }
 
     func loadReplySuggestions(for item: InboxItem) async -> [SuggestedReply]? {

@@ -14,7 +14,7 @@ struct ActionPanelView: View {
         case loading
         case groupResult(ChatAnalyzer.GroupAnalysis)
         case privateResult(ChatAnalyzer.PrivateAnalysis)
-        case error
+        case error(String)
     }
 
     enum ReplyState {
@@ -44,8 +44,8 @@ struct ActionPanelView: View {
                     groupAnalysisView(result)
                 case .privateResult(let result):
                     privateAnalysisView(result)
-                case .error:
-                    errorRow(label: "分析失败，请重试")
+                case .error(let msg):
+                    errorRow(label: msg)
                 case .idle:
                     EmptyView()
                 }
@@ -140,16 +140,18 @@ struct ActionPanelView: View {
         analysisState = .loading
         Task {
             if item.isGroup {
-                if let result = await monitor.analyzeGroupChat(item: item) {
+                let (result, err) = await monitor.analyzeGroupChat(item: item)
+                if let result = result {
                     analysisState = .groupResult(result)
                 } else {
-                    analysisState = .error
+                    analysisState = .error(err ?? "分析失败")
                 }
             } else {
-                if let result = await monitor.analyzePrivateChat(item: item) {
+                let (result, err) = await monitor.analyzePrivateChat(item: item)
+                if let result = result {
                     analysisState = .privateResult(result)
                 } else {
-                    analysisState = .error
+                    analysisState = .error(err ?? "分析失败")
                 }
             }
         }
