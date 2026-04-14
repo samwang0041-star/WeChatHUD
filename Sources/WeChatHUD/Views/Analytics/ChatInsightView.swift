@@ -11,9 +11,42 @@ struct ChatInsightView: View {
     @State private var searchText = ""
     @State private var selectedDate = Date()
     @State private var allStats: [String: ChatStatsData] = [:]
+    @State private var overview: ChatInsightEngine.GlobalOverview?
     @State private var statsLoaded = false
+    @State private var selectedScope: Scope = .all
+    @State private var selectedWindow: TimeWindow = .month
     /// All active sessions (including non-whitelisted), sorted by last message time
     @State private var otherActiveSessions: [SessionEntry] = []
+
+    enum Scope: String, CaseIterable {
+        case whitelist = "白名单"
+        case all = "所有人"
+    }
+
+    enum TimeWindow: String, CaseIterable {
+        case week = "近 7 天"
+        case month = "近 30 天"
+        case quarter = "近 90 天"
+        case all = "全部"
+
+        var seconds: Int? {
+            switch self {
+            case .week: return 7 * 86400
+            case .month: return 30 * 86400
+            case .quarter: return 90 * 86400
+            case .all: return nil
+            }
+        }
+
+        var fetchLimit: Int {
+            switch self {
+            case .week: return 200
+            case .month: return 500
+            case .quarter: return 1000
+            case .all: return 2000
+            }
+        }
+    }
 
     /// Lightweight entry for non-whitelisted active chats
     struct SessionEntry: Identifiable {
@@ -37,6 +70,16 @@ struct ChatInsightView: View {
             fixStaleDisplayNames()
             computeAllStats()
         }
+        .onChange(of: selectedWindow) { _, _ in
+            statsLoaded = false
+            overview = nil
+            computeAllStats()
+        }
+        .onChange(of: selectedScope) { _, _ in
+            statsLoaded = false
+            overview = nil
+            computeAllStats()
+        }
     }
 
     // MARK: - Compute stats (pure algorithm, instant)
@@ -44,62 +87,85 @@ struct ChatInsightView: View {
     private func computeAllStats() {
         let whitelist = store.getWhitelist()
         let whitelistIds = Set(whitelist.map { $0.id })
+        let whitelistMap = Dictionary(uniqueKeysWithValues: whitelist.map { ($0.id, $0) })
         let selfUsername = reader.myUsername()
         let selfDisplayName = reader.displayName(for: selfUsername)
         let selfNames = reader.mySelfNames
+        let nowTs = Int(Date().timeIntervalSince1970)
+        let cutoff = selectedWindow.seconds.map { nowTs - $0 } ?? 0
+        let limit = selectedWindow.fetchLimit
         var stats: [String: ChatStatsData] = [:]
+        var others: [SessionEntry] = []
 
-        // Stats for whitelisted chats
-        for entry in whitelist {
-            do {
-                let messages = try reader.getMessages(chatUsername: entry.id, limit: 200)
-                let s = ChatInsightEngine.computeStats(
-                    messages: messages,
-                    selfUsername: selfUsername,
-                    selfDisplayName: selfDisplayName,
-                    selfNames: selfNames,
-                    chatUsername: entry.id,
-                    chatName: entry.displayName,
-                    isGroup: entry.isGroup,
-                    category: entry.category
-                )
-                stats[entry.id] = s
-            } catch {}
+        guard let sessions = try? reader.getSessions() else {
+            statsLoaded = true
+            return
         }
 
-        // Load all sessions to find non-whitelisted active chats
-        let todayStart = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
-        var others: [SessionEntry] = []
-        if let sessions = try? reader.getSessions() {
-            for s in sessions {
-                guard !whitelistIds.contains(s.username) else { continue }
-                guard s.lastTimestamp > todayStart else { continue }
-                // Filter out system accounts
-                guard !s.username.hasPrefix("gh_"),
-                      !s.username.contains("@app"),
-                      s.username != "filehelper",
-                      s.username != "floatbottle",
-                      !s.username.hasPrefix("fake_") else { continue }
+        for s in sessions {
+            // Filter system accounts
+            guard !s.username.hasPrefix("gh_"),
+                  !s.username.contains("@app"),
+                  s.username != "filehelper",
+                  s.username != "floatbottle",
+                  !s.username.hasPrefix("fake_"),
+                  !selfNames.contains(s.username) else { continue }
 
-                let name = reader.displayName(for: s.username)
-                // Quick message count for today
-                let msgCount = (try? reader.getMessages(chatUsername: s.username, limit: 50))?.filter {
-                    $0.createTime > todayStart
-                }.count ?? 0
-                guard msgCount > 0 else { continue }
+            // Scope filter
+            if selectedScope == .whitelist && !whitelistIds.contains(s.username) { continue }
 
+            // Time window filter on session level
+            guard cutoff == 0 || s.lastTimestamp > cutoff else { continue }
+
+            let messages: [MessageInfo]
+            do {
+                let raw = try reader.getMessages(chatUsername: s.username, limit: limit)
+                messages = cutoff > 0 ? raw.filter { $0.createTime >= cutoff } : raw
+            } catch { continue }
+            guard !messages.isEmpty else { continue }
+
+            let isWhitelisted = whitelistIds.contains(s.username)
+            let entry = whitelistMap[s.username]
+            let name = entry?.displayName ?? reader.displayName(for: s.username)
+            let category = entry?.category ?? .other
+
+            let st = ChatInsightEngine.computeStats(
+                messages: messages,
+                selfUsername: selfUsername,
+                selfDisplayName: selfDisplayName,
+                selfNames: selfNames,
+                chatUsername: s.username,
+                chatName: name,
+                isGroup: s.isGroup,
+                category: category
+            )
+            stats[s.username] = st
+
+            if !isWhitelisted {
                 others.append(SessionEntry(
                     id: s.username,
                     displayName: name,
                     isGroup: s.isGroup,
                     lastTimestamp: s.lastTimestamp,
-                    messageCount: msgCount
+                    messageCount: st.messageCount
                 ))
             }
         }
 
         allStats = stats
-        otherActiveSessions = others.sorted { $0.lastTimestamp > $1.lastTimestamp }
+        otherActiveSessions = others.sorted { $0.messageCount > $1.messageCount }
+
+        let contacts = store.loadContacts()
+        let commitments = store.loadCommitments(status: nil)
+        let vipSet = Set(store.loadVIPUsernames())
+        overview = ChatInsightEngine.computeGlobalOverview(
+            allStats: stats,
+            contacts: contacts,
+            commitments: commitments,
+            replyDebtItems: monitor.replyDebtItems,
+            vipUsernames: vipSet,
+            selfUsernames: selfNames
+        )
         statsLoaded = true
     }
 
@@ -455,95 +521,209 @@ struct ChatInsightView: View {
 
     @ViewBuilder
     private var overviewStatsContent: some View {
-        let totalMessages = allStats.values.reduce(0) { $0 + $1.messageCount }
-        let totalMyMessages = allStats.values.reduce(0) { $0 + $1.myMessageCount }
-        let totalChats = allStats.count
-        let activeChats = allStats.values.filter { $0.messageCount > 0 }.count
-        let totalParticipants = Set(allStats.values.flatMap { s in
-            s.topSenders.map { $0.name }
-        }).count
+        if let o = overview {
+            // Header
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("全局概览")
+                        .font(.system(size: 18, weight: .bold))
+                    Text("\(selectedScope.rawValue) · \(selectedWindow.rawValue)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 6) {
+                    Picker("", selection: $selectedScope) {
+                        ForEach(Scope.allCases, id: \.self) { s in
+                            Text(s.rawValue).tag(s)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                    Picker("", selection: $selectedWindow) {
+                        ForEach(TimeWindow.allCases, id: \.self) { w in
+                            Text(w.rawValue).tag(w)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 280)
+                }
+            }
 
-        // Header
-        VStack(alignment: .leading, spacing: 4) {
-            Text("全局概览")
-                .font(.system(size: 18, weight: .bold))
-            Text("白名单聊天的即时统计")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-        }
+            // Row 1: Core stats
+            HStack(spacing: 12) {
+                overviewStatCard("消息总数", "\(o.totalMessages)", "bubble.left.and.bubble.right", .blue)
+                overviewStatCard("活跃聊天", "\(o.activeChats)/\(o.totalChats)", "message", .purple)
+                overviewStatCard("参与者", "\(o.participants)", "person.2", .cyan)
+                overviewStatCard("我的消息", "\(o.myMessages)", "pencil.line", .orange)
+            }
 
-        // Stats row
-        HStack(spacing: 12) {
-            overviewStatCard("消息总数", "\(totalMessages)", "bubble.left.and.bubble.right", .blue)
-            overviewStatCard("活跃聊天", "\(activeChats)/\(totalChats)", "message", .purple)
-            overviewStatCard("参与者", "\(totalParticipants)", "person.2", .cyan)
-            overviewStatCard("我的消息", "\(totalMyMessages)", "pencil.line", .orange)
-        }
+            // Row 2: Response health + commitments
+            HStack(spacing: 12) {
+                overviewStatCard("平均响应", formatResponseTime(o.avgResponseSeconds), "timer", .green)
+                overviewStatCard("回复率", "\(Int(o.responseRate * 100))%", "arrowshape.turn.up.left", .teal)
+                overviewStatCard("待回超时", "\(o.overdueChats)", "exclamationmark.circle", o.overdueChats > 0 ? .red : .gray)
+                overviewStatCard("待办承诺", "\(o.pendingCommitments)", "checkmark.circle", o.overdueCommitments > 0 ? .red : .green)
+            }
 
-        // Aggregated hourly chart
-        let aggregatedHourly = aggregateHourlyData()
-        moduleCardFull("消息时段分布", icon: "clock") {
-            hourlyBarChart(aggregatedHourly)
-                .frame(height: 100)
-        }
-
-        // Message type donut
-        HStack(spacing: 12) {
-            moduleCard("我的消息占比", icon: "chart.pie") {
+            // Hourly chart
+            moduleCardFull("消息时段分布", icon: "clock") {
+                hourlyBarChart(o.messagesByHour)
+                    .frame(height: 100)
                 HStack(spacing: 16) {
-                    messageDonut(my: totalMyMessages, total: totalMessages)
-                    VStack(alignment: .leading, spacing: 4) {
-                        legendRow(color: .blue, label: "我的消息", count: totalMyMessages)
-                        legendRow(color: .blue.opacity(0.15), label: "其他人", count: totalMessages - totalMyMessages)
+                    timeSlotChip("早间 6-9", count: o.morningMessages, color: .orange)
+                    timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
+                    timeSlotChip("晚间 18-23", count: o.eveningMessages, color: .purple)
+                    timeSlotChip("深夜 23-6", count: o.nightMessages, color: .red)
+                    Spacer()
+                    Text("非工时 \(Int(o.afterHoursRatio * 100))%")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(o.afterHoursRatio > 0.4 ? .red : .secondary)
+                }
+            }
+
+            // Row 3: My ratio + category + chat type
+            HStack(spacing: 12) {
+                moduleCard("我的消息占比", icon: "chart.pie") {
+                    HStack(spacing: 16) {
+                        messageDonut(my: o.myMessages, total: o.totalMessages)
+                        VStack(alignment: .leading, spacing: 4) {
+                            legendRow(color: .blue, label: "我的消息", count: o.myMessages)
+                            legendRow(color: .blue.opacity(0.15), label: "其他人", count: o.totalMessages - o.myMessages)
+                        }
+                    }
+                }
+
+                moduleCard("消息分布", icon: "folder") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
+                        categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
+                        categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
+                        Divider().padding(.vertical, 2)
+                        categoryBar("群聊", count: o.groupMessages, total: o.totalMessages, color: .purple)
+                        categoryBar("私聊", count: o.privateMessages, total: o.totalMessages, color: .cyan)
                     }
                 }
             }
 
-            moduleCard("分类分布", icon: "folder") {
-                let workCount = allStats.values.filter { $0.category == .work }.reduce(0) { $0 + $1.messageCount }
-                let lifeCount = allStats.values.filter { $0.category == .life }.reduce(0) { $0 + $1.messageCount }
-                let otherCount = allStats.values.filter { $0.category == .other }.reduce(0) { $0 + $1.messageCount }
-                VStack(alignment: .leading, spacing: 6) {
-                    categoryBar("工作", count: workCount, total: totalMessages, color: .blue)
-                    categoryBar("生活", count: lifeCount, total: totalMessages, color: .green)
-                    categoryBar("其他", count: otherCount, total: totalMessages, color: .orange)
+            // Row 4: Relationship network
+            if !o.tierDistribution.isEmpty || !o.roleDistribution.isEmpty {
+                HStack(spacing: 12) {
+                    moduleCard("联系人层级", icon: "person.3") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(o.tierDistribution, id: \.tier) { item in
+                                HStack {
+                                    Text(item.tier).font(.system(size: 11)).foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                                }
+                            }
+                        }
+                    }
+                    moduleCard("角色分布", icon: "person.text.rectangle") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(o.roleDistribution.prefix(6), id: \.role) { item in
+                                HStack {
+                                    Text(item.role).font(.system(size: 11)).foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                                }
+                            }
+                        }
+                    }
                 }
             }
-        }
 
-        // Top chats
-        moduleCardFull("最活跃聊天", icon: "flame") {
-            let sorted = allStats.values.sorted { $0.messageCount > $1.messageCount }
-            ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
-                topChatRow(rank: idx + 1, stats: s)
+            // Row 5: Communication balance
+            if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
+                HStack(spacing: 12) {
+                    moduleCard("沟通最均衡", icon: "equal.circle") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(sym.name).font(.system(size: 12, weight: .medium))
+                            Text("对等度 \(Int(sym.ratio * 100))%")
+                                .font(.system(size: 10)).foregroundColor(.green)
+                        }
+                    }
+                    moduleCard("沟通最失衡", icon: "arrow.left.arrow.right") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(asym.name).font(.system(size: 12, weight: .medium))
+                            Text("对等度 \(Int(asym.ratio * 100))%")
+                                .font(.system(size: 10)).foregroundColor(.orange)
+                        }
+                    }
+                }
             }
-        }
 
-        // Hint for AI analysis
-        if monitor.globalBriefing == nil {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 12))
-                    .foregroundColor(.orange)
-                Text("点击左下方「全局分析」可生成 AI 全景简报")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+            // Row 6: One-way chats (mostly them talking)
+            if !o.oneWayChats.isEmpty {
+                moduleCardFull("单向沟通 (对方远多于你)", icon: "arrow.down.circle") {
+                    ForEach(o.oneWayChats.prefix(3), id: \.name) { chat in
+                        HStack {
+                            Text(chat.name).font(.system(size: 12)).lineLimit(1)
+                            Spacer()
+                            Text("对方 \(chat.theirCount) / 你 \(chat.myCount)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.05))
-            .cornerRadius(8)
+
+            // Row 7: Top chats
+            moduleCardFull("最活跃聊天", icon: "flame") {
+                let sorted = allStats.values.sorted { $0.messageCount > $1.messageCount }
+                ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
+                    topChatRow(rank: idx + 1, stats: s)
+                }
+            }
+
+            // Row 8: Commitments detail
+            if o.pendingCommitments + o.overdueCommitments + o.fulfilledCommitments > 0 {
+                moduleCardFull("承诺追踪", icon: "checkmark.shield") {
+                    HStack(spacing: 16) {
+                        commitmentPill("待办", count: o.pendingCommitments, color: .blue)
+                        commitmentPill("超期", count: o.overdueCommitments, color: .red)
+                        commitmentPill("已完成", count: o.fulfilledCommitments, color: .green)
+                        Spacer()
+                    }
+                }
+            }
+
+            // Hint for AI analysis
+            if monitor.globalBriefing == nil {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
+                    Text("点击左下方「全局分析」可生成 AI 全景简报")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.05))
+                .cornerRadius(8)
+            }
         }
     }
 
-    private func aggregateHourlyData() -> [Int] {
-        var result = Array(repeating: 0, count: 24)
-        for stats in allStats.values {
-            for i in 0..<24 {
-                result[i] += stats.messagesByHour[i]
-            }
+    private func timeSlotChip(_ label: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text("\(label) \(count)")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
         }
-        return result
+    }
+
+    private func commitmentPill(_ label: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label).font(.system(size: 11))
+            Text("\(count)")
+                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .foregroundColor(color)
+        }
     }
 
     // MARK: - Chart components
