@@ -229,13 +229,6 @@ struct ReplyDebtConfig: Codable {
     var groupAtOverdueMinutes: Int = 30
 }
 
-struct ReplyDebtAIConfig: Codable {
-    var enabled: Bool = false
-    var shadowMode: Bool = true
-    var maxCandidates: Int = 12
-    var minRuleScore: Int = 4
-    var requestTimeoutSeconds: Int = 20
-}
 
 // MARK: - Notification
 

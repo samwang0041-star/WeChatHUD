@@ -34,7 +34,6 @@ enum ScanEngine {
         changedRelPaths: Set<String>?,
         thresholds: UnreadThresholds,
         replyDebtConfig: ReplyDebtConfig,
-        replyDebtAIConfig: ReplyDebtAIConfig,
         currentRecent: [HUDNotification],
         recentLimit: Int
     ) async -> ScanOutcome? {
@@ -60,7 +59,7 @@ enum ScanEngine {
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
             let allContacts = store.loadContacts()
             let contactMap = Dictionary(uniqueKeysWithValues: allContacts.map { ($0.username, $0) })
-            var replyDebtItems = buildReplyDebtItems(
+            let replyDebtItems = buildReplyDebtItems(
                 sessions: sessions,
                 reader: reader,
                 chatActions: chatActions,
@@ -72,20 +71,7 @@ enum ScanEngine {
                 contactMap: contactMap,
                 config: replyDebtConfig
             )
-            if replyDebtAIConfig.enabled,
-               !replyDebtItems.isEmpty,
-               let aiService,
-               await aiService.isConfigured() {
-                let aiConfig = await aiService.currentConfig()
-                let judge = ReplyDebtJudge(now: Date())
-                replyDebtItems = await judge.apply(
-                    to: replyDebtItems,
-                    config: replyDebtAIConfig,
-                    client: aiService,
-                    model: aiConfig.model,
-                    store: store
-                )
-            }
+            // ReplyDebt uses rule scoring only, no AI ranker
 
             var privateUnreadChats = 0
             var groupAtCount = 0
@@ -388,7 +374,7 @@ enum ScanEngine {
 
                     let newMessages = messages.filter { $0.createTime > baseline }
                     for msg in newMessages {
-                        if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname) { continue }
+                        if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName) { continue }
                         let contact = store.getContact(username: msg.senderUsername)
                         let level: AttentionLevel = contact?.attentionLevel ?? .greylist
                         // Strangers (no contact record, no greylist) are skipped

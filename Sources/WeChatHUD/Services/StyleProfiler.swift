@@ -116,8 +116,9 @@ actor StyleProfiler {
         }
 
         let myUname = reader.myUsername()
+        let myDisplay = reader.displayName(for: myUname)
         let outgoing = messages.filter { msg in
-            Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname)
+            Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay)
                 && !excludeMsgUIDs.contains(msg.id)
         }
 
@@ -154,7 +155,7 @@ actor StyleProfiler {
 
         // --- Message pairs (question → answer) ---
         let chrono = Array(messages.reversed())
-        let pairs = extractMessagePairs(chrono: chrono, chatUsername: chatUsername, myUsername: myUname, excludeMsgUIDs: excludeMsgUIDs)
+        let pairs = extractMessagePairs(chrono: chrono, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, excludeMsgUIDs: excludeMsgUIDs)
 
         // --- Few-shot examples (diverse, skip very short or system-like) ---
         let examples = outgoing
@@ -185,23 +186,14 @@ actor StyleProfiler {
         )
     }
 
-    /// Classify whether a message is from the user themselves.
-    /// Mirrors the logic in ChatMonitor.isFromSelf (which is private).
+    /// Delegate to the canonical implementation in MessageHelpers.
     private nonisolated static func isFromSelf(
         _ msg: MessageInfo,
         chatUsername: String,
-        myUsername: String
+        myUsername: String,
+        myDisplayName: String = ""
     ) -> Bool {
-        // Primary check: match against the known wxid from db_storage path.
-        if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
-        // 1-on-1 fallback: for private chats, if the sender field is
-        // populated and doesn't match the peer, it must be self.
-        if !chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty {
-            if msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername {
-                return true
-            }
-        }
-        return false
+        MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
     }
 
     // MARK: - Deep Style Analysis
@@ -293,13 +285,13 @@ actor StyleProfiler {
     /// Only includes pairs where reply came within 5 minutes (same conversation context).
     private func extractMessagePairs(
         chrono: [MessageInfo], chatUsername: String,
-        myUsername: String, excludeMsgUIDs: Set<String>
+        myUsername: String, myDisplayName: String = "", excludeMsgUIDs: Set<String>
     ) -> [(question: String, answer: String)] {
         var pairs: [(String, String)] = []
         var lastPeerMsg: (text: String, time: Int)?
 
         for msg in chrono {
-            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername)
+            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
             if !fromSelf {
                 lastPeerMsg = (msg.text, msg.createTime)
             } else if let peer = lastPeerMsg, !excludeMsgUIDs.contains(msg.id) {
@@ -439,6 +431,7 @@ actor StyleProfiler {
         }
 
         let myUname = reader.myUsername()
+        let myDisplay = reader.displayName(for: myUname)
         // Collect reply pairs: (peer message → my reply) with interval
         var workDelays: [Int] = []
         var eveningDelays: [Int] = []
@@ -452,7 +445,7 @@ actor StyleProfiler {
         var lastPeerIndex: Int?
 
         for (idx, msg) in chronoArray.enumerated() {
-            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname)
+            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay)
             if !fromSelf {
                 lastPeerMsgTime = msg.createTime
                 lastPeerIndex = idx
@@ -480,7 +473,7 @@ actor StyleProfiler {
         // Count ALL late-night incoming messages (paired + unpaired)
         var totalLateNightIncoming = 0
         for msg in chronoArray {
-            if !Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname) {
+            if !Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay) {
                 if Self.timePeriod(unixTime: msg.createTime) == .lateNight {
                     totalLateNightIncoming += 1
                 }

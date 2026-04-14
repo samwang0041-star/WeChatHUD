@@ -221,11 +221,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: .hudReplyDebtAIConfigDidChange)
-            .sink { [weak self] _ in
-                self?.monitor.refreshNow()
-            }
-            .store(in: &cancellables)
 
         // Keyboard shortcuts — only active when the panel is key.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in

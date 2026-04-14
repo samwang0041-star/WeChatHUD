@@ -23,7 +23,7 @@ actor AIClassifier {
     init(store: HUDStore, config: AIConfig = AIConfig(), promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
         var c = config
-        c.temperature = 0.1
+        c.temperature = 0.05
         c.maxTokens = 256
         self.config = c
         self.promptLoader = promptLoader
@@ -31,7 +31,7 @@ actor AIClassifier {
 
     func updateConfig(_ config: AIConfig) {
         var c = config
-        c.temperature = 0.1
+        c.temperature = 0.05
         c.maxTokens = 256
         self.config = c
     }
@@ -134,7 +134,7 @@ actor AIClassifier {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个微信消息分类器。严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个微信消息分类器。严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

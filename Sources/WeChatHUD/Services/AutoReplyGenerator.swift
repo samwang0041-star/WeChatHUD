@@ -192,7 +192,7 @@ actor AutoReplyGenerator {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个微信自动回复助手。你的任务是模仿用户的聊天风格，生成一条最合适的回复。严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个微信自动回复助手。你的任务是模仿用户的聊天风格，生成一条最合适的回复。严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

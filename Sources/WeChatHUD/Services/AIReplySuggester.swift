@@ -167,7 +167,7 @@ actor AIReplySuggester {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个回复建议助手，严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个回复建议助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

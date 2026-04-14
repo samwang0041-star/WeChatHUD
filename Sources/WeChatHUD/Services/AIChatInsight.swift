@@ -8,7 +8,7 @@ actor AIChatInsight {
     private let promptLoader: PromptLoader
 
     func updateConfig(_ newConfig: AIConfig) {
-        var c = newConfig; c.maxTokens = 2048; c.temperature = 0.2
+        var c = newConfig; c.maxTokens = 1200; c.temperature = 0.15
         self.config = c
     }
 
@@ -19,8 +19,8 @@ actor AIChatInsight {
     ) {
         self.store = store
         var inflated = config
-        inflated.maxTokens = 2048  // insight output is larger
-        inflated.temperature = 0.2
+        inflated.maxTokens = 1200  // insight output is larger
+        inflated.temperature = 0.15
         self.config = inflated
         self.promptLoader = promptLoader
     }

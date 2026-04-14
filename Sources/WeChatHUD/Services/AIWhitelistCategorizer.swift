@@ -23,7 +23,7 @@ actor AIWhitelistCategorizer {
         self.store = store
         var inflated = config
         inflated.maxTokens = 384
-        inflated.temperature = 0.15
+        inflated.temperature = 0.05
         self.config = inflated
         self.promptLoader = promptLoader
         self.promptVersion = promptVersion
@@ -206,7 +206,7 @@ actor AIWhitelistCategorizer {
         let body: [String: Any] = [
             "model": config.model,
             "messages": [
-                ["role": "system", "content": "你是一个联系人分类助手，严格按要求输出 JSON。"],
+                ["role": "system", "content": "你是一个联系人分类助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
                 ["role": "user", "content": userPrompt]
             ],
             "temperature": config.temperature,

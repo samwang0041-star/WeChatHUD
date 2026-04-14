@@ -52,22 +52,6 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.groupAtOverdueMinutes, 15)
     }
 
-    func testReplyDebtAIConfigRoundTrip() throws {
-        let cfg = ReplyDebtAIConfig(
-            enabled: true,
-            shadowMode: true,
-            maxCandidates: 8,
-            minRuleScore: 5,
-            requestTimeoutSeconds: 15
-        )
-        try store.setSettingJSON("replyDebtAI", value: cfg)
-        let loaded = store.getSettingJSON("replyDebtAI", as: ReplyDebtAIConfig.self)
-        XCTAssertEqual(loaded?.enabled, true)
-        XCTAssertEqual(loaded?.shadowMode, true)
-        XCTAssertEqual(loaded?.maxCandidates, 8)
-        XCTAssertEqual(loaded?.minRuleScore, 5)
-        XCTAssertEqual(loaded?.requestTimeoutSeconds, 15)
-    }
 
     func testAIFeedbackPrefixFilter() throws {
         try store.writeAIFeedback(AIFeedbackEntry(
