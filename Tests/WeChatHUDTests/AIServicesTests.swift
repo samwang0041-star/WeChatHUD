@@ -166,7 +166,7 @@ final class AIServicesTests: XCTestCase {
         )
         try store.upsertPendingAsk(ask)
 
-        let retrospector = AIDailyRetrospector(store: store, config: cfg)
+        let retrospector = AIDailyRetrospector(store: store, aiService: AIService(config: cfg))
         let result = await retrospector.retrospect(.init(
             date: "2026-04-12",
             handled: [],
