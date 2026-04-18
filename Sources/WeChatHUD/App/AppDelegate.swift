@@ -316,7 +316,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let cfg = self.store.loadAIConfig()
                 Task {
                     await self.aiService.updateConfig(cfg)
-                    await self.monitor.autopilotService?.updateConfig(cfg)
                     await self.monitor.refreshReplySuggesterConfig()
                 }
             }
