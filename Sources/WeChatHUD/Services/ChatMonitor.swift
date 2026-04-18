@@ -102,7 +102,7 @@ final class ChatMonitor: ObservableObject {
         AIClassifier(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var commitmentTracker: CommitmentTracker = {
-        CommitmentTracker(store: store)
+        CommitmentTracker(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var discussionTracker: DiscussionTracker = {
         DiscussionTracker(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))

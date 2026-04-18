@@ -3,10 +3,12 @@ import Foundation
 /// Scans YOUR outgoing messages for promises/commitments.
 actor CommitmentTracker {
     private let store: HUDStore
+    private let aiService: AIService
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -117,9 +119,6 @@ actor CommitmentTracker {
         recipientName: String,
         recipientRole: ContactRole
     ) async -> CommitmentResult? {
-        let config = store.loadAIConfig()
-        guard !config.baseURL.isEmpty else { return nil }
-
         let template: String
         do { template = try promptLoader.load(version: "commitment_v1") }
         catch { print("[WCHUD] CommitmentTracker: prompt load failed: \(error)"); return nil }
@@ -139,13 +138,14 @@ actor CommitmentTracker {
             .replacingOccurrences(of: "{user_message}", with: yourMessage.text)
 
         let started = Date()
-        let response = await callModel(prompt: prompt, config: config)
+        let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
+        let model = await aiService.currentConfig().model
 
         guard let body = response else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: config.model, promptVersion: "commitment_v1",
+                model: model, promptVersion: "commitment_v1",
                 inputText: yourMessage.text, outputText: "",
                 latencyMs: latency, status: .httpError, errorMessage: "no response"
             ))
@@ -155,7 +155,7 @@ actor CommitmentTracker {
         if let result = parseResult(body) {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: config.model, promptVersion: "commitment_v1",
+                model: model, promptVersion: "commitment_v1",
                 inputText: yourMessage.text, outputText: body,
                 latencyMs: latency, status: .ok, errorMessage: nil
             ))
@@ -167,12 +167,12 @@ actor CommitmentTracker {
         // cooperate the second time even when the first answer had
         // a trailing comma, code fence, or chatty preamble.
         let strictPrompt = prompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要 markdown 代码块，不要任何解释性文字。"
-        let retryBody = await callModel(prompt: strictPrompt, config: config)
+        let retryBody = await callModel(prompt: strictPrompt)
         let retryLatency = Int(Date().timeIntervalSince(started) * 1000)
         if let retryBody = retryBody, let result = parseResult(retryBody) {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: config.model, promptVersion: "commitment_v1_retry",
+                model: model, promptVersion: "commitment_v1_retry",
                 inputText: yourMessage.text, outputText: retryBody,
                 latencyMs: retryLatency, status: .ok, errorMessage: nil
             ))
@@ -181,7 +181,7 @@ actor CommitmentTracker {
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .commitmentTracker,
-            model: config.model, promptVersion: "commitment_v1",
+            model: model, promptVersion: "commitment_v1",
             inputText: yourMessage.text, outputText: body,
             latencyMs: retryLatency, status: .parseError,
             errorMessage: "JSON parse failed on both initial and strict-retry"
@@ -189,40 +189,20 @@ actor CommitmentTracker {
         return nil
     }
 
-    private func callModel(prompt: String, config: AIConfig) async -> String? {
+    private func callModel(prompt: String) async -> String? {
         let trackID = "commitment:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "承诺分析")
+        AIActivityTracker.shared.begin(trackID, label: "承诺识别")
         defer { AIActivityTracker.shared.end(trackID) }
-        let base = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(base)/chat/completions") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: 30)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        let payload: [String: Any] = [
-            "model": config.model,
-            "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
-            "temperature": 0.05,
-            "max_tokens": 256,
-            "enable_thinking": false
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        return content
-    }
 
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
+        do {
+            return try await aiService.complete(
+                system: "只输出 JSON。",
+                user: prompt,
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256)
+            )
+        } catch {
+            return nil
+        }
     }
 
     private func parseResult(_ text: String) -> CommitmentResult? {
