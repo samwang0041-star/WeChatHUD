@@ -89,11 +89,64 @@ struct DetailPanelView: View {
     }
 }
 
-/// Host for the autopilot full-view inside the detail panel. Commit 3
-/// fleshes this out with the header + embedded `AutopilotTabView`; the
-/// initial routing commit just needs a placeholder that compiles.
+/// Host for the autopilot full-view inside the detail panel. Renders
+/// a header consistent with `ConversationDetailView` (back chevron +
+/// title) above the existing `AutopilotTabView` content so the two
+/// detail kinds feel like siblings.
 struct AutopilotDetailPane: View {
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
+
     var body: some View {
-        Color.clear
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+
+            ScrollView {
+                AutopilotTabView()
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button(action: {
+                panelState.clearDetail()
+                panelState.currentState = .extended
+            }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+            .buttonStyle(.plain)
+
+            Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
+                .font(.system(size: 11))
+                .foregroundColor(monitor.autopilotActive ? .green : .white.opacity(0.5))
+
+            Text("自动托管")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+
+            if monitor.autopilotActive {
+                Text(statusLabel)
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+
+            Spacer()
+        }
+    }
+
+    private var statusLabel: String {
+        if monitor.autopilotManuallyPaused { return "· 已手动暂停" }
+        if monitor.autopilotPaused { return "· 微信前台 已暂停" }
+        return "· 运行中"
     }
 }
