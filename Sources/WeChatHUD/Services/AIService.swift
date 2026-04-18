@@ -1,5 +1,27 @@
 import Foundation
 
+/// Per-call knobs for `AIService.complete`. Every service that used to build
+/// its own URLRequest now passes one of these so timeout / temperature /
+/// system-side tweaks travel alongside the prompt.
+///
+/// Codex path ignores `temperature`, `maxTokens`, and `extraSystemSuffix` —
+/// pi-ai's Responses API request body is fixed. OpenAI-compatible path honors
+/// every field.
+struct CompleteOptions {
+    var timeout: TimeInterval = 60
+    var temperature: Double? = nil   // nil → use AIConfig.temperature
+    var maxTokens: Int? = nil        // nil → use AIConfig.maxTokens
+    var modelOverride: String? = nil // nil → use slot.model
+    /// Appended to the system prompt for non-Codex providers. Used by the
+    /// existing "不要进入 thinking 模式" hint.
+    var extraSystemSuffix: String? = "\n\n不要进入 thinking 模式，不要输出 <think> 标签或思维过程。"
+    /// Set false to skip the `enable_thinking` flag entirely (some local
+    /// providers reject unknown fields). Default true matches current behavior.
+    var disableThinking: Bool = true
+
+    static let `default` = CompleteOptions()
+}
+
 actor AIService {
     private var config: AIConfig
 
@@ -29,15 +51,30 @@ actor AIService {
     /// Send a chat completion request. In `.auto` mode, tries the primary
     /// slot first and falls back to the other on failure.
     func complete(system: String, user: String) async throws -> String {
+        try await complete(system: system, user: user, options: .default)
+    }
+
+    /// Unified completion entry point. All services should call this instead
+    /// of building their own `/chat/completions` request. Routes to Codex when
+    /// the active slot is `openai-codex`, otherwise OpenAI-compatible.
+    ///
+    /// `.auto` mode is preserved: primary slot is tried first and the fallback
+    /// slot takes over on failure. The fallback fires even when its baseURL is
+    /// empty as long as the provider is Codex (empty URL is expected for Codex).
+    func complete(
+        system: String,
+        user: String,
+        options: CompleteOptions
+    ) async throws -> String {
         let primary = config.primarySlot
         let fallback = config.fallbackSlot
 
         do {
-            return try await send(slot: primary, system: system, user: user)
+            return try await send(slot: primary, system: system, user: user, options: options)
         } catch {
-            if let fb = fallback, !fb.baseURL.isEmpty {
+            if let fb = fallback, !fb.baseURL.isEmpty || fb.providerID == "openai-codex" {
                 print("[WCHUD-AI] primary failed (\(error.localizedDescription)), trying fallback…")
-                return try await send(slot: fb, system: system, user: user)
+                return try await send(slot: fb, system: system, user: user, options: options)
             }
             throw error
         }
@@ -45,7 +82,12 @@ actor AIService {
 
     /// Test a specific slot's connection.
     func testSlot(_ slot: AIProviderSlot) async throws -> String {
-        try await send(slot: slot, system: "Reply with OK.", user: "Test")
+        try await send(
+            slot: slot,
+            system: "Reply with OK.",
+            user: "Test",
+            options: .default
+        )
     }
 
     /// Test the connection to the AI provider.
@@ -55,12 +97,15 @@ actor AIService {
 
     // MARK: - Helpers
 
-    private func send(slot: AIProviderSlot, system: String, user: String) async throws -> String {
-        // Codex provider has its own transport (ChatGPT OAuth + Responses API).
-        // Forward to CodexBackend; everything else stays on the OpenAI-compatible
-        // `/chat/completions` path below.
+    private func send(
+        slot: AIProviderSlot,
+        system: String,
+        user: String,
+        options: CompleteOptions
+    ) async throws -> String {
         if slot.providerID == "openai-codex" {
-            let model = slot.model.trimmingCharacters(in: .whitespaces)
+            let model = (options.modelOverride ?? slot.model)
+                .trimmingCharacters(in: .whitespaces)
             let resolvedModel = model.isEmpty ? "gpt-5.4" : model
             return try await CodexBackend.shared.complete(
                 system: system, user: user, model: resolvedModel
@@ -78,27 +123,24 @@ actor AIService {
         if !slot.apiKey.isEmpty {
             request.setValue("Bearer \(slot.apiKey)", forHTTPHeaderField: "Authorization")
         }
-        request.timeoutInterval = 120
+        request.timeoutInterval = options.timeout
 
-        // Qwen3.5 optimization: suppress thinking mode to save tokens and latency
-        let effectiveSystem = system + "\n\n不要进入 thinking 模式，不要输出 <think> 标签或思维过程。"
+        let effectiveSystem = system + (options.extraSystemSuffix ?? "")
+        let model = options.modelOverride ?? slot.model
 
-        let body: [String: Any] = [
-            "model": slot.model,
+        var body: [String: Any] = [
+            "model": model,
             "messages": [
                 ["role": "system", "content": effectiveSystem],
                 ["role": "user", "content": user]
             ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            // Disable qwen3-style reasoning tokens — otherwise
-            // DashScope's qwen3.6-plus burns 800+ tokens on an
-            // internal chain-of-thought before emitting a single
-            // character of output, which makes every call take
-            // 15-30s and often exceed our timeout. Non-reasoning
-            // models silently ignore this field.
-            "enable_thinking": false
+            "temperature": options.temperature ?? config.temperature,
+            "max_tokens": options.maxTokens ?? config.maxTokens,
+            "stream": false
         ]
+        if options.disableThinking {
+            body["enable_thinking"] = false
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
