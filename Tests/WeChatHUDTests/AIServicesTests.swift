@@ -117,7 +117,7 @@ final class AIServicesTests: XCTestCase {
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
-        let catchup = AIGroupCatchup(store: store, config: cfg)
+        let catchup = AIGroupCatchup(store: store, aiService: AIService(config: cfg))
         let result = await catchup.summarize(.init(
             chatName: "测试群",
             selfName: "我",

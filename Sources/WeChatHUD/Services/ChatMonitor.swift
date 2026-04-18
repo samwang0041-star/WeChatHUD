@@ -260,7 +260,7 @@ final class ChatMonitor: ObservableObject {
             client: aiService
         )
         let classifierConfig = store.loadAIConfig()
-        self.aiGroupCatchup = AIGroupCatchup(store: store, config: classifierConfig)
+        self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService ?? AIService(config: classifierConfig))
         self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService ?? AIService(config: classifierConfig))
     }
 
@@ -1796,7 +1796,6 @@ final class ChatMonitor: ObservableObject {
         await briefingGenerator.updateConfig(cfg)
         await dailyRetrospector.updateConfig(cfg)
         await chatInsightService.updateConfig(cfg)
-        await aiGroupCatchup.updateConfig(cfg)
     }
 
     /// Rebuild `dismissedInbox` / `snoozedInbox` / `silencedInbox` from
