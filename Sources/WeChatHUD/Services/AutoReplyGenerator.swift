@@ -5,15 +5,12 @@ import Foundation
 /// one reply with confidence/risk assessment for autonomous sending.
 actor AutoReplyGenerator {
     private let store: HUDStore
-    private var config: AIConfig
+    private let aiService: AIService
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, config: AIConfig, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
-        var inflated = config
-        inflated.maxTokens = 512
-        inflated.temperature = 0.3
-        self.config = inflated
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -138,11 +135,11 @@ actor AutoReplyGenerator {
         // First attempt
         let first = await call(userPrompt)
         if let parsed = parse(first.text) {
-            audit(input: input, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil)
+            await audit(input: input, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil)
             return parsed
         }
         if first.text.isEmpty, let err = first.error {
-            audit(input: input, output: "", latencyMs: ms(since: started), status: .httpError, error: err)
+            await audit(input: input, output: "", latencyMs: ms(since: started), status: .httpError, error: err)
             return nil
         }
 
@@ -150,19 +147,12 @@ actor AutoReplyGenerator {
         let strict = userPrompt + "\n\n严格要求：上一次输出无法解析为 JSON。只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
         let second = await call(strict)
         if let parsed = parse(second.text) {
-            audit(input: input, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry")
+            await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry")
             return parsed
         }
 
-        audit(input: input, output: second.text, latencyMs: ms(since: started), status: .parseError, error: second.error ?? "JSON parse failed after retry")
+        await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .parseError, error: second.error ?? "JSON parse failed after retry")
         return nil
-    }
-
-    func updateConfig(_ config: AIConfig) {
-        var inflated = config
-        inflated.maxTokens = 512
-        inflated.temperature = 0.3
-        self.config = inflated
     }
 
     // MARK: - Model call
@@ -176,51 +166,16 @@ actor AutoReplyGenerator {
         let trackID = "autoreply:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "自动回复")
         defer { AIActivityTracker.shared.end(trackID) }
-        let baseURL = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")
-        }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        req.timeoutInterval = 60
-
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "system", "content": "你是一个微信自动回复助手。你的任务是模仿用户的聊天风格，生成一条最合适的回复。严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            "enable_thinking": false,
-            "stream": false
-        ]
 
         do {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
-                return ModelResponse(text: "", error: "no http response")
-            }
-            guard http.statusCode == 200 else {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                return ModelResponse(text: "", error: "HTTP \(http.statusCode): \(body.prefix(200))")
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                return ModelResponse(text: "", error: "could not extract content")
-            }
-            return ModelResponse(text: stripThinking(content), error: nil)
+            let content = try await aiService.complete(
+                system: "你是一个微信自动回复助手。你的任务是模仿用户的聊天风格，生成一条最合适的回复。严格按要求输出 JSON。",
+                user: userPrompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.3, maxTokens: 512)
+            )
+            return ModelResponse(text: content, error: nil)
         } catch {
-            return ModelResponse(text: "", error: "request failed: \(error.localizedDescription)")
+            return ModelResponse(text: "", error: error.localizedDescription)
         }
     }
 
@@ -254,12 +209,13 @@ actor AutoReplyGenerator {
 
     // MARK: - Audit
 
-    private func audit(input: Input, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) {
+    private func audit(input: Input, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
+        let model = await aiService.currentConfig().model
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
             role: .autopilot,
-            model: config.model,
+            model: model,
             promptVersion: "autopilot_reply_v2",
             inputText: "[\(input.senderName)@\(input.chatName)|\(input.contactRole.rawValue)] \(input.messageBody)",
             outputText: output,
@@ -282,21 +238,5 @@ actor AutoReplyGenerator {
 
     private func ms(since start: Date) -> Int {
         Int(Date().timeIntervalSince(start) * 1000)
-    }
-
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
-    }
-
-    private func stripThinking(_ text: String) -> String {
-        let pattern = "<think>[\\s\\S]*?</think>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

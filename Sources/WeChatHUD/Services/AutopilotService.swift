@@ -92,7 +92,7 @@ actor AutopilotService {
         self.store = store
         self.reader = reader
         self.aiConfig = config
-        self.generator = AutoReplyGenerator(store: store, config: config)
+        self.generator = AutoReplyGenerator(store: store, aiService: AIService(config: config))
         self.styleProfiler = StyleProfiler(reader: reader, store: store)
     }
 
@@ -382,7 +382,6 @@ actor AutopilotService {
 
     func updateConfig(_ config: AIConfig) async {
         self.aiConfig = config
-        await generator.updateConfig(config)
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.
