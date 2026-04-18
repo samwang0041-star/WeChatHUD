@@ -138,8 +138,7 @@ struct ConversationDetailView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Button(action: {
-                panelState.selectedChatUsername = nil
-                panelState.selectedChatName = nil
+                panelState.clearDetail()
                 panelState.currentState = .extended
             }) {
                 Image(systemName: "chevron.left")
