@@ -67,7 +67,7 @@ final class AIServicesTests: XCTestCase {
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
-        let suggester = AIReplySuggester(store: store, config: cfg)
+        let suggester = AIReplySuggester(store: store, aiService: AIService(config: cfg))
         let result = await suggester.suggest(.init(
             messageBody: "明天上午把预算单发给我",
             senderName: "林总",
