@@ -261,7 +261,7 @@ final class ChatMonitor: ObservableObject {
         )
         let classifierConfig = store.loadAIConfig()
         self.aiGroupCatchup = AIGroupCatchup(store: store, config: classifierConfig)
-        self.contextAnalyzer = ContextAnalyzer(store: store)
+        self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService ?? AIService(config: classifierConfig))
     }
 
     deinit {
