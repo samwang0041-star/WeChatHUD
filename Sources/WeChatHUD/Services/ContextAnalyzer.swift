@@ -4,10 +4,12 @@ import Foundation
 /// Provides background, stakeholder analysis, and action suggestions.
 actor ContextAnalyzer {
     private let store: HUDStore
+    private let aiService: AIService
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -47,8 +49,7 @@ actor ContextAnalyzer {
         senderProfile: String,
         userCommitments: String
     ) async -> AnalysisResult? {
-        let config = store.loadAIConfig()
-        guard !config.baseURL.isEmpty else { return nil }
+        guard await aiService.isConfigured() else { return nil }
 
         let template: String
         do { template = try promptLoader.load(version: "context_analyzer_v1") }
@@ -65,19 +66,19 @@ actor ContextAnalyzer {
             .replacingOccurrences(of: "{user_commitments}", with: userCommitments.isEmpty ? "（无未完成承诺）" : userCommitments)
 
         let started = Date()
-        guard let response = await callModel(prompt: prompt, config: config) else {
-            writeAudit(input: ask.summary, output: "", latency: ms(since: started), status: .httpError, error: "no response", config: config)
+        guard let response = await callModel(prompt: prompt) else {
+            await writeAudit(input: ask.summary, output: "", latency: ms(since: started), status: .httpError, error: "no response")
             return nil
         }
 
         let latency = ms(since: started)
         guard let data = cleanJSON(response).data(using: .utf8),
               let result = try? JSONDecoder().decode(AnalysisResult.self, from: data) else {
-            writeAudit(input: ask.summary, output: response, latency: latency, status: .parseError, error: "JSON parse failed", config: config)
+            await writeAudit(input: ask.summary, output: response, latency: latency, status: .parseError, error: "JSON parse failed")
             return nil
         }
 
-        writeAudit(input: ask.summary, output: response, latency: latency, status: .ok, error: nil, config: config)
+        await writeAudit(input: ask.summary, output: response, latency: latency, status: .ok, error: nil)
         return result
     }
 
@@ -87,48 +88,30 @@ actor ContextAnalyzer {
         Int(Date().timeIntervalSince(start) * 1000)
     }
 
-    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?, config: AIConfig) {
+    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?) async {
+        let model = await aiService.currentConfig().model
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .contextAnalyzer,
-            model: config.model, promptVersion: "context_analyzer_v1",
+            model: model, promptVersion: "context_analyzer_v1",
             inputText: input, outputText: output,
             latencyMs: latency, status: status, errorMessage: error
         ))
     }
 
-    private func callModel(prompt: String, config: AIConfig) async -> String? {
+    private func callModel(prompt: String) async -> String? {
         let trackID = "context:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "上下文分析")
         defer { AIActivityTracker.shared.end(trackID) }
-        guard let url = URL(string: normalizeURL(config.baseURL) + "/chat/completions") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: 45)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        let payload: [String: Any] = [
-            "model": config.model,
-            "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
-            "temperature": 0.1,
-            "max_tokens": 384,
-            "enable_thinking": false
-        ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        return content
-    }
 
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
+        do {
+            return try await aiService.complete(
+                system: "只输出 JSON。",
+                user: prompt,
+                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 384)
+            )
+        } catch {
+            return nil
+        }
     }
 
     private func cleanJSON(_ text: String) -> String {
