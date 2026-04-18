@@ -22,7 +22,7 @@ actor AutopilotService {
     private let reader: WeChatReader
     private let generator: AutoReplyGenerator
     private let styleProfiler: StyleProfiler
-    private var aiConfig: AIConfig
+    private let aiService: AIService
 
     /// Messages already processed (by msgUID), avoids double-handling.
     private var processedMsgUIDs: Set<String> = []
@@ -88,11 +88,11 @@ actor AutopilotService {
         var duration: TimeInterval { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
     }
 
-    init(store: HUDStore, reader: WeChatReader, config: AIConfig) {
+    init(store: HUDStore, reader: WeChatReader, aiService: AIService) {
         self.store = store
         self.reader = reader
-        self.aiConfig = config
-        self.generator = AutoReplyGenerator(store: store, aiService: AIService(config: config))
+        self.aiService = aiService
+        self.generator = AutoReplyGenerator(store: store, aiService: aiService)
         self.styleProfiler = StyleProfiler(reader: reader, store: store)
     }
 
@@ -378,10 +378,6 @@ actor AutopilotService {
     /// Reject a pending item (mark as skipped).
     func rejectPending(logId: Int64) {
         try? store.updateAutopilotLogAction(id: logId, action: .skipped)
-    }
-
-    func updateConfig(_ config: AIConfig) async {
-        self.aiConfig = config
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.
@@ -879,43 +875,16 @@ actor AutopilotService {
         {"summary":"一句话摘要(50字内)","key_topics":["最近话题1","话题2"],"pending_items":["待办1"],"shared_context":["共同经历/关系背景"],"communication_notes":["沟通习惯"],"mood_trend":"情绪描述","conversation_phase":"闲聊/讨论/决策/争论/告别/无","stance":"用户当前立场(如有)"}
         """
 
-        // Use aiConfig for lightweight AI call
-        var baseURL = aiConfig.baseURL
-        if !baseURL.contains("://") { baseURL = "http://\(baseURL)" }
-        while baseURL.hasSuffix("/") { baseURL.removeLast() }
-        if !baseURL.hasSuffix("/v1") { baseURL += "/v1" }
-
-        guard let url = URL(string: "\(baseURL)/chat/completions") else { return }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !aiConfig.apiKey.isEmpty {
-            req.setValue("Bearer \(aiConfig.apiKey)", forHTTPHeaderField: "Authorization")
+        let content: String
+        do {
+            content = try await aiService.complete(
+                system: "你是对话摘要助手。只输出JSON。",
+                user: prompt,
+                options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256)
+            )
+        } catch {
+            return
         }
-        req.timeoutInterval = 30
-
-        let body: [String: Any] = [
-            "model": aiConfig.model,
-            "messages": [
-                ["role": "system", "content": "你是对话摘要助手。只输出JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                ["role": "user", "content": prompt]
-            ],
-            "temperature": 0.2,
-            "max_tokens": 256,
-            "enable_thinking": false
-        ]
-
-        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { return }
-        req.httpBody = httpBody
-
-        guard let (data, response) = try? await URLSession.shared.data(for: req),
-              let http = response as? HTTPURLResponse, http.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let first = choices.first,
-              let message = first["message"] as? [String: Any],
-              let content = message["content"] as? String else { return }
 
         // Strip thinking tags and parse JSON
         let cleaned: String
@@ -1085,40 +1054,16 @@ actor AutopilotService {
             只输出消息文本，不要 JSON。
             """
 
-            var baseURL = aiConfig.baseURL
-            if !baseURL.contains("://") { baseURL = "http://\(baseURL)" }
-            while baseURL.hasSuffix("/") { baseURL.removeLast() }
-            if !baseURL.hasSuffix("/v1") { baseURL += "/v1" }
-            guard let url = URL(string: "\(baseURL)/chat/completions") else { continue }
-
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if !aiConfig.apiKey.isEmpty {
-                req.setValue("Bearer \(aiConfig.apiKey)", forHTTPHeaderField: "Authorization")
+            var content: String
+            do {
+                content = try await aiService.complete(
+                    system: "你是微信用户的主动聊天助手。只输出消息文本。",
+                    user: prompt,
+                    options: CompleteOptions(timeout: 30, temperature: 0.5, maxTokens: 128)
+                )
+            } catch {
+                continue
             }
-            req.timeoutInterval = 30
-
-            let body: [String: Any] = [
-                "model": aiConfig.model,
-                "messages": [
-                    ["role": "system", "content": "你是微信用户的主动聊天助手。只输出消息文本。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                    ["role": "user", "content": prompt]
-                ],
-                "temperature": 0.5,
-                "max_tokens": 128,
-                "enable_thinking": false
-            ]
-            guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { continue }
-            req.httpBody = httpBody
-
-            guard let (data, response) = try? await URLSession.shared.data(for: req),
-                  let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  var content = message["content"] as? String else { continue }
 
             content = content.trimmingCharacters(in: .whitespacesAndNewlines)
             // Strip quotes if AI wrapped the message

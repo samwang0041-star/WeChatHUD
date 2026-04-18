@@ -2326,7 +2326,7 @@ final class ChatMonitor: ObservableObject {
     func startAutopilot() {
         if autopilotService == nil {
             let config = store.loadAIConfig()
-            autopilotService = AutopilotService(store: store, reader: reader, config: config)
+            autopilotService = AutopilotService(store: store, reader: reader, aiService: aiService ?? AIService(config: config))
         }
         let service = autopilotService
         Task {
