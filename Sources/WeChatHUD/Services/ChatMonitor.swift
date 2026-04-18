@@ -112,7 +112,7 @@ final class ChatMonitor: ObservableObject {
         VIPAggregator(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var recallAnalyzer: RecallAnalyzer = {
-        RecallAnalyzer(store: store)
+        RecallAnalyzer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var replySuggester: AIReplySuggester = {
         AIReplySuggester(store: store, config: store.loadAIConfig())
