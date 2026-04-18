@@ -10,37 +10,26 @@ import Foundation
 /// Follows the same actor + HTTP + audit pattern as AIReplySuggester.
 actor AIInboxSummarizer {
     private let store: HUDStore
-    private var config: AIConfig
+    private let aiService: AIService
     private let promptLoader: PromptLoader
     private let promptVersion: String
 
     init(
         store: HUDStore,
-        config: AIConfig,
+        aiService: AIService,
         promptLoader: PromptLoader = PromptLoader(),
         promptVersion: String = "inbox_summary_v1"
     ) {
         self.store = store
-        var c = config
-        c.temperature = 0.1    // deterministic summaries
-        c.maxTokens = 100      // short output
-        self.config = c
+        self.aiService = aiService
         self.promptLoader = promptLoader
         self.promptVersion = promptVersion
-    }
-
-    /// Hot-reload connection params when the user changes AI settings.
-    func updateConfig(_ newConfig: AIConfig) {
-        var c = newConfig
-        c.temperature = 0.1
-        c.maxTokens = 100
-        self.config = c
     }
 
     /// Generate a one-line summary for an inbox item.
     /// Returns nil on failure (caller should fall back to raw preview).
     func summarize(_ context: InboxContext) async -> String? {
-        guard config.summaryEnabled else { return nil }
+        guard await aiService.currentConfig().summaryEnabled else { return nil }
         let started = Date()
 
         let template: String
@@ -90,11 +79,11 @@ actor AIInboxSummarizer {
                 .replacingOccurrences(of: "\u{201C}", with: "")
                 .replacingOccurrences(of: "\u{201D}", with: "")
             let summary = String(cleaned.prefix(30))
-            audit(input: context.triggerMessageText, output: summary, latencyMs: latencyMs, status: .ok, error: nil)
+            await audit(input: context.triggerMessageText, output: summary, latencyMs: latencyMs, status: .ok, error: nil)
             return summary
         }
 
-        audit(
+        await audit(
             input: context.triggerMessageText,
             output: "",
             latencyMs: latencyMs,
@@ -115,78 +104,28 @@ actor AIInboxSummarizer {
         let trackID = "inbox:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "收件摘要")
         defer { AIActivityTracker.shared.end(trackID) }
-        let baseURL = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            return CallResult(text: nil, error: "invalid url: \(config.baseURL)")
-        }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        req.timeoutInterval = 30
-
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "system", "content": "你是用户的微信消息管家。只输出摘要文本，不要任何其他内容。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            "enable_thinking": false,
-            "stream": false
-        ]
 
         do {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                let errBody = String(data: data, encoding: .utf8) ?? ""
-                return CallResult(text: nil, error: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0): \(errBody.prefix(200))")
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                return CallResult(text: nil, error: "could not extract content")
-            }
-            let cleaned = stripThinking(content)
-            return CallResult(text: cleaned, error: nil)
+            let content = try await aiService.complete(
+                system: "你是用户的微信消息管家。只输出摘要文本，不要任何其他内容。",
+                user: userPrompt,
+                options: CompleteOptions(timeout: 30, temperature: 0.1, maxTokens: 100)
+            )
+            return CallResult(text: content, error: nil)
         } catch {
             return CallResult(text: nil, error: error.localizedDescription)
         }
     }
 
-    // MARK: - Helpers
-
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
-    }
-
-    private func stripThinking(_ text: String) -> String {
-        let pattern = "<think>[\\s\\S]*?</think>"
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     // MARK: - Audit
 
-    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) {
+    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
+        let model = await aiService.currentConfig().model
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
             role: .summarizer,
-            model: config.model,
+            model: model,
             promptVersion: promptVersion,
             inputText: String(input.prefix(100)),
             outputText: output,

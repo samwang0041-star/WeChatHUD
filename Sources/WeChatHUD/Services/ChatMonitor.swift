@@ -159,7 +159,7 @@ final class ChatMonitor: ObservableObject {
         RelationshipInferrer(store: store, config: store.loadAIConfig())
     }()
     private lazy var inboxSummarizer: AIInboxSummarizer = {
-        AIInboxSummarizer(store: store, config: store.loadAIConfig())
+        AIInboxSummarizer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var chatInsightService: AIChatInsight = {
         AIChatInsight(store: store, config: store.loadAIConfig())
@@ -1794,7 +1794,6 @@ final class ChatMonitor: ObservableObject {
         let cfg = store.loadAIConfig()
         await relationshipInferrer.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
-        await inboxSummarizer.updateConfig(cfg)
         await dailyRetrospector.updateConfig(cfg)
         await chatInsightService.updateConfig(cfg)
         await aiGroupCatchup.updateConfig(cfg)
