@@ -5,10 +5,21 @@ import SwiftUI
 
 struct AIBuddyOverlay: View {
     let mood: BuddyMood
+    @EnvironmentObject var monitor: ChatMonitor
     @ObservedObject private var tracker = AIActivityTracker.shared
     @State private var isHovering = false
     @State private var now = Date()
     @State private var refreshTimer: Timer?
+
+    /// Mood priority: active AI work beats autopilot (transient signal
+    /// wins over persistent session), autopilot beats the passed-in mood
+    /// (persistent session beats idle/pending). Empty autopilot state
+    /// leaves the caller's mood alone.
+    private var effectiveMood: BuddyMood {
+        if tracker.isActive { return .analyzing }
+        if monitor.autopilotActive { return .autopiloting }
+        return mood
+    }
 
     var body: some View {
         // Details panel ONLY on hover — never auto-expand just because
@@ -18,7 +29,7 @@ struct AIBuddyOverlay: View {
         // idle) is the always-on signal; full task breakdown waits
         // for the user to actually ask for it.
         ZStack(alignment: .topTrailing) {
-            PixelBuddyView(mood: tracker.isActive ? .analyzing : mood)
+            PixelBuddyView(mood: effectiveMood)
                 .onHover { hovering in
                     withAnimation(.easeInOut(duration: 0.15)) { isHovering = hovering }
                 }
@@ -166,6 +177,10 @@ enum BuddyMood: CaseIterable, Equatable {
     case browsing
     case analyzing
     case celebrating
+    /// Autopilot session is active. Renders idle-like sprite with an
+    /// antenna/cap overlay so the user can glance at the buddy and know
+    /// the AI is actively handling replies.
+    case autopiloting
 }
 
 // MARK: - Mood Derivation (pure function for testability)
@@ -400,6 +415,34 @@ private let celebrateFrame2: Frame = {
     return f
 }()
 
+// MARK: - Autopiloting frames (idle sprite + antenna/cap overlay)
+
+/// Base autopilot pose — idle stand with an antenna drawn beside the
+/// head. The antenna tip pulses in frame 2 to read as a transmission
+/// blink at the existing 0.25s cadence. Positioned on the right side
+/// of the head (col 15-16) so it stays well inside the 12-col crop
+/// (cols 7-19) and doesn't clash with the sleepy-mood Z placement
+/// (cols 15-17 at rows 5-9 — different mood, no visual conflict).
+private let autopilotFrame1: Frame = {
+    var f = idleStand
+    // Antenna stalk rising from the right side of the head. Row 8 is
+    // the top visible row in the crop; rows 9-10 straddle the top of
+    // the head so the antenna reads as attached.
+    f[8][15] = H
+    f[9][15] = H
+    // Antenna tip — two-pixel accent ball one row/col up and to the right
+    f[8][16] = A
+    return f
+}()
+
+/// Second frame — tip blinks off. Two-frame cycle matches the rest of
+/// the mood set (most moods use 2-frame loops).
+private let autopilotFrame2: Frame = {
+    var f = autopilotFrame1
+    f[8][16] = O
+    return f
+}()
+
 // MARK: - Mood → Frame mapping
 
 func framesForMood(_ mood: BuddyMood) -> [Frame] {
@@ -413,6 +456,7 @@ func framesForMood(_ mood: BuddyMood) -> [Frame] {
     case .browsing:    return [browsingFrame1, browsingFrame2]
     case .analyzing:   return [analyzingFrame1, analyzingFrame2]
     case .celebrating: return [celebrateFrame1, celebrateFrame2]
+    case .autopiloting: return [autopilotFrame1, autopilotFrame2]
     }
 }
 

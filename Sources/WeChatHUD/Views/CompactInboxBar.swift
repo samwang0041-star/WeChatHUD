@@ -286,12 +286,24 @@ struct CompactInboxBar: View {
         let actionItems = monitor.inboxItems.filter { $0.actionRequired }
         let hasUrgent = actionItems.contains { $0.priority == .p0 }
         let hasPending = !actionItems.isEmpty
-        return deriveCompactMood(
+        let base = deriveCompactMood(
             syncStatus: monitor.stats.syncStatus,
             hasUrgent: hasUrgent,
             hasPending: hasPending,
             idleMinutes: idleMinutes
         )
+        // Autopilot is a persistent background signal that shouldn't
+        // mask urgent/error states (which demand immediate attention),
+        // but should win over idle/pending/sleepy (quiescent moods).
+        if monitor.autopilotActive {
+            switch base {
+            case .idle, .pending, .sleepy, .browsing, .celebrating:
+                return .autopiloting
+            case .scanning, .urgent, .error, .analyzing, .autopiloting:
+                return base
+            }
+        }
+        return base
     }
 
     private func startIdleTimer() {
