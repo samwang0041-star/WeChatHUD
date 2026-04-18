@@ -28,7 +28,6 @@ struct ExtendedTabsView: View {
         case commitments
         case workbench    // 工作台: bidirectional discussion items
         case dailyReport
-        case autopilot
         case insight
     }
 
@@ -82,7 +81,6 @@ struct ExtendedTabsView: View {
                     case .commitments: CommitmentTabView()
                     case .workbench:   WorkbenchTabView()
                     case .dailyReport: DailyReportTabView()
-                    case .autopilot:   AutopilotTabView()
                     case .insight:
                         Color.clear
                             .frame(height: 0)
@@ -147,7 +145,6 @@ struct ExtendedTabsView: View {
             }
             tabButton(.dailyReport, label: "日报", count: 0)
             tabButton(.insight, label: "洞察", count: 0)
-            tabButton(.autopilot, label: monitor.autopilotActive ? "🤖托管" : "托管", count: monitor.autopilotSessionPending)
             Spacer()
             Button(action: { panelState.showDetail() }) {
                 Image(systemName: "gearshape.fill")
