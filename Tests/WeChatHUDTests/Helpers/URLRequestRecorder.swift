@@ -13,13 +13,11 @@ final class URLRequestRecorder: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var stubbedResponse: (Data, URLResponse)? = nil
     nonisolated(unsafe) static var installed = false
 
-    @discardableResult
-    static func install() -> URLRequestRecorder.Type {
+    static func install() {
         capturedRequests = []
         stubbedResponse = nil
         URLProtocol.registerClass(URLRequestRecorder.self)
         installed = true
-        return URLRequestRecorder.self
     }
 
     static func uninstall() {

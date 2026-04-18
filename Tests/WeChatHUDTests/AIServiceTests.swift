@@ -42,13 +42,25 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
             options: .default
         )
 
-        let hitOpenAI = URLRequestRecorder.capturedRequests.contains { req in
+        // The call will fail (tests may or may not have ~/.codex/auth.json) but
+        // under no circumstances should /chat/completions be hit — that's the
+        // OpenAI-compat path and this is a Codex slot.
+        let hitOpenAIPath = URLRequestRecorder.capturedRequests.contains { req in
             req.url?.absoluteString.contains("/chat/completions") ?? false
         }
-        XCTAssertFalse(
-            hitOpenAI,
-            "Codex slot must not issue an OpenAI-compat /chat/completions request"
-        )
+        XCTAssertFalse(hitOpenAIPath, "Codex slot must not fall through to /chat/completions")
+
+        // If anything was captured at all, it must be a Codex-side host. This
+        // positive check is what catches "service bypasses AIService" regressions
+        // — without it the negative assertion above would be vacuously true when
+        // auth isn't configured on the runner.
+        if let first = URLRequestRecorder.capturedRequests.first,
+           let url = first.url?.absoluteString {
+            XCTAssertTrue(
+                url.contains("chatgpt.com/backend-api") || url.contains("auth.openai.com"),
+                "Codex routing should only hit Codex-side hosts, got \(url)"
+            )
+        }
     }
 
     // MARK: - OpenAI-compat slot
