@@ -162,7 +162,7 @@ final class ChatMonitor: ObservableObject {
         AIInboxSummarizer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var chatInsightService: AIChatInsight = {
-        AIChatInsight(store: store, config: store.loadAIConfig())
+        AIChatInsight(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
@@ -1794,7 +1794,6 @@ final class ChatMonitor: ObservableObject {
         let cfg = store.loadAIConfig()
         await relationshipInferrer.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
-        await chatInsightService.updateConfig(cfg)
     }
 
     /// Rebuild `dismissedInbox` / `snoozedInbox` / `silencedInbox` from
