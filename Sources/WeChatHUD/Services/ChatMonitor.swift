@@ -105,7 +105,7 @@ final class ChatMonitor: ObservableObject {
         CommitmentTracker(store: store)
     }()
     private lazy var discussionTracker: DiscussionTracker = {
-        DiscussionTracker(store: store)
+        DiscussionTracker(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     @Published var discussionItems: [DiscussionItem] = []
     private lazy var vipAggregator: VIPAggregator = {
@@ -1305,7 +1305,6 @@ final class ChatMonitor: ObservableObject {
             let myDisplay = reader.displayName(for: myUname)
             let selfNames = reader.mySelfNames
             Task { @MainActor [weak self] in
-                let config = await ai.currentConfig()
                 guard await ai.isConfigured() else { return }
                 for chatUsername in activeChats.prefix(5) {
                     let messages = (try? readerRef.getMessages(
@@ -1319,8 +1318,7 @@ final class ChatMonitor: ObservableObject {
                         messages: messages,
                         myUsername: myUname,
                         myDisplayName: myDisplay,
-                        mySelfNames: selfNames,
-                        config: config
+                        mySelfNames: selfNames
                     )
                     if inserted > 0 {
                         print("[WCHUD] DiscussionTracker: \(chatName) +\(inserted) items")

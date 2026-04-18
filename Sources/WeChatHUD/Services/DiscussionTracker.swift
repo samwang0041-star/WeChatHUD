@@ -11,11 +11,13 @@ import Foundation
 /// (上级派给我 / 我派给下级).
 actor DiscussionTracker {
     private let store: HUDStore
+    private let aiService: AIService
     private let promptLoader: PromptLoader
     private let promptVersion = "discussion_v1"
 
-    init(store: HUDStore, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -38,10 +40,10 @@ actor DiscussionTracker {
         messages: [MessageInfo],
         myUsername: String,
         myDisplayName: String,
-        mySelfNames: Set<String>,
-        config: AIConfig
+        mySelfNames: Set<String>
     ) async -> Int {
-        guard !config.baseURL.isEmpty, !messages.isEmpty else { return 0 }
+        guard !messages.isEmpty else { return 0 }
+        guard await aiService.isConfigured() else { return 0 }
 
         // Skip if we've already extracted recently enough — don't want
         // to re-call the model on every 10s scan for chats that
@@ -94,12 +96,13 @@ actor DiscussionTracker {
             .replacingOccurrences(of: "{known_items}", with: knownList.isEmpty ? "（暂无）" : knownList)
 
         let started = Date()
-        let body = await callModel(prompt: prompt, config: config)
+        let body = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
+        let model = await aiService.currentConfig().model
         guard let body = body else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: config.model, promptVersion: promptVersion,
+                model: model, promptVersion: promptVersion,
                 inputText: "chat=\(chatName), msgs=\(messages.count)",
                 outputText: "", latencyMs: latency,
                 status: .httpError, errorMessage: "no response"
@@ -111,14 +114,14 @@ actor DiscussionTracker {
         // One strict-retry, same pattern as CommitmentTracker / Classifier
         if items == nil {
             let strictPrompt = prompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要 markdown 代码块，不要任何解释性文字。"
-            if let retryBody = await callModel(prompt: strictPrompt, config: config) {
+            if let retryBody = await callModel(prompt: strictPrompt) {
                 items = parseItems(retryBody)
             }
         }
         guard let parsed = items else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: config.model, promptVersion: promptVersion,
+                model: model, promptVersion: promptVersion,
                 inputText: "chat=\(chatName)", outputText: body,
                 latencyMs: latency, status: .parseError,
                 errorMessage: "JSON parse failed after strict retry"
@@ -151,7 +154,7 @@ actor DiscussionTracker {
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .commitmentTracker,
-            model: config.model, promptVersion: promptVersion,
+            model: model, promptVersion: promptVersion,
             inputText: "chat=\(chatName), msgs=\(fresh.count)",
             outputText: "inserted=\(inserted)",
             latencyMs: latency, status: .ok, errorMessage: nil
@@ -208,44 +211,21 @@ actor DiscussionTracker {
         return s
     }
 
-    // MARK: - HTTP
+    // MARK: - AI call
 
-    private func callModel(prompt: String, config: AIConfig) async -> String? {
+    private func callModel(prompt: String) async -> String? {
         let trackID = "discussion:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "事项提取")
         defer { AIActivityTracker.shared.end(trackID) }
-        let base = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(base)/chat/completions") else { return nil }
-        var req = URLRequest(url: url, timeoutInterval: 45)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "system", "content": "你是对话事项提取助手。不要进入 thinking 模式。只输出 JSON。"],
-                ["role": "user", "content": prompt]
-            ],
-            "temperature": 0.1,
-            "max_tokens": 800,
-            "enable_thinking": false
-        ]
-        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        return content
-    }
 
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
+        do {
+            return try await aiService.complete(
+                system: "你是对话事项提取助手。只输出 JSON。",
+                user: prompt,
+                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 800)
+            )
+        } catch {
+            return nil
+        }
     }
 }
