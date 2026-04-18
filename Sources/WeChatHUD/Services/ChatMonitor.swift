@@ -94,28 +94,28 @@ final class ChatMonitor: ObservableObject {
 
     private let reader: WeChatReader
     private let store: HUDStore
-    private let aiService: AIService?
+    private let aiService: AIService
     private let groupContextBriefingService: GroupContextBriefingService
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
     private lazy var aiClassifier: AIClassifier = {
-        AIClassifier(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIClassifier(store: store, aiService: aiService)
     }()
     private lazy var commitmentTracker: CommitmentTracker = {
-        CommitmentTracker(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        CommitmentTracker(store: store, aiService: aiService)
     }()
     private lazy var discussionTracker: DiscussionTracker = {
-        DiscussionTracker(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        DiscussionTracker(store: store, aiService: aiService)
     }()
     @Published var discussionItems: [DiscussionItem] = []
     private lazy var vipAggregator: VIPAggregator = {
-        VIPAggregator(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        VIPAggregator(store: store, aiService: aiService)
     }()
     private lazy var recallAnalyzer: RecallAnalyzer = {
-        RecallAnalyzer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        RecallAnalyzer(store: store, aiService: aiService)
     }()
     private lazy var replySuggester: AIReplySuggester = {
-        AIReplySuggester(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIReplySuggester(store: store, aiService: aiService)
     }()
     private lazy var styleProfiler: StyleProfiler = {
         StyleProfiler(reader: reader, store: store)
@@ -147,22 +147,22 @@ final class ChatMonitor: ObservableObject {
     /// can include both the chat name and the aging label.
     @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     private lazy var dailyRetrospector: AIDailyRetrospector = {
-        AIDailyRetrospector(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIDailyRetrospector(store: store, aiService: aiService)
     }()
     private lazy var briefingGenerator: AIBriefingGenerator = {
-        AIBriefingGenerator(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIBriefingGenerator(store: store, aiService: aiService)
     }()
     private lazy var chatAnalyzer: ChatAnalyzer = {
-        ChatAnalyzer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        ChatAnalyzer(store: store, aiService: aiService)
     }()
     private lazy var relationshipInferrer: RelationshipInferrer = {
         RelationshipInferrer(store: store, config: store.loadAIConfig())
     }()
     private lazy var inboxSummarizer: AIInboxSummarizer = {
-        AIInboxSummarizer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIInboxSummarizer(store: store, aiService: aiService)
     }()
     private lazy var chatInsightService: AIChatInsight = {
-        AIChatInsight(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
+        AIChatInsight(store: store, aiService: aiService)
     }()
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
@@ -250,7 +250,7 @@ final class ChatMonitor: ObservableObject {
     // extracted to ScanEngine.swift.
     private typealias ScanOutcome = ScanEngine.ScanOutcome
 
-    init(reader: WeChatReader, store: HUDStore, aiService: AIService? = nil) {
+    init(reader: WeChatReader, store: HUDStore, aiService: AIService) {
         self.reader = reader
         self.store = store
         self.aiService = aiService
@@ -259,9 +259,8 @@ final class ChatMonitor: ObservableObject {
             store: store,
             client: aiService
         )
-        let classifierConfig = store.loadAIConfig()
-        self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService ?? AIService(config: classifierConfig))
-        self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService ?? AIService(config: classifierConfig))
+        self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService)
+        self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService)
     }
 
     deinit {
@@ -1206,10 +1205,10 @@ final class ChatMonitor: ObservableObject {
         }
 
         // 6. Conversation memory — incremental summary update for whitelist chats
-        let memoryAI = aiService
+        let ai = aiService
         let memoryReader = reader
         Task {
-            guard let ai = memoryAI, await ai.isConfigured() else { return }
+            guard await ai.isConfigured() else { return }
             let whitelist = storeRef.getWhitelist()
                 for entry in whitelist.prefix(5) {  // limit to top 5 to control AI cost
                     // Rate limit: skip if updated < 30 min ago
@@ -1298,7 +1297,8 @@ final class ChatMonitor: ObservableObject {
         let activeChats = Set(
             outcome.newInboundForClassifier.map(\.chatUsername)
         ).union(outcome.selfOutgoingMessages.map(\.chatUsername))
-        if !activeChats.isEmpty, let ai = aiService {
+        if !activeChats.isEmpty {
+            let ai = aiService
             let tracker = discussionTracker
             let readerRef = reader
             let myUname = reader.myUsername()
@@ -2325,8 +2325,7 @@ final class ChatMonitor: ObservableObject {
 
     func startAutopilot() {
         if autopilotService == nil {
-            let config = store.loadAIConfig()
-            autopilotService = AutopilotService(store: store, reader: reader, aiService: aiService ?? AIService(config: config))
+            autopilotService = AutopilotService(store: store, reader: reader, aiService: aiService)
         }
         let service = autopilotService
         Task {
