@@ -747,7 +747,7 @@ enum ClassifierCLI {
     }
 
     private static func makeClassifier(store: HUDStore) -> AIClassifier {
-        return AIClassifier(store: store, config: makeClassifierConfig(store: store))
+        return AIClassifier(store: store, aiService: AIService(config: makeClassifierConfig(store: store)))
     }
 
     /// Always reads via `HUDStore.loadAIConfig()` so the CLI

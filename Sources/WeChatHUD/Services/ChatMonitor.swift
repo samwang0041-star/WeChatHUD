@@ -99,7 +99,7 @@ final class ChatMonitor: ObservableObject {
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
     private lazy var aiClassifier: AIClassifier = {
-        AIClassifier(store: store, config: store.loadAIConfig())
+        AIClassifier(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var commitmentTracker: CommitmentTracker = {
         CommitmentTracker(store: store)
@@ -1796,7 +1796,6 @@ final class ChatMonitor: ObservableObject {
         let cfg = store.loadAIConfig()
         await replySuggester.updateConfig(cfg)
         await relationshipInferrer.updateConfig(cfg)
-        await aiClassifier.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
         await inboxSummarizer.updateConfig(cfg)
         await dailyRetrospector.updateConfig(cfg)
