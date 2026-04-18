@@ -115,7 +115,7 @@ final class ChatMonitor: ObservableObject {
         RecallAnalyzer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var replySuggester: AIReplySuggester = {
-        AIReplySuggester(store: store, config: store.loadAIConfig())
+        AIReplySuggester(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var styleProfiler: StyleProfiler = {
         StyleProfiler(reader: reader, store: store)
@@ -1792,7 +1792,6 @@ final class ChatMonitor: ObservableObject {
     /// Called by AppDelegate when the user changes AI settings.
     func refreshReplySuggesterConfig() async {
         let cfg = store.loadAIConfig()
-        await replySuggester.updateConfig(cfg)
         await relationshipInferrer.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
         await inboxSummarizer.updateConfig(cfg)

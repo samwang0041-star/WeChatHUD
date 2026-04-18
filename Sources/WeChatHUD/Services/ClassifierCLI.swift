@@ -476,7 +476,7 @@ enum ClassifierCLI {
         }
 
         let store = makeStore()
-        let suggester = AIReplySuggester(store: store, config: store.loadAIConfig())
+        let suggester = AIReplySuggester(store: store, aiService: AIService(config: store.loadAIConfig()))
         let askType = AskType(rawValue: typeStr) ?? .info
         let senderName = sender
         let chatName = chat
