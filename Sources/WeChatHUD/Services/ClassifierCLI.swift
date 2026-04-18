@@ -690,7 +690,7 @@ enum ClassifierCLI {
         let todayStart = cal.startOfDay(for: Date())
         let handledToday = allDone.filter { $0.updatedAt >= todayStart }
 
-        let retrospector = AIDailyRetrospector(store: store, config: store.loadAIConfig())
+        let retrospector = AIDailyRetrospector(store: store, aiService: AIService(config: store.loadAIConfig()))
         let reportDate = date
 
         // For overnight build we don't have message_count or focus

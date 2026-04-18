@@ -147,7 +147,7 @@ final class ChatMonitor: ObservableObject {
     /// can include both the chat name and the aging label.
     @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     private lazy var dailyRetrospector: AIDailyRetrospector = {
-        AIDailyRetrospector(store: store, config: store.loadAIConfig())
+        AIDailyRetrospector(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var briefingGenerator: AIBriefingGenerator = {
         AIBriefingGenerator(store: store, config: store.loadAIConfig())
@@ -1794,7 +1794,6 @@ final class ChatMonitor: ObservableObject {
         let cfg = store.loadAIConfig()
         await relationshipInferrer.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
-        await dailyRetrospector.updateConfig(cfg)
         await chatInsightService.updateConfig(cfg)
     }
 
