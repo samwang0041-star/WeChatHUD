@@ -32,24 +32,13 @@ actor ChatAnalyzer {
     // MARK: - Dependencies
 
     private let store: HUDStore
-    private var config: AIConfig
+    private let aiService: AIService
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, config: AIConfig, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
-        var cfg = config
-        cfg.maxTokens = 512
-        cfg.temperature = 0.2
-        self.config = cfg
+        self.aiService = aiService
         self.promptLoader = promptLoader
-    }
-
-    /// Hot-reload when the user changes AI settings.
-    func updateConfig(_ newConfig: AIConfig) {
-        var cfg = newConfig
-        cfg.maxTokens = 512
-        cfg.temperature = 0.2
-        self.config = cfg
     }
 
     // MARK: - Public API
@@ -189,78 +178,38 @@ actor ChatAnalyzer {
         }.joined(separator: "\n")
     }
 
-    // MARK: - HTTP call
+    // MARK: - AI call
 
     private func call(_ userPrompt: String) async -> String {
         let started = Date()
         let trackID = "chatanalyzer:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "聊天分析")
         defer { AIActivityTracker.shared.end(trackID) }
-        let baseURL = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            print("[WCHUD] ChatAnalyzer: invalid URL: \(config.baseURL)")
-            writeAudit(input: userPrompt, output: "", latencyMs: 0, status: .httpError, error: "invalid URL: \(config.baseURL)")
-            return ""
-        }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        req.timeoutInterval = 60
-
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "system", "content": "你是一个消息分析助手，严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            "enable_thinking": false,
-            "stream": false
-        ]
 
         do {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: req)
+            let content = try await aiService.complete(
+                system: "你是一个消息分析助手，严格按要求输出 JSON。",
+                user: userPrompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 512)
+            )
             let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                let errBody = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-                print("[WCHUD] ChatAnalyzer: HTTP \(code)")
-                writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .httpError, error: "HTTP \(code): \(errBody)")
-                return ""
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                print("[WCHUD] ChatAnalyzer: could not extract content from response")
-                let respBody = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
-                writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .parseError, error: "no content: \(respBody)")
-                return ""
-            }
-            let cleaned = stripThinking(content)
-            writeAudit(input: userPrompt, output: cleaned, latencyMs: latencyMs, status: .ok, error: nil)
-            return cleaned
+            await writeAudit(input: userPrompt, output: content, latencyMs: latencyMs, status: .ok, error: nil)
+            return content
         } catch {
             let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
-            print("[WCHUD] ChatAnalyzer: request error: \(error.localizedDescription)")
-            writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .httpError, error: error.localizedDescription)
+            let status: AIAuditStatus = (error as? URLError)?.code == .timedOut ? .timeout : .httpError
+            await writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: status, error: error.localizedDescription)
             return ""
         }
     }
 
-    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) {
+    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
+        let model = await aiService.currentConfig().model
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
             role: .chatAnalyzer,
-            model: config.model,
+            model: model,
             promptVersion: "chat_analyzer",
             inputText: String(input.prefix(200)),
             outputText: String(output.prefix(400)),
@@ -300,21 +249,4 @@ actor ChatAnalyzer {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    // MARK: - Helpers
-
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
-    }
-
-    private func stripThinking(_ text: String) -> String {
-        let pattern = "<think>[\\s\\S]*?</think>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 }

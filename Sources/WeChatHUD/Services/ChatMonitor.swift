@@ -153,7 +153,7 @@ final class ChatMonitor: ObservableObject {
         AIBriefingGenerator(store: store, config: store.loadAIConfig())
     }()
     private lazy var chatAnalyzer: ChatAnalyzer = {
-        ChatAnalyzer(store: store, config: store.loadAIConfig())
+        ChatAnalyzer(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var relationshipInferrer: RelationshipInferrer = {
         RelationshipInferrer(store: store, config: store.loadAIConfig())
@@ -1795,7 +1795,6 @@ final class ChatMonitor: ObservableObject {
     func refreshReplySuggesterConfig() async {
         let cfg = store.loadAIConfig()
         await replySuggester.updateConfig(cfg)
-        await chatAnalyzer.updateConfig(cfg)
         await relationshipInferrer.updateConfig(cfg)
         await aiClassifier.updateConfig(cfg)
         await briefingGenerator.updateConfig(cfg)
