@@ -25,6 +25,7 @@ struct CompactInboxBar: View {
             HStack(spacing: 7) {
                 leftWing
                 aiTick
+                AutopilotIndicator()
             }
             .padding(.leading, 16)
 
