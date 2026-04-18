@@ -1,16 +1,39 @@
 import AppKit
 import Combine
 
+/// What kind of content the detail panel is hosting. `.conversation`
+/// carries the target chat's username so `DetailPanelView` can hydrate
+/// `ConversationDetailView`; `.autopilot` routes to the full autopilot
+/// control surface (the same content formerly rendered as a tab).
+enum DetailKind: Equatable {
+    case conversation(chatUsername: String)
+    case autopilot
+}
+
 /// Manages the three-state lifecycle of the floating panel.
 @MainActor
 final class PanelState: ObservableObject {
     @Published var currentState: HUDState = .compact
     @Published var isMouseInside = false
-    /// When set, DetailPanelView shows conversation analysis instead of settings.
-    @Published var selectedChatUsername: String?
+    /// What the detail panel is currently showing. `nil` means no detail
+    /// target (either the panel is in compact/extended/notification, or
+    /// the caller opened the standalone Settings window).
+    @Published var detailKind: DetailKind?
+    /// Human-readable chat name — populated alongside `.conversation`
+    /// kinds and consumed by `ConversationDetailView` so we don't have
+    /// to re-look it up from the whitelist.
     @Published var selectedChatName: String?
     /// Set when returning from > 30 min idle — triggers digest banner.
     @Published var showSmartDigest = false
+
+    /// Back-compat convenience — the chat username when the detail
+    /// panel is hosting a `.conversation`, otherwise `nil`. Lets
+    /// existing call sites that only care about "is a chat selected?"
+    /// keep working without decomposing the enum.
+    var selectedChatUsername: String? {
+        if case .conversation(let username) = detailKind { return username }
+        return nil
+    }
 
     /// Callback to open settings in a separate window.
     var onShowSettings: (() -> Void)?
@@ -127,13 +150,33 @@ final class PanelState: ObservableObject {
 
     /// Show detail view for a specific conversation.
     func showChatDetail(chatUsername: String, chatName: String) {
-        selectedChatUsername = chatUsername
-        selectedChatName = chatName
+        showDetail(kind: .conversation(chatUsername: chatUsername), chatName: chatName)
+    }
+
+    /// Route the detail panel to a specific `DetailKind`. The optional
+    /// `chatName` is stored only for `.conversation` kinds (other kinds
+    /// ignore it).
+    func showDetail(kind: DetailKind, chatName: String? = nil) {
+        detailKind = kind
+        if case .conversation = kind {
+            selectedChatName = chatName
+        } else {
+            selectedChatName = nil
+        }
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
         currentState = .detail
+    }
+
+    /// Dismiss the detail target (used by back chevrons inside the
+    /// detail view). Kept as a separate entry point from `collapse()`
+    /// because callers sometimes want to drop back to `.extended`
+    /// rather than all the way to `.compact`.
+    func clearDetail() {
+        detailKind = nil
+        selectedChatName = nil
     }
 
     /// Dismiss the detail view back to the compact bar.
