@@ -1,7 +1,10 @@
 import SwiftUI
 
-/// Detail panel — shows either a conversation analysis workbench
-/// (when a chat is selected) or the settings view (gear button).
+/// Detail panel — routes on `panelState.detailKind`:
+/// - `.conversation`: the analysis workbench for a specific chat.
+/// - `.autopilot`: the full autopilot control surface (same content the
+///   old tab used to render, now living behind the compact-bar indicator).
+/// - `nil`: the standalone Settings window (the gear fallback).
 struct DetailPanelView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
@@ -17,21 +20,35 @@ struct DetailPanelView: View {
                 }
 
                 // Main content
-                if let chatUsername = panelState.selectedChatUsername,
-                   let chatName = panelState.selectedChatName {
-                    ConversationDetailView(
-                        chatUsername: chatUsername,
-                        chatName: chatName
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
+                switch panelState.detailKind {
+                case .conversation(let chatUsername):
+                    if let chatName = panelState.selectedChatName {
+                        ConversationDetailView(
+                            chatUsername: chatUsername,
+                            chatName: chatName
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        // Chat name missing — fall back to empty pane
+                        // instead of an opaque crash. Shouldn't happen
+                        // in practice (callers always set both).
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                case .autopilot:
+                    AutopilotDetailPane()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .none:
                     SettingsView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
 
             // Explicit close — back to compact pill.
-            Button(action: { panelState.collapse() }) {
+            Button(action: {
+                panelState.clearDetail()
+                panelState.collapse()
+            }) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 15))
                     .foregroundColor(.secondary)
@@ -69,5 +86,14 @@ struct DetailPanelView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .background(Color.red.opacity(0.08))
+    }
+}
+
+/// Host for the autopilot full-view inside the detail panel. Commit 3
+/// fleshes this out with the header + embedded `AutopilotTabView`; the
+/// initial routing commit just needs a placeholder that compiles.
+struct AutopilotDetailPane: View {
+    var body: some View {
+        Color.clear
     }
 }
