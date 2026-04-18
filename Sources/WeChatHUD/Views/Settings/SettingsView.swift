@@ -90,18 +90,24 @@ struct SettingsView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear {
-            if panelState.pendingSettingsTab == "insight" {
-                selectedTab = .insight
-                panelState.pendingSettingsTab = nil
-            }
+        .onAppear { applyPendingTab(panelState.pendingSettingsTab) }
+        .onReceive(panelState.$pendingSettingsTab) { applyPendingTab($0) }
+    }
+
+    /// Centralized pending-tab router so both onAppear and subsequent
+    /// `pendingSettingsTab` updates end up in the same switch. Each
+    /// matched case clears the flag so it only fires once per publish.
+    private func applyPendingTab(_ raw: String?) {
+        guard let raw = raw else { return }
+        switch raw {
+        case "insight":
+            selectedTab = .insight
+        case "autopilot":
+            selectedTab = .autopilot
+        default:
+            return
         }
-        .onReceive(panelState.$pendingSettingsTab) { tab in
-            if tab == "insight" {
-                selectedTab = .insight
-                panelState.pendingSettingsTab = nil
-            }
-        }
+        panelState.pendingSettingsTab = nil
     }
 
     // MARK: - Sidebar
