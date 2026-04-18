@@ -8,16 +8,19 @@ import Foundation
 /// pi-ai's Responses API request body is fixed. OpenAI-compatible path honors
 /// every field.
 struct CompleteOptions {
-    var timeout: TimeInterval = 60
+    var timeout: TimeInterval = 120
     var temperature: Double? = nil   // nil → use AIConfig.temperature
     var maxTokens: Int? = nil        // nil → use AIConfig.maxTokens
     var modelOverride: String? = nil // nil → use slot.model
     /// Appended to the system prompt for non-Codex providers. Used by the
     /// existing "不要进入 thinking 模式" hint.
     var extraSystemSuffix: String? = "\n\n不要进入 thinking 模式，不要输出 <think> 标签或思维过程。"
-    /// Set false to skip the `enable_thinking` flag entirely (some local
-    /// providers reject unknown fields). Default true matches current behavior.
-    var disableThinking: Bool = true
+    /// When true, the request body includes `"enable_thinking": false` (which
+    /// suppresses Qwen-style thinking output). When false, the field is omitted
+    /// entirely — useful for providers that reject unknown keys. Default true
+    /// matches current behavior; set to false only for strict OpenAI-compatible
+    /// providers that don't recognize the flag.
+    var emitEnableThinkingFlag: Bool = true
 
     static let `default` = CompleteOptions()
 }
@@ -138,7 +141,7 @@ actor AIService {
             "max_tokens": options.maxTokens ?? config.maxTokens,
             "stream": false
         ]
-        if options.disableThinking {
+        if options.emitEnableThinkingFlag {
             body["enable_thinking"] = false
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
