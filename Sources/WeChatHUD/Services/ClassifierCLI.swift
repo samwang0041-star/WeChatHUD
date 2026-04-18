@@ -562,7 +562,7 @@ enum ClassifierCLI {
         let chatName = msgs.first?.chatName ?? chatUsername
         let selfName = reader.displayName(for: reader.myUsername())
 
-        let catchup = AIGroupCatchup(store: store, config: store.loadAIConfig())
+        let catchup = AIGroupCatchup(store: store, aiService: AIService(config: store.loadAIConfig()))
         let started = Date()
         let result = runAsync {
             await catchup.summarize(.init(chatName: chatName, selfName: selfName, messages: usable))
