@@ -157,7 +157,7 @@ actor VIPAggregator {
             return try await aiService.complete(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.1)
+                options: CompleteOptions(timeout: 60, temperature: 0.1, maxTokens: 512)
             )
         } catch {
             return nil
