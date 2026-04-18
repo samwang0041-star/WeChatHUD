@@ -109,7 +109,7 @@ final class ChatMonitor: ObservableObject {
     }()
     @Published var discussionItems: [DiscussionItem] = []
     private lazy var vipAggregator: VIPAggregator = {
-        VIPAggregator(store: store)
+        VIPAggregator(store: store, aiService: aiService ?? AIService(config: store.loadAIConfig()))
     }()
     private lazy var recallAnalyzer: RecallAnalyzer = {
         RecallAnalyzer(store: store)

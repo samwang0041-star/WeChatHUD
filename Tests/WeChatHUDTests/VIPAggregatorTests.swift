@@ -47,7 +47,7 @@ final class VIPAggregatorTests: XCTestCase {
     }
 
     func testAggregateReturnsNilWithoutTraces() {
-        let agg = VIPAggregator(store: store)
+        let agg = VIPAggregator(store: store, aiService: AIService())
         let semaphore = DispatchSemaphore(value: 0)
         var result: VIPAggregator.AggregateResult?
         Task {

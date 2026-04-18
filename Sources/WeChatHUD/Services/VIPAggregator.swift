@@ -3,10 +3,12 @@ import Foundation
 /// Periodically batches unbatched VIP traces from all groups and sends them to AI for analysis.
 actor VIPAggregator {
     private let store: HUDStore
+    private let aiService: AIService
     private let promptLoader: PromptLoader
 
-    init(store: HUDStore, promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -57,8 +59,7 @@ actor VIPAggregator {
         let traces = store.loadUnbatchedVIPTraces(vipUsername: vipUsername)
         guard !traces.isEmpty else { return nil }
 
-        let config = store.loadAIConfig()
-        guard !config.baseURL.isEmpty else { return nil }
+        guard await aiService.isConfigured() else { return nil }
 
         let template: String
         do { template = try promptLoader.load(version: "vip_aggregator_v1") }
@@ -105,13 +106,14 @@ actor VIPAggregator {
             .replacingOccurrences(of: "{role_dimensions}", with: roleDimensions)
 
         let started = Date()
-        let response = await callModel(prompt: prompt, config: config)
+        let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
+        let model = await aiService.currentConfig().model
 
         guard let body = response else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .vipAggregator,
-                model: config.model, promptVersion: "vip_aggregator_v1",
+                model: model, promptVersion: "vip_aggregator_v1",
                 inputText: "vip:\(vipUsername) traces:\(traces.count)",
                 outputText: "",
                 latencyMs: latency, status: .httpError, errorMessage: "no response"
@@ -122,7 +124,7 @@ actor VIPAggregator {
         guard let result = parseResult(body) else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .vipAggregator,
-                model: config.model, promptVersion: "vip_aggregator_v1",
+                model: model, promptVersion: "vip_aggregator_v1",
                 inputText: "vip:\(vipUsername) traces:\(traces.count)",
                 outputText: body,
                 latencyMs: latency, status: .parseError, errorMessage: "JSON parse failed"
@@ -136,7 +138,7 @@ actor VIPAggregator {
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .vipAggregator,
-            model: config.model, promptVersion: "vip_aggregator_v1",
+            model: model, promptVersion: "vip_aggregator_v1",
             inputText: "vip:\(vipUsername) traces:\(traces.count)",
             outputText: body,
             latencyMs: latency, status: .ok, errorMessage: nil
@@ -146,34 +148,20 @@ actor VIPAggregator {
 
     // MARK: - Private helpers
 
-    private func callModel(prompt: String, config: AIConfig) async -> String? {
+    private func callModel(prompt: String) async -> String? {
         let trackID = "vip:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "VIP 分析")
+        AIActivityTracker.shared.begin(trackID, label: "VIP 摘要")
         defer { AIActivityTracker.shared.end(trackID) }
-        guard let url = URL(string: "\(normalizeURL(config.baseURL))/chat/completions") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: 60)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+
+        do {
+            return try await aiService.complete(
+                system: "只输出 JSON。",
+                user: prompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.1)
+            )
+        } catch {
+            return nil
         }
-        let payload: [String: Any] = [
-            "model": config.model,
-            "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
-            "temperature": 0.1,
-            "max_tokens": 512,
-            "enable_thinking": false
-        ]
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
-        request.httpBody = body
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse,
-              http.statusCode == 200 else { return nil }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        return content
     }
 
     private func parseResult(_ text: String) -> AggregateResult? {
@@ -197,14 +185,6 @@ actor VIPAggregator {
             s = String(s[lo...hi])
         }
         return s
-    }
-
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
     }
 
     private func formatTime(_ unixSeconds: Int) -> String {
