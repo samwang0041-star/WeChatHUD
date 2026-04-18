@@ -4,24 +4,16 @@ import Foundation
 /// Analyzes individual chats and generates global briefings.
 actor AIChatInsight {
     private let store: HUDStore
-    private var config: AIConfig
+    private let aiService: AIService
     private let promptLoader: PromptLoader
-
-    func updateConfig(_ newConfig: AIConfig) {
-        var c = newConfig; c.maxTokens = 1200; c.temperature = 0.15
-        self.config = c
-    }
 
     init(
         store: HUDStore,
-        config: AIConfig,
+        aiService: AIService,
         promptLoader: PromptLoader = PromptLoader()
     ) {
         self.store = store
-        var inflated = config
-        inflated.maxTokens = 1200  // insight output is larger
-        inflated.temperature = 0.15
-        self.config = inflated
+        self.aiService = aiService
         self.promptLoader = promptLoader
     }
 
@@ -92,7 +84,7 @@ actor AIChatInsight {
                 result: response.text,
                 ttlHours: 2
             )
-            writeAudit(
+            await writeAudit(
                 chatUsername: chatUsername,
                 prompt: prompt,
                 output: response.text,
@@ -108,7 +100,7 @@ actor AIChatInsight {
         let retryResponse = await call(retry)
         guard !retryResponse.text.isEmpty,
               let retryResult = parseInsight(retryResponse.text) else {
-            writeAudit(
+            await writeAudit(
                 chatUsername: chatUsername,
                 prompt: prompt,
                 output: retryResponse.text,
@@ -126,7 +118,7 @@ actor AIChatInsight {
             result: retryResponse.text,
             ttlHours: 2
         )
-        writeAudit(
+        await writeAudit(
             chatUsername: chatUsername,
             prompt: prompt,
             output: retryResponse.text,
@@ -184,7 +176,7 @@ actor AIChatInsight {
         return parseGlobalBriefing(response.text)
     }
 
-    // MARK: - HTTP call (same pattern as AIGroupCatchup)
+    // MARK: - HTTP call
 
     private struct ModelResponse {
         let text: String
@@ -195,51 +187,16 @@ actor AIChatInsight {
         let trackID = "insight:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "对话洞察")
         defer { AIActivityTracker.shared.end(trackID) }
-        let baseURL = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")
-        }
-
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        req.timeoutInterval = 60
-
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            "enable_thinking": false,
-            "stream": false
-        ]
 
         do {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
-                return ModelResponse(text: "", error: "no http response")
-            }
-            guard http.statusCode == 200 else {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                return ModelResponse(text: "", error: "HTTP \(http.statusCode): \(body.prefix(200))")
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                return ModelResponse(text: "", error: "could not extract content")
-            }
-            return ModelResponse(text: stripThinking(content), error: nil)
+            let content = try await aiService.complete(
+                system: "",
+                user: userPrompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 1200)
+            )
+            return ModelResponse(text: content, error: nil)
         } catch {
-            print("[ChatInsight] API error: \(error.localizedDescription)")
-            return ModelResponse(text: "", error: "request failed: \(error.localizedDescription)")
+            return ModelResponse(text: "", error: error.localizedDescription)
         }
     }
 
@@ -277,22 +234,6 @@ actor AIChatInsight {
         String(input.hashValue)
     }
 
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
-    }
-
-    private func stripThinking(_ text: String) -> String {
-        let pattern = "<think>[\\s\\S]*?</think>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private func writeAudit(
         chatUsername: String,
         prompt: String,
@@ -300,12 +241,13 @@ actor AIChatInsight {
         latencyMs: Int,
         status: AIAuditStatus,
         error: String?
-    ) {
+    ) async {
+        let model = await aiService.currentConfig().model
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
             role: .contextAnalyzer,
-            model: config.model,
+            model: model,
             promptVersion: "chat_insight_v1",
             inputText: "[\(chatUsername)] \(prompt.prefix(100))",
             outputText: output,
