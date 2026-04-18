@@ -5,10 +5,60 @@ import Foundation
 enum MessageHelpers {
 
     /// Check if a message text @-mentions the current user or @everyone.
-    static func isAtMe(_ text: String, myUsername: String) -> Bool {
-        if !myUsername.isEmpty, text.contains("@\(myUsername)") { return true }
-        if text.contains("@所有人") { return true }
-        if text.range(of: "@all", options: .caseInsensitive) != nil { return true }
+    ///
+    /// WeChat renders `@mention` in the saved message body using the
+    /// *display name* of the target member, terminated by U+2005
+    /// (FOUR-PER-EM SPACE) or an ordinary space — NOT the wxid. So a
+    /// match against `myUsername` alone will miss almost every real
+    /// @-mention. Pass `myDisplayName` and `mySelfNames` (learned
+    /// aliases from WeChatReader) so we catch e.g. "@张三\u{2005}".
+    ///
+    /// Each candidate is matched as `@<name>` immediately followed by
+    /// a Unicode whitespace / punctuation / end-of-string boundary —
+    /// this avoids false positives like `myDisplayName == "大"`
+    /// matching inside "@大家好".
+    static func isAtMe(
+        _ text: String,
+        myUsername: String,
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
+    ) -> Bool {
+        // Gather every token we recognize as "me". Filter empties so
+        // they don't degenerate into matching bare "@".
+        var candidates: [String] = []
+        if !myUsername.isEmpty { candidates.append(myUsername) }
+        if !myDisplayName.isEmpty { candidates.append(myDisplayName) }
+        for name in mySelfNames where !name.isEmpty { candidates.append(name) }
+
+        for name in candidates {
+            if containsAtMention(text: text, name: name) { return true }
+        }
+        if containsAtMention(text: text, name: "所有人") { return true }
+        // @all is case-insensitive and can terminate at word boundary.
+        if text.range(of: #"@all\b"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return true
+        }
+        return false
+    }
+
+    /// Returns true when `text` contains `@<name>` whose trailing
+    /// character is a whitespace, punctuation, or end-of-string — the
+    /// boundary WeChat uses to terminate an @mention. Iterates all
+    /// occurrences so a non-boundary earlier hit doesn't short-circuit
+    /// a boundary-matched later hit.
+    private static func containsAtMention(text: String, name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        let needle = "@" + name
+        var cursor = text.startIndex
+        while let range = text.range(of: needle, range: cursor..<text.endIndex) {
+            let after = range.upperBound
+            if after == text.endIndex { return true }
+            let ch = text[after]
+            if ch.isWhitespace || ch.isPunctuation || ch.isNewline {
+                return true
+            }
+            cursor = after
+        }
         return false
     }
 
@@ -24,8 +74,17 @@ enum MessageHelpers {
         mySelfNames: Set<String> = []
     ) -> Bool {
         if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
-        // Check against learned self aliases (covers wxid variants, nicknames)
-        if !mySelfNames.isEmpty && mySelfNames.contains(msg.senderUsername) { return true }
+        // Check learned self aliases against BOTH senderUsername and
+        // senderName. WeChat's group tables sometimes store the user's
+        // own messages with `senderUsername` left as the raw nickname
+        // hint (un-promoted) while `senderName` holds the same hint;
+        // checking only one field missed these cases and AI
+        // summaries ended up attributing the user's own "收到" to a
+        // bystander named the same as their group nickname.
+        if !mySelfNames.isEmpty {
+            if mySelfNames.contains(msg.senderUsername) { return true }
+            if !msg.senderName.isEmpty && mySelfNames.contains(msg.senderName) { return true }
+        }
         // Group chat fallback: senderUsername might be a display name instead of wxid
         if chatUsername.contains("@chatroom") && !myDisplayName.isEmpty {
             if msg.senderUsername == myDisplayName || msg.senderName == myDisplayName {

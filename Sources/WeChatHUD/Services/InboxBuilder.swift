@@ -73,7 +73,23 @@ enum InboxBuilder {
                 continue
             }
 
-            // Active debt item (reactivates even if dismissed — debt = newer message)
+            // Check dismissed. A debt item stays dismissed as long
+            // as the dismissal timestamp is >= the debt's own
+            // timestamp — i.e. nothing newer has arrived since the
+            // user clicked X. When a newer inbound arrives, the
+            // debt timestamp advances past the dismissal mark and
+            // the item reactivates. Previously debt items ignored
+            // dismiss entirely, making the X button feel broken
+            // ("I clicked X and it's still there 2s later").
+            if let dismissTs = dismissed[debt.chatUsername] {
+                let debtTs = Int64(debt.timestamp.timeIntervalSince1970)
+                if dismissTs >= debtTs {
+                    item.status = .dismissed
+                    handledItems.append(item)
+                    continue
+                }
+            }
+
             actionItems.append(item)
         }
 

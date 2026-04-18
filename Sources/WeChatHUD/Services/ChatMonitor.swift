@@ -104,6 +104,10 @@ final class ChatMonitor: ObservableObject {
     private lazy var commitmentTracker: CommitmentTracker = {
         CommitmentTracker(store: store)
     }()
+    private lazy var discussionTracker: DiscussionTracker = {
+        DiscussionTracker(store: store)
+    }()
+    @Published var discussionItems: [DiscussionItem] = []
     private lazy var vipAggregator: VIPAggregator = {
         VIPAggregator(store: store)
     }()
@@ -117,8 +121,31 @@ final class ChatMonitor: ObservableObject {
         StyleProfiler(reader: reader, store: store)
     }()
     private lazy var alertEngine: ProactiveAlertEngine = {
-        ProactiveAlertEngine(store: store)
+        let engine = ProactiveAlertEngine(store: store)
+        // Bridge engine state → published property so SwiftUI views
+        // observing ChatMonitor re-render when a VIP escalates.
+        engine.onTiersChanged = { [weak self] tiers in
+            self?.vipAlertTiers = tiers
+        }
+        // A tier advance (e.g. T3: "已等 2 小时") also pops an in-panel
+        // toast so the user sees it even if they dismissed the OS
+        // notification.
+        engine.onTierAdvanced = { [weak self] chatName, tier in
+            guard tier >= .t3 else { return }
+            self?.pendingEscalationBanner = (chatName, tier)
+        }
+        return engine
     }()
+
+    /// Per-chat VIP alert tier. Published so AppDelegate can update
+    /// the menu bar badge and CompactInboxBar can add a pulse effect
+    /// without needing to traverse into the alert engine directly.
+    @Published private(set) var vipAlertTiers: [String: VIPAlertTier] = [:]
+
+    /// Set by the alert engine when a VIP advances to T3+; AppDelegate
+    /// observes and turns it into a one-shot toast. Tuple form so we
+    /// can include both the chat name and the aging label.
+    @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     private lazy var dailyRetrospector: AIDailyRetrospector = {
         AIDailyRetrospector(store: store, config: store.loadAIConfig())
     }()
@@ -139,9 +166,50 @@ final class ChatMonitor: ObservableObject {
     }()
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
+
+    /// Pre-generated expand-panel data — analysis + reply suggestions
+    /// fired in the background right after scan, so when the user
+    /// clicks an inbox row the action panel reads from cache and
+    /// renders instantly instead of spinning on "正在整理重点…".
+    /// Keyed by chatUsername; `timestamp` binds each entry to a
+    /// specific message so stale cache from a prior message gets
+    /// rejected when a newer one arrives.
+    struct PrefetchedAction {
+        let timestamp: Int
+        let groupAnalysis: ChatAnalyzer.GroupAnalysis?
+        let privateAnalysis: ChatAnalyzer.PrivateAnalysis?
+        let replies: [SuggestedReply]
+        let hasProfile: Bool
+        /// True once the analysis task has run to completion — lets
+        /// the UI tell "still waiting for prefetch" from "prefetch
+        /// finished with no result" (API error / timeout). Without
+        /// this flag, a silent API failure leaves the panel spinning
+        /// forever on "AI 正在整理重点…".
+        let analysisAttempted: Bool
+        /// True once the replies task has run to completion.
+        let repliesAttempted: Bool
+    }
+    @Published private(set) var actionPrefetch: [String: PrefetchedAction] = [:]
+
     private var safetyTimer: Timer?
     private var safetyTickCount = 0
     private var scanInProgress = false
+
+    /// Set when an FSEvent or timer tick requests a scan while one is
+    /// already running. The in-flight scan checks this on exit and
+    /// re-triggers itself with the accumulated request — so we never
+    /// silently drop the FSEvent batch that was meant to trigger the
+    /// new scan. Without this, messages written during a long-running
+    /// scan wouldn't surface until the next FSEvent or the 10 s safety
+    /// tick, producing a visible notification lag.
+    private var rescanRequested = false
+    /// If true, the pending rescan must be a full scan (changedRelPaths
+    /// = nil). A queued full-scan overrides any incremental paths.
+    private var rescanRequestedFull = false
+    /// Incremental paths accumulated while a scan was in progress.
+    /// Merged into the rescan trigger on scan exit. Ignored when
+    /// `rescanRequestedFull` is true.
+    private var rescanRequestedPaths: Set<String> = []
 
     /// Coalesced FSEvent debouncer.
     ///
@@ -212,6 +280,12 @@ final class ChatMonitor: ObservableObject {
         registerWeChatObservers()
         print("[WCHUD] wechat running at startup? \(isWeChatRunning())")
 
+        // Hydrate in-memory action state from persistent store. Without
+        // this, a user who silenced/snoozed/dismissed yesterday would
+        // see those chats re-appear in their inbox after a restart —
+        // everything was ephemeral in an earlier design.
+        hydrateInboxActionsFromStore()
+
         // Initial scan — either red (no WeChat) or green (scanned clean).
         Task { @MainActor in
             print("[WCHUD] initial scan Task starting")
@@ -259,6 +333,9 @@ final class ChatMonitor: ObservableObject {
         debounceWorkItem?.cancel()
         debounceWorkItem = nil
         pendingChangedPaths.removeAll()
+        rescanRequested = false
+        rescanRequestedFull = false
+        rescanRequestedPaths.removeAll()
     }
 
     func refreshNow() {
@@ -777,12 +854,42 @@ final class ChatMonitor: ObservableObject {
     ///   relative paths are refreshed and scanned. The 60s safety timer
     ///   passes nil to do a full sweep.
     private func scan(changedRelPaths: Set<String>? = nil) async {
+        // If a scan is already running, don't drop this request — queue
+        // it so we re-scan when the current run exits. Otherwise any
+        // FSEvent batch that arrives during a long-running scan (AI
+        // post-scan work, big catch-up, etc.) would vanish and messages
+        // would surface only on the next 10s safety tick.
         guard !scanInProgress else {
-            print("[WCHUD] scan skipped — already in progress")
+            rescanRequested = true
+            if changedRelPaths == nil {
+                // nil means full scan — upgrade any pending incremental
+                // request to a full scan, since full ⊇ incremental.
+                rescanRequestedFull = true
+                rescanRequestedPaths.removeAll()
+            } else if !rescanRequestedFull, let paths = changedRelPaths {
+                rescanRequestedPaths.formUnion(paths)
+            }
+            print("[WCHUD] scan queued (already in progress, paths=\(changedRelPaths?.count.description ?? "full"))")
             return
         }
         scanInProgress = true
-        defer { scanInProgress = false }
+        defer {
+            scanInProgress = false
+            // Drain any request that arrived during this scan. We
+            // launch the follow-up in a detached Task so the current
+            // scan's `defer` can finish cleanly; by the time it runs,
+            // scanInProgress is already false.
+            if rescanRequested {
+                let wantsFull = rescanRequestedFull
+                let queued: Set<String>? = wantsFull ? nil : rescanRequestedPaths
+                rescanRequested = false
+                rescanRequestedFull = false
+                rescanRequestedPaths.removeAll()
+                Task { @MainActor [weak self] in
+                    await self?.scan(changedRelPaths: queued)
+                }
+            }
+        }
 
         // Gate: WeChat must be running.
         guard isWeChatRunning() else {
@@ -792,6 +899,22 @@ final class ChatMonitor: ObservableObject {
                 atMentionCount: 0,
                 vipCount: 0,
                 syncStatus: .waitingForWeChat,
+                lastSyncAt: stats.lastSyncAt
+            )
+            return
+        }
+
+        // Gate: user logged into a different WeChat account since we
+        // started. Our `dbDir` is immutable, so every subsequent read
+        // would hit stale DBs for the wrong account. Stop here and
+        // surface the condition so the UI can prompt a restart.
+        if reader.hasAccountSwitched() {
+            print("[WCHUD] scan gated — WeChat account switched (was \(reader.myUsername()), now \(reader.detectCurrentAccountWxid() ?? "?"))")
+            stats = HUDStats(
+                unreadCount: 0,
+                atMentionCount: 0,
+                vipCount: 0,
+                syncStatus: .accountSwitched,
                 lastSyncAt: stats.lastSyncAt
             )
             return
@@ -857,6 +980,13 @@ final class ChatMonitor: ObservableObject {
         // Generate AI summaries for new inbox items (async, progressive)
         generateSummaries()
 
+        // Pre-generate expand-panel data (chat analysis + reply
+        // suggestions) so clicking into an inbox row surfaces the
+        // AI output instantly instead of making the user wait for
+        // two round-trips. Fires in the background, updates
+        // `actionPrefetch` progressively.
+        prefetchActionPanelData()
+
         // Proactive alerts — evaluate rules after state update
         alertEngine.evaluate(
             unreadItems: unreadItems,
@@ -900,6 +1030,15 @@ final class ChatMonitor: ObservableObject {
     func reloadAIData() {
         commitments = store.loadCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
+        discussionItems = store.loadDiscussionItems(limit: 200)
+    }
+
+    /// Update a discussion item's status (done / dismissed / archived).
+    /// UI calls this from the 工作台 tab — reloads the published list
+    /// so the row vanishes from the active view immediately.
+    func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) {
+        try? store.updateDiscussionItemStatus(id: id, status: status)
+        discussionItems = store.loadDiscussionItems(limit: 200)
     }
 
     /// Fire-and-forget AI processing for new scan data.
@@ -1129,6 +1268,128 @@ final class ChatMonitor: ObservableObject {
         }
 
         // 7. ReplyDebt AI re-ranking removed — rule scoring + time sort is sufficient
+
+        // 8. Auto-brief new group @mentions. The briefing service already
+        // caches + dedupes (loadGroupContextBriefing no-ops if it's
+        // loading or cached), so we can just fire it for every current
+        // @mention in `recentNotifications` and trust the service to
+        // skip repeats. Cap to the 5 most recent so a big catch-up
+        // doesn't trigger a burst of AI calls all at once.
+        let briefables = outcome.recentNotifications
+            .filter { $0.canExplainContext }
+            .sorted { $0.timestamp > $1.timestamp }
+            .prefix(5)
+        for notif in briefables {
+            loadGroupContextBriefing(for: notif)
+        }
+
+        // 9. DiscussionTracker — bidirectional item extraction.
+        //
+        // Unlike CommitmentTracker (which only looks at OUR outgoing
+        // promises), this reads both sides of the conversation and
+        // pulls out todos/decisions/info/time-place/questions — a
+        // memory layer the user asked for: "我跟别人聊了可能忘了
+        // 的事情，抽出来做备忘". The weekly report slices these by
+        // hierarchy (上级派给我 / 我派给下级).
+        //
+        // Cost control: only chats with *new* inbound or outbound
+        // messages this scan get analyzed; the tracker itself also
+        // watermarks per chat so re-scans skip unchanged windows.
+        let activeChats = Set(
+            outcome.newInboundForClassifier.map(\.chatUsername)
+        ).union(outcome.selfOutgoingMessages.map(\.chatUsername))
+        if !activeChats.isEmpty, let ai = aiService {
+            let tracker = discussionTracker
+            let readerRef = reader
+            let myUname = reader.myUsername()
+            let myDisplay = reader.displayName(for: myUname)
+            let selfNames = reader.mySelfNames
+            Task { @MainActor [weak self] in
+                let config = await ai.currentConfig()
+                guard await ai.isConfigured() else { return }
+                for chatUsername in activeChats.prefix(5) {
+                    let messages = (try? readerRef.getMessages(
+                        chatUsername: chatUsername, limit: 40, sinceLocalId: nil
+                    )) ?? []
+                    guard !messages.isEmpty else { continue }
+                    let chatName = readerRef.displayName(for: chatUsername)
+                    let inserted = await tracker.extract(
+                        chatUsername: chatUsername,
+                        chatName: chatName,
+                        messages: messages,
+                        myUsername: myUname,
+                        myDisplayName: myDisplay,
+                        mySelfNames: selfNames,
+                        config: config
+                    )
+                    if inserted > 0 {
+                        print("[WCHUD] DiscussionTracker: \(chatName) +\(inserted) items")
+                    }
+                }
+                // Refresh published list after batch.
+                guard let self = self else { return }
+                self.discussionItems = self.store.loadDiscussionItems(limit: 200)
+            }
+        }
+
+        // 10. Commitment fulfillment closure.
+        //
+        // For each pending commitment, look at what the user sent
+        // subsequently in the same chat. If there's a "已发 / 搞定 /
+        // 完成" keyword or a file/image/link in a commitment that
+        // talks about deliverables → auto-mark fulfilled. If the
+        // deadline has passed with no evidence → auto-mark overdue.
+        //
+        // `autoAdvanceCommitmentStatus` only flips .pending rows —
+        // user-cancelled / user-completed rows are untouched.
+        let pendingCommitments = commitments.filter { $0.status == .pending }
+        if !pendingCommitments.isEmpty {
+            let readerForFulfillment = reader
+            let storeForFulfillment = store
+            Task { @MainActor [weak self] in
+                var changed = false
+                for c in pendingCommitments {
+                    // Fetch recent messages in that chat, filter to
+                    // the user's own outbound messages AFTER the
+                    // commitment was created.
+                    guard let allMsgs = try? readerForFulfillment.getMessages(
+                        chatUsername: c.chatUsername, limit: 50, sinceLocalId: nil
+                    ) else { continue }
+                    let commitEpoch = Int(c.createdAt.timeIntervalSince1970)
+                    let subsequent = allMsgs.filter { msg in
+                        msg.createTime > commitEpoch &&
+                        MessageHelpers.isFromSelf(
+                            msg, chatUsername: c.chatUsername,
+                            myUsername: readerForFulfillment.myUsername(),
+                            myDisplayName: readerForFulfillment.displayName(for: readerForFulfillment.myUsername()),
+                            mySelfNames: readerForFulfillment.mySelfNames
+                        )
+                    }
+                    let signal = CommitmentTracker.evaluateFulfillment(
+                        commitment: c,
+                        subsequentSelfMessages: subsequent
+                    )
+                    switch signal {
+                    case .fulfilled(let reason):
+                        try? storeForFulfillment.autoAdvanceCommitmentStatus(
+                            msgUID: c.msgUID, to: .fulfilled
+                        )
+                        print("[WCHUD] Commitment fulfilled: \(c.content) — \(reason)")
+                        changed = true
+                    case .overdue:
+                        try? storeForFulfillment.autoAdvanceCommitmentStatus(
+                            msgUID: c.msgUID, to: .overdue
+                        )
+                        changed = true
+                    case .stillPending:
+                        break
+                    }
+                }
+                if changed, let self = self {
+                    self.commitments = storeForFulfillment.loadCommitments()
+                }
+            }
+        }
     }
 
     /// Resolve a relative deadline string like "+30m", "+2h", "+1d" to a Date.
@@ -1359,7 +1620,8 @@ final class ChatMonitor: ObservableObject {
             isGroup: contactUsername.contains("@chatroom"),
             messages: msgs,
             myUsername: myUname,
-            myDisplayName: reader.displayName(for: myUname)
+            myDisplayName: reader.displayName(for: myUname),
+            mySelfNames: reader.mySelfNames
         )
     }
 
@@ -1543,22 +1805,66 @@ final class ChatMonitor: ObservableObject {
         await aiGroupCatchup.updateConfig(cfg)
     }
 
-    /// Dismiss an inbox item. It will reactivate if a new message arrives
-    /// (ScanEngine produces a new ReplyDebtItem for the chat).
+    /// Rebuild `dismissedInbox` / `snoozedInbox` / `silencedInbox` from
+    /// `chat_actions`. Called at `start()` so the inbox view opens with
+    /// the same handled state the user left it in last session.
+    ///
+    /// Mapping is the inverse of what the action methods write:
+    ///   - snoozed_until > now   → snoozedInbox[user] = until
+    ///   - silenced_at > now+1yr → silencedInbox.insert(user)   (permanent)
+    ///   - silenced_at > 0       → dismissedInbox[user] = silenced_at
+    private func hydrateInboxActionsFromStore() {
+        let actions = store.loadChatActions()
+        let nowEpoch = Int(Date().timeIntervalSince1970)
+        // Anything silenced further than a year ahead is from the
+        // "silence forever" branch (which writes now + 10 years).
+        let permanentThreshold = nowEpoch + 365 * 86400
+
+        dismissedInbox.removeAll(keepingCapacity: true)
+        snoozedInbox.removeAll(keepingCapacity: true)
+        silencedInbox.removeAll(keepingCapacity: true)
+
+        for (user, action) in actions {
+            if action.snoozedUntil > nowEpoch {
+                snoozedInbox[user] = Date(timeIntervalSince1970: TimeInterval(action.snoozedUntil))
+            }
+            if action.silencedAt > permanentThreshold {
+                silencedInbox.insert(user)
+            } else if action.silencedAt > 0 {
+                dismissedInbox[user] = Int64(action.silencedAt)
+            }
+        }
+    }
+
+    /// Dismiss an inbox item. Persists via `chat_actions.silenced_at` so
+    /// the dismissal survives restarts; anything newer than this
+    /// timestamp reactivates normally.
     func dismissInboxItem(_ item: InboxItem) {
-        dismissedInbox[item.chatUsername] = Int64(item.timestamp.timeIntervalSince1970)
+        let ts = Int(item.timestamp.timeIntervalSince1970)
+        dismissedInbox[item.chatUsername] = Int64(ts)
+        try? store.silenceChat(chatUsername: item.chatUsername, silencedAt: ts)
         rebuildInbox()
     }
 
-    /// Snooze an inbox item until a specific date.
+    /// Snooze an inbox item until a specific date. Persists via
+    /// `chat_actions.snoozed_until` — the next scan after expiry will
+    /// repopulate the chat into the active inbox automatically.
     func snoozeInboxItem(_ item: InboxItem, until: Date) {
         snoozedInbox[item.chatUsername] = until
+        let untilEpoch = Int(until.timeIntervalSince1970)
+        try? store.snoozeChat(chatUsername: item.chatUsername, until: untilEpoch)
         rebuildInbox()
     }
 
-    /// Permanently silence a chat from the inbox.
+    /// Silence a chat from the inbox. We use a far-future `silenced_at`
+    /// (10 years out) to cover "silence forever" — strictly newer
+    /// messages than that get through, but in practice nothing will
+    /// arrive from 10 years in the future. Cheaper than adding a new
+    /// dedicated column for what amounts to the same mechanism.
     func silenceInboxItem(_ item: InboxItem) {
         silencedInbox.insert(item.chatUsername)
+        let farFuture = Int(Date().timeIntervalSince1970) + 315_360_000 // ~10 years
+        try? store.silenceChat(chatUsername: item.chatUsername, silencedAt: farFuture)
         rebuildInbox()
     }
 
@@ -1567,6 +1873,11 @@ final class ChatMonitor: ObservableObject {
         dismissedInbox.removeValue(forKey: item.chatUsername)
         snoozedInbox.removeValue(forKey: item.chatUsername)
         silencedInbox.remove(item.chatUsername)
+        // Drop the persisted side too — otherwise a user who silences
+        // via ExtendedTabsView (persistent) then clicks "restore" in
+        // the inbox would only clear the in-memory hint, and the
+        // chat would stay silenced in the store forever.
+        try? store.clearChatAction(chatUsername: item.chatUsername)
         rebuildInbox()
     }
 
@@ -1605,22 +1916,6 @@ final class ChatMonitor: ObservableObject {
         // Fetch style profile to make suggestions match user's writing style
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
 
-        // Build feedback context from recent AI feedback
-        let recentFeedback = store.loadAIFeedback(limit: 10, msgUIDPrefix: "reply_suggest:")
-        let feedbackHint: String?
-        if !recentFeedback.isEmpty {
-            let adopted = recentFeedback.filter { $0.feedbackType == .truePositive }.count
-            let rejected = recentFeedback.filter { $0.feedbackType == .falsePositive }.count
-            let notes = recentFeedback.compactMap(\.note).filter { !$0.isEmpty }.prefix(3)
-            var parts: [String] = []
-            if adopted > 0 { parts.append("用户采纳了 \(adopted)/\(recentFeedback.count) 条建议") }
-            if rejected > 0 { parts.append("拒绝了 \(rejected) 条") }
-            if !notes.isEmpty { parts.append("偏好备注: \(notes.joined(separator: "; "))") }
-            feedbackHint = parts.isEmpty ? nil : parts.joined(separator: "。")
-        } else {
-            feedbackHint = nil
-        }
-
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
             senderName: item.senderName,
@@ -1628,10 +1923,32 @@ final class ChatMonitor: ObservableObject {
             isGroup: item.isGroup,
             askType: .none,
             relationship: "work",
-            styleHint: style.isEmpty ? nil : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))",
-            feedbackContext: feedbackHint
+            styleHint: buildStyleHint(style),
+            feedbackContext: buildFeedbackHint()
         )
         return await replySuggester.suggest(input) ?? []
+    }
+
+    /// Build the "用户采纳了 X/Y 条建议" hint from persisted AI feedback.
+    /// Extracted so both reply-suggestion entry points (ReplyDebt and
+    /// InboxItem) share the same learning signal — otherwise one path
+    /// gets smarter with use and the other stays frozen.
+    private func buildFeedbackHint() -> String? {
+        let recent = store.loadAIFeedback(limit: 10, msgUIDPrefix: "reply_suggest:")
+        guard !recent.isEmpty else { return nil }
+        let adopted = recent.filter { $0.feedbackType == .truePositive }.count
+        let rejected = recent.filter { $0.feedbackType == .falsePositive }.count
+        let notes = recent.compactMap(\.note).filter { !$0.isEmpty }.prefix(3)
+        var parts: [String] = []
+        if adopted > 0 { parts.append("用户采纳了 \(adopted)/\(recent.count) 条建议") }
+        if rejected > 0 { parts.append("拒绝了 \(rejected) 条") }
+        if !notes.isEmpty { parts.append("偏好备注: \(notes.joined(separator: "; "))") }
+        return parts.isEmpty ? nil : parts.joined(separator: "。")
+    }
+
+    private func buildStyleHint(_ style: StyleProfiler.StyleProfile) -> String? {
+        guard !style.isEmpty else { return nil }
+        return "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
     }
 
     /// Generate AI summaries for inbox items that don't have cached summaries.
@@ -1653,14 +1970,36 @@ final class ChatMonitor: ObservableObject {
                 // Check cache first
                 let cacheKey = "\(item.chatUsername)_\(Int(item.timestamp.timeIntervalSince1970))"
                 if let cached = self.summaryCache[cacheKey] {
-                    self.updateItemSummary(chatUsername: item.chatUsername, summary: cached)
+                    self.updateItemSummary(chatUsername: item.chatUsername, timestamp: item.timestamp, summary: cached)
                     continue
                 }
 
-                // Build InboxContext — use 50 messages within 48h for accurate summaries
+                // Build InboxContext — trigger message MUST be the latest
+                // inbound (peer) message in the window. Without the
+                // self-filter, a user's own ack ("收到") that came after
+                // the real trigger would be picked as the trigger
+                // message, the AI would faithfully summarize it as
+                // "收到", and the row would end up displaying
+                // "陈总: 收到" — where 陈总 is the peer sender from the
+                // debt item but "收到" is the summary of the user's
+                // own reply. Alignment with ReplyDebtScorer's
+                // latestInbound requires the same predicate here.
                 let msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
                 let cutoff48h = Date().addingTimeInterval(-48 * 3600)
-                let filtered = msgs.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff48h }
+                let myUname = readerRef.myUsername()
+                let myDisplay = readerRef.displayName(for: myUname)
+                let mySelfNames = readerRef.mySelfNames
+                let filtered = msgs.filter { msg in
+                    let inWindow = Date(timeIntervalSince1970: Double(msg.createTime)) >= cutoff48h
+                    let isSelf = MessageHelpers.isFromSelf(
+                        msg,
+                        chatUsername: item.chatUsername,
+                        myUsername: myUname,
+                        myDisplayName: myDisplay,
+                        mySelfNames: mySelfNames
+                    )
+                    return inWindow && !isSelf
+                }
                 guard let triggerMsg = filtered.first else { continue }
 
                 let context = InboxContextBuilder.build(
@@ -1668,7 +2007,7 @@ final class ChatMonitor: ObservableObject {
                     triggerMessage: triggerMsg,
                     reader: readerRef,
                     store: storeRef,
-                    myUsername: readerRef.myUsername(),
+                    myUsername: myUname,
                     contactEntry: storeRef.getContact(username: item.chatUsername),
                     whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
                 )
@@ -1679,21 +2018,186 @@ final class ChatMonitor: ObservableObject {
 
                 // Cache + update UI
                 self.summaryCache[cacheKey] = summary
-                self.updateItemSummary(chatUsername: item.chatUsername, summary: summary)
+                self.updateItemSummary(chatUsername: item.chatUsername, timestamp: item.timestamp, summary: summary)
             }
         }
     }
 
-    /// Update a single inbox item's aiSummary without rebuilding the entire list.
-    private func updateItemSummary(chatUsername: String, summary: String) {
-        if let idx = inboxItems.firstIndex(where: { $0.chatUsername == chatUsername }) {
-            inboxItems[idx].aiSummary = summary
+    /// Pre-generate ActionPanel data in the background. Fires ALL
+    /// items in parallel and commits each slot (analysis / replies)
+    /// to the cache as soon as it resolves, so the user doesn't
+    /// wait for the slowest round-trip in a serial queue.
+    ///
+    /// Earlier versions ran one item at a time (`for ... await`),
+    /// which meant a row with a slow 7-second analysis blocked
+    /// every subsequent row — if the user hovered the 3rd item
+    /// the spinner was guaranteed to show even though prefetch
+    /// had "started". Now each item has its own Task and each
+    /// piece (analysis vs replies) writes its slot independently.
+    ///
+    /// Cache key: chatUsername. Each slot entry is stamped with
+    /// the item's timestamp so a newer message invalidates it.
+    private func prefetchActionPanelData() {
+        let items = inboxItems.filter { $0.actionRequired }
+        guard !items.isEmpty else { return }
+
+        for item in items {
+            let ts = Int(item.timestamp.timeIntervalSince1970)
+            // Skip if we already have a fully-materialized entry
+            // for this exact (chat, timestamp) pair.
+            if let existing = actionPrefetch[item.chatUsername],
+               existing.timestamp == ts,
+               (existing.groupAnalysis != nil || existing.privateAnalysis != nil),
+               (!existing.hasProfile || !existing.replies.isEmpty) {
+                continue
+            }
+
+            let chatUsername = item.chatUsername
+            let captured = item  // for Task capture
+            let hasProfile = hasRelationshipProfile(for: chatUsername)
+
+            // Fire analysis and replies in parallel. Each writes
+            // back to the cache on completion — partial entries
+            // are valid and the UI can render whichever slot
+            // arrives first. Completion is recorded via
+            // `analysisAttempted` / `repliesAttempted` so a silent
+            // API failure switches the UI to an error state
+            // instead of spinning forever.
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                var group: ChatAnalyzer.GroupAnalysis?
+                var priv: ChatAnalyzer.PrivateAnalysis?
+                if captured.isGroup {
+                    let (result, _) = await self.analyzeGroupChat(item: captured)
+                    group = result
+                } else {
+                    let (result, _) = await self.analyzePrivateChat(item: captured)
+                    priv = result
+                }
+                guard self.isItemStillCurrent(chatUsername: chatUsername, ts: ts) else { return }
+                self.mergeActionPrefetch(
+                    chatUsername: chatUsername,
+                    ts: ts,
+                    groupAnalysis: group,
+                    privateAnalysis: priv,
+                    replies: nil,
+                    hasProfile: hasProfile,
+                    markAnalysisAttempted: true,
+                    markRepliesAttempted: false
+                )
+            }
+
+            if hasProfile {
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    let replies = (await self.loadReplySuggestions(for: captured)) ?? []
+                    guard self.isItemStillCurrent(chatUsername: chatUsername, ts: ts) else { return }
+                    self.mergeActionPrefetch(
+                        chatUsername: chatUsername,
+                        ts: ts,
+                        groupAnalysis: nil,
+                        privateAnalysis: nil,
+                        replies: replies,
+                        hasProfile: hasProfile,
+                        markAnalysisAttempted: false,
+                        markRepliesAttempted: true
+                    )
+                }
+            } else {
+                // No profile → no replies ever coming. Mark attempted
+                // immediately so UI doesn't wait on a task that
+                // won't run.
+                mergeActionPrefetch(
+                    chatUsername: chatUsername,
+                    ts: ts,
+                    groupAnalysis: nil,
+                    privateAnalysis: nil,
+                    replies: nil,
+                    hasProfile: hasProfile,
+                    markAnalysisAttempted: false,
+                    markRepliesAttempted: true
+                )
+            }
         }
     }
 
-    /// Clean summary cache entries not matching any current inbox item.
+    /// True when the inbox still contains an item matching the
+    /// given (chatUsername, timestamp) pair. Used by prefetch
+    /// tasks to avoid committing stale results for items that
+    /// have been dismissed / replaced during the AI round-trip.
+    private func isItemStillCurrent(chatUsername: String, ts: Int) -> Bool {
+        inboxItems.contains {
+            $0.chatUsername == chatUsername &&
+            Int($0.timestamp.timeIntervalSince1970) == ts
+        }
+    }
+
+    /// Merge partial prefetch results into the cache entry for a
+    /// (chat, timestamp) pair. `nil` result args leave the existing
+    /// slot alone; non-nil args overwrite it. `markAnalysisAttempted`
+    /// / `markRepliesAttempted` flip their flags to true regardless
+    /// of whether the corresponding result arg is nil — so a failed
+    /// API call still records "we tried". Timestamp mismatch wipes
+    /// and restarts the entry (a newer message invalidated it).
+    private func mergeActionPrefetch(
+        chatUsername: String,
+        ts: Int,
+        groupAnalysis: ChatAnalyzer.GroupAnalysis?,
+        privateAnalysis: ChatAnalyzer.PrivateAnalysis?,
+        replies: [SuggestedReply]?,
+        hasProfile: Bool,
+        markAnalysisAttempted: Bool,
+        markRepliesAttempted: Bool
+    ) {
+        let existing = actionPrefetch[chatUsername]
+        let sameGeneration = existing?.timestamp == ts
+        actionPrefetch[chatUsername] = PrefetchedAction(
+            timestamp: ts,
+            groupAnalysis: groupAnalysis ?? (sameGeneration ? existing?.groupAnalysis : nil),
+            privateAnalysis: privateAnalysis ?? (sameGeneration ? existing?.privateAnalysis : nil),
+            replies: replies ?? (sameGeneration ? existing?.replies ?? [] : []),
+            hasProfile: hasProfile,
+            analysisAttempted: markAnalysisAttempted || (sameGeneration && existing?.analysisAttempted == true),
+            repliesAttempted: markRepliesAttempted || (sameGeneration && existing?.repliesAttempted == true)
+        )
+    }
+
+    /// Update a single item's aiSummary without rebuilding the list.
+    /// Matches on `(chatUsername, timestamp)` because the same chat can
+    /// legitimately have multiple inbox entries (different unread
+    /// bursts), and the cache key is timestamped — matching on just
+    /// `chatUsername` could paint the wrong row's summary when two are
+    /// in flight.
+    ///
+    /// Also updates `handledItems`: if the user dismisses / snoozes /
+    /// silences a row between scan and summary arrival, the item
+    /// migrates out of `inboxItems`. Writing the summary there too
+    /// means "restore" brings back the enriched row instead of a blank
+    /// one that would force a re-summarize.
+    private func updateItemSummary(chatUsername: String, timestamp: Date, summary: String) {
+        let ts = Int(timestamp.timeIntervalSince1970)
+        if let idx = inboxItems.firstIndex(where: {
+            $0.chatUsername == chatUsername && Int($0.timestamp.timeIntervalSince1970) == ts
+        }) {
+            inboxItems[idx].aiSummary = summary
+            return
+        }
+        if let idx = handledItems.firstIndex(where: {
+            $0.chatUsername == chatUsername && Int($0.timestamp.timeIntervalSince1970) == ts
+        }) {
+            handledItems[idx].aiSummary = summary
+        }
+    }
+
+    /// Clean summary cache entries not matching any current inbox or
+    /// handled item. Without keeping handled items in the live set,
+    /// restoring a dismissed row would force re-summarization — we
+    /// keep them cached as long as the row is still visible somewhere.
     private func cleanSummaryCache() {
-        let activeKeys = Set(inboxItems.map { "\($0.chatUsername)_\(Int($0.timestamp.timeIntervalSince1970))" })
+        func key(_ item: InboxItem) -> String {
+            "\(item.chatUsername)_\(Int(item.timestamp.timeIntervalSince1970))"
+        }
+        let activeKeys = Set(inboxItems.map(key)).union(handledItems.map(key))
         summaryCache = summaryCache.filter { activeKeys.contains($0.key) }
     }
 
@@ -1749,7 +2253,8 @@ final class ChatMonitor: ObservableObject {
             messages: filtered,
             myUsername: myUname,
             myName: "我",
-            myDisplayName: reader.displayName(for: myUname)
+            myDisplayName: reader.displayName(for: myUname),
+            mySelfNames: reader.mySelfNames
         )
         return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }
@@ -1774,7 +2279,8 @@ final class ChatMonitor: ObservableObject {
             messages: filtered,
             myUsername: myUname,
             myName: "我",
-            myDisplayName: reader.displayName(for: myUname)
+            myDisplayName: reader.displayName(for: myUname),
+            mySelfNames: reader.mySelfNames
         )
         return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
     }
@@ -1785,9 +2291,6 @@ final class ChatMonitor: ObservableObject {
         }
         let relationship = "\(profile.relationship) (\(profile.hierarchy.label))"
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
-        let styleHint = style.isEmpty
-            ? nil
-            : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
 
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
@@ -1796,7 +2299,8 @@ final class ChatMonitor: ObservableObject {
             isGroup: item.isGroup,
             askType: item.askType,
             relationship: relationship,
-            styleHint: styleHint
+            styleHint: buildStyleHint(style),
+            feedbackContext: buildFeedbackHint()
         )
 
         guard let suggestions = await replySuggester.suggest(input) else { return nil }
@@ -1807,6 +2311,15 @@ final class ChatMonitor: ObservableObject {
 
     func hasRelationshipProfile(for username: String) -> Bool {
         store.getRelationshipProfile(username: username) != nil
+    }
+
+    /// Fetch the relationship profile for a chat (used by the weekly
+    /// report to decide whether a counterpart is superior / peer /
+    /// subordinate). Returns nil when the user hasn't inferred a
+    /// profile for this contact yet — the caller must handle that
+    /// gracefully (those items flow through "未分类" sections).
+    func relationshipProfile(for username: String) -> RelationshipProfile? {
+        store.getRelationshipProfile(username: username)
     }
 
     // MARK: - Autopilot

@@ -28,6 +28,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     private var walMtimes: [String: Date] = [:]      // relative path → last-seen WAL mtime
     private var contactsMtime: Date?                 // last-seen contact.db mtime
     private var keysMtime: Date?                     // last-seen all_keys.json mtime
+    /// Cache: chatUsername → relPath of the DB that contains its Msg_ table.
+    /// Avoids O(N_dbs) table lookups on every getMessages() call.
+    private var chatDBCache: [String: String] = [:]
+    /// Negative cache: chats we scanned all DBs for and found no table.
+    /// Cleared on each refreshIfChanged so new tables are discovered.
+    private var chatDBNegativeCache: Set<String> = []
 
     init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent) {
         let home = NSHomeDirectory()
@@ -40,6 +46,22 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         if cacheStrategy == .persistent {
             loadManifest()
         }
+        // Hydrate learned group-chat self-aliases from last run so the
+        // first scan after a restart already knows "我" vs "哆啦" and
+        // the AI summarizer doesn't mis-attribute the user's own
+        // messages on day one.
+        if let saved = UserDefaults.standard.stringArray(forKey: Self.learnedAliasesKey) {
+            self.mySelfNames = Set(saved)
+        }
+    }
+
+    private static let learnedAliasesKey = "wchud.learnedSelfAliases"
+
+    /// Persist the current `mySelfNames` set to UserDefaults so it
+    /// survives relaunches. Called after `getMessages` learns a new
+    /// alias from a realSenderId==0 + hint pair.
+    private func persistSelfAliases() {
+        UserDefaults.standard.set(Array(mySelfNames), forKey: Self.learnedAliasesKey)
     }
 
     static func cacheDir(for strategy: CacheStrategy) -> String {
@@ -67,6 +89,28 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         return nil
     }
 
+    /// Returns the wxid currently active in WeChat (the subdirectory
+    /// under `xwechat_files` whose `db_storage` exists), based on a
+    /// live filesystem probe — NOT the immutable `dbDir` captured at
+    /// init. When it differs from `myUsername()`, the user has logged
+    /// into a different account without restarting WeChatHUD and every
+    /// subsequent read is stale. Callers should prompt a restart.
+    func detectCurrentAccountWxid() -> String? {
+        guard let live = Self.autoDetectDBDir() else { return nil }
+        let parts = live.split(separator: "/")
+        guard parts.count >= 2 else { return nil }
+        return String(parts[parts.count - 2])
+    }
+
+    /// True when the auto-detected active WeChat account wxid differs
+    /// from the one our `dbDir` was opened with. Cheap enough to call
+    /// per scan; no DB I/O.
+    func hasAccountSwitched() -> Bool {
+        let current = detectCurrentAccountWxid() ?? ""
+        let mine = myUsername()
+        return !current.isEmpty && !mine.isEmpty && current != mine
+    }
+
     // MARK: - Key Loading
 
     func loadKeys(force: Bool = false) throws {
@@ -76,6 +120,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if !force, let cur = curMtime, let last = keysMtime, cur == last {
                 return  // unchanged, nothing to do
             }
+            // Keys file changed — new DBs may have appeared with new tables.
+            chatDBNegativeCache.removeAll()
             guard let data = fm.contents(atPath: keysPath) else {
                 throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
             }
@@ -252,21 +298,30 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             contactCache[username] = display
         }
 
-        // Build self-name aliases: wxid + any display name from contact.db
+        // Rebuild self-name aliases. Merge the base set (wxid + legacy
+        // short ID + contact.db display name) WITH any group-chat
+        // nicknames previously learned via `getMessages`'s
+        // realSenderId==0 branch — previously we `= [me]`'d which
+        // threw away every learned alias on every contact.db refresh.
+        // That's why the AI summarizer kept seeing the user's own
+        // messages labelled as the group nickname (e.g. "哆啦") and
+        // mis-attributing them to a bystander of the same name.
         let me = myUsername()
         if !me.isEmpty {
-            mySelfNames = [me]
+            var names = mySelfNames  // preserve learned aliases
+            names.insert(me)
             // WeChat DB Name2Id may store the legacy short ID (without _xxxx suffix).
             // Add it so isFromSelf can match group messages using the old format.
             if let underscoreRange = me.range(of: "_", options: .backwards),
                me[underscoreRange.upperBound...].count == 4,
                me[underscoreRange.upperBound...].allSatisfy({ $0.isHexDigit }) {
                 let shortId = String(me[..<underscoreRange.lowerBound])
-                if !shortId.isEmpty { mySelfNames.insert(shortId) }
+                if !shortId.isEmpty { names.insert(shortId) }
             }
             if let myDisplay = contactCache[me], myDisplay != me {
-                mySelfNames.insert(myDisplay)
+                names.insert(myDisplay)
             }
+            mySelfNames = names
             print("[WCHUD] mySelfNames: \(mySelfNames)")
         }
     }
@@ -333,7 +388,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     func findMessageDBs() -> [String] {
         keys.keys
-            .filter { $0.contains("message/message_") && $0.hasSuffix(".db") }
+            .filter {
+                $0.contains("message/message_") && $0.hasSuffix(".db")
+                && !$0.contains("message_fts") && !$0.contains("message_resource")
+            }
             .sorted()
     }
 
@@ -359,14 +417,28 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     // MARK: - Message Queries
 
     func getMessages(chatUsername: String, limit: Int = 50, sinceLocalId: Int? = nil) throws -> [MessageInfo] {
-        let msgDBs = findMessageDBs()
         var results: [MessageInfo] = []
 
-        for relPath in msgDBs {
+        // Negative cache: we already scanned all DBs and this chat has no table.
+        if chatDBNegativeCache.contains(chatUsername) {
+            return []
+        }
+
+        // Determine which DB(s) to search. Fast path: use cached mapping.
+        let dbsToSearch: [String]
+        if let cachedRel = chatDBCache[chatUsername] {
+            dbsToSearch = [cachedRel]
+        } else {
+            dbsToSearch = findMessageDBs()
+        }
+
+        for relPath in dbsToSearch {
             let decPath = try getDecryptedDB(relativePath: relPath)
             guard let tableName = try findMsgTable(chatUsername: chatUsername, dbPath: decPath) else {
                 continue
             }
+            // Remember this mapping for future calls.
+            chatDBCache[chatUsername] = relPath
 
             var db: OpaquePointer?
             guard Self.openReadonly(path: decPath, db: &db) else { continue }
@@ -410,22 +482,41 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 let parsed = WeChatParser.renderMessage(content: contentStr, baseType: baseType, isGroup: isGroup)
 
                 var senderUsername = name2id[realSenderId] ?? parsed.senderHint
-                // In group chats, name2id lookup can fail for the user's own
-                // messages because Name2Id only stores *other* members. Two
-                // detection strategies, in order of confidence:
-                //   1. hint is already a known self alias (wxid / contact name /
-                //      previously-learned group nickname).
-                //   2. realSenderId == 0 — WeChat stores 0 for the user's own
-                //      messages in Name2Id-indexed group tables.
-                // When either matches, learn the hint so future lookups are fast.
+                let me = myUsername()
+
+                // Any known self-identity marker (wxid, short ID,
+                // contact.db display name, or a previously-learned
+                // group nickname) that shows up as senderUsername
+                // gets promoted to the canonical wxid immediately.
+                // This catches the case where WeChat's Name2Id stores
+                // the user's OWN row with value = group nickname —
+                // without this, the nickname stayed as the sender
+                // and the AI summarizer couldn't tell it was the
+                // user talking.
+                if !senderUsername.isEmpty {
+                    if senderUsername == me || mySelfNames.contains(senderUsername) {
+                        senderUsername = me
+                    }
+                }
+
+                // In group chats where the lookup yielded nothing
+                // (name2id hit nothing), we try additional heuristics:
+                //   1. `parsed.senderHint` is already a known self
+                //      alias → promote.
+                //   2. `realSenderId == 0` — WeChat stores 0 for the
+                //      user's own messages in Name2Id-indexed group
+                //      tables. Learn the hint so future lookups are
+                //      fast, and persist it so a restart doesn't
+                //      reset the knowledge.
                 if isGroup && name2id[realSenderId] == nil {
                     let hint = parsed.senderHint
                     if mySelfNames.contains(hint) {
-                        senderUsername = myUsername()
+                        senderUsername = me
                     } else if realSenderId == 0 && !hint.isEmpty {
                         mySelfNames.insert(hint)
                         print("[WCHUD] learned self alias from group: '\(hint)'")
-                        senderUsername = myUsername()
+                        persistSelfAliases()
+                        senderUsername = me
                     }
                 }
                 let senderName = displayName(for: senderUsername)
@@ -445,6 +536,18 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 )
                 results.append(msg)
             }
+            break  // Msg_<hash> table lives in exactly one DB — no need to check others.
+        }
+
+        // Cache miss: cached DB no longer has this table. Retry with full scan.
+        if results.isEmpty && dbsToSearch.count == 1 {
+            chatDBCache.removeValue(forKey: chatUsername)
+            return try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId)
+        }
+
+        // Full scan found nothing — remember so we skip next time.
+        if results.isEmpty && dbsToSearch.count > 1 {
+            chatDBNegativeCache.insert(chatUsername)
         }
 
         return results.sorted { $0.createTime > $1.createTime }

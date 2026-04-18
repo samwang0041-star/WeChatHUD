@@ -172,6 +172,7 @@ actor AIReplySuggester {
             ],
             "temperature": config.temperature,
             "max_tokens": config.maxTokens,
+            "enable_thinking": false,
             "stream": false
         ]
 

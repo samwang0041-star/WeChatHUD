@@ -26,6 +26,7 @@ struct ExtendedTabsView: View {
         case replyDebt
         case catchup
         case commitments
+        case workbench    // 工作台: bidirectional discussion items
         case dailyReport
         case autopilot
         case insight
@@ -79,12 +80,13 @@ struct ExtendedTabsView: View {
                     case .replyDebt:   replyDebtContent
                     case .catchup:     CatchupTabView()
                     case .commitments: CommitmentTabView()
+                    case .workbench:   WorkbenchTabView()
                     case .dailyReport: DailyReportTabView()
                     case .autopilot:   AutopilotTabView()
                     case .insight:
                         Color.clear
                             .frame(height: 0)
-                            .onAppear { panelState.onShowInsight?() }
+                            .onAppear { panelState.onShowInsight() }
                     }
                 }
             }
@@ -136,6 +138,12 @@ struct ExtendedTabsView: View {
             tabButton(.catchup, label: "追赶", count: 0)
             if !monitor.commitments.isEmpty {
                 tabButton(.commitments, label: "承诺", count: monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count)
+            }
+            // 工作台 counts only pending items so the badge tracks what
+            // still needs attention, not archived history.
+            let workbenchPending = monitor.discussionItems.filter { $0.status == .pending }.count
+            if workbenchPending > 0 || !monitor.discussionItems.isEmpty {
+                tabButton(.workbench, label: "工作台", count: workbenchPending)
             }
             tabButton(.dailyReport, label: "日报", count: 0)
             tabButton(.insight, label: "洞察", count: 0)

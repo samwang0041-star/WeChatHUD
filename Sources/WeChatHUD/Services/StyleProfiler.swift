@@ -117,8 +117,9 @@ actor StyleProfiler {
 
         let myUname = reader.myUsername()
         let myDisplay = reader.displayName(for: myUname)
+        let mySelfNames = reader.mySelfNames
         let outgoing = messages.filter { msg in
-            Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay)
+            Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, mySelfNames: mySelfNames)
                 && !excludeMsgUIDs.contains(msg.id)
         }
 
@@ -155,7 +156,7 @@ actor StyleProfiler {
 
         // --- Message pairs (question → answer) ---
         let chrono = Array(messages.reversed())
-        let pairs = extractMessagePairs(chrono: chrono, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, excludeMsgUIDs: excludeMsgUIDs)
+        let pairs = extractMessagePairs(chrono: chrono, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, mySelfNames: mySelfNames, excludeMsgUIDs: excludeMsgUIDs)
 
         // --- Few-shot examples (diverse, skip very short or system-like) ---
         let examples = outgoing
@@ -187,13 +188,20 @@ actor StyleProfiler {
     }
 
     /// Delegate to the canonical implementation in MessageHelpers.
+    /// `mySelfNames` carries the learned display-name aliases for the
+    /// user — critical for group chats where WeChat stores the
+    /// sender's identifier as a display name rather than the wxid. Must
+    /// be forwarded at every call site, otherwise the user's own
+    /// group-chat messages get classified as "peer" and pollute the
+    /// tone/rhythm analytics.
     private nonisolated static func isFromSelf(
         _ msg: MessageInfo,
         chatUsername: String,
         myUsername: String,
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
     ) -> Bool {
-        MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+        MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
     }
 
     // MARK: - Deep Style Analysis
@@ -285,13 +293,15 @@ actor StyleProfiler {
     /// Only includes pairs where reply came within 5 minutes (same conversation context).
     private func extractMessagePairs(
         chrono: [MessageInfo], chatUsername: String,
-        myUsername: String, myDisplayName: String = "", excludeMsgUIDs: Set<String>
+        myUsername: String, myDisplayName: String = "",
+        mySelfNames: Set<String> = [],
+        excludeMsgUIDs: Set<String>
     ) -> [(question: String, answer: String)] {
         var pairs: [(String, String)] = []
         var lastPeerMsg: (text: String, time: Int)?
 
         for msg in chrono {
-            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
             if !fromSelf {
                 lastPeerMsg = (msg.text, msg.createTime)
             } else if let peer = lastPeerMsg, !excludeMsgUIDs.contains(msg.id) {
@@ -432,6 +442,7 @@ actor StyleProfiler {
 
         let myUname = reader.myUsername()
         let myDisplay = reader.displayName(for: myUname)
+        let mySelfNames = reader.mySelfNames
         // Collect reply pairs: (peer message → my reply) with interval
         var workDelays: [Int] = []
         var eveningDelays: [Int] = []
@@ -445,7 +456,7 @@ actor StyleProfiler {
         var lastPeerIndex: Int?
 
         for (idx, msg) in chronoArray.enumerated() {
-            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay)
+            let fromSelf = Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, mySelfNames: mySelfNames)
             if !fromSelf {
                 lastPeerMsgTime = msg.createTime
                 lastPeerIndex = idx
@@ -473,7 +484,7 @@ actor StyleProfiler {
         // Count ALL late-night incoming messages (paired + unpaired)
         var totalLateNightIncoming = 0
         for msg in chronoArray {
-            if !Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay) {
+            if !Self.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, mySelfNames: mySelfNames) {
                 if Self.timePeriod(unixTime: msg.createTime) == .lateNight {
                     totalLateNightIncoming += 1
                 }

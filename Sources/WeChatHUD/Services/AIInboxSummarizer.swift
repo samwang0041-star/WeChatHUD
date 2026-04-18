@@ -51,18 +51,24 @@ actor AIInboxSummarizer {
             return nil
         }
 
-        // Build context messages string — use up to 20 messages for accurate summaries
-        let contextStr = context.recentMessages.prefix(20).map { msg in
-            "\(msg.senderName): \(msg.text)"
-        }.joined(separator: "\n")
-
-        let commitmentsStr = context.pendingCommitments.isEmpty
-            ? "无"
-            : context.pendingCommitments.map { $0.content }.joined(separator: "; ")
-
-        let asksStr = context.pendingAsks.isEmpty
-            ? "无"
-            : context.pendingAsks.map { $0.summary }.joined(separator: "; ")
+        // Use the pre-tagged transcript from InboxContextBuilder. It
+        // labels each line as "我: ..." for user-outbound messages
+        // and "{senderName}: ..." for peer messages — without this,
+        // the model can't tell the user's own "收到" from a peer
+        // reply and has produced summaries like "对方仅回复收到"
+        // for messages the user actually sent.
+        //
+        // We deliberately do NOT pass pendingCommitments /
+        // pendingAsks — they previously polluted summaries with
+        // unrelated old tasks. Example: a @华武 ask from 3 days ago
+        // about "费率谈判材料" got blended into a completely
+        // different trigger message about 微银通, producing
+        // "发材料、交计划、准备会议" when none of those appeared
+        // in the actual message. ChatAnalyzer (which has a richer
+        // reasoning loop) is the right place to cross-reference
+        // pending items; the inbox summarizer's single job is
+        // "what does THIS message ask".
+        let contextStr = context.taggedTranscript
 
         let userPrompt = template
             .replacingOccurrences(of: "{sender_name}", with: context.triggerMessage.senderName)
@@ -72,8 +78,6 @@ actor AIInboxSummarizer {
             .replacingOccurrences(of: "{message_body}", with: context.triggerMessageText)
             .replacingOccurrences(of: "{context_messages}", with: contextStr)
             .replacingOccurrences(of: "{my_last_reply}", with: context.myLastReplyText ?? "无")
-            .replacingOccurrences(of: "{pending_commitments}", with: commitmentsStr)
-            .replacingOccurrences(of: "{pending_asks}", with: asksStr)
 
         let result = await call(userPrompt)
         let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
@@ -132,6 +136,7 @@ actor AIInboxSummarizer {
             ],
             "temperature": config.temperature,
             "max_tokens": config.maxTokens,
+            "enable_thinking": false,
             "stream": false
         ]
 

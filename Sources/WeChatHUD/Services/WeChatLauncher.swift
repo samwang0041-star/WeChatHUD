@@ -2,6 +2,19 @@ import AppKit
 import ApplicationServices
 import CoreGraphics
 
+extension Notification.Name {
+    /// Posted immediately before WeChatLauncher begins activating WeChat.
+    /// Observed by AppDelegate to collapse the HUD panel so it doesn't
+    /// overlap WeChat while the user interacts with it.
+    static let hudWillOpenWeChat = Notification.Name("WeChatHUD.WillOpenWeChat")
+
+    /// Posted when WeChatLauncher fails in a way the user should see
+    /// (Accessibility not granted, WeChat not running, search field
+    /// missing, activation timeout). `userInfo["message"]` carries the
+    /// human-readable message for the toast. Posted on main.
+    static let hudLauncherFailed = Notification.Name("WeChatHUD.LauncherFailed")
+}
+
 /// Bridge between the HUD and WeChat.app for click-to-open navigation.
 ///
 /// WeChat macOS has no URL scheme or scripting API for jumping directly
@@ -48,6 +61,19 @@ enum WeChatLauncher {
         }
     }
 
+    /// Surface a user-visible failure message. Previously every
+    /// failure path just logged to `/tmp/wchud_launcher.log` — the
+    /// user had no way to know why "在微信中打开" did nothing.
+    private static func notifyUser(_ message: String) {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .hudLauncherFailed,
+                object: nil,
+                userInfo: ["message": message]
+            )
+        }
+    }
+
     // Virtual key codes (ANSI layout). These are hardware codes that
     // don't change with keyboard layout — good for our use case since
     // we're typing modifier+letter, not text.
@@ -64,9 +90,18 @@ enum WeChatLauncher {
     static func openChat(named chatName: String) {
         log("openChat called: \(chatName)")
 
+        // Signal the HUD to get out of the way — we're about to raise WeChat
+        // to the foreground and don't want the panel overlapping its UI.
+        // Fire on main so Combine/UI sinks dispatch correctly regardless of
+        // the caller thread.
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .hudWillOpenWeChat, object: nil)
+        }
+
         guard let app = runningWeChat() else {
             log("WeChat not running — abort")
             NSSound.beep()
+            notifyUser("微信未运行 — 请先打开微信")
             return
         }
         log("WeChat found: \(app.bundleIdentifier ?? "?") pid=\(app.processIdentifier)")
@@ -78,6 +113,7 @@ enum WeChatLauncher {
         log("AXIsProcessTrusted = \(trusted)")
         if !trusted {
             log("Accessibility not granted — prompt surfaced, caller should retry")
+            notifyUser("需要辅助功能权限才能打开微信会话 — 已弹出系统授权请求")
             return
         }
 
@@ -96,6 +132,7 @@ enum WeChatLauncher {
             guard activated else {
                 log("activation failed; restoring clipboard")
                 restoreClipboard(saved: saved)
+                notifyUser("打开失败：无法激活微信窗口")
                 return
             }
 
@@ -103,6 +140,7 @@ enum WeChatLauncher {
                 guard isFront else {
                     log("WeChat never became frontmost; aborting")
                     restoreClipboard(saved: saved)
+                    notifyUser("打开失败：微信未能切到前台")
                     return
                 }
                 // Small settle pass so the AX tree has the freshest
@@ -171,6 +209,7 @@ enum WeChatLauncher {
         guard let searchField = findSearchField(in: axApp) else {
             log("AX: search field not found, giving up")
             restoreClipboard(saved: savedClipboard)
+            notifyUser("打开失败：微信搜索框未找到（可能微信版本已更新）")
             return
         }
         log("AX: found search field; clicking to activate")
@@ -218,6 +257,7 @@ enum WeChatLauncher {
         guard attempts > 0 else {
             log("AX: search_item_\(chatName) never appeared, giving up")
             restoreClipboard(saved: savedClipboard)
+            notifyUser("打开失败：在微信中没找到会话「\(chatName)」")
             return
         }
 

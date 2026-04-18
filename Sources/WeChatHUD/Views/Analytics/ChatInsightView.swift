@@ -64,8 +64,7 @@ struct ChatInsightView: View {
             detailArea
                 .frame(minWidth: 540)
         }
-        .frame(minWidth: 900, minHeight: 620)
-        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             fixStaleDisplayNames()
             computeAllStats()
@@ -517,33 +516,41 @@ struct ChatInsightView: View {
     }
 
     // MARK: - Overview Dashboard (no chat selected)
+    //
+    // Redesigned around four tiers of info, in descending priority:
+    //  1. Header      — scope / window picker, refresh, copy-as-report
+    //  2. Hero        — AI briefing headline + 1 suggestion, or CTA
+    //  3. Attention   — prominent red/orange alert bar if anything's
+    //                   overdue; one-tap navigation to the chat
+    //  4. KPI grid    — six healthy/degraded/alerting numbers
+    //  5. Collapsibles — time, relationships, work/life, top chats,
+    //                    pressure — each folded by default with a
+    //                    one-line summary so the user decides which
+    //                    detail to unfurl
+
+    /// Tracks which collapsible detail modules are currently expanded.
+    /// String IDs rather than an enum so adding new modules doesn't
+    /// require a type change everywhere.
+    @State private var expandedModules: Set<String> = []
 
     private var overviewDashboard: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if monitor.insightLoading {
-                    VStack(spacing: 10) {
-                        ProgressView(value: monitor.insightProgressFraction)
-                            .frame(width: 240)
-                        Text(monitor.insightProgress)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 14) {
+                if let overview = overview, statsLoaded {
+                    overviewHeader
+                    if monitor.insightLoading {
+                        inlineLoadingBanner
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 40)
-                } else if let briefing = monitor.globalBriefing {
-                    globalBriefingContent(briefing)
-                } else if statsLoaded {
-                    overviewStatsContent
+                    heroSection(overview: overview, briefing: monitor.globalBriefing)
+                    attentionAlertBar(overview: overview, briefing: monitor.globalBriefing)
+                    kpiGrid(overview: overview)
+                    collapsibleTimePattern(overview)
+                    collapsibleRelationships(overview)
+                    collapsibleWorkLife(overview)
+                    collapsibleTopChats()
+                    collapsiblePressure(overview)
                 } else {
-                    VStack(spacing: 12) {
-                        ProgressView()
-                            .controlSize(.regular)
-                        Text("正在加载统计数据...")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    initialLoadingState
                 }
             }
             .padding(24)
@@ -552,267 +559,737 @@ struct ChatInsightView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
     }
 
-    private let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+    private var initialLoadingState: some View {
+        VStack(spacing: 12) {
+            ProgressView().controlSize(.regular)
+            Text("正在加载统计数据…")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, 80)
+    }
 
-    @ViewBuilder
-    private var overviewStatsContent: some View {
-        if let o = overview {
-            // Header
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("全局概览")
-                        .font(.system(size: 18, weight: .bold))
-                    Text("\(selectedScope.rawValue) · \(selectedWindow.rawValue)")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
+    private var inlineLoadingBanner: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .scaleEffect(0.6)
+                .frame(width: 12, height: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("AI 正在分析…")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Text(monitor.insightProgress)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 0)
+            ProgressView(value: monitor.insightProgressFraction)
+                .frame(width: 120)
+        }
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    // MARK: Header
+
+    private var overviewHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("全局概览")
+                    .font(.system(size: 20, weight: .bold))
+                Text("\(selectedScope.rawValue) · \(selectedWindow.rawValue) · \(overview?.totalMessages ?? 0) 条消息")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 6) {
                     Picker("", selection: $selectedScope) {
                         ForEach(Scope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented).frame(width: 160)
-                    Picker("", selection: $selectedWindow) {
-                        ForEach(TimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented).frame(width: 280)
-                }
-            }
-
-            // ===== D1: Communication Profile =====
-            HStack(spacing: 12) {
-                overviewStatCard("消息总数", "\(o.totalMessages)", "bubble.left.and.bubble.right", .blue)
-                overviewStatCard("活跃聊天", "\(o.activeChats)/\(o.totalChats)", "message", .purple)
-                overviewStatCard("参与者", "\(o.participants)", "person.2", .cyan)
-                overviewStatCard("我的消息", "\(o.myMessages)", "pencil.line", .orange)
-            }
-
-            HStack(spacing: 12) {
-                overviewStatCard("发起率", "\(Int(o.initiationRate * 100))%", "arrow.up.right", .teal)
-                overviewStatCard("群聊", "\(o.groupChats)个/\(o.groupMessages)条", "person.3", .indigo)
-                overviewStatCard("私聊", "\(o.privateChats)个/\(o.privateMessages)条", "person", .mint)
-                overviewStatCard("我的占比", "\(Int(o.myRatio * 100))%", "chart.pie", .blue)
-            }
-
-            // Message type distribution
-            if !o.typeDistribution.isEmpty {
-                moduleCardFull("消息类型", icon: "doc.text") {
-                    HStack(spacing: 12) {
-                        ForEach(o.typeDistribution.prefix(5), id: \.type) { item in
-                            VStack(spacing: 2) {
-                                Text("\(item.count)").font(.system(size: 12, weight: .bold).monospacedDigit())
-                                Text(item.type).font(.system(size: 9)).foregroundColor(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
                     }
-                }
-            }
-
-            // ===== D2: Time Patterns =====
-            moduleCardFull("时段分布", icon: "clock") {
-                hourlyBarChart(o.messagesByHour).frame(height: 100)
-                HStack(spacing: 16) {
-                    timeSlotChip("早间 6-9", count: o.morningMessages, color: .orange)
-                    timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
-                    timeSlotChip("晚间 18-23", count: o.eveningMessages, color: .purple)
-                    timeSlotChip("深夜 23-6", count: o.nightMessages, color: .red)
-                    Spacer()
-                    Text("非工时 \(Int(o.afterHoursRatio * 100))%")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(o.afterHoursRatio > 0.4 ? .red : .secondary)
-                }
-            }
-
-            // Weekday distribution
-            if o.messagesByWeekday.contains(where: { $0 > 0 }) {
-                moduleCardFull("星期分布", icon: "calendar") {
-                    HStack(spacing: 4) {
-                        ForEach(0..<7, id: \.self) { i in
-                            let val = o.messagesByWeekday[i]
-                            let maxVal = max(o.messagesByWeekday.max() ?? 1, 1)
-                            VStack(spacing: 4) {
-                                Spacer(minLength: 0)
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill((i == 0 || i == 6) ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6))
-                                    .frame(width: 30, height: CGFloat(val) / CGFloat(maxVal) * 60)
-                                Text(weekdayNames[i]).font(.system(size: 9)).foregroundColor(.secondary)
-                            }
-                        }
-                    }.frame(height: 80)
-                    HStack {
-                        Text("工作日 \(o.weekdayTotal)条").font(.system(size: 10)).foregroundColor(.blue)
-                        Spacer()
-                        Text("周末 \(o.weekendTotal)条").font(.system(size: 10)).foregroundColor(.orange)
-                        Spacer()
-                        Text("最忙 \(weekdayNames[o.busiestWeekday])").font(.system(size: 10)).foregroundColor(.secondary)
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                    Button(action: { Task { await monitor.loadInsight(force: true) } }) {
+                        Image(systemName: monitor.insightLoading ? "stop.circle" : "arrow.clockwise")
+                            .font(.system(size: 11))
                     }
-                }
-            }
-
-            // ===== D3: Response Health =====
-            HStack(spacing: 12) {
-                overviewStatCard("平均响应", formatResponseTime(o.avgResponseSeconds), "timer", .green)
-                overviewStatCard("回复率", "\(Int(o.responseRate * 100))%", "arrowshape.turn.up.left", .teal)
-                overviewStatCard("待回超时", "\(o.overdueChats)", "exclamationmark.circle", o.overdueChats > 0 ? .red : .gray)
-                overviewStatCard("待办承诺", "\(o.pendingCommitments)", "checkmark.circle", o.overdueCommitments > 0 ? .red : .green)
-            }
-
-            // ===== D4: Relationship Network =====
-            HStack(spacing: 12) {
-                moduleCard("联系人层级", icon: "person.3") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(o.tierDistribution, id: \.tier) { item in
-                            HStack { Text(item.tier).font(.system(size: 11)).foregroundColor(.secondary); Spacer(); Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit()) }
-                        }
+                    .disabled(monitor.insightLoading)
+                    .help("重新生成 AI 简报")
+                    Button(action: copyAsReport) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
                     }
+                    .help("复制为 Markdown 周报")
                 }
-                moduleCard("角色分布", icon: "person.text.rectangle") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(o.roleDistribution.prefix(6), id: \.role) { item in
-                            HStack { Text(item.role).font(.system(size: 11)).foregroundColor(.secondary); Spacer(); Text("\(item.count)").font(.system(size: 11, weight: .medium).monospacedDigit()) }
-                        }
-                    }
+                Picker("", selection: $selectedWindow) {
+                    ForEach(TimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
-            }
-
-            if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
-                HStack(spacing: 12) {
-                    moduleCard("沟通最均衡", icon: "equal.circle") {
-                        VStack(alignment: .leading, spacing: 2) { Text(sym.name).font(.system(size: 12, weight: .medium)); Text("对等度 \(Int(sym.ratio * 100))%").font(.system(size: 10)).foregroundColor(.green) }
-                    }
-                    moduleCard("沟通最失衡", icon: "arrow.left.arrow.right") {
-                        VStack(alignment: .leading, spacing: 2) { Text(asym.name).font(.system(size: 12, weight: .medium)); Text("对等度 \(Int(asym.ratio * 100))%").font(.system(size: 10)).foregroundColor(.orange) }
-                    }
-                }
-            }
-
-            // ===== D5: Work/Life Balance =====
-            HStack(spacing: 12) {
-                moduleCard("工作/生活", icon: "briefcase") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
-                        categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
-                        categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
-                    }
-                }
-                moduleCard("边界健康", icon: "shield.checkered") {
-                    VStack(spacing: 8) {
-                        ZStack {
-                            Circle().stroke(Color.gray.opacity(0.2), lineWidth: 8)
-                            Circle().trim(from: 0, to: Double(o.boundaryScore) / 100)
-                                .stroke(o.boundaryScore >= 70 ? Color.green : o.boundaryScore >= 40 ? Color.orange : Color.red, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                            Text("\(o.boundaryScore)").font(.system(size: 16, weight: .bold))
-                        }.frame(width: 60, height: 60)
-                        Text("非工时工作 \(o.workAfterHoursCount)条")
-                            .font(.system(size: 10)).foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            // ===== D6: Influence =====
-            moduleCardFull("影响力分布", icon: "chart.bar") {
-                HStack(spacing: 12) {
-                    influencePill("上级", count: o.superiorMessages, color: .red)
-                    influencePill("同级", count: o.peerMessages, color: .blue)
-                    influencePill("外部", count: o.externalMessages, color: .orange)
-                    influencePill("私人", count: o.personalMessages, color: .green)
-                    Spacer()
-                    Text("活跃群 \(o.activeGroupCount)个 · @我 \(o.atMentionChats)次")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
-                }
-            }
-
-            // ===== D7: Commitment Reliability =====
-            if o.pendingCommitments + o.overdueCommitments + o.fulfilledCommitments > 0 {
-                moduleCardFull("承诺可靠性", icon: "checkmark.shield") {
-                    HStack(spacing: 16) {
-                        commitmentPill("待办", count: o.pendingCommitments, color: .blue)
-                        commitmentPill("超期", count: o.overdueCommitments, color: .red)
-                        commitmentPill("已完成", count: o.fulfilledCommitments, color: .green)
-                        Spacer()
-                        Text("完成率 \(Int(o.commitmentCompletionRate * 100))%")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(o.commitmentCompletionRate >= 0.8 ? .green : .orange)
-                    }
-                }
-            }
-
-            // ===== D8: Attention Distribution =====
-            moduleCardFull("注意力分配", icon: "eye") {
-                HStack(spacing: 16) {
-                    VStack(spacing: 2) {
-                        Text("\(Int(o.vipMessageRatio * 100))%").font(.system(size: 14, weight: .bold))
-                        Text("VIP 占比").font(.system(size: 9)).foregroundColor(.secondary)
-                    }
-                    Divider().frame(height: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(o.topTimeBlackHoles.prefix(3), id: \.name) { item in
-                            HStack {
-                                Text(item.name).font(.system(size: 11)).lineLimit(1)
-                                Spacer()
-                                Text("\(item.count)条").font(.system(size: 10).monospacedDigit()).foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
-                if !o.neglectedHighValue.isEmpty {
-                    Divider()
-                    HStack(spacing: 4) {
-                        Image(systemName: "exclamationmark.triangle").font(.system(size: 10)).foregroundColor(.orange)
-                        Text("被忽略的重要联系人：\(o.neglectedHighValue.map(\.name).prefix(3).joined(separator: "、"))")
-                            .font(.system(size: 10)).foregroundColor(.orange)
-                    }
-                }
-            }
-
-            // ===== D9: One-way + Top chats =====
-            if !o.oneWayChats.isEmpty {
-                moduleCardFull("单向沟通 (对方远多于你)", icon: "arrow.down.circle") {
-                    ForEach(o.oneWayChats.prefix(3), id: \.name) { chat in
-                        HStack {
-                            Text(chat.name).font(.system(size: 12)).lineLimit(1); Spacer()
-                            Text("对方 \(chat.theirCount) / 你 \(chat.myCount)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                        }.padding(.vertical, 2)
-                    }
-                }
-            }
-
-            moduleCardFull("最活跃聊天", icon: "flame") {
-                let sorted = allStats.values.sorted { $0.messageCount > $1.messageCount }
-                ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
-                    topChatRow(rank: idx + 1, stats: s)
-                }
-            }
-
-            // ===== D10: Pressure Signals =====
-            moduleCardFull("压力信号", icon: "waveform.path.ecg") {
-                HStack(spacing: 16) {
-                    pressurePill("待处理请求", count: o.pendingAsks, threshold: 5)
-                    pressurePill("紧急请求", count: o.urgentAsks, threshold: 1)
-                    pressurePill("撤回消息", count: o.recalledMessages, threshold: 3)
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        let density = o.recentDensityRatio
-                        Text(density > 1.3 ? "近期偏忙" : density < 0.7 ? "近期偏闲" : "节奏正常")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(density > 1.3 ? .red : density < 0.7 ? .green : .secondary)
-                        Text("7日/均值 \(String(format: "%.0f%%", density * 100))")
-                            .font(.system(size: 9)).foregroundColor(.secondary)
-                    }
-                }
-            }
-
-            // Hint for AI analysis
-            if monitor.globalBriefing == nil {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles").font(.system(size: 12)).foregroundColor(.orange)
-                    Text("点击左下方「全局分析」可生成 AI 全景简报").font(.system(size: 12)).foregroundColor(.secondary)
-                }
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.05)).cornerRadius(8)
+                .pickerStyle(.segmented)
+                .frame(width: 280)
             }
         }
     }
+
+    // MARK: Hero
+
+    @ViewBuilder
+    private func heroSection(overview: ChatInsightEngine.GlobalOverview, briefing: GlobalBriefing?) -> some View {
+        if let briefing = briefing {
+            briefingHero(briefing)
+        } else {
+            ctaHero(overview: overview)
+        }
+    }
+
+    private func briefingHero(_ briefing: GlobalBriefing) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                    .foregroundColor(.accentColor)
+                Text("AI 全景简报 · \(briefing.date)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                Spacer()
+                if !briefing.overallMood.isEmpty {
+                    Text(briefing.overallMood)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(4)
+                }
+            }
+            Text(briefing.headline)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !briefing.topSuggestion.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .padding(.top, 2)
+                    Text(briefing.topSuggestion)
+                        .font(.system(size: 12))
+                        .foregroundColor(.primary.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if !briefing.blindSpots.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("盲区提醒")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    ForEach(briefing.blindSpots.prefix(3), id: \.self) { spot in
+                        HStack(alignment: .top, spacing: 4) {
+                            Text("•")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                            Text(spot)
+                                .font(.system(size: 11))
+                                .foregroundColor(.primary.opacity(0.8))
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [Color.accentColor.opacity(0.12), Color.accentColor.opacity(0.04)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+        )
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+        )
+    }
+
+    private func ctaHero(overview: ChatInsightEngine.GlobalOverview) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 20))
+                .foregroundColor(.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("生成 AI 全景简报")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("基于 \(overview.totalMessages) 条消息，AI 会提炼需要你行动的事、跨对话话题、暗信号等")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button(action: { Task { await monitor.loadInsight(force: true) } }) {
+                Text("开始分析")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(monitor.insightLoading)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.06))
+        .cornerRadius(10)
+    }
+
+    // MARK: Attention alert bar — tap-to-act on overdue things
+
+    @ViewBuilder
+    private func attentionAlertBar(overview: ChatInsightEngine.GlobalOverview, briefing: GlobalBriefing?) -> some View {
+        // Prefer the AI's action-required items when we have them
+        // (more specific), fall back to raw overdue counts.
+        let aiItems = briefing?.actionRequired ?? []
+        let hasOverdueChats = overview.overdueChats > 0
+        let hasOverdueCommits = overview.overdueCommitments > 0
+        let hasNeglected = !overview.neglectedHighValue.isEmpty
+        let anything = !aiItems.isEmpty || hasOverdueChats || hasOverdueCommits || hasNeglected
+
+        if anything {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
+                    Text("需要你立即处理")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.red)
+                    Spacer()
+                }
+
+                if !aiItems.isEmpty {
+                    ForEach(Array(aiItems.prefix(5).enumerated()), id: \.offset) { _, item in
+                        actionItemRow(
+                            source: item.source,
+                            what: item.what,
+                            hours: item.waitingHours,
+                            urgency: item.urgency
+                        )
+                    }
+                } else {
+                    // Synthesize from raw counts when AI hasn't analyzed yet.
+                    if hasOverdueChats {
+                        actionCountRow(
+                            icon: "clock.badge.exclamationmark",
+                            text: "\(overview.overdueChats) 个白名单对话待回超时",
+                            color: .red
+                        )
+                    }
+                    if hasOverdueCommits {
+                        actionCountRow(
+                            icon: "checkmark.circle.trianglebadge.exclamationmark",
+                            text: "\(overview.overdueCommitments) 条承诺已过期",
+                            color: .red
+                        )
+                    }
+                    if hasNeglected {
+                        let preview = overview.neglectedHighValue.prefix(3).map(\.name).joined(separator: "、")
+                        actionCountRow(
+                            icon: "person.slash",
+                            text: "重要联系人冷落: \(preview)",
+                            color: .orange
+                        )
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.red.opacity(0.06))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.red.opacity(0.15), lineWidth: 0.5)
+            )
+        }
+    }
+
+    private func actionItemRow(source: String, what: String, hours: Double, urgency: String) -> some View {
+        Button(action: { jumpToChatByName(source) }) {
+            HStack(alignment: .top, spacing: 8) {
+                Circle()
+                    .fill(urgency == "高" ? Color.red : urgency == "中" ? Color.orange : Color.gray)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 6)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(source)
+                            .font(.system(size: 12, weight: .semibold))
+                        if hours > 0 {
+                            Text("· 等 \(formatHoursShort(hours))")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Text(what)
+                        .font(.system(size: 11))
+                        .foregroundColor(.primary.opacity(0.75))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                    .foregroundColor(.secondary.opacity(0.5))
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func actionCountRow(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(.primary.opacity(0.85))
+            Spacer()
+        }
+    }
+
+    // MARK: KPI grid — 6 numbers with contextual status
+
+    private func kpiGrid(overview o: ChatInsightEngine.GlobalOverview) -> some View {
+        let rowA = [
+            KPI(
+                label: "消息总量",
+                value: "\(o.totalMessages)",
+                hint: densityHint(o.recentDensityRatio),
+                status: densityStatus(o.recentDensityRatio)
+            ),
+            KPI(
+                label: "非工时占比",
+                value: "\(Int(o.afterHoursRatio * 100))%",
+                hint: o.afterHoursRatio > 0.4 ? "偏多" : "健康",
+                status: o.afterHoursRatio > 0.4 ? .red : o.afterHoursRatio > 0.2 ? .orange : .green
+            ),
+            KPI(
+                label: "平均响应",
+                value: formatResponseTime(o.avgResponseSeconds),
+                hint: responseHint(o.avgResponseSeconds),
+                status: responseStatus(o.avgResponseSeconds)
+            ),
+        ]
+        let rowB = [
+            KPI(
+                label: "回复率",
+                value: "\(Int(o.responseRate * 100))%",
+                hint: o.responseRate >= 0.8 ? "稳定" : o.responseRate >= 0.6 ? "一般" : "偏低",
+                status: o.responseRate >= 0.8 ? .green : o.responseRate >= 0.6 ? .orange : .red
+            ),
+            KPI(
+                label: "承诺履约",
+                value: "\(Int(o.commitmentCompletionRate * 100))%",
+                hint: "\(o.fulfilledCommitments) 已完成 / \(o.overdueCommitments) 超期",
+                status: o.commitmentCompletionRate >= 0.8 ? .green : o.commitmentCompletionRate >= 0.6 ? .orange : .red
+            ),
+            KPI(
+                label: "VIP 占比",
+                value: "\(Int(o.vipMessageRatio * 100))%",
+                hint: o.vipMessageRatio < 0.1 ? "注意力偏离" : "合理",
+                status: o.vipMessageRatio < 0.1 ? .orange : .green
+            ),
+        ]
+        return VStack(spacing: 10) {
+            HStack(spacing: 10) { ForEach(rowA, id: \.label) { kpiCard($0) } }
+            HStack(spacing: 10) { ForEach(rowB, id: \.label) { kpiCard($0) } }
+        }
+    }
+
+    private struct KPI: Hashable {
+        let label: String
+        let value: String
+        let hint: String
+        let status: KPIStatus
+    }
+
+    private enum KPIStatus {
+        case green, orange, red, neutral
+
+        var color: Color {
+            switch self {
+            case .green: return .green
+            case .orange: return .orange
+            case .red: return .red
+            case .neutral: return .secondary
+            }
+        }
+    }
+
+    private func kpiCard(_ kpi: KPI) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text(kpi.label)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Circle()
+                    .fill(kpi.status.color)
+                    .frame(width: 6, height: 6)
+            }
+            Text(kpi.value)
+                .font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundColor(.primary)
+            Text(kpi.hint)
+                .font(.system(size: 10))
+                .foregroundColor(kpi.status.color.opacity(0.8))
+                .lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(10)
+    }
+
+    private func densityHint(_ ratio: Double) -> String {
+        if ratio > 1.3 { return "+\(Int((ratio - 1) * 100))% 近期偏忙" }
+        if ratio < 0.7 { return "-\(Int((1 - ratio) * 100))% 近期偏闲" }
+        return "节奏正常"
+    }
+
+    private func densityStatus(_ ratio: Double) -> KPIStatus {
+        if ratio > 1.5 { return .red }
+        if ratio > 1.3 || ratio < 0.7 { return .orange }
+        return .green
+    }
+
+    private func responseHint(_ seconds: Double) -> String {
+        if seconds <= 0 { return "—" }
+        if seconds < 1800 { return "快" }
+        if seconds < 7200 { return "一般" }
+        return "慢"
+    }
+
+    private func responseStatus(_ seconds: Double) -> KPIStatus {
+        if seconds <= 0 { return .neutral }
+        if seconds < 1800 { return .green }
+        if seconds < 7200 { return .orange }
+        return .red
+    }
+
+    // MARK: Collapsible detail sections
+
+    private func collapsibleTimePattern(_ o: ChatInsightEngine.GlobalOverview) -> some View {
+        collapsibleSection(
+            id: "time",
+            title: "时间节奏",
+            icon: "clock",
+            summary: "最忙 \(weekdayNames[o.busiestWeekday]) \(o.busiestHour) 点 · 工作日 \(o.weekdayTotal) / 周末 \(o.weekendTotal)"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                hourlyBarChart(o.messagesByHour).frame(height: 90)
+                HStack(spacing: 12) {
+                    timeSlotChip("早 6-9", count: o.morningMessages, color: .orange)
+                    timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
+                    timeSlotChip("晚 18-23", count: o.eveningMessages, color: .purple)
+                    timeSlotChip("夜 23-6", count: o.nightMessages, color: .red)
+                }
+                if o.messagesByWeekday.contains(where: { $0 > 0 }) {
+                    Divider()
+                    weekdayBars(o.messagesByWeekday).frame(height: 70)
+                }
+            }
+        }
+    }
+
+    private func collapsibleRelationships(_ o: ChatInsightEngine.GlobalOverview) -> some View {
+        let topTier = o.tierDistribution.first?.tier ?? "—"
+        let topRole = o.roleDistribution.first?.role ?? "—"
+        return collapsibleSection(
+            id: "relationships",
+            title: "关系分布",
+            icon: "person.3",
+            summary: "主要对象 \(topTier) · 最多 \(topRole)"
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("层级").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        ForEach(o.tierDistribution, id: \.tier) { row in
+                            tinyRow(label: row.tier, count: row.count)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("角色").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                        ForEach(o.roleDistribution.prefix(6), id: \.role) { row in
+                            tinyRow(label: row.role, count: row.count)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
+                    Divider()
+                    HStack(spacing: 10) {
+                        relRow(label: "最均衡", name: sym.name, ratio: sym.ratio, good: true)
+                        relRow(label: "最失衡", name: asym.name, ratio: asym.ratio, good: false)
+                    }
+                }
+                if !o.oneWayChats.isEmpty {
+                    Divider()
+                    Text("单向沟通 (对方远多于你)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    ForEach(o.oneWayChats.prefix(3), id: \.name) { c in
+                        HStack {
+                            Button(action: { jumpToChatByName(c.name) }) {
+                                Text(c.name).font(.system(size: 12)).lineLimit(1)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                            Text("对方 \(c.theirCount) / 你 \(c.myCount)")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func collapsibleWorkLife(_ o: ChatInsightEngine.GlobalOverview) -> some View {
+        let workPct = o.totalMessages > 0 ? Int(Double(o.workMessages) / Double(o.totalMessages) * 100) : 0
+        let lifePct = o.totalMessages > 0 ? Int(Double(o.lifeMessages) / Double(o.totalMessages) * 100) : 0
+        return collapsibleSection(
+            id: "work-life",
+            title: "工作 / 生活",
+            icon: "briefcase",
+            summary: "工作 \(workPct)% · 生活 \(lifePct)% · 边界分 \(o.boundaryScore)"
+        ) {
+            HStack(alignment: .center, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
+                    categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
+                    categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
+                }
+                .frame(maxWidth: .infinity)
+                VStack(spacing: 6) {
+                    ZStack {
+                        Circle().stroke(Color.gray.opacity(0.15), lineWidth: 7)
+                        Circle().trim(from: 0, to: Double(o.boundaryScore) / 100)
+                            .stroke(
+                                o.boundaryScore >= 70 ? Color.green :
+                                    o.boundaryScore >= 40 ? Color.orange : Color.red,
+                                style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                            )
+                            .rotationEffect(.degrees(-90))
+                        Text("\(o.boundaryScore)")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                    }
+                    .frame(width: 56, height: 56)
+                    Text("非工时工作 \(o.workAfterHoursCount)")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func collapsibleTopChats() -> some View {
+        collapsibleSection(
+            id: "top",
+            title: "最活跃聊天",
+            icon: "flame",
+            summary: "按消息量 TOP 5"
+        ) {
+            let sorted = allStats.values.sorted { $0.messageCount > $1.messageCount }
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
+                    Button(action: { selectedChat = s.chatUsername }) {
+                        topChatRow(rank: idx + 1, stats: s)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func collapsiblePressure(_ o: ChatInsightEngine.GlobalOverview) -> some View {
+        collapsibleSection(
+            id: "pressure",
+            title: "压力信号",
+            icon: "waveform.path.ecg",
+            summary: "待办 \(o.pendingAsks) · 紧急 \(o.urgentAsks) · 撤回 \(o.recalledMessages)"
+        ) {
+            HStack(spacing: 16) {
+                pressurePill("待处理请求", count: o.pendingAsks, threshold: 5)
+                pressurePill("紧急请求", count: o.urgentAsks, threshold: 1)
+                pressurePill("撤回消息", count: o.recalledMessages, threshold: 3)
+                Spacer()
+            }
+        }
+    }
+
+    // MARK: Generic collapsible
+
+    private func collapsibleSection<Content: View>(
+        id: String,
+        title: String,
+        icon: String,
+        summary: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let expanded = expandedModules.contains(id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if expanded { expandedModules.remove(id) }
+                    else { expandedModules.insert(id) }
+                }
+            }) {
+                HStack(spacing: 8) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .frame(width: 14)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Text(summary)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                Divider().background(Color.primary.opacity(0.05))
+                content()
+                    .padding(14)
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(10)
+    }
+
+    // MARK: Small helpers
+
+    private func tinyRow(label: String, count: Int) -> some View {
+        HStack {
+            Text(label).font(.system(size: 11)).foregroundColor(.secondary)
+            Spacer()
+            Text("\(count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+        }
+    }
+
+    private func relRow(label: String, name: String, ratio: Double, good: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
+            Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+            Text("对等度 \(Int(ratio * 100))%")
+                .font(.system(size: 10))
+                .foregroundColor(good ? .green : .orange)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func weekdayBars(_ messagesByWeekday: [Int]) -> some View {
+        let maxVal = max(messagesByWeekday.max() ?? 1, 1)
+        return HStack(alignment: .bottom, spacing: 6) {
+            ForEach(0..<7, id: \.self) { i in
+                let val = messagesByWeekday[i]
+                VStack(spacing: 3) {
+                    Spacer(minLength: 0)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill((i == 0 || i == 6) ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6))
+                        .frame(width: 26, height: CGFloat(val) / CGFloat(maxVal) * 48)
+                    Text(weekdayNames[i])
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func formatHoursShort(_ hours: Double) -> String {
+        if hours < 1 { return "\(Int(hours * 60))m" }
+        if hours < 24 { return "\(Int(hours))h" }
+        return "\(Int(hours / 24))d"
+    }
+
+    private func jumpToChatByName(_ name: String) {
+        // Try whitelist first (exact match, then partial)
+        let wl = store.getWhitelist()
+        if let hit = wl.first(where: { $0.displayName == name })
+            ?? wl.first(where: { $0.displayName.localizedCaseInsensitiveContains(name) }) {
+            selectedChat = hit.id
+            return
+        }
+        // Fall back to "other active" list
+        if let hit = otherActiveSessions.first(where: { $0.displayName == name })
+            ?? otherActiveSessions.first(where: { $0.displayName.localizedCaseInsensitiveContains(name) }) {
+            selectedChat = hit.id
+        }
+    }
+
+    private func copyAsReport() {
+        guard let o = overview else { return }
+        var lines: [String] = []
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        lines.append("# WeChatHUD \(selectedWindow.rawValue) 报告 · \(df.string(from: Date()))")
+        lines.append("")
+        if let b = monitor.globalBriefing {
+            lines.append("## 头条")
+            lines.append(b.headline)
+            lines.append("")
+            if !b.topSuggestion.isEmpty {
+                lines.append("**建议**: \(b.topSuggestion)")
+                lines.append("")
+            }
+            if !b.actionRequired.isEmpty {
+                lines.append("## 需要行动")
+                for item in b.actionRequired {
+                    lines.append("- **\(item.source)**: \(item.what) (等 \(formatHoursShort(item.waitingHours)))")
+                }
+                lines.append("")
+            }
+        }
+        lines.append("## 关键指标")
+        lines.append("- 消息总量: \(o.totalMessages) (\(densityHint(o.recentDensityRatio)))")
+        lines.append("- 非工时占比: \(Int(o.afterHoursRatio * 100))%")
+        lines.append("- 平均响应: \(formatResponseTime(o.avgResponseSeconds))")
+        lines.append("- 回复率: \(Int(o.responseRate * 100))%")
+        lines.append("- 承诺履约: \(Int(o.commitmentCompletionRate * 100))% (已完成 \(o.fulfilledCommitments) / 超期 \(o.overdueCommitments))")
+        lines.append("- 边界分: \(o.boundaryScore)/100 · 非工时工作 \(o.workAfterHoursCount) 条")
+        lines.append("")
+        lines.append("## 时间节奏")
+        lines.append("最忙 \(weekdayNames[o.busiestWeekday]) \(o.busiestHour) 点 · 工作日 \(o.weekdayTotal) / 周末 \(o.weekendTotal)")
+        lines.append("")
+        if !o.neglectedHighValue.isEmpty {
+            lines.append("## 被忽略的重要联系人")
+            for item in o.neglectedHighValue.prefix(5) {
+                lines.append("- \(item.name) (\(item.role))")
+            }
+        }
+        WeChatLauncher.copyText(lines.joined(separator: "\n"))
+    }
+
+    private let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+
 
     private func timeSlotChip(_ label: String, count: Int, color: Color) -> some View {
         HStack(spacing: 3) {
@@ -1025,64 +1502,4 @@ struct ChatInsightView: View {
         .cornerRadius(10)
     }
 
-    // MARK: - Global briefing (from AI)
-
-    @ViewBuilder
-    private func globalBriefingContent(_ briefing: GlobalBriefing) -> some View {
-        // Header
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("全局简报")
-                    .font(.system(size: 18, weight: .bold))
-                Text(briefing.date)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-        }
-
-        // Stats row
-        HStack(spacing: 12) {
-            overviewStatCard("消息总数", "\(briefing.stats.totalMessages)", "bubble.left.and.bubble.right.fill", .blue)
-            overviewStatCard("活跃群聊", "\(briefing.stats.activeGroups)/\(briefing.stats.totalGroups)", "person.3.fill", .purple)
-            overviewStatCard("活跃私聊", "\(briefing.stats.activePrivateChats)", "person.fill", .cyan)
-            overviewStatCard("工作占比", "\(Int(briefing.stats.workRatio * 100))%", "briefcase.fill", .orange)
-        }
-
-        // Headline
-        Text(briefing.headline)
-            .font(.system(size: 13))
-            .foregroundColor(.primary)
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.blue.opacity(0.05))
-            .cornerRadius(8)
-
-        // Action required
-        if !briefing.actionRequired.isEmpty {
-            moduleCardFull("需要你行动", icon: "exclamationmark.circle.fill") {
-                ForEach(Array(briefing.actionRequired.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(.red)
-                            .padding(.top, 2)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(item.source): \(item.what)")
-                                .font(.system(size: 12))
-                            Text("等了 \(String(format: "%.0f", item.waitingHours)) 小时")
-                                .font(.system(size: 10))
-                                .foregroundColor(.red.opacity(0.7))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Suggestion
-        moduleCardFull("建议", icon: "lightbulb.fill") {
-            Text(briefing.topSuggestion)
-                .font(.system(size: 12))
-        }
-    }
 }

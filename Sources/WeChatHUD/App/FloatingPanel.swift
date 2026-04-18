@@ -64,8 +64,13 @@ final class FirstMouseHostingView<Content: SwiftUI.View>: NSHostingView<Content>
     }
 }
 
-/// A floating NSPanel that sits at the top of the screen.
-/// Non-activating: doesn't steal focus from other apps.
+/// A floating NSPanel rendered as a Dynamic Island-style pill that
+/// wraps the notch on MacBooks, and emulates the same silhouette on
+/// external / non-notched displays. In compact state the panel's
+/// height equals the notch height and its middle span is aligned
+/// with the physical cutout so only the left/right "wings" of the
+/// pill read as visible UI. Expanded states grow DOWNWARD from the
+/// notch — the top edge stays locked to `screen.frame.maxY`.
 class FloatingPanel: NSPanel {
     /// The pill-shaped container view. Exposed so AppDelegate can hook up
     /// the mouse enter/exit closures to PanelState.
@@ -77,31 +82,41 @@ class FloatingPanel: NSPanel {
         self.pillContainer = container
 
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 250, height: 36),
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 32),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
 
-        // .statusBar (25) is one level above .mainMenu (24), so the panel
-        // draws on top of the menu bar — required for true 吸顶 look.
-        self.level = .statusBar
+        // `.popUpMenu` (level 101) paints above the menu bar on
+        // every macOS configuration we've tested. `.statusBar` (25)
+        // theoretically sits above `.mainMenu` (24), but some setups
+        // still clip floating panels to `visibleFrame` — leaving a
+        // ~25pt gap between our pill and the physical screen top
+        // that breaks the "island continues out of the notch"
+        // illusion. Overriding to pop-up-menu level is the simplest
+        // reliable fix.
+        self.level = .popUpMenu
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         self.isOpaque = false
         self.backgroundColor = .clear
-        self.hasShadow = false   // AppKit shadow paints a thin top edge — off
+        // No drop shadow — the pill's top edge is flush with the
+        // hardware notch, and a shadow would paint a visible halo
+        // above/around the notch that breaks the "island" illusion.
+        self.hasShadow = false
         self.isMovableByWindowBackground = false
         self.hidesOnDeactivate = false
 
-        // Pure-black container (PillContainerView allocated above).
-        // Explicit opaque sRGB black, no stroke. Only the bottom two corners
-        // are rounded so the top edge fuses with the screen's top edge.
+        // Container is now a transparent host — the island
+        // silhouette (pill with a notch cutout at top-center) is
+        // drawn by SwiftUI via `IslandShape` as the root view's
+        // background. Keeping the AppKit layer transparent lets
+        // the notch cutout show whatever's behind the panel on
+        // external displays, mirroring the hardware cutout on
+        // notched Macs.
         container.wantsLayer = true
-        container.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
-        container.layer?.cornerRadius = 18
-        // In AppKit (Y-up), MinY is the bottom, so these are the bottom corners.
-        container.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        container.layer?.masksToBounds = true
+        container.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0)
+        container.layer?.masksToBounds = false
 
         // Set a window appearance so SwiftUI controls render correctly in the
         // dark pill states. The detail (settings) state will override this.
@@ -138,44 +153,86 @@ class FloatingPanel: NSPanel {
         }
     }
 
-    /// Position the panel centered at the very top of the target screen,
-    /// overlapping the menu bar region (真吸顶 — uses .frame, not .visibleFrame).
+    /// Cached geometry of the target screen's notch. Refreshed on
+    /// every reposition so moving the panel to a different display
+    /// or changing the display configuration picks up the new
+    /// notch/fake-notch metrics.
+    private(set) var notch: NotchGeometry = NotchGeometry(
+        hasRealNotch: false, notchWidth: 200, notchHeight: 32, notchCenterX: 0
+    )
+
+    /// Refresh `notch` from the current `targetScreen`. Cheap.
+    private func refreshNotchGeometry() {
+        notch = NotchGeometry.detect(on: targetScreen)
+    }
+
+    /// Position the panel with its top edge flush against the
+    /// screen's top edge, horizontally centered on the notch (real
+    /// or fake). On notched Macs the compact-height pill's middle
+    /// span then disappears under the hardware cutout; on external
+    /// screens the same positioning produces a notch-silhouette
+    /// look. Expansions always grow downward — the top edge is
+    /// locked, so the animation visually "drops out" of the island.
     func positionAtTop() {
-        let screen = targetScreen
-        let screenFrame = screen.frame
+        refreshNotchGeometry()
         let panelWidth = frame.width
-        let x = screenFrame.midX - panelWidth / 2
-        let y = screenFrame.maxY - frame.height  // flush with screen top
+        let x = notch.notchCenterX - panelWidth / 2
+        let y = targetScreen.frame.maxY - frame.height
         setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    /// Animate the panel frame, keeping it anchored to the screen top.
-    /// Uses AppKit's default animator — no custom duration or curve.
+    /// Animate the panel frame, keeping its top edge locked to the
+    /// screen top (i.e., to the notch). Uses AppKit's default animator.
     func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil) {
-        let screen = targetScreen
-        let screenFrame = screen.frame
-        let newWidth = width ?? frame.width
-        let x = screenFrame.midX - newWidth / 2
-        let y = screenFrame.maxY - newHeight
+        let frame = targetFrame(height: newHeight, width: width)
+        animator().setFrame(frame, display: true)
+    }
 
-        animator().setFrame(
-            NSRect(x: x, y: y, width: newWidth, height: newHeight),
-            display: true
-        )
+    /// Snap the panel to the target size with NO animation. Used on
+    /// first-ever layout so the initial placeholder `contentRect`
+    /// doesn't animate down to the real compact size — that's the
+    /// "first animation is wrong" artifact on launch.
+    func setFrameInstantly(height: CGFloat, width: CGFloat? = nil) {
+        setFrame(targetFrame(height: height, width: width), display: true)
+    }
+
+    /// Compute the target NSRect given a desired height/width. Keeps
+    /// the top edge pinned to the notch and horizontally centers the
+    /// panel on the notch center — so expansions "grow down" out of
+    /// the island rather than drifting sideways.
+    private func targetFrame(height newHeight: CGFloat, width: CGFloat? = nil) -> NSRect {
+        refreshNotchGeometry()
+        let newWidth = width ?? frame.width
+        let x = notch.notchCenterX - newWidth / 2
+        let y = targetScreen.frame.maxY - newHeight
+        return NSRect(x: x, y: y, width: newWidth, height: newHeight)
     }
 
     /// Switch the panel between the dark pill appearance and the light
-    /// system-settings appearance used in the `.detail` state.
+    /// system-settings appearance used in the `.detail` state. The
+    /// dark island silhouette is painted by SwiftUI (IslandShape),
+    /// so the container itself stays transparent in the dark
+    /// states — we only set a solid background for detail/settings
+    /// which uses a standard rounded window instead of the island.
     func setDetailAppearance(_ isDetail: Bool) {
         if isDetail {
             // Use system (light) appearance for the settings panel so SwiftUI
             // controls render with native macOS System Settings styling.
             self.appearance = nil   // inherit system appearance
             pillContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            pillContainer.layer?.cornerRadius = 12
+            pillContainer.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            pillContainer.layer?.masksToBounds = true
         } else {
-            // Revert to the opaque black pill for compact / extended / notification.
+            // Island states (compact / extended / notification):
+            // container stays transparent — SwiftUI's IslandShape
+            // paints the black pill with its notch cutout. Reverting
+            // to an opaque black layer here would fill the notch
+            // region too and break the silhouette.
             self.appearance = NSAppearance(named: .darkAqua)
-            pillContainer.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+            pillContainer.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0)
+            pillContainer.layer?.cornerRadius = 0
+            pillContainer.layer?.masksToBounds = false
         }
     }
 

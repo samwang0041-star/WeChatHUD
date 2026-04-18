@@ -64,9 +64,34 @@ enum ReplyDebtScorer {
     }
 
     private static func buildItem(seed: Seed, config: ReplyDebtConfig) -> ReplyDebtItem? {
-        guard seed.isWhitelisted else { return nil }
+        // Whitelist gate — with an exception for group @mentions.
+        // When someone calls you out by name in a group you haven't
+        // explicitly whitelisted, that's still a clear request that
+        // deserves to surface in the HUD; forcing the user to
+        // pre-whitelist every ad-hoc group they get pulled into
+        // defeats the point of "@ 我 → 提醒". Private chats still
+        // require whitelisting so random strangers can't spam the
+        // inbox.
+        if !seed.isWhitelisted {
+            guard seed.session.isGroup && seed.isAtMention else { return nil }
+        }
         guard let latestInbound = seed.latestInbound else { return nil }
         if let latestOutbound = seed.latestOutbound, latestOutbound.createTime >= latestInbound.createTime {
+            // User "replied" but — did they actually answer? If the
+            // inbound was substantive (money / specific time /
+            // decision ask / commitment ref) and the reply was an
+            // ack ("嗯嗯"), flag it as an unsubstantive-reply debt
+            // instead of silently treating the conversation as done.
+            let signals = ImportanceDetector.signals(latestInbound.text)
+            if !signals.isEmpty, ImportanceDetector.isAckOnly(latestOutbound.text) {
+                return buildUnsubstantiveItem(
+                    seed: seed,
+                    latestInbound: latestInbound,
+                    latestOutbound: latestOutbound,
+                    signals: signals,
+                    config: config
+                )
+            }
             return nil
         }
 
@@ -100,8 +125,10 @@ enum ReplyDebtScorer {
         let isPrivateChat = !seed.session.isGroup
 
         if seed.session.isGroup {
-            let actionableWhitelistedGroup = seed.isWhitelisted && hasAskSignal
-            guard seed.isAtMention || hasUrgentKeyword || actionableWhitelistedGroup else { return nil }
+            // Group chats require explicit signals directed at the user:
+            // @mention or urgent keywords. Generic ask signals ("看看", "确认")
+            // fire too often on messages not addressed to us.
+            guard seed.isAtMention || hasUrgentKeyword else { return nil }
         }
 
         let ageMinutes = max(0, nowTs - latestInbound.createTime) / 60
@@ -174,6 +201,71 @@ enum ReplyDebtScorer {
             // forwarded messages), but session.lastTimestamp is always updated
             // when new activity happens.
             timestamp: Date(timeIntervalSince1970: Double(max(latestInbound.createTime, seed.session.lastTimestamp))),
+            priority: priority,
+            score: score,
+            unreadCount: seed.session.unreadCount,
+            isGroup: seed.session.isGroup,
+            isWhitelisted: seed.isWhitelisted,
+            isVIP: seed.isVIP,
+            isAtMention: seed.isAtMention,
+            inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
+            reasons: reasons,
+            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority)
+        )
+    }
+
+    /// Build a debt item for the "user acked but didn't really answer"
+    /// case. Scoring is deliberately milder than a fresh unreplied
+    /// message — the user DID at least register the message — but
+    /// we still surface it so they don't leave important things on
+    /// "嗯嗯". Priority caps at P1 so it never dominates over true
+    /// unanswered items.
+    private static func buildUnsubstantiveItem(
+        seed: Seed,
+        latestInbound: MessageInfo,
+        latestOutbound: MessageInfo,
+        signals: [String],
+        config: ReplyDebtConfig
+    ) -> ReplyDebtItem? {
+        let nowTs = Int(seed.now.timeIntervalSince1970)
+
+        // Silence / snooze honored just like the normal path.
+        if let action = seed.chatAction {
+            if action.snoozedUntil > nowTs { return nil }
+            if action.silencedAt >= latestInbound.createTime { return nil }
+        }
+
+        var score = 2  // base — lower than overdue etc.
+        var reasons: [ReplyDebtReason] = [
+            ReplyDebtReason(code: .unsubstantiveReply,
+                            label: "未实质回应（\(signals.joined(separator: "、"))）")
+        ]
+
+        if seed.isVIP {
+            score += 2
+            reasons.append(ReplyDebtReason(code: .whitelisted, label: "VIP"))
+        } else if seed.isWhitelisted {
+            score += 1
+            reasons.append(ReplyDebtReason(code: .whitelisted))
+        }
+
+        if !seed.session.isGroup {
+            score += 1
+            reasons.append(ReplyDebtReason(code: .privateChat))
+        }
+
+        let priority: ReplyDebtPriority = score >= 5 ? .p1 : .p2
+
+        return ReplyDebtItem(
+            id: seed.session.username,
+            chatUsername: seed.session.username,
+            chatName: seed.chatName,
+            senderName: latestInbound.senderName,
+            preview: String(latestInbound.text.prefix(80)),
+            latestOutboundPreview: String(latestOutbound.text.prefix(80)),
+            timestamp: Date(timeIntervalSince1970: Double(
+                max(latestInbound.createTime, seed.session.lastTimestamp)
+            )),
             priority: priority,
             score: score,
             unreadCount: seed.session.unreadCount,
