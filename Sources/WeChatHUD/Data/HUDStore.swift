@@ -295,6 +295,33 @@ final class HUDStore: ObservableObject {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status, deadline_at)")
 
+        // -- discussion_items table (bidirectional work-item extraction)
+        // Keyed by (chat_username, anchor_msg_uid, content) to dedupe
+        // across re-scans of the same conversation window. Status is
+        // mutable; everything else is write-once by the extractor.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS discussion_items (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_username     TEXT NOT NULL,
+                chat_name         TEXT NOT NULL,
+                kind              TEXT NOT NULL,
+                owner             TEXT NOT NULL,
+                content           TEXT NOT NULL,
+                detail            TEXT,
+                anchor_msg_uid    TEXT NOT NULL,
+                source_timestamp  INTEGER NOT NULL,
+                due_at            INTEGER,
+                status            TEXT NOT NULL DEFAULT 'pending',
+                confidence        REAL NOT NULL,
+                prompt_version    TEXT NOT NULL,
+                created_at        INTEGER NOT NULL,
+                updated_at        INTEGER NOT NULL,
+                UNIQUE(chat_username, anchor_msg_uid, content)
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_disc_chat ON discussion_items(chat_username, source_timestamp)")
+        try exec("CREATE INDEX IF NOT EXISTS idx_disc_status_time ON discussion_items(status, source_timestamp)")
+
         // -- autopilot_sessions table
         try exec("""
             CREATE TABLE IF NOT EXISTS autopilot_sessions (
@@ -505,6 +532,15 @@ final class HUDStore: ObservableObject {
 
     func removeFromWhitelist(username: String) throws {
         try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+        // Also clear this chat's baseline — otherwise re-adding the
+        // same contact to the whitelist later would reuse the stale
+        // watermark and silently swallow every message that arrived
+        // while it was off the list.
+        try? exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
+        // Drop any snooze/silence state too: "removed from whitelist"
+        // is the strongest reset signal we have, and leaving those
+        // behind would make a re-added chat come back already muted.
+        try? exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
     }
 
     func isWhitelisted(_ username: String) -> Bool {
@@ -1709,6 +1745,156 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
+    }
+
+    /// Conditionally flip a commitment's status — ONLY if it is
+    /// currently `.pending`. Used by the auto-fulfillment checker so
+    /// we never clobber a status the user manually set (e.g. they
+    /// cancelled something; the scanner shouldn't re-mark it fulfilled
+    /// later just because we spotted a keyword).
+    func autoAdvanceCommitmentStatus(msgUID: String, to newStatus: CommitmentStatus) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE commitments SET status=?, updated_at=?
+            WHERE msg_uid=? AND status=?
+        """, params: [
+            newStatus.rawValue, "\(now)",
+            msgUID, CommitmentStatus.pending.rawValue
+        ])
+    }
+
+    // MARK: - Discussion Items
+
+    /// Insert a discussion item, ignoring duplicates by the
+    /// `(chat_username, anchor_msg_uid, content)` uniqueness
+    /// constraint. Returns true if a new row was actually inserted.
+    @discardableResult
+    func insertDiscussionItem(
+        chatUsername: String,
+        chatName: String,
+        kind: DiscussionItemKind,
+        owner: DiscussionItemOwner,
+        content: String,
+        detail: String?,
+        anchorMsgUID: String,
+        sourceTimestamp: Int,
+        dueAt: Date?,
+        confidence: Double,
+        promptVersion: String
+    ) throws -> Bool {
+        let now = Int(Date().timeIntervalSince1970)
+        let dueStr = dueAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        try exec("""
+            INSERT OR IGNORE INTO discussion_items(
+                chat_username, chat_name, kind, owner, content, detail,
+                anchor_msg_uid, source_timestamp, due_at, status,
+                confidence, prompt_version, created_at, updated_at
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, params: [
+            chatUsername, chatName, kind.rawValue, owner.rawValue,
+            content, detail ?? "",
+            anchorMsgUID, "\(sourceTimestamp)", dueStr,
+            DiscussionItemStatus.pending.rawValue,
+            String(confidence), promptVersion,
+            "\(now)", "\(now)"
+        ])
+        return sqlite3_changes(db) > 0
+    }
+
+    /// Load discussion items with optional filters.
+    /// - Parameters:
+    ///   - chatUsername: if set, only items from that chat
+    ///   - status: if set, only items in that status (default shows all)
+    ///   - sinceTimestamp: if set, only items with `source_timestamp >= this`
+    ///   - limit: cap results (nil = no cap)
+    func loadDiscussionItems(
+        chatUsername: String? = nil,
+        status: DiscussionItemStatus? = nil,
+        sinceTimestamp: Int? = nil,
+        limit: Int? = nil
+    ) -> [DiscussionItem] {
+        var results: [DiscussionItem] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+
+        var sql = """
+            SELECT id, chat_username, chat_name, kind, owner, content, detail,
+                   anchor_msg_uid, source_timestamp, due_at, status,
+                   confidence, prompt_version, created_at, updated_at
+            FROM discussion_items
+        """
+        var clauses: [String] = []
+        var params: [String] = []
+        if let chatUsername = chatUsername {
+            clauses.append("chat_username=?")
+            params.append(chatUsername)
+        }
+        if let status = status {
+            clauses.append("status=?")
+            params.append(status.rawValue)
+        }
+        if let since = sinceTimestamp {
+            clauses.append("source_timestamp >= ?")
+            params.append("\(since)")
+        }
+        if !clauses.isEmpty {
+            sql += " WHERE " + clauses.joined(separator: " AND ")
+        }
+        sql += " ORDER BY source_timestamp DESC"
+        if let limit = limit { sql += " LIMIT \(limit)" }
+
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        for (i, p) in params.enumerated() {
+            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let detailRaw = String(cString: sqlite3_column_text(stmt, 6))
+            let dueRaw = sqlite3_column_int64(stmt, 9)
+            let due: Date? = sqlite3_column_type(stmt, 9) == SQLITE_NULL || dueRaw == 0
+                ? nil
+                : Date(timeIntervalSince1970: TimeInterval(dueRaw))
+            results.append(DiscussionItem(
+                id: sqlite3_column_int64(stmt, 0),
+                chatUsername: String(cString: sqlite3_column_text(stmt, 1)),
+                chatName: String(cString: sqlite3_column_text(stmt, 2)),
+                kind: DiscussionItemKind(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .todo,
+                owner: DiscussionItemOwner(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .shared,
+                content: String(cString: sqlite3_column_text(stmt, 5)),
+                detail: detailRaw.isEmpty ? nil : detailRaw,
+                anchorMsgUID: String(cString: sqlite3_column_text(stmt, 7)),
+                sourceTimestamp: Int(sqlite3_column_int64(stmt, 8)),
+                dueAt: due,
+                status: DiscussionItemStatus(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .pending,
+                confidence: sqlite3_column_double(stmt, 11),
+                promptVersion: String(cString: sqlite3_column_text(stmt, 12)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 13))),
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14)))
+            ))
+        }
+        return results
+    }
+
+    func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE discussion_items SET status=?, updated_at=? WHERE id=?
+        """, params: [status.rawValue, "\(now)", "\(id)"])
+    }
+
+    /// The most recent `source_timestamp` extracted for a chat — used
+    /// by the tracker to skip messages it already analysed.
+    func latestDiscussionSourceTimestamp(chatUsername: String) -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(
+            db,
+            "SELECT MAX(source_timestamp) FROM discussion_items WHERE chat_username=?",
+            -1, &stmt, nil
+        ) == SQLITE_OK else { return 0 }
+        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(stmt, 0))
     }
 
     // MARK: - Reply Drafts

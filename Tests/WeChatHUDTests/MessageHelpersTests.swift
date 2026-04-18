@@ -29,6 +29,50 @@ final class MessageHelpersTests: XCTestCase {
         XCTAssertTrue(MessageHelpers.isAtMe("@所有人", myUsername: ""))
     }
 
+    // WeChat stores @mentions in message text as "@DisplayName<space>"
+    // (ordinary space or U+2005), NOT the wxid. Pre-fix: detection
+    // failed because `isAtMe` only checked the wxid.
+    func testIsAtMeMatchesDisplayName() {
+        XCTAssertTrue(MessageHelpers.isAtMe(
+            "@张三 明天几点到？", myUsername: "wxid_abc", myDisplayName: "张三"))
+    }
+
+    func testIsAtMeMatchesDisplayNameWithU2005() {
+        // U+2005 FOUR-PER-EM SPACE — WeChat's canonical @mention terminator.
+        let text = "大家好 @张三\u{2005}请看一下这个"
+        XCTAssertTrue(MessageHelpers.isAtMe(text, myUsername: "wxid_abc", myDisplayName: "张三"))
+    }
+
+    func testIsAtMeMatchesLearnedAlias() {
+        // Group nickname that WeChatReader learned via realSenderId==0 fallback.
+        XCTAssertTrue(MessageHelpers.isAtMe(
+            "@老王 帮我看下", myUsername: "wxid_abc",
+            myDisplayName: "王大明", mySelfNames: ["老王", "Wang"]))
+    }
+
+    func testIsAtMeBoundaryPreventsPartialMatch() {
+        // Short display name like "大" must not match inside "@大家好".
+        XCTAssertFalse(MessageHelpers.isAtMe(
+            "@大家好 开会啦", myUsername: "", myDisplayName: "大"))
+    }
+
+    func testIsAtMeBoundaryAtEndOfString() {
+        // "@张三" at end of string (no trailing space) should still match.
+        XCTAssertTrue(MessageHelpers.isAtMe(
+            "点名 @张三", myUsername: "", myDisplayName: "张三"))
+    }
+
+    func testIsAtMeNoFalsePositiveOnOthers() {
+        // @someone_else — must NOT match.
+        XCTAssertFalse(MessageHelpers.isAtMe(
+            "@李四 来一下", myUsername: "wxid_abc", myDisplayName: "张三"))
+    }
+
+    func testIsAtMeIgnoresEmptyDisplayNameDefault() {
+        // Empty display name + empty self-aliases ⇒ never a bare "@" match.
+        XCTAssertFalse(MessageHelpers.isAtMe("@ hello", myUsername: "wxid_abc"))
+    }
+
     // MARK: - isFromSelf
 
     private func makeMsg(
@@ -70,6 +114,20 @@ final class MessageHelpersTests: XCTestCase {
         // Empty sender username → don't assume self
         let msg = makeMsg(senderUsername: "")
         XCTAssertFalse(MessageHelpers.isFromSelf(msg, chatUsername: "peer", myUsername: "wxid_me"))
+    }
+
+    // WeChatReader learns group-chat nicknames as self-aliases when
+    // name2id lookup fails and realSenderId==0. Callers that don't
+    // forward `mySelfNames` used to mis-classify these as "from peer".
+    func testIsFromSelfGroupAlias() {
+        let msg = makeMsg(chatUsername: "room@chatroom", senderUsername: "老王")
+        // Without aliases → misclassified as peer.
+        XCTAssertFalse(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me"))
+        // With the learned alias → correctly self.
+        XCTAssertTrue(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me",
+            mySelfNames: ["老王"]))
     }
 
     // MARK: - unreadStatus

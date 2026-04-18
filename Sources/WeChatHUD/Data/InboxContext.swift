@@ -10,6 +10,12 @@ struct InboxContext {
 
     // 2. Conversation window (dynamic size)
     let recentMessages: [MessageInfo]
+    /// Pre-rendered transcript labelling each line with "我"
+    /// (user-outbound) or the actual sender name (inbound). Passed
+    /// directly to the AI summarizer so it can't mistake the user's
+    /// own "收到" for a peer reply — which previously made it produce
+    /// summaries like "对方仅回复收到" when the ack was the user's.
+    let taggedTranscript: String
     let myLastReply: MessageInfo?
     let myLastReplyText: String?
     let timeSinceMyLastReply: TimeInterval?

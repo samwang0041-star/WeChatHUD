@@ -90,6 +90,18 @@ struct SettingsView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .onAppear {
+            if panelState.pendingSettingsTab == "insight" {
+                selectedTab = .insight
+                panelState.pendingSettingsTab = nil
+            }
+        }
+        .onReceive(panelState.$pendingSettingsTab) { tab in
+            if tab == "insight" {
+                selectedTab = .insight
+                panelState.pendingSettingsTab = nil
+            }
+        }
     }
 
     // MARK: - Sidebar
@@ -167,9 +179,13 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var content: some View {
-        // Contacts tab uses its own List which needs full height — no ScrollView.
+        // Insight uses HSplitView and needs full space — no ScrollView or padding.
+        // Contacts uses its own List which needs full height — no ScrollView.
         // Other tabs are form-based and need ScrollView.
-        if selectedTab == .contacts {
+        if selectedTab == .insight {
+            ChatInsightView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if selectedTab == .contacts {
             VStack(alignment: .leading, spacing: 16) {
                 heroHeader
                 ContactsSettingsView()
@@ -183,7 +199,7 @@ struct SettingsView: View {
                     heroHeader
 
                     switch selectedTab {
-                    case .contacts:
+                    case .contacts, .insight:
                         EmptyView() // handled above
                     case .aiButler:
                         AISettingsView()
@@ -191,9 +207,6 @@ struct SettingsView: View {
                         AutopilotSettingsView()
                     case .system:
                         SyncSettingsView()
-                    case .insight:
-                        Color.clear
-                            .onAppear { panelState.onShowInsight?() }
                     case .dailyReport:
                         DailyReportTabView()
                     case .commitments:

@@ -4,12 +4,12 @@ macOS 原生吸顶浮窗客户端，配合 wechat-cli 使用。SwiftUI + AppKit�
 
 ## 项目状态
 
-**当前阶段：Production-ready — 六轮进化完成**
+**当前阶段：Production-ready — 六轮进化完成 + Codex 集成**
 
-- 194 个测试全部通过（117 基线 + 77 新增）
-- Release build 零警告
+- 350 个测试全部通过（321 基线 + 29 Codex 新增）
+- Release build 零新警告（pre-existing Swift 6 严格并发告警未处理）
 - ChatMonitor 从 1690 行重构为 1131 行 Coordinator 模式
-- 十一轮进化: 质量→架构→功能→交互→测试→稳定→性能→智能→集成→飞轮
+- Codex 集成：读取 codex CLI 本地 OAuth token，蹭 ChatGPT 订阅调 gpt-5.4
 
 ## 架构概述
 
@@ -29,7 +29,11 @@ Sources/WeChatHUD/
 │   ├── ChatMonitor.swift         — 核心协调器 (事件→扫描→UI更新)
 │   ├── ScanEngine.swift          — 纯函数扫描逻辑 (从 ChatMonitor 提取)
 │   ├── MessageHelpers.swift      — 纯工具函数 (从 ChatMonitor 提取)
-│   ├── AIService.swift           — OpenAI 兼容 API 客户端
+│   ├── AIService.swift           — OpenAI 兼容 + Codex 分流入口
+│   ├── Codex/                    — OpenClaw 机制复刻 (ChatGPT OAuth 直连)
+│   │   ├── CodexAuth.swift       — 读 ~/.codex/auth.json + JWT 解码
+│   │   ├── CodexTokenStore.swift — access token 缓存 + refresh + 单例去重
+│   │   └── CodexBackend.swift    — chatgpt.com/backend-api SSE 客户端
 │   ├── AIClassifier.swift        — 消息分类 (ask/task/deadline)
 │   ├── ReplyDebtScorer.swift     — 回复债务评分
 │   ├── ReplyDebtJudge.swift      — AI 二次判断 + shadow mode
@@ -52,7 +56,7 @@ Sources/WeChatHUD/
 
 - **数据来源**：直接读微信加密 DB（AES-256-CBC 页解密），不依赖 CLI
 - **自有数据库**：`~/.wechat-hud/hud.sqlite3` 存白名单、设置、缓存
-- **AI 接口**：可配置的 OpenAI 兼容 API（Ollama/远程都支持）
+- **AI 接口**：可配置的 OpenAI 兼容 API（Ollama/远程都支持）+ OpenAI Codex (蹭 codex CLI 登录态，指纹完全模拟 OpenClaw/pi-ai：`originator: pi`、`User-Agent: pi (Darwin...)`、同样的 session_id/prompt_cache_key 复用策略)
 - **窗口**：NSPanel (.nonactivatingPanel, .floating)，不抢焦点
 - **白名单驱动**：只分析白名单里的对话，其余忽略
 - **三态 + 详情**：compact(36px) → extended(tabs) → notification(banner) → detail(500px)
@@ -80,13 +84,14 @@ swift test           # 跑测试 (完整输出)
 
 ## 测试
 
-194 个测试覆盖：
+350 个测试覆盖：
 - HUDStore (45): 设置/白名单/PendingAsk/Autopilot/AIAudit/ChatAction
 - NewSchema (24): Contact/VIPTrace/RecalledMessage/Commitment
 - WeChatDecryptor (9): 页解密 + 端到端 DB 解密
 - WeChatParser (8): 内容解码/XML 解析/媒体渲染
 - MessageHelpers (23): 纯函数全覆盖
 - AutopilotSafety (15): 安全护栏配置 + 关键词检测
+- Codex (29): CodexAuth (18) / CodexBackend (6) / CodexTokenStore (5) — OAuth 解析、SSE 解析、HTTP 指纹断言、401 重读、并发 refresh 去重
 - AI Services (70+): Classifier/ReplyDebt/Commitment/VIP/Context 等
 
 ## 参考

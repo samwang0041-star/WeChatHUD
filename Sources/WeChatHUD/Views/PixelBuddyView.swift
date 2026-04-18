@@ -11,18 +11,24 @@ struct AIBuddyOverlay: View {
     @State private var refreshTimer: Timer?
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            // Activity panel — anchored to the left of the buddy, real-time
-            if isHovering || tracker.isActive {
-                activityPanel(now: now)
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
-                    .offset(x: -24)
-            }
-
+        // Details panel ONLY on hover — never auto-expand just because
+        // AI is running. Auto-expansion during background work broke
+        // the island metaphor by covering half the inbox with a
+        // rectangular white card. The buddy's mood (analyzing vs
+        // idle) is the always-on signal; full task breakdown waits
+        // for the user to actually ask for it.
+        ZStack(alignment: .topTrailing) {
             PixelBuddyView(mood: tracker.isActive ? .analyzing : mood)
                 .onHover { hovering in
                     withAnimation(.easeInOut(duration: 0.15)) { isHovering = hovering }
                 }
+
+            if isHovering {
+                activityPanel(now: now)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .offset(y: 22)
+                    .zIndex(1)
+            }
         }
         .onAppear { startRefresh() }
         .onDisappear { stopRefresh() }
@@ -170,7 +176,7 @@ func deriveCompactMood(syncStatus: SyncStatus, hasUrgent: Bool, hasPending: Bool
     switch syncStatus {
     case .syncing:
         return .scanning
-    case .stale, .waitingForWeChat, .error:
+    case .stale, .waitingForWeChat, .error, .accountSwitched:
         return .error
     default:
         break

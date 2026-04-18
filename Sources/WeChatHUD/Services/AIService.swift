@@ -17,6 +17,11 @@ actor AIService {
 
     func isConfigured() -> Bool {
         let slot = config.primarySlot
+        // Codex slots are valid even with empty baseURL — the URL is hardcoded
+        // and auth comes from the codex CLI login state, not user-entered values.
+        if slot.providerID == "openai-codex" {
+            return !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         return !slot.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -51,6 +56,17 @@ actor AIService {
     // MARK: - Helpers
 
     private func send(slot: AIProviderSlot, system: String, user: String) async throws -> String {
+        // Codex provider has its own transport (ChatGPT OAuth + Responses API).
+        // Forward to CodexBackend; everything else stays on the OpenAI-compatible
+        // `/chat/completions` path below.
+        if slot.providerID == "openai-codex" {
+            let model = slot.model.trimmingCharacters(in: .whitespaces)
+            let resolvedModel = model.isEmpty ? "gpt-5.4" : model
+            return try await CodexBackend.shared.complete(
+                system: system, user: user, model: resolvedModel
+            )
+        }
+
         let baseURL = normalizeURL(slot.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw AIError.invalidURL(slot.baseURL)
@@ -74,7 +90,14 @@ actor AIService {
                 ["role": "user", "content": user]
             ],
             "temperature": config.temperature,
-            "max_tokens": config.maxTokens
+            "max_tokens": config.maxTokens,
+            // Disable qwen3-style reasoning tokens — otherwise
+            // DashScope's qwen3.6-plus burns 800+ tokens on an
+            // internal chain-of-thought before emitting a single
+            // character of output, which makes every call take
+            // 15-30s and often exceed our timeout. Non-reasoning
+            // models silently ignore this field.
+            "enable_thinking": false
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

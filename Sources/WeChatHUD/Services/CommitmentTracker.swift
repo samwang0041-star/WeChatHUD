@@ -18,6 +18,85 @@ actor CommitmentTracker {
         let confidence: Double
     }
 
+    /// Outcome of a fulfillment check run against a pending commitment.
+    /// Pure-algorithm — no AI. If you need more nuance later, wrap
+    /// ambiguous `.stillPending` cases in an AI semantic pass.
+    enum FulfillmentSignal {
+        /// Subsequent self-message evidence shows the promise was kept.
+        case fulfilled(reason: String)
+        /// Deadline has passed with no evidence of fulfillment.
+        case overdue
+        /// No evidence yet, deadline not yet passed.
+        case stillPending
+    }
+
+    /// Keywords that strongly indicate "this thing was delivered".
+    /// Kept as plain strings (no regex) because case-sensitivity in
+    /// Chinese doesn't matter and the list is small.
+    private static let fulfillmentKeywords: [String] = [
+        "发你了", "发给你了", "发给您了", "已发", "已给你", "已发送",
+        "给你了", "给您了", "传你了", "传给你", "推你了", "推给你",
+        "搞定了", "搞定", "完成了", "完成", "已完成",
+        "处理完了", "处理好了", "处理完", "处理完毕",
+        "做好了", "做完了", "做完", "弄好了", "弄完",
+        "OK了", "ok了", "Ok了", "好了", "办好了",
+        "安排好了", "安排完了", "跟进完了"
+    ]
+
+    /// Hints in the commitment content that the thing being promised
+    /// is a tangible deliverable (file/image/link). NOUNS only — we
+    /// deliberately don't include generic verbs like "发/给" because
+    /// phrases like "给个决定" or "发个通知" contain them but don't
+    /// imply a file will be sent. Only a concrete deliverable noun
+    /// gates the file-send-as-fulfillment heuristic.
+    private static let deliverableHints: [String] = [
+        "文件", "方案", "资料", "材料", "链接",
+        "图", "照片", "截图", "文档", "名单", "表格", "PPT", "ppt",
+        "合同", "报告", "草案", "清单"
+    ]
+
+    /// Decide whether a commitment can be considered fulfilled given
+    /// a set of the user's outbound messages that landed AFTER the
+    /// commitment was made in the same chat.
+    static func evaluateFulfillment(
+        commitment: Commitment,
+        subsequentSelfMessages: [MessageInfo],
+        now: Date = Date()
+    ) -> FulfillmentSignal {
+        // 1. Text evidence — any fulfillment keyword in later messages.
+        for msg in subsequentSelfMessages {
+            if let matched = fulfillmentKeywords.first(where: { msg.text.contains($0) }) {
+                return .fulfilled(reason: "后续消息含「\(matched)」")
+            }
+        }
+
+        // 2. Deliverable evidence — commitment mentions sending
+        //    something AND we see a file-class outbound message.
+        let isDeliverable = deliverableHints.contains { commitment.content.contains($0) }
+        if isDeliverable {
+            for msg in subsequentSelfMessages {
+                // baseType 3=image, 43=video, 49=link (WeChat layout).
+                if msg.baseType == 3 || msg.baseType == 43 || msg.baseType == 49 {
+                    let label: String
+                    switch msg.baseType {
+                    case 3:  label = "图片"
+                    case 43: label = "视频"
+                    case 49: label = "链接/文件"
+                    default: label = "媒体"
+                    }
+                    return .fulfilled(reason: "后续发送了\(label)")
+                }
+            }
+        }
+
+        // 3. Deadline check — no evidence but deadline has passed.
+        if let deadline = commitment.deadlineAt, deadline < now {
+            return .overdue
+        }
+
+        return .stillPending
+    }
+
     /// Quick pre-filter: does message contain commitment signal words?
     /// This is additive — signals passed to AI as hints.
     static func hasCommitmentSignal(_ text: String) -> Bool {
@@ -73,23 +152,41 @@ actor CommitmentTracker {
             return nil
         }
 
-        guard let result = parseResult(body) else {
+        if let result = parseResult(body) {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
                 model: config.model, promptVersion: "commitment_v1",
                 inputText: yourMessage.text, outputText: body,
-                latencyMs: latency, status: .parseError, errorMessage: "JSON parse failed"
+                latencyMs: latency, status: .ok, errorMessage: nil
             ))
-            return nil
+            return result
+        }
+
+        // Parse failed — same pattern as AIClassifier/AIReplySuggester:
+        // retry once with a strict-JSON reminder appended. Many models
+        // cooperate the second time even when the first answer had
+        // a trailing comma, code fence, or chatty preamble.
+        let strictPrompt = prompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要 markdown 代码块，不要任何解释性文字。"
+        let retryBody = await callModel(prompt: strictPrompt, config: config)
+        let retryLatency = Int(Date().timeIntervalSince(started) * 1000)
+        if let retryBody = retryBody, let result = parseResult(retryBody) {
+            try? store.writeAIAudit(AIAuditEntry(
+                id: 0, ts: Date(), role: .commitmentTracker,
+                model: config.model, promptVersion: "commitment_v1_retry",
+                inputText: yourMessage.text, outputText: retryBody,
+                latencyMs: retryLatency, status: .ok, errorMessage: nil
+            ))
+            return result
         }
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .commitmentTracker,
             model: config.model, promptVersion: "commitment_v1",
             inputText: yourMessage.text, outputText: body,
-            latencyMs: latency, status: .ok, errorMessage: nil
+            latencyMs: retryLatency, status: .parseError,
+            errorMessage: "JSON parse failed on both initial and strict-retry"
         ))
-        return result
+        return nil
     }
 
     private func callModel(prompt: String, config: AIConfig) async -> String? {
@@ -108,7 +205,8 @@ actor CommitmentTracker {
             "model": config.model,
             "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
             "temperature": 0.05,
-            "max_tokens": 256
+            "max_tokens": 256,
+            "enable_thinking": false
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }

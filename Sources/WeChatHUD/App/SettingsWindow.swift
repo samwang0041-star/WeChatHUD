@@ -36,8 +36,22 @@ class SettingsWindow: NSWindow {
         )
         window.title = "WeChatHUD 设置"
         window.contentView = hostingView
-        window.center()
         window.isReleasedWhenClosed = false
+
+        // Open on the same screen as the floating panel, below it.
+        let panelScreen = NSApp.windows
+            .first(where: { $0 is FloatingPanel })?.screen
+        let screen = panelScreen ?? NSScreen.main ?? NSScreen.screens.first
+        if let screen = screen {
+            let vf = screen.visibleFrame
+            let w: CGFloat = min(1080, vf.width - 40)
+            let h: CGFloat = min(780, vf.height - 80)
+            let x = vf.midX - w / 2
+            let y = vf.maxY - h - 60
+            window.setFrame(NSRect(x: x, y: max(y, vf.minY), width: w, height: h), display: true)
+        } else {
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 

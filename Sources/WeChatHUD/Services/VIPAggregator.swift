@@ -161,7 +161,8 @@ actor VIPAggregator {
             "model": config.model,
             "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
             "temperature": 0.1,
-            "max_tokens": 512
+            "max_tokens": 512,
+            "enable_thinking": false
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
         request.httpBody = body

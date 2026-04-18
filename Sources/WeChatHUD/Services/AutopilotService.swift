@@ -903,7 +903,8 @@ actor AutopilotService {
                 ["role": "user", "content": prompt]
             ],
             "temperature": 0.2,
-            "max_tokens": 256
+            "max_tokens": 256,
+            "enable_thinking": false
         ]
 
         guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { return }
@@ -1106,7 +1107,8 @@ actor AutopilotService {
                     ["role": "user", "content": prompt]
                 ],
                 "temperature": 0.5,
-                "max_tokens": 128
+                "max_tokens": 128,
+                "enable_thinking": false
             ]
             guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { continue }
             req.httpBody = httpBody

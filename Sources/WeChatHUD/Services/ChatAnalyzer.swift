@@ -61,7 +61,8 @@ actor ChatAnalyzer {
         messages: [MessageInfo],
         myUsername: String,
         myName: String,
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
     ) async -> GroupAnalysis? {
         let template: String
         do {
@@ -76,7 +77,8 @@ actor ChatAnalyzer {
             chatUsername: chatUsername,
             myUsername: myUsername,
             myName: myName,
-            myDisplayName: myDisplayName
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
         )
 
         let userPrompt = template
@@ -115,7 +117,8 @@ actor ChatAnalyzer {
         messages: [MessageInfo],
         myUsername: String,
         myName: String,
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
     ) async -> PrivateAnalysis? {
         let template: String
         do {
@@ -130,7 +133,8 @@ actor ChatAnalyzer {
             chatUsername: chatUsername,
             myUsername: myUsername,
             myName: myName,
-            myDisplayName: myDisplayName
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
         )
 
         // Resolve relationship description from store
@@ -170,11 +174,12 @@ actor ChatAnalyzer {
         chatUsername: String,
         myUsername: String,
         myName: String,
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
     ) -> String {
         let chronological = messages.reversed()
         return chronological.map { msg in
-            let isSelf = MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+            let isSelf = MessageHelpers.isFromSelf(msg, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
             let sender = isSelf
                 ? (myName.isEmpty ? "我" : myName)
                 : (msg.senderName.isEmpty ? msg.senderUsername : msg.senderName)
@@ -187,12 +192,14 @@ actor ChatAnalyzer {
     // MARK: - HTTP call
 
     private func call(_ userPrompt: String) async -> String {
+        let started = Date()
         let trackID = "chatanalyzer:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "聊天分析")
         defer { AIActivityTracker.shared.end(trackID) }
         let baseURL = normalizeURL(config.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             print("[WCHUD] ChatAnalyzer: invalid URL: \(config.baseURL)")
+            writeAudit(input: userPrompt, output: "", latencyMs: 0, status: .httpError, error: "invalid URL: \(config.baseURL)")
             return ""
         }
 
@@ -202,7 +209,7 @@ actor ChatAnalyzer {
         if !config.apiKey.isEmpty {
             req.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         }
-        req.timeoutInterval = 120
+        req.timeoutInterval = 60
 
         let body: [String: Any] = [
             "model": config.model,
@@ -212,15 +219,19 @@ actor ChatAnalyzer {
             ],
             "temperature": config.temperature,
             "max_tokens": config.maxTokens,
+            "enable_thinking": false,
             "stream": false
         ]
 
         do {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
             let (data, response) = try await URLSession.shared.data(for: req)
+            let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                let errBody = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
                 print("[WCHUD] ChatAnalyzer: HTTP \(code)")
+                writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .httpError, error: "HTTP \(code): \(errBody)")
                 return ""
             }
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -229,12 +240,36 @@ actor ChatAnalyzer {
                   let message = first["message"] as? [String: Any],
                   let content = message["content"] as? String else {
                 print("[WCHUD] ChatAnalyzer: could not extract content from response")
+                let respBody = String(data: data, encoding: .utf8)?.prefix(200) ?? ""
+                writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .parseError, error: "no content: \(respBody)")
                 return ""
             }
-            return stripThinking(content)
+            let cleaned = stripThinking(content)
+            writeAudit(input: userPrompt, output: cleaned, latencyMs: latencyMs, status: .ok, error: nil)
+            return cleaned
         } catch {
+            let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
             print("[WCHUD] ChatAnalyzer: request error: \(error.localizedDescription)")
+            writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: .httpError, error: error.localizedDescription)
             return ""
+        }
+    }
+
+    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) {
+        let entry = AIAuditEntry(
+            id: 0,
+            ts: Date(),
+            role: .chatAnalyzer,
+            model: config.model,
+            promptVersion: "chat_analyzer",
+            inputText: String(input.prefix(200)),
+            outputText: String(output.prefix(400)),
+            latencyMs: latencyMs,
+            status: status,
+            errorMessage: error
+        )
+        do { try store.writeAIAudit(entry) } catch {
+            print("[WCHUD] ChatAnalyzer: audit write failed: \(error)")
         }
     }
 

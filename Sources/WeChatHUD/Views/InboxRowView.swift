@@ -5,6 +5,7 @@ import AppKit
 /// Shows priority dot, contact info, status labels, and hover actions.
 struct InboxRowView: View {
     @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
     let item: InboxItem
     let onDismiss: () -> Void
     var onSnooze: ((Date) -> Void)? = nil
@@ -25,6 +26,11 @@ struct InboxRowView: View {
                     firstLine
                     // Second line: summary or preview
                     secondLine
+                    // Tier 2: auto-briefing for group @mentions — a one-
+                    // line "他想你: ..." that appears without the user
+                    // having to click. The view itself decides whether
+                    // to render anything (empty when not applicable).
+                    inlineBriefingLine
                 }
 
                 if hovered {
@@ -149,6 +155,64 @@ struct InboxRowView: View {
                     .foregroundColor(.white.opacity(0.45))
                     .lineLimit(1)
             }
+        }
+    }
+
+    // MARK: - Tier 2: inline briefing
+
+    /// Find the HUDNotification that corresponds to this inbox item.
+    /// Inbox items are keyed by chatUsername, so a row for a group
+    /// @mention matches the most recent @mention notification for that
+    /// chat in `recentNotifications` (which is capped to ~10 items).
+    private var matchingNotification: HUDNotification? {
+        guard item.isGroup, item.isAtMention else { return nil }
+        return monitor.recentNotifications.first {
+            $0.chatUsername == item.chatUsername && $0.canExplainContext
+        }
+    }
+
+    /// Rendered "他想你: ..." inline briefing, or a compact "分析中"
+    /// placeholder while the briefing is in flight. Returns nil (row
+    /// doesn't render this region) when the item isn't a group
+    /// @mention or when no briefing activity has been started yet —
+    /// keeps rows that don't need this feature visually unchanged.
+    @ViewBuilder
+    private var inlineBriefingLine: some View {
+        if let notif = matchingNotification {
+            let state = monitor.groupContextState(for: notif)
+            if state.isLoading && state.briefing == nil {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange.opacity(0.7))
+                    Text("分析中…")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            } else if let briefing = state.briefing {
+                // Prefer the actionable "what should you do" line when
+                // deep analysis is ready; fall back to the briefing's
+                // `nextStep`, then to plain `whyMentioned`.
+                let summaryText: String = {
+                    if let action = briefing.deepSuggestedAction, !action.isEmpty { return action }
+                    if !briefing.nextStep.isEmpty { return briefing.nextStep }
+                    return briefing.whyMentioned
+                }()
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange.opacity(0.85))
+                    Text(summaryText)
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.72))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                EmptyView()
+            }
+        } else {
+            EmptyView()
         }
     }
 

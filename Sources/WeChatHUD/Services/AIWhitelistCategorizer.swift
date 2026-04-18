@@ -129,6 +129,13 @@ actor AIWhitelistCategorizer {
         }
     }
 
+    /// Max candidates per AI call. Empirically safe for a 32k-token
+    /// context window: 5 messages × ~25 candidates ≈ 125 message stubs,
+    /// leaves headroom for the prompt skeleton + output. Larger batches
+    /// were sporadically failing (HTTP 413 / empty response) on
+    /// accounts with 500+ contacts, silently dropping categorization.
+    private static let batchChunkSize = 25
+
     func categorizeBatch(_ items: [BatchItem]) async -> [BatchResult] {
         guard !items.isEmpty else { return [] }
 
@@ -140,6 +147,23 @@ actor AIWhitelistCategorizer {
             return []
         }
 
+        // Chunk to avoid overflowing the model's context window.
+        var merged: [BatchResult] = []
+        var cursor = 0
+        while cursor < items.count {
+            let end = min(cursor + Self.batchChunkSize, items.count)
+            let chunk = Array(items[cursor..<end])
+            let results = await categorizeChunk(chunk, template: template)
+            merged.append(contentsOf: results)
+            cursor = end
+        }
+        return merged
+    }
+
+    /// Single AI call for one chunk. Each `BatchResult.index` is the
+    /// caller's original index (not re-numbered), so the merged output
+    /// still aligns with the caller's input positions.
+    private func categorizeChunk(_ items: [BatchItem], template: String) async -> [BatchResult] {
         let candidatesText = items.map { item in
             let msgs = item.messages.prefix(5)
                 .map { "[\(clean($0.sender))] \(clean($0.body))" }
@@ -211,6 +235,7 @@ actor AIWhitelistCategorizer {
             ],
             "temperature": config.temperature,
             "max_tokens": config.maxTokens,
+            "enable_thinking": false,
             "stream": false
         ]
 

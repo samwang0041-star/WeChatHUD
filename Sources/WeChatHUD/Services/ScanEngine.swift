@@ -62,8 +62,19 @@ enum ScanEngine {
 
             // Refresh message DBs before reading — picks up outbound messages
             // the user just sent in WeChat, so reply debt correctly detects replies.
-            for relPath in reader.findMessageDBs() {
-                _ = try? reader.refreshIfChanged(relPath: relPath)
+            // When FSEvents told us exactly which files changed, only refresh those.
+            // On timer-based fallback scans (changedRelPaths == nil), check all DBs
+            // but refreshIfChanged is cheap (mtime compare) for unchanged files.
+            let msgDBs = reader.findMessageDBs()
+            if let changed = changedRelPaths {
+                let changedSet = Set(changed)
+                for relPath in msgDBs where changedSet.contains(relPath) {
+                    _ = try? reader.refreshIfChanged(relPath: relPath)
+                }
+            } else {
+                for relPath in msgDBs {
+                    _ = try? reader.refreshIfChanged(relPath: relPath)
+                }
             }
 
             let selfNames = reader.mySelfNames
@@ -141,7 +152,7 @@ enum ScanEngine {
                         unreadCollected.append(item)
                     }
                 } else {
-                    for msg in recentMsgs where MessageHelpers.isAtMe(msg.text, myUsername: myUname) {
+                    for msg in recentMsgs where MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) {
                         let item = makeItem(msg, kind: .groupAt)
                         if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
                             suppressedCollected.append(item)
@@ -220,12 +231,36 @@ enum ScanEngine {
 
                 let currentMaxTime = messages.first?.createTime ?? 0
 
-                guard let baseline = store.getWhitelistBaseline(username: entry.id) else {
-                    let seed = currentMaxTime > 0
-                        ? currentMaxTime
-                        : Int(Date().timeIntervalSince1970)
+                // Resolve the baseline for "what's new since last scan".
+                // If no baseline is stored (first scan for this chat —
+                // typically right after the user adds it to the
+                // whitelist), seed it to cover the existing unread
+                // backlog. Otherwise adding a new whitelist entry while
+                // there are unread messages would silently swallow
+                // them: we'd seed to the newest message time and none
+                // of the backlog would pass the `> baseline` filter.
+                let baseline: Int
+                if let existing = store.getWhitelistBaseline(username: entry.id) {
+                    baseline = existing
+                } else {
+                    let unreadCount = sessionMap[entry.id]?.unreadCount ?? 0
+                    let seed: Int
+                    if unreadCount > 0 && !messages.isEmpty {
+                        // Messages are newest-first. The N unread ones
+                        // sit at indices 0..<unreadCount (capped to
+                        // what we actually fetched). Seed just before
+                        // the OLDEST unread — messages[N-1] — so the
+                        // `> baseline` filter picks up exactly those N,
+                        // not N+1 (including the first *read* message).
+                        let lastUnreadIdx = min(unreadCount, messages.count) - 1
+                        seed = max(0, messages[lastUnreadIdx].createTime - 1)
+                    } else if currentMaxTime > 0 {
+                        seed = currentMaxTime
+                    } else {
+                        seed = Int(Date().timeIntervalSince1970)
+                    }
                     try? store.setWhitelistBaseline(username: entry.id, lastCreateTime: seed)
-                    continue
+                    baseline = seed
                 }
 
                 let newMessages = messages.filter { $0.createTime > baseline }
@@ -243,7 +278,7 @@ enum ScanEngine {
                     if MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap) {
                         continue
                     }
-                    let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname)
+                    let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
                     let kind: HUDNotificationKind
                     if !msg.chatUsername.contains("@chatroom") {
                         kind = .privateChat
@@ -255,8 +290,13 @@ enum ScanEngine {
 
                     // Use the more recent of message createTime and session lastTimestamp.
                     // WeChat's create_time can be stale for bots/forwarded messages.
+                    // Cap at "now" so a session row that claims a future
+                    // timestamp (seen occasionally for bot-generated
+                    // messages) can't push our notification timestamp
+                    // past the current moment and scramble the sort.
+                    let nowEpoch = Int(Date().timeIntervalSince1970)
                     let sessionTs = sessionMap[entry.id]?.lastTimestamp ?? msg.createTime
-                    let bestTime = max(msg.createTime, sessionTs)
+                    let bestTime = min(nowEpoch, max(msg.createTime, sessionTs))
                     let msgTime = Date(timeIntervalSince1970: Double(bestTime))
                     let notif = HUDNotification(
                         chatUsername: msg.chatUsername,
@@ -501,7 +541,7 @@ enum ScanEngine {
                 latestInbound: inbound,
                 latestOutbound: latestOutbound,
                 inboundCountSinceLastOutbound: inboundCountSinceLastOutbound,
-                isAtMention: MessageHelpers.isAtMe(inbound.text, myUsername: myUsername),
+                isAtMention: MessageHelpers.isAtMe(inbound.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames),
                 chatAction: chatActions[session.username],
                 now: now,
                 contactReplyWindowMinutes: contactMap[session.username]?.replyWindowMinutes

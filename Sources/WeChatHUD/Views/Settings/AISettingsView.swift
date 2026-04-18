@@ -27,6 +27,10 @@ struct AISettingsView: View {
     @State private var localTestResult = ""
     @State private var localTesting = false
 
+    // Codex (ChatGPT OAuth) status — populated when cloud slot picks "openai-codex".
+    @State private var codexLoggedInEmail: String? = nil
+    @State private var codexAuthError: String? = nil
+
     @State private var summaryEnabled = true
     @State private var suggestionsEnabled = true
     @State private var moodDetectionEnabled = true
@@ -232,6 +236,41 @@ struct AISettingsView: View {
                         .frame(maxWidth: 200)
                 }
             }
+
+            // Codex login status (replaces baseURL/apiKey for the OAuth-only provider)
+            if providerID.wrappedValue == "openai-codex" {
+                SettingsRowDivider()
+                codexStatusRow
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codexStatusRow: some View {
+        if let err = codexAuthError {
+            SettingsRow("登录态", icon: "exclamationmark.triangle.fill", iconColor: .orange) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(err)
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 240, alignment: .trailing)
+                    Text("终端运行: codex login")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+        } else if let email = codexLoggedInEmail {
+            SettingsRow("登录账号", icon: "checkmark.seal.fill", iconColor: .green) {
+                Text(email)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+            }
+        } else {
+            SettingsRow("登录态", icon: "questionmark.circle", iconColor: .secondary) {
+                Text("正在检测…").font(.system(size: 10)).foregroundColor(.secondary)
+            }
         }
     }
 
@@ -383,7 +422,34 @@ struct AISettingsView: View {
             cloudBaseURL = p.baseURL
             if !p.models.contains(cloudModel) { cloudModel = p.models.first ?? "" }
         }
+        if cloudProviderID == "openai-codex" { refreshCodexStatus() }
         saveAIConfig()
+    }
+
+    /// Probe `~/.codex/auth.json` and surface either the bound email or a
+    /// short error string. Runs off the main thread (file IO + JWT decode).
+    private func refreshCodexStatus() {
+        codexAuthError = nil
+        codexLoggedInEmail = nil
+        Task.detached(priority: .userInitiated) {
+            do {
+                let profile = try CodexAuth.readProfile()
+                await MainActor.run {
+                    codexLoggedInEmail = profile.email ?? "(已登录)"
+                    codexAuthError = nil
+                }
+            } catch let error as CodexError {
+                await MainActor.run {
+                    codexAuthError = error.errorDescription ?? "未登录"
+                    codexLoggedInEmail = nil
+                }
+            } catch {
+                await MainActor.run {
+                    codexAuthError = error.localizedDescription
+                    codexLoggedInEmail = nil
+                }
+            }
+        }
     }
 
     private func onLocalChanged() {
@@ -423,6 +489,7 @@ struct AISettingsView: View {
         notifyDuration = notifCfg.durationSeconds
 
         reloadRecentGroupContextAudit()
+        if cloudProviderID == "openai-codex" { refreshCodexStatus() }
     }
 
     private func buildConfig() -> AIConfig {

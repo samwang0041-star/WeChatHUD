@@ -57,10 +57,10 @@ struct DetailPanelView: View {
             }
             Spacer()
             Button("[查看]") {
-                panelState.collapse()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    panelState.mouseEntered()
-                }
+                // Switch to .extended directly — the old "collapse
+                // then mouseEntered 0.3s later" dance produced a
+                // visible shrink-then-grow flicker.
+                panelState.goExtended()
             }
             .font(.system(size: 10))
             .buttonStyle(.plain)

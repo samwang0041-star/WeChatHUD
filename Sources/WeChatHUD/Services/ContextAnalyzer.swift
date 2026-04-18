@@ -111,7 +111,8 @@ actor ContextAnalyzer {
             "model": config.model,
             "messages": [["role": "system", "content": "不要进入 thinking 模式，不要输出 <think> 标签。只输出 JSON。"], ["role": "user", "content": prompt]],
             "temperature": 0.1,
-            "max_tokens": 384
+            "max_tokens": 384,
+            "enable_thinking": false
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return nil }

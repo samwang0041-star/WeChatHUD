@@ -127,6 +127,29 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertFalse(store.isWhitelisted("user1"))
     }
 
+    // Regression: removing a whitelist entry must drop its baseline and
+    // any chat_actions too. Otherwise re-adding the same user later
+    // reuses the stale watermark → backlog silently swallowed, or the
+    // re-added chat comes back already muted.
+    func testRemoveFromWhitelistClearsBaselineAndActions() throws {
+        try store.addToWhitelist(
+            username: "user1",
+            displayName: "T",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.setWhitelistBaseline(username: "user1", lastCreateTime: 1700000000)
+        try store.silenceChat(chatUsername: "user1", silencedAt: 1700001000)
+        XCTAssertEqual(store.getWhitelistBaseline(username: "user1"), 1700000000)
+        XCTAssertNotNil(store.loadChatActions()["user1"])
+
+        try store.removeFromWhitelist(username: "user1")
+
+        XCTAssertNil(store.getWhitelistBaseline(username: "user1"))
+        XCTAssertNil(store.loadChatActions()["user1"])
+    }
+
     func testWhitelistMutuallyExclusive() throws {
         try store.addToWhitelist(
             username: "user1",

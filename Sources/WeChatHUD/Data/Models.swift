@@ -30,12 +30,55 @@ struct HUDStats {
     var lastSyncAt: Date? = nil
 }
 
+/// Escalation tiers for an unanswered VIP message. Computed purely
+/// from how long the item has been overdue — ProactiveAlertEngine
+/// advances the tier on each scan and fires the right signal for
+/// each level:
+///
+/// - `.t1` (30m+): one system notification
+/// - `.t2` (60m+): menu-bar "!" badge + compact pill pulse (visual only)
+/// - `.t3` (120m+): second system notification + in-panel toast
+/// - `.t4` (240m+): third notification + persistent "!Nh" in menu bar
+///
+/// Each tier only fires once per item; resetting requires the user to
+/// act on the item (reply / dismiss / snooze).
+enum VIPAlertTier: Int, Comparable, Codable {
+    case none = 0
+    case t1 = 1
+    case t2 = 2
+    case t3 = 3
+    case t4 = 4
+
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+
+    static func compute(overdueMinutes: Int) -> Self {
+        if overdueMinutes >= 240 { return .t4 }
+        if overdueMinutes >= 120 { return .t3 }
+        if overdueMinutes >= 60  { return .t2 }
+        if overdueMinutes >= 30  { return .t1 }
+        return .none
+    }
+
+    /// Approximate "how long has this been overdue" label — rendered in
+    /// the menu bar and banner so the user knows how urgent it is.
+    var agingLabel: String {
+        switch self {
+        case .none: return ""
+        case .t1:   return "30m"
+        case .t2:   return "1h"
+        case .t3:   return "2h"
+        case .t4:   return "4h+"
+        }
+    }
+}
+
 enum SyncStatus {
     case idle
     case syncing
     case ok
     case stale              // >5 min since last sync
     case waitingForWeChat   // WeChat process not running
+    case accountSwitched    // WeChat logged into a different account since we started
     case error(String)
 
     var dotColor: String {
@@ -43,7 +86,7 @@ enum SyncStatus {
         case .idle, .syncing: return "yellow"
         case .ok: return "green"
         case .stale: return "yellow"
-        case .waitingForWeChat, .error: return "red"
+        case .waitingForWeChat, .error, .accountSwitched: return "red"
         }
     }
 }
@@ -174,6 +217,11 @@ enum ReplyDebtReasonCode: String, Codable, CaseIterable {
     case unread
     case overdue
     case repeatedInbound
+    /// Counterpart sent a substantive message (money / specific time /
+    /// decision / commitment-reference) and the user's only reply
+    /// was an ack ("嗯嗯", "好的"). Flag so the user doesn't let an
+    /// important point slide with a hollow acknowledgment.
+    case unsubstantiveReply
 
     var label: String {
         switch self {
@@ -185,6 +233,7 @@ enum ReplyDebtReasonCode: String, Codable, CaseIterable {
         case .unread: return "未读"
         case .overdue: return "超时"
         case .repeatedInbound: return "连续催促"
+        case .unsubstantiveReply: return "未实质回应"
         }
     }
 }
@@ -729,6 +778,19 @@ struct AIProvider: Identifiable, Hashable {
             requiresKey: false,
             signupURL: ""
         ),
+        // Special-cased provider: requires no API key and no baseURL.
+        // Reads OAuth tokens from `~/.codex/auth.json` (codex-cli login state)
+        // and posts to chatgpt.com/backend-api/codex/responses with a request
+        // fingerprint identical to OpenClaw / pi-ai. Dispatched by
+        // `AIService.send` when `slot.providerID == "openai-codex"`.
+        AIProvider(
+            id: "openai-codex",
+            name: "OpenAI Codex (ChatGPT 订阅)",
+            baseURL: "",
+            models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.3-codex"],
+            requiresKey: false,
+            signupURL: "https://github.com/openai/codex"
+        ),
         AIProvider(
             id: "custom",
             name: "自定义",
@@ -908,6 +970,7 @@ enum AIRole: String, Codable {
     case autopilot         = "autopilot"
     case summarizer        = "summarizer"
     case briefer           = "briefer"
+    case chatAnalyzer      = "chat_analyzer"
 }
 
 enum AIAuditStatus: String, Codable {
@@ -1017,6 +1080,85 @@ struct Commitment: Identifiable {
     let deadlineAt: Date?
     let confidence: Double
     let status: CommitmentStatus
+    let promptVersion: String
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+// MARK: - DiscussionItem (bidirectional conversation-extracted work items)
+
+/// The kind of thing extracted from a conversation. Drives the UI
+/// icon + filter chip + sort priority.
+enum DiscussionItemKind: String, Codable, CaseIterable {
+    case todo       // 待办事项
+    case decision   // 待决策（讨论过，没定）
+    case info       // 信息点（地址/价格/关键信息）
+    case timePlace  // 时间地点（约见/截止）
+    case question   // 悬而未决的问题
+
+    var label: String {
+        switch self {
+        case .todo:      return "待办"
+        case .decision:  return "待决策"
+        case .info:      return "信息"
+        case .timePlace: return "时间地点"
+        case .question:  return "待确认"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .todo:      return "checkmark.square"
+        case .decision:  return "arrow.triangle.branch"
+        case .info:      return "info.circle"
+        case .timePlace: return "calendar"
+        case .question:  return "questionmark.circle"
+        }
+    }
+}
+
+/// Whose responsibility is the item — drives the "上级交代给我 / 我交代给下级"
+/// weekly-report slicing. `mine` = I need to do it; `theirs` = other
+/// party needs to do it; `shared` = undetermined or joint.
+enum DiscussionItemOwner: String, Codable {
+    case mine
+    case theirs
+    case shared
+
+    var label: String {
+        switch self {
+        case .mine:   return "我要做"
+        case .theirs: return "对方要做"
+        case .shared: return "双方"
+        }
+    }
+}
+
+enum DiscussionItemStatus: String, Codable {
+    case pending    // 默认
+    case done       // 用户手动标记完成
+    case dismissed  // 用户觉得不是待办，扔掉
+    case archived   // 老了，折叠
+}
+
+struct DiscussionItem: Identifiable {
+    let id: Int64
+    let chatUsername: String
+    let chatName: String
+    let kind: DiscussionItemKind
+    let owner: DiscussionItemOwner
+    /// The item text, one line e.g. "下周五之前提交 Q2 方案".
+    let content: String
+    /// Optional free-form detail extracted alongside (rationale, deps).
+    let detail: String?
+    /// Anchor message that produced this item. Used for dedupe and
+    /// to link back to the source conversation.
+    let anchorMsgUID: String
+    /// Unix seconds of the source message — used for weekly slicing.
+    let sourceTimestamp: Int
+    let dueAt: Date?
+    var status: DiscussionItemStatus
+    let confidence: Double
     let promptVersion: String
     let createdAt: Date
     let updatedAt: Date

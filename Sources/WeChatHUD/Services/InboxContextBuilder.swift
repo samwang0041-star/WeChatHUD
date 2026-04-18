@@ -55,6 +55,7 @@ enum InboxContextBuilder {
         let text = triggerMessage.text
         let windowSize = contextWindowSize(messageLength: text.count)
         let myDisplayName = reader.displayName(for: myUsername)
+        let mySelfNames = reader.mySelfNames
 
         // Fetch recent messages for context
         let recentMessages = (try? reader.getMessages(
@@ -64,7 +65,7 @@ enum InboxContextBuilder {
 
         // Find my last reply
         let myLastReply = recentMessages.first {
-            MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+            MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
         }
         let timeSinceMyLastReply: TimeInterval? = myLastReply.map {
             Date().timeIntervalSince(Date(timeIntervalSince1970: Double($0.createTime)))
@@ -74,12 +75,12 @@ enum InboxContextBuilder {
         let inboundSinceReply: Int
         if let outbound = myLastReply {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
                 && $0.createTime > outbound.createTime
             }.count
         } else {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName)
+                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
             }.count
         }
 
@@ -114,7 +115,7 @@ enum InboxContextBuilder {
 
         // Group context
         let isGroup = chatUsername.contains("@chatroom")
-        let mentionedMe = MessageHelpers.isAtMe(text, myUsername: myUsername)
+        let mentionedMe = MessageHelpers.isAtMe(text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
         let groupContext: [MessageInfo]?
         if isGroup && mentionedMe {
             let allRecent = (try? reader.getMessages(chatUsername: chatUsername, limit: windowSize + 10)) ?? []
@@ -166,10 +167,30 @@ enum InboxContextBuilder {
             linkURL = nil
         }
 
+        // Pre-render a speaker-labeled transcript (chronological
+        // order, oldest first). The AI summarizer previously saw
+        // "senderName: text" for every row — which mis-attributed
+        // the user's own "收到" to the peer and produced summaries
+        // like "对方仅回复收到". Tagging self-outbound messages as
+        // "我" removes the ambiguity.
+        let transcriptLines = recentMessages.reversed().prefix(30).map { msg -> String in
+            let isSelf = MessageHelpers.isFromSelf(
+                msg, chatUsername: chatUsername,
+                myUsername: myUsername, myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames
+            )
+            let speaker = isSelf
+                ? "我"
+                : (msg.senderName.isEmpty ? "对方" : msg.senderName)
+            return "\(speaker): \(msg.text)"
+        }
+        let taggedTranscript = transcriptLines.joined(separator: "\n")
+
         return InboxContext(
             triggerMessage: triggerMessage,
             triggerMessageText: text,
             recentMessages: recentMessages,
+            taggedTranscript: taggedTranscript,
             myLastReply: myLastReply,
             myLastReplyText: myLastReply?.text,
             timeSinceMyLastReply: timeSinceMyLastReply,
