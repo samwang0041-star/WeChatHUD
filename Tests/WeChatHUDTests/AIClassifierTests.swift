@@ -166,7 +166,7 @@ final class AIClassifierTests: XCTestCase {
             throw XCTSkip("fixture has < 5 cases (\(cases.count)); skipping until test set is grown")
         }
 
-        let classifier = AIClassifier(store: store, config: cfg)
+        let classifier = AIClassifier(store: store, aiService: AIService(config: cfg))
 
         var tp = 0, fp = 0, tn = 0, fn = 0
         for c in cases {

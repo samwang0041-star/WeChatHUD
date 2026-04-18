@@ -16,24 +16,14 @@ import Foundation
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
 actor AIClassifier {
     private let store: HUDStore
-    private var config: AIConfig
+    private let aiService: AIService
     private let promptLoader: PromptLoader
     private let promptVersion: String = "classifier_v1"
 
-    init(store: HUDStore, config: AIConfig = AIConfig(), promptLoader: PromptLoader = PromptLoader()) {
+    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
-        var c = config
-        c.temperature = 0.05
-        c.maxTokens = 256
-        self.config = c
+        self.aiService = aiService
         self.promptLoader = promptLoader
-    }
-
-    func updateConfig(_ config: AIConfig) {
-        var c = config
-        c.temperature = 0.05
-        c.maxTokens = 256
-        self.config = c
     }
 
     /// Classify a single message. Returns nil only when the call could
@@ -57,7 +47,7 @@ actor AIClassifier {
         // First attempt.
         let firstResponse = await callModel(userPrompt: userPrompt)
         if let parsed = parseResult(firstResponse.text) {
-            writeAudit(
+            await writeAudit(
                 message: message,
                 output: firstResponse.text,
                 latencyMs: ms(since: started),
@@ -70,7 +60,7 @@ actor AIClassifier {
         // First call yielded an HTTP / parse failure. Log it as parse_error
         // (or http_error if no body), then retry once with a stricter nudge.
         if firstResponse.text.isEmpty, let err = firstResponse.error {
-            writeAudit(
+            await writeAudit(
                 message: message,
                 output: "",
                 latencyMs: ms(since: started),
@@ -83,7 +73,7 @@ actor AIClassifier {
         let stricterPrompt = userPrompt + "\n\n严格要求：你的上一次输出无法被解析为 JSON。请只输出一个 JSON 对象，不要任何其它文字、markdown 围栏或解释。"
         let secondResponse = await callModel(userPrompt: stricterPrompt)
         if let parsed = parseResult(secondResponse.text) {
-            writeAudit(
+            await writeAudit(
                 message: message,
                 output: secondResponse.text,
                 latencyMs: ms(since: started),
@@ -93,7 +83,7 @@ actor AIClassifier {
             return parsed.with(promptVersion: promptVersion)
         }
 
-        writeAudit(
+        await writeAudit(
             message: message,
             output: secondResponse.text,
             latencyMs: ms(since: started),
@@ -110,64 +100,24 @@ actor AIClassifier {
         let error: String?
     }
 
-    /// Direct chat-completions call against the configured MLX endpoint.
-    /// Doesn't reuse `AIService` because that actor owns its own (different)
-    /// config — we want a clean separation between the user-facing AI for
-    /// summary/AI-chat features and the classifier infrastructure.
+    /// Chat completion routed through `AIService.complete` so the Codex /
+    /// OpenAI-compatible provider selection is uniform. Preserves the
+    /// `ModelResponse` contract so the retry / audit logic above stays
+    /// untouched.
     private func callModel(userPrompt: String) async -> ModelResponse {
         let trackID = "classifier:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "消息分类")
         defer { AIActivityTracker.shared.end(trackID) }
-        let baseURL = normalizeURL(config.baseURL)
-        guard let url = URL(string: "\(baseURL)/chat/completions") else {
-            return ModelResponse(text: "", error: "invalid url: \(config.baseURL)")
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !config.apiKey.isEmpty {
-            request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-        }
-        request.timeoutInterval = 30
-
-        let body: [String: Any] = [
-            "model": config.model,
-            "messages": [
-                ["role": "system", "content": "你是一个微信消息分类器。严格按要求输出 JSON。不要进入 thinking 模式，不要输出 <think> 标签。"],
-                ["role": "user", "content": userPrompt]
-            ],
-            "temperature": config.temperature,
-            "max_tokens": config.maxTokens,
-            "enable_thinking": false,
-            "stream": false
-        ]
 
         do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let content = try await aiService.complete(
+                system: "你是一个微信消息分类器。严格按要求输出 JSON。",
+                user: userPrompt,
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256)
+            )
+            return ModelResponse(text: content, error: nil)
         } catch {
-            return ModelResponse(text: "", error: "json encode failed: \(error)")
-        }
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return ModelResponse(text: "", error: "no http response")
-            }
-            guard http.statusCode == 200 else {
-                let errBody = String(data: data, encoding: .utf8) ?? ""
-                return ModelResponse(text: "", error: "HTTP \(http.statusCode): \(errBody.prefix(200))")
-            }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let choices = json["choices"] as? [[String: Any]],
-                  let first = choices.first,
-                  let message = first["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                return ModelResponse(text: "", error: "could not extract content from response")
-            }
-            return ModelResponse(text: stripThinking(content), error: nil)
-        } catch {
-            return ModelResponse(text: "", error: "request failed: \(error.localizedDescription)")
+            return ModelResponse(text: "", error: error.localizedDescription)
         }
     }
 
@@ -261,12 +211,13 @@ actor AIClassifier {
 
     // MARK: - Audit
 
-    private func writeAudit(message: ClassifierInput, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) {
+    private func writeAudit(message: ClassifierInput, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
+        let model = await aiService.currentConfig().model
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
             role: .classifier,
-            model: config.model,
+            model: model,
             promptVersion: promptVersion,
             inputText: "[\(message.senderName)@\(message.chatName)] \(message.text)",
             outputText: output,
@@ -285,22 +236,6 @@ actor AIClassifier {
 
     private func ms(since start: Date) -> Int {
         Int(Date().timeIntervalSince(start) * 1000)
-    }
-
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
-        while u.hasSuffix("/") { u.removeLast() }
-        if !u.hasSuffix("/v1") { u += "/v1" }
-        return u
-    }
-
-    private func stripThinking(_ text: String) -> String {
-        let pattern = "<think>[\\s\\S]*?</think>"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
