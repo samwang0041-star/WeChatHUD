@@ -643,7 +643,7 @@ enum ClassifierCLI {
         let isGroup = chatUsername.contains("@chatroom")
         let contactName = msgs.first?.chatName ?? chatUsername
 
-        let categorizer = AIWhitelistCategorizer(store: store, config: store.loadAIConfig())
+        let categorizer = AIWhitelistCategorizer(store: store, aiService: AIService(config: store.loadAIConfig()))
         let started = Date()
         let result = runAsync {
             await categorizer.categorize(.init(contactName: contactName, isGroup: isGroup, messages: usable))

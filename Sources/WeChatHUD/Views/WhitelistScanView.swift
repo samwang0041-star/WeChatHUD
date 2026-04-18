@@ -225,7 +225,7 @@ struct WhitelistScanView: View {
                 ))
             }
 
-            let categorizer = AIWhitelistCategorizer(store: store, config: store.loadAIConfig())
+            let categorizer = AIWhitelistCategorizer(store: store, aiService: AIService(config: store.loadAIConfig()))
             var allResults: [AIWhitelistCategorizer.BatchResult] = []
 
             let chunks = stride(from: 0, to: batchItems.count, by: 15).map {

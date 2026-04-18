@@ -93,7 +93,7 @@ final class AIServicesTests: XCTestCase {
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
-        let categorizer = AIWhitelistCategorizer(store: store, config: cfg)
+        let categorizer = AIWhitelistCategorizer(store: store, aiService: AIService(config: cfg))
         let result = await categorizer.categorize(.init(
             contactName: "林总",
             isGroup: false,
