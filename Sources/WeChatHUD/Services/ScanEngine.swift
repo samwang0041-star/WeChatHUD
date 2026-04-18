@@ -30,7 +30,7 @@ enum ScanEngine {
     static func performScan(
         reader: WeChatReader,
         store: HUDStore,
-        aiService: AIService?,
+        aiService: AIService,
         changedRelPaths: Set<String>?,
         thresholds: UnreadThresholds,
         replyDebtConfig: ReplyDebtConfig,
