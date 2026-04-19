@@ -1607,6 +1607,34 @@ final class ChatMonitor: ObservableObject {
             .map { (sender: $0.senderName, body: $0.text) } ?? []
     }
 
+    /// Last message in `chatUsername` that did NOT come from the user.
+    /// Used when appending a manual send to the autopilot session ledger
+    /// so the model knows what the reply was responding to. Returns nil
+    /// if the reader can't be read or no peer message is found in the
+    /// recent window.
+    func lastPeerMessage(chatUsername: String, limit: Int = 15) -> String? {
+        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil) else {
+            return nil
+        }
+        let myUname = reader.myUsername()
+        let myDisplay = reader.displayName(for: myUname)
+        let selfNames = reader.mySelfNames
+        // getMessages returns newest-first; find the first peer message.
+        for msg in msgs {
+            let fromSelf = MessageHelpers.isFromSelf(
+                msg, chatUsername: chatUsername,
+                myUsername: myUname,
+                myDisplayName: myDisplay,
+                mySelfNames: selfNames
+            )
+            if !fromSelf {
+                let trimmed = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
     /// All WeChat contacts (username → displayName) from the encrypted DB.
     func wechatContacts() -> [String: String] {
         reader.allContacts()
