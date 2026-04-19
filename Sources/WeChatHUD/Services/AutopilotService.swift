@@ -88,12 +88,32 @@ actor AutopilotService {
         var duration: TimeInterval { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
     }
 
-    init(store: HUDStore, reader: WeChatReader, aiService: AIService) {
+    /// Callback fired on every verified outgoing send. Used by ChatMonitor
+    /// to append to the session ledger. Arguments: `(chatUsername, text,
+    /// peerLastMessage, topic)`. Nil until injected by the caller.
+    typealias LedgerWriteCallback = @MainActor @Sendable (String, String, String?, String?) -> Void
+    /// Reads the current ledger for a chat. Used by `processBatch` to
+    /// feed `{session_ledger}` into the reply prompt. Nil until injected
+    /// by the caller.
+    typealias LedgerReadCallback = @MainActor @Sendable (String) -> [LedgerEntry]
+
+    private let ledgerWrite: LedgerWriteCallback?
+    private let ledgerRead: LedgerReadCallback?
+
+    init(
+        store: HUDStore,
+        reader: WeChatReader,
+        aiService: AIService,
+        ledgerRead: LedgerReadCallback? = nil,
+        ledgerWrite: LedgerWriteCallback? = nil
+    ) {
         self.store = store
         self.reader = reader
         self.aiService = aiService
         self.generator = AutoReplyGenerator(store: store, aiService: aiService)
         self.styleProfiler = StyleProfiler(reader: reader, store: store)
+        self.ledgerRead = ledgerRead
+        self.ledgerWrite = ledgerWrite
     }
 
     // MARK: - Public interface
@@ -540,6 +560,15 @@ actor AutopilotService {
         let memory = store.loadConversationMemory(chatUsername: representative.chatUsername)
         let memoryText = memory?.formatForPrompt()
 
+        // --- Pull session ledger (entries this autopilot session has sent
+        // to this chat). Hop to MainActor since ChatMonitor owns it. ---
+        let ledger: [LedgerEntry]
+        if let read = ledgerRead {
+            ledger = await MainActor.run { read(representative.chatUsername) }
+        } else {
+            ledger = []
+        }
+
         // --- Build per-contact style hint ---
         let contactHint = Self.buildContactStyleHint(style: style, contactRole: representative.contactRole)
 
@@ -565,6 +594,7 @@ actor AutopilotService {
             contactStyleHint: contactHint,
             mediaContext: mediaContext,
             conversationMemory: memoryText,
+            sessionLedger: ledger,
             replyStyleSuffix: config.replyStyle.promptFragment
         )
 
@@ -711,7 +741,9 @@ actor AutopilotService {
             risk: risk,
             reasoning: decision.reasoning,
             styleScore: styleScore,
-            scheduledSendTime: sendTime
+            scheduledSendTime: sendTime,
+            peerLastMessage: combinedText,
+            topic: memory?.conversationPhase
         )
         pendingSendQueue.append(pendingItem)
 
@@ -737,7 +769,16 @@ actor AutopilotService {
 
     /// Serialize all sends through a single point. Only one send at a time.
     /// Includes clipboard save/restore, frontmost check, and post-send verification.
-    private func serialSend(chatName: String, chatUsername: String, text: String, typingDelay: TimeInterval = 0) async -> Bool {
+    /// On `verified == true`, fires `ledgerWrite` so ChatMonitor can append
+    /// this send to the session ledger.
+    private func serialSend(
+        chatName: String,
+        chatUsername: String,
+        text: String,
+        typingDelay: TimeInterval = 0,
+        peerLastMessage: String? = nil,
+        topic: String? = nil
+    ) async -> Bool {
         // M5 fix: block concurrent sends through actor suspension points
         guard !isSending else {
             print("[WCHUD] Autopilot: send already in progress, dropped for '\(chatName)' — will retry on next scan")
@@ -751,7 +792,12 @@ actor AutopilotService {
         defer { ClipboardGuard.restore(savedClipboard) }
 
         // Send with optional typing simulation (blocks until complete — 2s+ per message)
-        let uiSuccess = await WeChatLauncher.sendMessage(chatName: chatName, text: text, typingDelay: typingDelay)
+        let uiSuccess = await WeChatLauncher.sendMessage(
+            chatName: chatName,
+            text: text,
+            typingDelay: typingDelay,
+            sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey
+        )
         guard uiSuccess else {
             print("[WCHUD] Autopilot: UI send failed for '\(chatName)'")
             return false
@@ -771,13 +817,24 @@ actor AutopilotService {
                 sentMsgUIDs = Set(sentMsgUIDs.suffix(250))
             }
         }
+
+        // Write session ledger entry on verified send. Runs on MainActor
+        // because the ledger lives on ChatMonitor.
+        if verified, let write = ledgerWrite {
+            await MainActor.run {
+                write(chatUsername, text, peerLastMessage, topic)
+            }
+        }
+
         return verified
     }
 
     private func serialSendWithRateLimit(
         chatName: String, chatUsername: String,
         text: String, config: AutopilotConfig,
-        typingDelay: TimeInterval = 0
+        typingDelay: TimeInterval = 0,
+        peerLastMessage: String? = nil,
+        topic: String? = nil
     ) async -> Bool {
         let now = Date()
         let oneHourAgo = now.addingTimeInterval(-3600)
@@ -796,7 +853,14 @@ actor AutopilotService {
             sendTimestamps.removeValue(forKey: chatUsername)
         }
 
-        let success = await serialSend(chatName: chatName, chatUsername: chatUsername, text: text, typingDelay: typingDelay)
+        let success = await serialSend(
+            chatName: chatName,
+            chatUsername: chatUsername,
+            text: text,
+            typingDelay: typingDelay,
+            peerLastMessage: peerLastMessage,
+            topic: topic
+        )
         if success {
             sendTimestamps[chatUsername, default: []].append(now)
             globalSendTimestamps.append(now)
@@ -982,7 +1046,8 @@ actor AutopilotService {
         let typingDelay = Self.estimateTypingDelay(for: item.replyText)
         let success = await serialSendWithRateLimit(
             chatName: item.chatName, chatUsername: item.chatUsername,
-            text: item.replyText, config: config, typingDelay: typingDelay
+            text: item.replyText, config: config, typingDelay: typingDelay,
+            peerLastMessage: item.peerLastMessage, topic: item.topic
         )
         if success {
             sessionStats.totalSent += 1
