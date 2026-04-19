@@ -374,6 +374,29 @@ enum ScanEngine {
                         ))
                     }
 
+                    // Cross-group VIP: if the current chat is a group
+                    // (whitelisted but not itself marked VIP), and the
+                    // sender is one of the flagged VIP persons, fire the
+                    // same trace so VIPAggregator and notifications pick
+                    // it up. The `entry.attentionLevel != .vip` guard
+                    // prevents double-appending when the group itself is
+                    // VIP-attention — that path is handled above.
+                    let chatIsGroup = entry.id.contains("@chatroom")
+                    if chatIsGroup
+                       && entry.attentionLevel != .vip
+                       && vipPersonUsernames.contains(msg.senderUsername)
+                    {
+                        vipTraceMessages.append((
+                            vipUsername: msg.senderUsername,
+                            vipName: msg.senderName,
+                            chatUsername: msg.chatUsername,
+                            chatName: msg.chatName,
+                            msgUID: msg.id,
+                            rawText: msg.text,
+                            msgTime: msg.createTime
+                        ))
+                    }
+
                     // Collect for AI classifier (non-self inbound messages)
                     newInboundForClassifier.append((
                         msg: msg,
