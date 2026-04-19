@@ -216,6 +216,17 @@ enum ScanEngine {
             var newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)] = []
             var selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)] = []
 
+            // Usernames of contacts explicitly marked VIP — used to detect
+            // their presence in any whitelisted group chat, not just their
+            // own private thread. A group chat itself (attentionLevel=.vip,
+            // isGroup=true) is excluded here because that path is already
+            // handled by the per-entry VIP check inside the loop below.
+            let vipPersonUsernames: Set<String> = Set(
+                whitelist
+                    .filter { $0.attentionLevel == .vip && !$0.isGroup }
+                    .map(\.id)
+            )
+
             // Build session lookup for timestamp correction
             let sessionMap = Dictionary(uniqueKeysWithValues: sessions.map { ($0.username, $0) })
 
