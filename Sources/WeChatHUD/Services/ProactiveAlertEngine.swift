@@ -157,6 +157,38 @@ final class ProactiveAlertEngine {
         )
     }
 
+    /// Push a macOS notification when a VIP contact speaks inside a
+    /// whitelisted group chat (not their private thread). Coalesces
+    /// multiple messages in the same scan batch into one notification
+    /// per (vipUsername, groupUsername) pair so the user sees
+    /// "VIP 张三 在群里说话了 · [产品群] 看看这个" once, not three times.
+    ///
+    /// `messageCount` > 1 appends a "发了 N 条" suffix to the title.
+    /// Identifier is scoped to (vip, group) and reused across tiers,
+    /// which also lets the OS suppress duplicate delivery.
+    func pushCrossGroupVIPAlert(
+        vipName: String,
+        vipUsername: String,
+        groupName: String,
+        groupUsername: String,
+        preview: String,
+        messageCount: Int
+    ) {
+        let title: String
+        if messageCount > 1 {
+            title = "VIP \(vipName) 在群里发了 \(messageCount) 条消息"
+        } else {
+            title = "VIP \(vipName) 在群里说话了"
+        }
+        let trimmedPreview = String(preview.prefix(80))
+        let body = "[\(groupName)] \(trimmedPreview)"
+        pushAlert(
+            title: title,
+            body: body,
+            identifier: "cross-vip-\(vipUsername)-\(groupUsername)"
+        )
+    }
+
     private func pushAlert(title: String, body: String, identifier: String) {
         guard alertHistory.count < maxAlertsPerHour else { return }
 
