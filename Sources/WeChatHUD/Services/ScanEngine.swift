@@ -309,12 +309,23 @@ enum ScanEngine {
                     let sessionTs = sessionMap[entry.id]?.lastTimestamp ?? msg.createTime
                     let bestTime = min(nowEpoch, max(msg.createTime, sessionTs))
                     let msgTime = Date(timeIntervalSince1970: Double(bestTime))
+
+                    // Promote the notification's attention level to .vip when
+                    // the sender is a flagged VIP contact speaking in a
+                    // non-VIP whitelisted group. This routes the event through
+                    // the same HUD/banner path as a VIP-chat notification —
+                    // `HUDNotification.isVIP` is derived from attentionLevel.
+                    let isCrossGroupVIP = entry.attentionLevel != .vip
+                        && msg.chatUsername.contains("@chatroom")
+                        && vipPersonUsernames.contains(msg.senderUsername)
+                    let effectiveLevel: WhitelistAttentionLevel =
+                        isCrossGroupVIP ? .vip : entry.attentionLevel
                     let notif = HUDNotification(
                         chatUsername: msg.chatUsername,
                         chatName: msg.chatName,
                         senderUsername: msg.senderUsername,
                         senderName: msg.senderName,
-                        attentionLevel: entry.attentionLevel,
+                        attentionLevel: effectiveLevel,
                         messageID: msg.id,
                         rawText: msg.text,
                         snippet: Self.deduplicateSenderInSnippet(msg.text, senderName: msg.senderName),
