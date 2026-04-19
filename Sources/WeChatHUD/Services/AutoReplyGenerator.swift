@@ -70,6 +70,10 @@ actor AutoReplyGenerator {
         var mediaContext: String? = nil
         /// Conversation memory (formatted text block). Nil if no memory exists.
         var conversationMemory: String? = nil
+        /// Session ledger — entries appended for this chat during the
+        /// current autopilot session. Used to keep the model consistent
+        /// with what it has already said. Empty = fresh session.
+        var sessionLedger: [LedgerEntry] = []
         /// Optional style override appended to prompt.
         var replyStyleSuffix: String = ""
     }
@@ -80,15 +84,21 @@ actor AutoReplyGenerator {
 
         let template: String
         do {
-            template = try promptLoader.load(version: "autopilot_reply_v2")
+            template = try promptLoader.load(version: "autopilot_reply_v3")
         } catch {
-            // Fallback to v1 — simpler prompt but keeps the system working
-            print("[WCHUD] AutoReplyGenerator: v2 prompt load failed, trying v1 fallback")
+            // Fallback chain: v3 → v2 → v1. Keeps autopilot functional
+            // even if the tuned prompt goes missing from the bundle.
+            print("[WCHUD] AutoReplyGenerator: v3 prompt load failed, trying v2 fallback")
             do {
-                template = try promptLoader.load(version: "autopilot_reply_v1")
+                template = try promptLoader.load(version: "autopilot_reply_v2")
             } catch {
-                print("[WCHUD] AutoReplyGenerator: both v2 and v1 prompt load failed: \(error)")
-                return nil
+                print("[WCHUD] AutoReplyGenerator: v2 prompt load failed, trying v1 fallback")
+                do {
+                    template = try promptLoader.load(version: "autopilot_reply_v1")
+                } catch {
+                    print("[WCHUD] AutoReplyGenerator: all prompt versions failed: \(error)")
+                    return nil
+                }
             }
         }
 
@@ -105,6 +115,7 @@ actor AutoReplyGenerator {
             : input.messagePairs.enumerated().map { "  \($0.offset + 1). 对方：\($0.element.question) → 用户：\($0.element.answer)" }.joined(separator: "\n")
 
         let memoryText = input.conversationMemory ?? "（暂无记忆）"
+        let ledgerText = Self.formatLedger(input.sessionLedger)
 
         // Append media context to message body if present
         let messageBody = input.mediaContext != nil
@@ -120,6 +131,7 @@ actor AutoReplyGenerator {
             .replacingOccurrences(of: "{context_window}", with: input.contextWindow)
             .replacingOccurrences(of: "{contact_style_hint}", with: input.contactStyleHint.isEmpty ? "（暂无特征数据）" : input.contactStyleHint)
             .replacingOccurrences(of: "{conversation_memory}", with: memoryText)
+            .replacingOccurrences(of: "{session_ledger}", with: ledgerText)
             .replacingOccurrences(of: "{style_description}", with: input.styleDescription)
             .replacingOccurrences(of: "{punctuation_style}", with: input.punctuationStyle.isEmpty ? "（暂无数据）" : input.punctuationStyle)
             .replacingOccurrences(of: "{sentence_style}", with: input.sentenceStyle.isEmpty ? "（暂无数据）" : input.sentenceStyle)
@@ -216,7 +228,7 @@ actor AutoReplyGenerator {
             ts: Date(),
             role: .autopilot,
             model: model,
-            promptVersion: "autopilot_reply_v2",
+            promptVersion: "autopilot_reply_v3",
             inputText: "[\(input.senderName)@\(input.chatName)|\(input.contactRole.rawValue)] \(input.messageBody)",
             outputText: output,
             latencyMs: latencyMs,
@@ -238,5 +250,25 @@ actor AutoReplyGenerator {
 
     private func ms(since start: Date) -> Int {
         Int(Date().timeIntervalSince(start) * 1000)
+    }
+
+    /// Render the session ledger as a compact log block for `{session_ledger}`.
+    /// Keeps only the most recent 8 entries (a single reply doesn't need
+    /// the full 20-entry history) and trims peer quotes to 50 chars.
+    static func formatLedger(_ entries: [LedgerEntry]) -> String {
+        guard !entries.isEmpty else {
+            return "（会话刚开始，你还没发过消息。）"
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        return entries.suffix(8).map { e in
+            let time = fmt.string(from: e.timestamp)
+            let peer = e.peerLastMessage.flatMap { text -> String in
+                let snippet = text.count > 50 ? String(text.prefix(50)) + "…" : text
+                return "对方: \"\(snippet)\""
+            }
+            let prefix = peer.map { "[\(time) \($0)]" } ?? "[\(time)]"
+            return "\(prefix) → 你回:「\(e.outgoingText)」"
+        }.joined(separator: "\n")
     }
 }
