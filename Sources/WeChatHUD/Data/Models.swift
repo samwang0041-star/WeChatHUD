@@ -1340,6 +1340,17 @@ struct DBKey {
 
 // MARK: - Autopilot
 
+/// One outgoing message inside an active autopilot session. The ledger
+/// is injected into the next reply's prompt so the model can stay
+/// consistent with what it just said. Lives in memory on `ChatMonitor`
+/// and resets when the autopilot session starts or stops.
+struct LedgerEntry: Equatable {
+    let timestamp: Date
+    let outgoingText: String
+    let peerLastMessage: String?
+    let topic: String?
+}
+
 /// Autopilot action taken for a message.
 enum AutopilotAction: String, Codable {
     case sent           // auto-replied successfully
@@ -1478,4 +1489,18 @@ struct AutopilotConfig: Codable {
     var proactiveSilenceDays: Int = 3
     /// Late-night silence threshold (0.0-1.0). If reply rate in 23:00-7:00 < this → silent.
     var silentNightThreshold: Double = 0.2
+    /// Which keystroke submits a message in WeChat. Default `.cmdEnter`
+    /// matches the stock WeChat config (Enter=newline, Cmd+Enter=send).
+    /// Users who flipped WeChat's preference to "Enter=send" must set
+    /// this to `.enter`, otherwise the autopilot's Cmd+Enter keypress
+    /// is interpreted as a newline and the message never leaves the
+    /// input box.
+    var sendKey: WeChatSendKey = .cmdEnter
+}
+
+/// Which keystroke submits a message in WeChat, matching the "按 Enter
+/// 发送消息" preference. See `AutopilotConfig.sendKey`.
+enum WeChatSendKey: String, Codable, CaseIterable {
+    case cmdEnter  // default WeChat: Cmd+Enter sends, Enter inserts newline
+    case enter     // user flipped it: Enter sends, Shift/Option+Enter inserts newline
 }

@@ -65,6 +65,10 @@ final class ChatMonitor: ObservableObject {
     @Published var autopilotSessionPending = 0
     @Published var autopilotPendingSendQueue: [PendingSend] = []
     @Published var autopilotSessionStats = AutopilotService.SessionStats()
+    /// In-memory session ledger: one entry per verified outgoing message
+    /// per chat during an active autopilot session. Reset on start/stop.
+    /// Capped at 20 entries per chat (FIFO eviction).
+    @Published private(set) var autopilotSessionLedger: [String: [LedgerEntry]] = [:]
     @Published var inboxItems: [InboxItem] = []
     /// Published handled items for the UI (dismissed/snoozed/silenced).
     @Published var handledItems: [InboxItem] = []
@@ -2328,6 +2332,10 @@ final class ChatMonitor: ObservableObject {
             autopilotService = AutopilotService(store: store, reader: reader, aiService: aiService)
         }
         let service = autopilotService
+        // Clear any stale ledger entries from a previous session before
+        // flipping the active flag, so observers never see fresh-active
+        // state with stale entries.
+        resetSessionLedger()
         Task {
             do {
                 try await service?.start()
@@ -2354,7 +2362,29 @@ final class ChatMonitor: ObservableObject {
             }
         }
         autopilotActive = false
+        // Drop ledger entries after marking inactive — anything accumulated
+        // while autopilot was off-by-a-hair shouldn't leak into the next
+        // session.
+        resetSessionLedger()
         print("[WCHUD] Autopilot: OFF")
+    }
+
+    /// Append one verified outgoing message to the session ledger for
+    /// `chatUsername`. Caps the per-chat list at 20 entries (FIFO).
+    /// Safe to call from any context on @MainActor.
+    func appendLedgerEntry(_ entry: LedgerEntry, for chatUsername: String) {
+        var list = autopilotSessionLedger[chatUsername] ?? []
+        list.append(entry)
+        if list.count > 20 {
+            list.removeFirst(list.count - 20)
+        }
+        autopilotSessionLedger[chatUsername] = list
+    }
+
+    /// Clear the entire session ledger across all chats. Called when
+    /// autopilot starts or stops.
+    func resetSessionLedger() {
+        autopilotSessionLedger = [:]
     }
 
     /// Approve a pending autopilot item and send it.
