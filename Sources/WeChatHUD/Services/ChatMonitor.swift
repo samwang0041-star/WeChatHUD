@@ -2329,7 +2329,25 @@ final class ChatMonitor: ObservableObject {
 
     func startAutopilot() {
         if autopilotService == nil {
-            autopilotService = AutopilotService(store: store, reader: reader, aiService: aiService)
+            autopilotService = AutopilotService(
+                store: store,
+                reader: reader,
+                aiService: aiService,
+                ledgerRead: { [weak self] chatUsername in
+                    self?.autopilotSessionLedger[chatUsername] ?? []
+                },
+                ledgerWrite: { [weak self] chatUsername, text, peerLastMessage, topic in
+                    self?.appendLedgerEntry(
+                        LedgerEntry(
+                            timestamp: Date(),
+                            outgoingText: text,
+                            peerLastMessage: peerLastMessage,
+                            topic: topic
+                        ),
+                        for: chatUsername
+                    )
+                }
+            )
         }
         let service = autopilotService
         // Clear any stale ledger entries from a previous session before

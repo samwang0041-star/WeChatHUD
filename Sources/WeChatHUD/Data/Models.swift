@@ -1445,6 +1445,12 @@ struct PendingSend: Identifiable {
     let styleScore: Int
     let scheduledSendTime: Date
     let createdAt: Date = Date()
+    /// The peer message that triggered this reply, if available. Used by
+    /// the session ledger so later prompts can echo back naturally.
+    var peerLastMessage: String? = nil
+    /// Conversation phase snapshot at the time the reply was drafted.
+    /// Used as the ledger entry's `topic`.
+    var topic: String? = nil
 
     /// Remaining seconds until scheduled send.
     var remainingSeconds: Int {
