@@ -1062,6 +1062,62 @@ final class ChatMonitor: ObservableObject {
             )
         }
 
+        // 1b. Cross-group VIP notifications: fire one macOS banner per
+        // (vip, group) pair in this batch. A trace is cross-group when
+        // the chat is a group AND that group's own whitelist entry is
+        // not VIP-attention (if it were, the existing VIP-chat banner
+        // path already covers it). Coalesces by batch so three
+        // back-to-back messages from the same VIP in the same group
+        // produce one notification, not three.
+        let whitelistEntries = storeRef.getWhitelist()
+        let vipGroupUsernames: Set<String> = Set(
+            whitelistEntries
+                .filter { $0.attentionLevel == .vip && $0.isGroup }
+                .map(\.id)
+        )
+        var crossGroupBuckets: [String: (vipName: String, vipUsername: String,
+                                         groupName: String, groupUsername: String,
+                                         firstPreview: String, count: Int,
+                                         latestTime: Int)] = [:]
+        for trace in outcome.vipTraceMessages {
+            guard trace.chatUsername.contains("@chatroom"),
+                  !vipGroupUsernames.contains(trace.chatUsername) else { continue }
+            let key = "\(trace.vipUsername)|\(trace.chatUsername)"
+            if var existing = crossGroupBuckets[key] {
+                existing.count += 1
+                if trace.msgTime > existing.latestTime {
+                    existing.latestTime = trace.msgTime
+                    existing.firstPreview = trace.rawText
+                }
+                crossGroupBuckets[key] = existing
+            } else {
+                crossGroupBuckets[key] = (
+                    vipName: trace.vipName,
+                    vipUsername: trace.vipUsername,
+                    groupName: trace.chatName,
+                    groupUsername: trace.chatUsername,
+                    firstPreview: trace.rawText,
+                    count: 1,
+                    latestTime: trace.msgTime
+                )
+            }
+        }
+        if !crossGroupBuckets.isEmpty {
+            let engine = alertEngine
+            Task { @MainActor in
+                for bucket in crossGroupBuckets.values {
+                    engine.pushCrossGroupVIPAlert(
+                        vipName: bucket.vipName,
+                        vipUsername: bucket.vipUsername,
+                        groupName: bucket.groupName,
+                        groupUsername: bucket.groupUsername,
+                        preview: bucket.firstPreview,
+                        messageCount: bucket.count
+                    )
+                }
+            }
+        }
+
         // 2. VIP aggregation (async)
         if !outcome.vipTraceMessages.isEmpty {
             let vipUsernames = Set(outcome.vipTraceMessages.map(\.vipUsername))
