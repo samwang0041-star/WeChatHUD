@@ -218,14 +218,8 @@ enum ScanEngine {
 
             // Usernames of contacts explicitly marked VIP — used to detect
             // their presence in any whitelisted group chat, not just their
-            // own private thread. A group chat itself (attentionLevel=.vip,
-            // isGroup=true) is excluded here because that path is already
-            // handled by the per-entry VIP check inside the loop below.
-            let vipPersonUsernames: Set<String> = Set(
-                whitelist
-                    .filter { $0.attentionLevel == .vip && !$0.isGroup }
-                    .map(\.id)
-            )
+            // own private thread. See `deriveVIPPersonUsernames`.
+            let vipPersonUsernames = Self.deriveVIPPersonUsernames(whitelist: whitelist)
 
             // Build session lookup for timestamp correction
             let sessionMap = Dictionary(uniqueKeysWithValues: sessions.map { ($0.username, $0) })
@@ -315,9 +309,12 @@ enum ScanEngine {
                     // non-VIP whitelisted group. This routes the event through
                     // the same HUD/banner path as a VIP-chat notification —
                     // `HUDNotification.isVIP` is derived from attentionLevel.
-                    let isCrossGroupVIP = entry.attentionLevel != .vip
-                        && msg.chatUsername.contains("@chatroom")
-                        && vipPersonUsernames.contains(msg.senderUsername)
+                    let isCrossGroupVIP = Self.shouldAppendCrossGroupVIPTrace(
+                        entryID: entry.id,
+                        entryLevel: entry.attentionLevel,
+                        senderUsername: msg.senderUsername,
+                        vipPersonUsernames: vipPersonUsernames
+                    )
                     let effectiveLevel: WhitelistAttentionLevel =
                         isCrossGroupVIP ? .vip : entry.attentionLevel
                     let notif = HUDNotification(
@@ -389,14 +386,13 @@ enum ScanEngine {
                     // (whitelisted but not itself marked VIP), and the
                     // sender is one of the flagged VIP persons, fire the
                     // same trace so VIPAggregator and notifications pick
-                    // it up. The `entry.attentionLevel != .vip` guard
-                    // prevents double-appending when the group itself is
-                    // VIP-attention — that path is handled above.
-                    let chatIsGroup = entry.id.contains("@chatroom")
-                    if chatIsGroup
-                       && entry.attentionLevel != .vip
-                       && vipPersonUsernames.contains(msg.senderUsername)
-                    {
+                    // it up. See `shouldAppendCrossGroupVIPTrace`.
+                    if Self.shouldAppendCrossGroupVIPTrace(
+                        entryID: entry.id,
+                        entryLevel: entry.attentionLevel,
+                        senderUsername: msg.senderUsername,
+                        vipPersonUsernames: vipPersonUsernames
+                    ) {
                         vipTraceMessages.append((
                             vipUsername: msg.senderUsername,
                             vipName: msg.senderName,
@@ -514,6 +510,37 @@ enum ScanEngine {
             print("[WCHUD] performScan error: \(error)")
             return nil
         }
+    }
+
+    // MARK: - Cross-group VIP helpers (pure, testable)
+
+    /// Derive the set of usernames for contacts explicitly marked VIP
+    /// in their private thread. Excludes VIP-tagged group chats — those
+    /// are already handled by the per-entry VIP branch inside the scan
+    /// loop, and treating a group id as a "VIP person" would cause the
+    /// cross-group detector to match the room itself.
+    static func deriveVIPPersonUsernames(whitelist: [WhitelistEntry]) -> Set<String> {
+        Set(
+            whitelist
+                .filter { $0.attentionLevel == .vip && !$0.isGroup }
+                .map(\.id)
+        )
+    }
+
+    /// True when a message from `senderUsername` inside a whitelisted
+    /// chat (represented by `entryId` + `entryLevel`) should fire an
+    /// additional cross-group VIP trace. Guards against double-counting
+    /// messages that the existing `entry.attentionLevel == .vip` branch
+    /// already appends.
+    static func shouldAppendCrossGroupVIPTrace(
+        entryID: String,
+        entryLevel: WhitelistAttentionLevel,
+        senderUsername: String,
+        vipPersonUsernames: Set<String>
+    ) -> Bool {
+        guard entryID.contains("@chatroom") else { return false }
+        guard entryLevel != .vip else { return false }
+        return vipPersonUsernames.contains(senderUsername)
     }
 
     /// Strip leading sender name from snippet to avoid "亮🌸: 亮🌸让你..." duplication.
