@@ -2419,18 +2419,40 @@ final class ChatMonitor: ObservableObject {
     /// `chatUsername`. Caps the per-chat list at 20 entries (FIFO).
     /// Safe to call from any context on @MainActor.
     func appendLedgerEntry(_ entry: LedgerEntry, for chatUsername: String) {
-        var list = autopilotSessionLedger[chatUsername] ?? []
-        list.append(entry)
-        if list.count > 20 {
-            list.removeFirst(list.count - 20)
-        }
-        autopilotSessionLedger[chatUsername] = list
+        autopilotSessionLedger = Self.ledgerByAppending(
+            entry, to: autopilotSessionLedger, for: chatUsername
+        )
     }
 
     /// Clear the entire session ledger across all chats. Called when
     /// autopilot starts or stops.
     func resetSessionLedger() {
         autopilotSessionLedger = [:]
+    }
+
+    /// Pure function exposed for tests. Returns the ledger dictionary
+    /// with `entry` appended under `chatUsername`, capped at 20 entries
+    /// per chat (FIFO — oldest evicted first).
+    nonisolated static func ledgerByAppending(
+        _ entry: LedgerEntry,
+        to ledger: [String: [LedgerEntry]],
+        for chatUsername: String
+    ) -> [String: [LedgerEntry]] {
+        var next = ledger
+        var list = next[chatUsername] ?? []
+        list.append(entry)
+        if list.count > 20 {
+            list.removeFirst(list.count - 20)
+        }
+        next[chatUsername] = list
+        return next
+    }
+
+    /// Pure-function counterpart to `resetSessionLedger()`. Always
+    /// returns an empty dictionary. Kept as a separate helper so tests
+    /// can assert the exact cleared shape without touching live state.
+    nonisolated static func ledgerByResetting(_ ledger: [String: [LedgerEntry]]) -> [String: [LedgerEntry]] {
+        [:]
     }
 
     /// Approve a pending autopilot item and send it.

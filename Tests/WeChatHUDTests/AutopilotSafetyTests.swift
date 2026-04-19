@@ -126,4 +126,61 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertFalse(AutopilotReplyStyle.brief.promptFragment.isEmpty)
         XCTAssertFalse(AutopilotReplyStyle.detailed.promptFragment.isEmpty)
     }
+
+    // MARK: - Session ledger (capacity + reset)
+
+    /// Appending 25 entries must leave exactly 20 — oldest-first eviction.
+    func testAppendLedgerEntryCapsAt20() {
+        var ledger: [String: [LedgerEntry]] = [:]
+        let chat = "wxid_test"
+        for i in 0..<25 {
+            let entry = LedgerEntry(
+                timestamp: Date(timeIntervalSince1970: TimeInterval(i)),
+                outgoingText: "msg \(i)",
+                peerLastMessage: nil,
+                topic: nil
+            )
+            ledger = ChatMonitor.ledgerByAppending(entry, to: ledger, for: chat)
+        }
+        let list = ledger[chat] ?? []
+        XCTAssertEqual(list.count, 20, "ledger must cap at 20 entries per chat")
+        // The first 5 entries (indices 0-4) should have been evicted;
+        // the oldest remaining is index 5.
+        XCTAssertEqual(list.first?.outgoingText, "msg 5")
+        XCTAssertEqual(list.last?.outgoingText, "msg 24")
+    }
+
+    /// Resetting the ledger must clear every chat, not just one.
+    func testResetSessionLedgerClearsAllChats() {
+        var ledger: [String: [LedgerEntry]] = [:]
+        let entryA = LedgerEntry(timestamp: Date(), outgoingText: "a", peerLastMessage: nil, topic: nil)
+        let entryB = LedgerEntry(timestamp: Date(), outgoingText: "b", peerLastMessage: nil, topic: nil)
+        ledger = ChatMonitor.ledgerByAppending(entryA, to: ledger, for: "chat_a")
+        ledger = ChatMonitor.ledgerByAppending(entryB, to: ledger, for: "chat_b")
+        XCTAssertEqual(ledger.count, 2)
+        let cleared = ChatMonitor.ledgerByResetting(ledger)
+        XCTAssertTrue(cleared.isEmpty, "reset must drop every chat's entries")
+        XCTAssertNil(cleared["chat_a"])
+        XCTAssertNil(cleared["chat_b"])
+    }
+
+    /// Prompt v3 must ship with every placeholder AutoReplyGenerator
+    /// substitutes. If any go missing the reply will contain literal
+    /// `{session_ledger}` style braces and the model will choke.
+    func testPromptV3FileLoadsAndContainsPlaceholders() throws {
+        let loader = PromptLoader()
+        let template = try loader.load(version: "autopilot_reply_v3")
+        for placeholder in [
+            "{session_ledger}",
+            "{conversation_memory}",
+            "{context_window}",
+            "{sender_name}",
+            "{message_body}"
+        ] {
+            XCTAssertTrue(
+                template.contains(placeholder),
+                "autopilot_reply_v3 missing placeholder \(placeholder)"
+            )
+        }
+    }
 }
