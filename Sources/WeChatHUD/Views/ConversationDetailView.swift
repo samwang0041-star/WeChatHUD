@@ -119,13 +119,29 @@ struct ConversationDetailView: View {
         isSending = true
         defer { isSending = false }
 
-        let success = await WeChatLauncher.sendMessage(chatName: chatName, text: text)
+        let sendKey = (await monitor.loadAutopilotConfig()).sendKey
+        let success = await WeChatLauncher.sendMessage(chatName: chatName, text: text, sendKey: sendKey)
         if success {
             sendResult = "发送成功"
             replyText = ""
             // Record as positive AI feedback if the reply came from a suggestion
             if suggestions.contains(where: { $0.text == text }) {
                 try? monitor.recordReplyFeedback(adopted: true, chatUsername: chatUsername)
+            }
+            // If autopilot is active, this manual send belongs in the
+            // session ledger so the next AI reply doesn't contradict
+            // what the user just said.
+            if monitor.autopilotActive {
+                let peerLast = monitor.lastPeerMessage(chatUsername: chatUsername)
+                monitor.appendLedgerEntry(
+                    LedgerEntry(
+                        timestamp: Date(),
+                        outgoingText: text,
+                        peerLastMessage: peerLast,
+                        topic: nil
+                    ),
+                    for: chatUsername
+                )
             }
         } else {
             sendResult = "发送失败"
