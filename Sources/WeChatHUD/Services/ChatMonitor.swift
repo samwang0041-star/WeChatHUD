@@ -2146,11 +2146,17 @@ final class ChatMonitor: ObservableObject {
                 var group: ChatAnalyzer.GroupAnalysis?
                 var priv: ChatAnalyzer.PrivateAnalysis?
                 if captured.isGroup {
-                    let (result, _) = await self.analyzeGroupChat(item: captured)
+                    let (result, err) = await self.analyzeGroupChat(item: captured)
                     group = result
+                    if result == nil {
+                        print("[WCHUD] prefetch: analyzeGroupChat nil for '\(captured.chatName)' err=\(err ?? "none")")
+                    }
                 } else {
-                    let (result, _) = await self.analyzePrivateChat(item: captured)
+                    let (result, err) = await self.analyzePrivateChat(item: captured)
                     priv = result
+                    if result == nil {
+                        print("[WCHUD] prefetch: analyzePrivateChat nil for '\(captured.chatName)' err=\(err ?? "none")")
+                    }
                 }
                 guard self.isItemStillCurrent(chatUsername: chatUsername, ts: ts) else { return }
                 self.mergeActionPrefetch(

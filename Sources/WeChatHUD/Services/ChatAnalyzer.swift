@@ -198,6 +198,7 @@ actor ChatAnalyzer {
         } catch {
             let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
             let status: AIAuditStatus = (error as? URLError)?.code == .timedOut ? .timeout : .httpError
+            print("[WCHUD] ChatAnalyzer: call failed (\(status)) latencyMs=\(latencyMs) err=\(error.localizedDescription)")
             await writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: status, error: error.localizedDescription)
             return ""
         }
