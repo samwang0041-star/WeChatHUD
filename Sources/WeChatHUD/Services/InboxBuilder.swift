@@ -145,11 +145,19 @@ enum InboxBuilder {
                 continue
             }
 
-            // Check dismissed (only for notifications, not debt items)
-            if dismissed[notif.chatUsername] != nil {
-                item.status = .dismissed
-                handledItems.append(item)
-                continue
+            // Check dismissed. Match the debt-item reactivation rule:
+            // a dismissal only suppresses future notifications whose
+            // timestamp is <= the dismissal mark. A newer inbound wakes
+            // the chat back up — without this, one "忽略" click
+            // silenced the chat forever and new messages vanished
+            // straight into the handled section.
+            if let dismissTs = dismissed[notif.chatUsername] {
+                let notifTs = Int64(notif.timestamp.timeIntervalSince1970)
+                if dismissTs >= notifTs {
+                    item.status = .dismissed
+                    handledItems.append(item)
+                    continue
+                }
             }
 
             if isAction {
