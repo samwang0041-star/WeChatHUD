@@ -115,11 +115,28 @@ final class InboxBuilderTests: XCTestCase {
         XCTAssertEqual(items.count, 1, "debt items always reactivate regardless of dismiss")
     }
 
-    func testDismissedNotificationFiltered() {
-        let notif = makeNotification(chatUsername: "wxid_dismissed_notif", attentionLevel: .watch)
-        let dismissed: [String: Int64] = ["wxid_dismissed_notif": 999]
+    func testDismissedNotificationReactivatesOnNewerInbound() {
+        // Notification timestamp is "now"; dismiss mark is far in the
+        // past → the dismissal is stale and the chat should surface.
+        // Mirrors the debt-item reactivation rule. Fixes the bug where
+        // one "忽略" click silenced a chat forever.
+        let notif = makeNotification(chatUsername: "wxid_reactivated", attentionLevel: .watch)
+        let dismissed: [String: Int64] = ["wxid_reactivated": 999]
         let items = InboxBuilder.build(replyDebtItems: [], notifications: [notif], dismissed: dismissed)
-        XCTAssertTrue(items.isEmpty, "dismissed notification should not appear")
+        XCTAssertEqual(items.count, 1, "notification newer than dismiss mark should resurface")
+    }
+
+    func testDismissedNotificationStaysHandledWhenOlderThanDismissMark() {
+        // Dismissal mark "now", notification "old" → still dismissed.
+        // Confirms the dismiss-then-show-stale-notif path.
+        let staleNotif = makeNotification(
+            chatUsername: "wxid_stale",
+            attentionLevel: .watch,
+            timestamp: Date(timeIntervalSince1970: 1000)
+        )
+        let dismissed: [String: Int64] = ["wxid_stale": Int64(Date().timeIntervalSince1970)]
+        let items = InboxBuilder.build(replyDebtItems: [], notifications: [staleNotif], dismissed: dismissed)
+        XCTAssertTrue(items.isEmpty, "stale notification (timestamp < dismissTs) stays handled")
     }
 
     func testInfoItemsCappedAtFive() {
