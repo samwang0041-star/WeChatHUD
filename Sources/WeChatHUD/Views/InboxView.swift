@@ -132,8 +132,13 @@ struct InboxView: View {
             // Middle — notch cutout space
             Spacer(minLength: liveNotchWidth)
 
-            // Right wing — sync label + gear
-            HStack(spacing: 6) {
+            // Right wing — autopilot indicator + sync label + gear.
+            // Autopilot lives here because the compact-bar twin is only
+            // glanceable (hovering the pill flips to extended), so the
+            // actionable instance must live inside the extended view's
+            // persistent header band.
+            HStack(spacing: 8) {
+                AutopilotIndicator()
                 if let syncAt = monitor.stats.lastSyncAt {
                     Text(syncLabel(syncAt))
                         .font(.system(size: 9))

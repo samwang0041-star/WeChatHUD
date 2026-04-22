@@ -11,6 +11,7 @@ struct AutopilotSettingsView: View {
     @State private var handleGroupAt: Bool = false
     @State private var replyStyle: AutopilotReplyStyle = .auto
     @State private var excludedContacts: [String] = []
+    @State private var sendKey: WeChatSendKey = .cmdEnter
 
     @State private var didLoad = false
     @State private var showClearConfirm = false
@@ -190,6 +191,22 @@ struct AutopilotSettingsView: View {
                 isOn: $handleGroupAt
             )
             .onChange(of: handleGroupAt) { save() }
+
+            SettingsRowDivider()
+            SettingsRow(
+                "微信发送键",
+                subtitle: sendKey == .cmdEnter ? "默认：Enter 换行，Cmd+Enter 发送" : "你已在微信里改成 Enter 直接发送",
+                icon: "paperplane.fill",
+                iconColor: .blue
+            ) {
+                Picker("", selection: $sendKey) {
+                    Text("Cmd+Enter").tag(WeChatSendKey.cmdEnter)
+                    Text("Enter").tag(WeChatSendKey.enter)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 170)
+                .onChange(of: sendKey) { save() }
+            }
         }
     }
 
@@ -280,23 +297,26 @@ struct AutopilotSettingsView: View {
         handleGroupAt = cfg.handleGroupAt
         replyStyle = cfg.replyStyle
         excludedContacts = cfg.excludedContacts
+        sendKey = cfg.sendKey
         sessions = store.loadAutopilotSessions(limit: 10)
         allContacts = store.loadContacts(level: nil)
     }
 
     private func save() {
-        let existing = store.getSettingJSON("autopilot", as: AutopilotConfig.self)
-        let cfg = AutopilotConfig(
-            enabled: existing?.enabled ?? false,
-            confidenceThreshold: confidenceThreshold,
-            maxRepliesPerHour: maxRepliesPerHour,
-            handleGroupAt: handleGroupAt,
-            vipAutoNotify: vipAutoNotify,
-            vipBusyTemplate: vipBusyTemplate,
-            batchWindowSeconds: batchWindowSeconds,
-            excludedContacts: excludedContacts,
-            replyStyle: replyStyle
-        )
+        // Merge-update so we don't clobber fields the settings UI doesn't
+        // surface yet (maxSendsPerSession, sensitiveKeywords, proactive*,
+        // etc. all default-construct and would blow away user values if
+        // we rebuilt from scratch).
+        var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        cfg.confidenceThreshold = confidenceThreshold
+        cfg.maxRepliesPerHour = maxRepliesPerHour
+        cfg.handleGroupAt = handleGroupAt
+        cfg.vipAutoNotify = vipAutoNotify
+        cfg.vipBusyTemplate = vipBusyTemplate
+        cfg.batchWindowSeconds = batchWindowSeconds
+        cfg.excludedContacts = excludedContacts
+        cfg.replyStyle = replyStyle
+        cfg.sendKey = sendKey
         try? store.setSettingJSON("autopilot", value: cfg)
     }
 }

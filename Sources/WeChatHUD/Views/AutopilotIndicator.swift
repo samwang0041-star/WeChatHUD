@@ -12,9 +12,8 @@ struct AutopilotIndicator: View {
     var body: some View {
         Button(action: { showPopover.toggle() }) {
             HStack(spacing: 3) {
-                Text("🤖")
-                    .font(.system(size: 10))
-                    .opacity(iconOpacity)
+                Image(systemName: "airplane.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(iconColor)
                 if monitor.autopilotActive {
                     stats
@@ -29,20 +28,22 @@ struct AutopilotIndicator: View {
                 .environmentObject(monitor)
                 .environmentObject(panelState)
         }
+        .onChange(of: showPopover) { _, newValue in
+            // Pill collapse is driven by mouseEntered/mouseExited. The
+            // popover renders outside the pill, so the cursor naturally
+            // leaves the pill bounds while interacting with it — lock
+            // the pill open while the popover is visible.
+            panelState.popoverOpen = newValue
+        }
     }
 
     // MARK: - Visual state
 
-    private var iconOpacity: Double {
-        monitor.autopilotActive ? 1.0 : 0.3
-    }
-
-    /// Icon tint — emoji is mostly preserved by the system, but an
-    /// overlay color still shows through on macOS as a subtle hue
-    /// shift. Used to keep the state triple (off/running/paused)
-    /// readable at a glance.
+    /// Icon tint — unlike emoji, SF Symbols respect `foregroundColor`.
+    /// Off-state stays at 0.6 opacity so the affordance is discoverable
+    /// without dominating the pill visually.
     private var iconColor: Color {
-        if !monitor.autopilotActive { return .white.opacity(0.4) }
+        if !monitor.autopilotActive { return .white.opacity(0.6) }
         if monitor.autopilotPaused || monitor.autopilotManuallyPaused { return .yellow }
         return .green
     }
@@ -119,8 +120,9 @@ struct AutopilotPopoverView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Text("🤖")
-                .font(.system(size: 14))
+            Image(systemName: "airplane.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(monitor.autopilotActive ? .green : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text("自动托管")
                     .font(.system(size: 12, weight: .semibold))

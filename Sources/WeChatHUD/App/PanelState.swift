@@ -65,6 +65,14 @@ final class PanelState: ObservableObject {
     @Published var toastMessage: String? = nil
     private var toastTimer: Timer?
 
+    /// Set to `true` while any SwiftUI popover anchored inside the pill
+    /// is visible. Popovers render outside the pill bounds, so the
+    /// cursor leaves `isMouseInside` as soon as the user moves toward
+    /// the popover content — which would otherwise trigger the
+    /// extended→compact collapse and take the popover down with it.
+    /// `mouseExited()` honors this flag and skips the collapse.
+    @Published var popoverOpen: Bool = false
+
     /// Show a toast that auto-dismisses after `duration` seconds. New
     /// calls replace the previous message and reset the timer, so
     /// spamming doesn't queue up stale messages.
@@ -123,13 +131,19 @@ final class PanelState: ObservableObject {
         // Don't auto-collapse the detail view — the user may be typing in a
         // text field, etc. The detail view has its own explicit close button.
         guard currentState != .detail else { return }
+        // Popovers anchored inside the pill render outside the pill's
+        // bounds. Moving the cursor toward the popover UI counts as
+        // "exit" here; ignore the exit while a popover is open so the
+        // pill (and the popover with it) stay put.
+        guard !popoverOpen else { return }
 
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: exitDebounce, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                // Only collapse if the mouse actually stayed outside.
-                if !self.isMouseInside && self.currentState == .extended {
+                // Only collapse if the mouse actually stayed outside AND
+                // no popover re-opened during the debounce window.
+                if !self.isMouseInside && !self.popoverOpen && self.currentState == .extended {
                     self.currentState = .compact
                 }
                 self.exitDebounceTimer = nil
