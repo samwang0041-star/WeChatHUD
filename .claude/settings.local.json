@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(make app *)",
-      "Bash(make run *)"
+      "Bash(make run *)",
+      "Bash(mkdir -p ~/.config/superpowers/worktrees/WeChatHUD)",
+      "Bash(git worktree *)"
     ]
   }
 }

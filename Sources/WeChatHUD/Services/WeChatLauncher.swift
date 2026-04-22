@@ -743,7 +743,12 @@ enum WeChatLauncher {
     /// Returns true if the sequence completed without obvious error.
     /// Send a message to a chat. If `typingDelay` > 0, text is pasted into the input
     /// box first and the send keystroke is delayed to simulate human typing time.
-    static func sendMessage(chatName: String, text: String, typingDelay: TimeInterval = 0) async -> Bool {
+    static func sendMessage(
+        chatName: String,
+        text: String,
+        typingDelay: TimeInterval = 0,
+        sendKey: WeChatSendKey = .cmdEnter
+    ) async -> Bool {
         return await withCheckedContinuation { continuation in
             DispatchQueue.main.async {
                 guard let app = runningWeChat() else {
@@ -785,9 +790,15 @@ enum WeChatLauncher {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                                 postCmdKey(kVK_ANSI_V)
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    // Use Cmd+Return to send
-                                    postCmdKey(kVK_Return)
-                                    log("sendMessage: sent to \(chatName) (typingDelay=\(String(format: "%.1f", typingDelay))s)")
+                                    // Submit keystroke depends on the user's
+                                    // WeChat preference: Cmd+Enter for default
+                                    // WeChat ("Enter=newline"), plain Enter if
+                                    // they flipped it to "Enter=send".
+                                    switch sendKey {
+                                    case .cmdEnter: postCmdKey(kVK_Return)
+                                    case .enter:    postKey(kVK_Return)
+                                    }
+                                    log("sendMessage: sent to \(chatName) via \(sendKey) (typingDelay=\(String(format: "%.1f", typingDelay))s)")
                                     // Restore clipboard
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                         pasteboard.clearContents()

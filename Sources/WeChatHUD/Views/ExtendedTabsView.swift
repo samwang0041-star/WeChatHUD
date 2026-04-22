@@ -146,6 +146,12 @@ struct ExtendedTabsView: View {
             tabButton(.dailyReport, label: "日报", count: 0)
             tabButton(.insight, label: "洞察", count: 0)
             Spacer()
+            // Autopilot lives here (not a tab — click opens a popover with
+            // start/stop/stats). Compact-bar twin is purely glanceable:
+            // hovering the pill flips to extended before the user can click
+            // it, so the extended instance is where interaction actually
+            // happens.
+            AutopilotIndicator()
             Button(action: { panelState.showDetail() }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 11, weight: .semibold))
