@@ -28,6 +28,7 @@ struct ExtendedTabsView: View {
         case commitments
         case workbench    // 工作台: bidirectional discussion items
         case dailyReport
+        case retrospective  // 复盘 (Plan M6.5)
         case insight
     }
 
@@ -81,6 +82,7 @@ struct ExtendedTabsView: View {
                     case .commitments: CommitmentTabView()
                     case .workbench:   WorkbenchTabView()
                     case .dailyReport: DailyReportTabView()
+                    case .retrospective: RetrospectiveTabView()
                     case .insight:
                         Color.clear
                             .frame(height: 0)
@@ -144,6 +146,7 @@ struct ExtendedTabsView: View {
                 tabButton(.workbench, label: "工作台", count: workbenchPending)
             }
             tabButton(.dailyReport, label: "日报", count: 0)
+            tabButton(.retrospective, label: "复盘", count: 0)
             tabButton(.insight, label: "洞察", count: 0)
             Spacer()
             // Autopilot lives here (not a tab — click opens a popover with
