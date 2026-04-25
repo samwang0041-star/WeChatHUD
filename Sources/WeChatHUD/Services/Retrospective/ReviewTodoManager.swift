@@ -27,16 +27,25 @@ actor ReviewTodoManager {
         newRunID: Int,
         newCandidates: [ReviewTodo]
     ) -> [ReviewTodo] {
-        let prevPending = store.todos(for: prevRunID, statuses: [.pending])
-        var deduped = newCandidates
+        // First: dedupe inside newCandidates (if AI extracted the same
+        // todo twice from the same conversation, keep only the first).
+        var inner: [ReviewTodo] = []
+        for c in newCandidates {
+            if !inner.contains(where: { ReviewTodoManager.matches(prev: $0, cand: c) }) {
+                inner.append(c)
+            }
+        }
 
+        // Then: dedupe against prev-run pending todos.
+        let prevPending = store.todos(for: prevRunID, statuses: [.pending])
+        var deduped = inner
         for prev in prevPending {
             if let matchIdx = deduped.firstIndex(where: { ReviewTodoManager.matches(prev: prev, cand: $0) }) {
                 deduped.remove(at: matchIdx)
                 store.bumpTodoCarry(todoID: prev.id, newRunID: newRunID)
             } else {
-                // Prev still pending but not re-extracted in this run.
-                // Carry forward anyway so the user can act on it.
+                // Prev still pending but not re-extracted this run.
+                // Carry forward anyway so user can still act on it.
                 store.bumpTodoCarry(todoID: prev.id, newRunID: newRunID)
             }
         }
