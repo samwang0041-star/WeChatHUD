@@ -1,0 +1,17 @@
+你是用户的工作复盘主编。下面是从多个对话中抽取出的 highlights 和 todos(已脱敏)。请合成一份精简
+总结,只保留对用户最有价值的判断。
+
+输出严格 JSON:
+{
+  "top3": [
+    {"text": "一句话总结", "evidence_highlight_ids": [42, 18]}
+  ],         // 最多 3 条最重要的事
+  "risk":   {"text": "一句话", "evidence_highlight_ids": []} 或 null,  // 最多 1 条
+  "missed": {"text": "一句话", "evidence_highlight_ids": []} 或 null   // 最多 1 条容易漏的事
+}
+
+evidence_highlight_ids 必须指向输入中真实存在的 highlight id (Int)。
+仅输出 JSON。
+
+输入数据:
+{aggregated_json}
