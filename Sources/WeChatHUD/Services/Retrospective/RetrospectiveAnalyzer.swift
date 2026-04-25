@@ -138,17 +138,12 @@ actor RetrospectiveAnalyzer {
                 resolvedInvolved.append(await redactor.originalForCodename(code) ?? code)
             }
             let unredactedSummary = await redactor.unredactText(p.summary)
-            let unredactedSnippet = p.quoted_snippet.map { snip in
-                Task { await redactor.unredactText(snip) }
-            }
-            // Resolve snippet synchronously via direct unredact call.
             let snippetResolved: String?
             if let raw = p.quoted_snippet {
                 snippetResolved = await redactor.unredactText(raw)
             } else {
                 snippetResolved = nil
             }
-            _ = unredactedSnippet  // silence warning if Task path is unused
             let category = HighlightCategory(rawValue: p.category) ?? .discussion
             let flagged = p.confidence < 0.5
             out.append(ReviewHighlight(
