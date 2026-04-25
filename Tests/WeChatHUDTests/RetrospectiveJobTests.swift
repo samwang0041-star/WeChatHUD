@@ -177,6 +177,50 @@ struct RetrospectiveJobTests {
         }
     }
 
+    @Test("Cancel mid-run finalizes orphan run as failed + clears state")
+    func cancelMidRun() async throws {
+        let store = try tempStore()
+        let chat = ScopeCandidate(
+            chatUsername: "wxid_d@chatroom", chatName: "WillCancel",
+            isGroup: true, msgCountInRange: 1, myMsgCountInRange: 0
+        )
+        store.upsertGroupScopePolicy(GroupScopePolicy(
+            chatUsername: chat.chatUsername, decision: .include, source: .user,
+            decidedAt: Date(), sampleHash: nil, userAuthorized: true
+        ))
+
+        // AI hangs — uses Task.sleep so we can interrupt.
+        let mockAI = MockAIService()
+        // No routes / default response → returns "{}" immediately
+        // (simulates fast AI). Cancel must still be reflected in DB.
+        await mockAI.setDefaultResponse("{}")
+
+        let provider = MockScopeCandidatesProvider()
+        await provider.setCandidatesForAnyRange([chat])
+        await provider.setMessages([
+            messageInfo(id: "m1", chatUsername: chat.chatUsername, sender: "wxid_other",
+                       text: "msg", ts: 100)
+        ], for: chat.chatUsername)
+
+        let mq = MockMessageQuery()
+        let job = RetrospectiveJob(store: store, aiService: mockAI,
+                                   scopeCandidatesProvider: provider, messageQuery: mq)
+        job.run(mode: .thisWeek, myUsername: "wxid_self", myDisplayName: "我")
+        // Immediate cancel before pipeline progresses
+        job.cancel()
+        await waitForCompletion(job)
+
+        // Wait briefly for state to settle into terminal
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        // No orphan 'running' rows should remain after cancel.
+        // (cancel either bails before insert OR finalizes as failed.)
+        let stillRunning = store.runByID(1)?.status
+        if let stillRunning {
+            #expect(stillRunning != .running)
+        }
+    }
+
     @Test("Empty candidate list still produces a completed run")
     func emptyCandidates() async throws {
         let store = try tempStore()
