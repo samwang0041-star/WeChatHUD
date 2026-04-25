@@ -146,7 +146,16 @@ actor SummarySynthesizer {
 
     private static func parseSummaryDict(_ d: [String: Any]) -> SummaryItem? {
         guard let text = d["text"] as? String, !text.isEmpty else { return nil }
-        let ids = (d["evidence_highlight_ids"] as? [Int]) ?? []
+        // AI may return ids as Int or as String — accept both.
+        let raw = d["evidence_highlight_ids"]
+        let ids: [Int]
+        if let intArr = raw as? [Int] {
+            ids = intArr
+        } else if let strArr = raw as? [String] {
+            ids = strArr.compactMap(Int.init)
+        } else {
+            ids = []
+        }
         return SummaryItem(text: text, evidenceHighlightIDs: ids)
     }
 
