@@ -3,27 +3,21 @@ import AppKit
 
 /// 日报 tab — daily retrospective summary, tomorrow's first task,
 /// commitment tracking, and a copyable WeChat daily report draft.
+///
+/// Weekly mode was removed in M10 — the new `复盘` tab (Plan M6.5)
+/// supersedes it with custom time ranges, AI deep extraction, and
+/// persistent cross-week todos. See [Plan M10] in
+/// docs/superpowers/plans/2026-04-25-retrospective-tab.md.
 struct DailyReportTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
-    enum ReportMode: String, CaseIterable {
-        case daily = "日报"
-        case weekly = "周报"
-    }
-    @State private var reportMode: ReportMode = .daily
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Mode toggle
             HStack(spacing: 0) {
-                Picker("", selection: $reportMode) {
-                    ForEach(ReportMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 140)
-                .controlSize(.small)
+                Text("日报")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.85))
+                    .padding(.leading, 4)
                 Spacer()
                 Button(action: {
                     Task { await monitor.loadDailyReport(force: true) }
@@ -40,11 +34,7 @@ struct DailyReportTabView: View {
 
             Divider().background(Color.white.opacity(0.07))
 
-            if reportMode == .daily {
-                dailyContent
-            } else {
-                weeklyContent
-            }
+            dailyContent
         }
         .task {
             await monitor.loadDailyReport()
@@ -76,274 +66,6 @@ struct DailyReportTabView: View {
                 emptyState("日报生成失败，请稍后重试")
             }
         }
-    }
-
-    // MARK: - Weekly content
-
-    private var weeklyContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                weeklyOverview
-                divider
-                weeklyHierarchyTasks
-                divider
-                weeklyCommitments
-                divider
-                weeklyPendingAsks
-                divider
-                exportButton
-            }
-            .padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - Weekly hierarchy tasks (user-requested feature)
-    //
-    // Slices extracted `DiscussionItem`s by the counterpart's
-    // relationship hierarchy so the user gets their weekly read-out
-    // of: 上级派给我 / 我派给下级 / 平级协作. Filters to the last 7
-    // days based on `source_timestamp`.
-
-    private var weeklyItems: [DiscussionItem] {
-        let weekAgo = Int(Date().addingTimeInterval(-7 * 86400).timeIntervalSince1970)
-        return monitor.discussionItems.filter { item in
-            item.sourceTimestamp >= weekAgo
-        }
-    }
-
-    /// (item, hierarchy of the counterpart chat) pairs.
-    private func itemsWithHierarchy() -> [(item: DiscussionItem, hierarchy: RelationshipProfile.Hierarchy?)] {
-        weeklyItems.map { item in
-            let profile = monitor.relationshipProfile(for: item.chatUsername)
-            return (item, profile?.hierarchy)
-        }
-    }
-
-    /// Items that qualify as "上级派给我":
-    /// counterpart is superior AND the item is owned by me.
-    private var itemsFromSuperior: [DiscussionItem] {
-        itemsWithHierarchy()
-            .filter { $0.hierarchy == .superior && $0.item.owner == .mine }
-            .map(\.item)
-    }
-
-    /// Items that qualify as "我派给下级":
-    /// counterpart is subordinate AND the item is owned by them.
-    private var itemsToSubordinate: [DiscussionItem] {
-        itemsWithHierarchy()
-            .filter { $0.hierarchy == .subordinate && $0.item.owner == .theirs }
-            .map(\.item)
-    }
-
-    /// 平级协作: anything in a peer relationship, regardless of owner.
-    private var itemsWithPeers: [DiscussionItem] {
-        itemsWithHierarchy()
-            .filter { $0.hierarchy == .peer }
-            .map(\.item)
-    }
-
-    private var weeklyHierarchyTasks: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            hierarchyGroup(
-                title: "上级派给我",
-                items: itemsFromSuperior,
-                emptyHint: "本周上级没有新任务给你",
-                accent: .orange
-            )
-            hierarchyGroup(
-                title: "我派给下级",
-                items: itemsToSubordinate,
-                emptyHint: "本周没有派出去的任务",
-                accent: .blue
-            )
-            hierarchyGroup(
-                title: "平级协作",
-                items: itemsWithPeers,
-                emptyHint: "本周没有跟平级同事的协作事项",
-                accent: .gray
-            )
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-
-    private func hierarchyGroup(
-        title: String,
-        items: [DiscussionItem],
-        emptyHint: String,
-        accent: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Circle().fill(accent.opacity(0.6)).frame(width: 6, height: 6)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.8))
-                Text("·  \(items.count) 条")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
-                    .monospacedDigit()
-                Spacer()
-            }
-            if items.isEmpty {
-                Text(emptyHint)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.35))
-                    .padding(.leading, 12)
-            } else {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(items) { item in
-                        HStack(alignment: .top, spacing: 6) {
-                            Image(systemName: item.kind.iconName)
-                                .font(.system(size: 9))
-                                .foregroundColor(accent.opacity(0.7))
-                                .frame(width: 10, alignment: .center)
-                                .padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(item.content)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(item.status == .done ? 0.4 : 0.85))
-                                    .strikethrough(item.status == .done)
-                                    .lineLimit(2)
-                                Text(item.chatName)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white.opacity(0.35))
-                            }
-                            Spacer(minLength: 0)
-                            statusBadge(for: item)
-                        }
-                        .padding(.vertical, 2)
-                        .padding(.leading, 12)
-                    }
-                }
-            }
-        }
-    }
-
-    private func statusBadge(for item: DiscussionItem) -> some View {
-        Group {
-            switch item.status {
-            case .done:
-                Text("已完成")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.green)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.green.opacity(0.15))
-                    .cornerRadius(3)
-            case .pending:
-                if let due = item.dueAt, Date() > due {
-                    Text("超期")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundColor(.red)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(Color.red.opacity(0.15))
-                        .cornerRadius(3)
-                } else {
-                    EmptyView()
-                }
-            default: EmptyView()
-            }
-        }
-    }
-
-    // MARK: - Export
-
-    private var exportButton: some View {
-        HStack {
-            Spacer()
-            Button(action: copyWeeklyReport) {
-                Label("复制周报 Markdown", systemImage: "doc.on.doc")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            Spacer()
-        }
-        .padding(.vertical, 10)
-    }
-
-    private func copyWeeklyReport() {
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        let now = Date()
-        let weekStart = df.string(from: now.addingTimeInterval(-7 * 86400))
-        let weekEnd = df.string(from: now)
-        var lines = ["# 本周工作总结 (\(weekStart) – \(weekEnd))", ""]
-
-        func section(_ title: String, items: [DiscussionItem]) {
-            lines.append("## \(title)")
-            if items.isEmpty {
-                lines.append("（无）")
-            } else {
-                for item in items {
-                    var line = "- \(item.content)"
-                    if item.status == .done { line += " ✅" }
-                    line += "  _(\(item.chatName))_"
-                    lines.append(line)
-                }
-            }
-            lines.append("")
-        }
-        section("上级派给我", items: itemsFromSuperior)
-        section("我派给下级", items: itemsToSubordinate)
-        section("平级协作", items: itemsWithPeers)
-
-        let md = lines.joined(separator: "\n")
-        WeChatLauncher.copyText(md)
-    }
-
-    private var weeklyOverview: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sectionLabel("本周概览")
-            let pending = monitor.commitments.filter { $0.status == .pending }.count
-            let fulfilled = monitor.commitments.filter { $0.status == .fulfilled }.count
-            let overdue = monitor.commitments.filter { $0.status == .overdue }.count
-
-            HStack(spacing: 6) {
-                statPill(label: "待处理承诺", value: "\(pending)", color: pending > 0 ? .orange : .white)
-                statPill(label: "已完成", value: "\(fulfilled)", color: fulfilled > 0 ? .green : .white)
-                statPill(label: "超期", value: "\(overdue)", color: overdue > 0 ? .red : .white)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-    }
-
-    private var weeklyCommitments: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionLabel("本周承诺", count: monitor.commitments.count)
-            if monitor.commitments.isEmpty {
-                Text("本周暂无承诺记录")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.35))
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(sortedCommitments) { commitment in
-                    CommitmentRow(commitment: commitment)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-
-    private var weeklyPendingAsks: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionLabel("本周待办")
-            Text("查看「待回」和「追赶」标签页获取最新待办事项")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
-                .padding(.vertical, 6)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
     }
 
     // MARK: - Loading
