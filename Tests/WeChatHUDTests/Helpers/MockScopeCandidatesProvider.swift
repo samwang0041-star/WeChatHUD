@@ -3,6 +3,7 @@ import Foundation
 
 actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
     private var candidatesByRange: [DateRange: [ScopeCandidate]] = [:]
+    private var defaultCandidates: [ScopeCandidate] = []
     private var samplesByUsername: [String: [String]] = [:]
     private var messagesByUsername: [String: [MessageInfo]] = [:]
     private var relationByUsername: [String: Relation] = [:]
@@ -11,6 +12,14 @@ actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
 
     func setCandidates(_ items: [ScopeCandidate], for range: DateRange) {
         candidatesByRange[range] = items
+    }
+
+    /// Convenience: registers candidates returned for ANY range query.
+    /// Tests rarely care about exact range matching against ScopeResolver
+    /// (which produces a fresh `.end = now` each call), so this avoids
+    /// hash misses.
+    func setCandidatesForAnyRange(_ items: [ScopeCandidate]) {
+        defaultCandidates = items
     }
 
     func setSamples(_ samples: [String], for username: String) {
@@ -28,7 +37,8 @@ actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
     // MARK: - ScopeCandidatesProvider
 
     func candidates(in range: DateRange) async -> [ScopeCandidate] {
-        candidatesByRange[range] ?? []
+        if let exact = candidatesByRange[range] { return exact }
+        return defaultCandidates
     }
 
     func sampleMessages(for usernames: [String], in range: DateRange, limit: Int) async -> [String: [String]] {
