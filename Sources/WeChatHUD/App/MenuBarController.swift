@@ -27,11 +27,13 @@ final class MenuBarController: ObservableObject {
     private var spinFrames: [NSImage] = []
     private var spinIndex = 0
     private var savedImage: NSImage?
-    private var savedTitle: String = ""
 
     private init() {}
 
-    /// AppDelegate calls once after creating the status item.
+    /// AppDelegate calls once after creating the status item. The
+    /// image may not be set yet at attach time (depends on init order
+    /// in applicationDidFinishLaunching) — render() will lazily
+    /// re-snapshot when transitioning back to idle.
     func attach(_ item: NSStatusItem) {
         self.statusItem = item
         savedImage = item.button?.image
@@ -53,11 +55,13 @@ final class MenuBarController: ObservableObject {
         spinTimer = nil
         switch jobState {
         case .idle, .completed, .failed, .partial:
+            // Late-snapshot: if attach() ran before AppDelegate's
+            // updateMenuBarIcon(), savedImage was nil. Re-grab now.
+            if savedImage == nil { savedImage = button.image }
             button.image = savedImage
             button.title = badgeText
         case .resolvingScope, .screeningGroups, .analyzingChats,
              .synthesizingSummary, .detectingRedBanner:
-            savedTitle = button.title
             button.title = ""
             startSpinning(button: button)
         }

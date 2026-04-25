@@ -39,9 +39,9 @@ struct RetrospectiveTabView: View {
 
                 if let err = errorText {
                     Text(err)
-                        .font(.system(size: 9))
-                        .foregroundColor(.red.opacity(0.7))
-                        .lineLimit(1)
+                        .font(.system(size: 11))
+                        .foregroundColor(.red.opacity(0.85))
+                        .lineLimit(2)
                 }
             }
 

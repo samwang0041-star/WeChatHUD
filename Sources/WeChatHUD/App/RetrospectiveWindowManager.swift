@@ -28,6 +28,7 @@ final class RetrospectiveWindowManager {
         )
         w.title = "复盘"
         w.contentView = NSHostingView(rootView: view)
+        w.minSize = NSSize(width: 600, height: 500)
         w.center()
         let proxy = WindowDelegateProxy { [weak self] in
             self?.window = nil
