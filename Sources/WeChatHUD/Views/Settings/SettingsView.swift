@@ -65,7 +65,7 @@ struct SettingsView: View {
             case .autopilot:          return "自动回复的安全护栏和行为设置。"
             case .system:             return "同步间隔、数据管理和系统信息。"
             case .insight:            return "聊天态势分析、情绪洞察和暗信号。"
-            case .dailyReport:        return "查看日报和周报摘要。"
+            case .dailyReport:        return "查看日报摘要。自定义时间范围的复盘（原周报）已迁移到「复盘」tab。"
             case .commitments:        return "追踪你和对方的承诺和待办。"
             case .autopilotDashboard: return "自动回复活动日志和会话统计。"
             }
