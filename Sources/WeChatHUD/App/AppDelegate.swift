@@ -386,25 +386,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Priority: VIP at T2+ takes over with a "!" prefix + aging,
         // otherwise show unread counts. Two publishers combined via
         // CombineLatest so either signal redraws the badge.
+        //
+        // Plan M6.1: instead of writing directly to statusItem.button.title
+        // (which would race with MenuBarController's spinner overlay during
+        // retrospective jobs), we feed the computed string into
+        // MenuBarController.shared.badgeText. The controller renders it
+        // when no job is running and replaces it with a spinner otherwise.
+        if let statusItem { MenuBarController.shared.attach(statusItem) }
         monitor.$inboxItems
             .combineLatest(monitor.$vipAlertTiers)
-            .sink { [weak self] items, tiers in
-                guard let self = self, let button = self.statusItem?.button else { return }
+            .sink { items, tiers in
                 let p0p1 = items.filter { $0.priority != .p2 }.count
                 let total = items.count
-                // Any VIP at T2+ wins — show longest-waiting aging label
-                // with a "!" prefix so the user can tell at a glance.
                 let escalated = tiers.values.filter { $0 >= .t2 }
                 let worstTier = escalated.max() ?? .none
+                let text: String
                 if worstTier >= .t2 {
-                    button.title = " ! \(worstTier.agingLabel)"
+                    text = " ! \(worstTier.agingLabel)"
                 } else if p0p1 > 0 {
-                    button.title = " \(p0p1)"
+                    text = " \(p0p1)"
                 } else if total > 0 {
-                    button.title = " \(total)"
+                    text = " \(total)"
                 } else {
-                    button.title = ""
+                    text = ""
                 }
+                MenuBarController.shared.badgeText = text
+            }
+            .store(in: &cancellables)
+
+        // Plan M6.1: also subscribe to RetrospectiveJob state so the
+        // controller can swap to / from the spinner overlay.
+        monitor.retrospectiveJob.$state
+            .sink { state in
+                MenuBarController.shared.jobState = state
             }
             .store(in: &cancellables)
     }

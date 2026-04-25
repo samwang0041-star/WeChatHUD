@@ -99,6 +99,75 @@ final class ChatMonitor: ObservableObject {
     private let reader: WeChatReader
     private let store: HUDStore
     private let aiService: AIService
+
+    // MARK: - Retrospective surface (Plan M6.0)
+    //
+    // These nonisolated read accessors let the retrospective adapter actors
+    // (ChatMonitorScopeProvider / ChatMonitorMessageQuery) reach the
+    // private fields without breaking encapsulation. HUDStore is internally
+    // FULLMUTEX-safe; AIService is an actor; reader.myUsername() is a
+    // synchronous lookup. All safe to call cross-isolation.
+
+    nonisolated var hudStore: HUDStore { store }
+    nonisolated var myUsername: String { reader.myUsername() }
+    nonisolated var myDisplayName: String {
+        let me = myUsername
+        return store.getWhitelistEntry(username: me)?.displayName ?? ""
+    }
+
+    /// AI service witness for retrospective services that depend on
+    /// `any AIServiceProtocol` instead of the concrete actor type.
+    nonisolated var aiServiceRef: any AIServiceProtocol { aiService }
+
+    /// Date-range message query. Wraps `reader.getMessages(chatUsername:limit:)`
+    /// and filters by `createTime`. MessageInfo.createTime is `Int` (unix ts);
+    /// we convert the start/end Dates before comparison.
+    nonisolated func messagesInRange(
+        chatUsername: String,
+        start: Date,
+        end: Date,
+        fetchLimit: Int = 1000
+    ) -> [MessageInfo] {
+        let raw: [MessageInfo]
+        do {
+            raw = try reader.getMessages(chatUsername: chatUsername, limit: fetchLimit, sinceLocalId: nil)
+        } catch {
+            return []
+        }
+        let startTs = Int(start.timeIntervalSince1970)
+        let endTs = Int(end.timeIntervalSince1970)
+        return raw.filter { msg in
+            msg.createTime >= startTs && msg.createTime <= endTs
+        }
+    }
+
+    /// Sample messages for AI group screening — first N messages in the
+    /// date range, formatted as plain text strings (no metadata).
+    nonisolated func sampleMessageTexts(
+        chatUsername: String,
+        start: Date,
+        end: Date,
+        limit: Int = 20
+    ) -> [String] {
+        messagesInRange(chatUsername: chatUsername, start: start, end: end, fetchLimit: 1000)
+            .prefix(limit)
+            .map { $0.text }
+    }
+
+    /// Lazy retrospective orchestrator. Owns the @MainActor RetrospectiveJob
+    /// + two adapter actors that bridge ChatMonitor APIs to the
+    /// retrospective protocols. UI binds to `retrospectiveJob.$state` for
+    /// progress + completion notifications.
+    @MainActor
+    lazy var retrospectiveJob: RetrospectiveJob = {
+        return RetrospectiveJob(
+            store: hudStore,
+            aiService: aiServiceRef,
+            scopeCandidatesProvider: ChatMonitorScopeProvider(monitor: self),
+            messageQuery: ChatMonitorMessageQuery(monitor: self),
+            config: .default
+        )
+    }()
     private let groupContextBriefingService: GroupContextBriefingService
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
