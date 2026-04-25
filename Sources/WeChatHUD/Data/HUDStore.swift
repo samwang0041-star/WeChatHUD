@@ -34,6 +34,16 @@ final class HUDStore: ObservableObject {
         // Best-effort housekeeping. Failures are non-fatal — the app
         // still starts, we just leave old audit rows around.
         try? pruneAIAudit(olderThanDays: 14)
+
+        // Retrospective tab migration + crash recovery (Plan M1.2 / M1.6).
+        // Idempotent CREATE TABLE IF NOT EXISTS for 7 tables + indexes.
+        // Then mark stale 'running' runs as failed and clean expired undo.
+        migrateRetrospective()
+        let reapedRuns = reapStaleRuns()
+        let reapedUndo = reapStaleUndo(olderThanSeconds: 30 * 60)
+        if reapedRuns > 0 || reapedUndo > 0 {
+            print("[HUDStore] reaped \(reapedRuns) stale review_runs + \(reapedUndo) old undo entries")
+        }
     }
 
     func close() {
@@ -528,10 +538,26 @@ final class HUDStore: ObservableObject {
             attentionLevel.rawValue,
             "\(now)"
         ])
+
+        let existingContact = getContact(username: username)
+        let contactLevel: AttentionLevel = attentionLevel == .vip ? .vip : .whitelist
+        let contactRole = existingContact?.role ?? defaultContactRole(for: category)
+        let roleNote = existingContact?.roleNote ?? ""
+        let replyWindow = existingContact?.replyWindowMinutes ?? contactRole.defaultReplyWindowMinutes
+
+        try upsertContact(
+            username: username,
+            displayName: displayName,
+            attentionLevel: contactLevel,
+            role: contactRole,
+            roleNote: roleNote,
+            replyWindowMinutes: replyWindow
+        )
     }
 
     func removeFromWhitelist(username: String) throws {
         try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+        try? deleteContact(username: username)
         // Also clear this chat's baseline — otherwise re-adding the
         // same contact to the whitelist later would reuse the stale
         // watermark and silently swallow every message that arrived
@@ -1222,9 +1248,9 @@ final class HUDStore: ObservableObject {
             apiKey: ""
         )
         cfg.cloudProvider = AIProviderSlot(
-            providerID: "dashscope",
-            baseURL: "https://dashscope.aliyuncs.com/compatible-mode",
-            model: "qwen-plus",
+            providerID: "custom",
+            baseURL: "https://api.kimi.com/coding/v1",
+            model: "kimi-for-coding",
             apiKey: ""
         )
         cfg.activeMode = .local
@@ -2378,20 +2404,22 @@ final class HUDStore: ObservableObject {
         let entries = getWhitelist()
         for entry in entries {
             let newLevel: AttentionLevel = entry.attentionLevel == .vip ? .vip : .whitelist
-            let defaultRole: ContactRole
-            switch entry.category {
-            case .work: defaultRole = .colleague
-            case .life: defaultRole = .friend
-            case .other: defaultRole = .acquaintance
-            }
             if getContact(username: entry.id) == nil {
                 try? upsertContact(
                     username: entry.id,
                     displayName: entry.displayName,
                     attentionLevel: newLevel,
-                    role: defaultRole
+                    role: defaultContactRole(for: entry.category)
                 )
             }
+        }
+    }
+
+    private func defaultContactRole(for category: WhitelistCategory) -> ContactRole {
+        switch category {
+        case .work: return .colleague
+        case .life: return .friend
+        case .other: return .acquaintance
         }
     }
 
@@ -2414,6 +2442,90 @@ final class HUDStore: ObservableObject {
             throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
         }
     }
+
+    // MARK: - Retrospective extension helpers
+    //
+    // Exposed to the +Retrospective extension (different file). HUDStore
+    // is a non-actor `final class` with FULLMUTEX, so all SQL is internally
+    // serialized; these helpers are `nonisolated` so actors can call them
+    // synchronously without await.
+
+    /// Lets the extension prepare its own statements. Stays internal —
+    /// not part of the public surface.
+    nonisolated var rawDB: OpaquePointer? { db }
+
+    /// Best-effort SQL exec used by retrospective migration (mirrors the
+    /// existing private exec but swallows errors, matching the codebase's
+    /// best-effort `try? exec("ALTER TABLE …")` pattern).
+    nonisolated func execIgnoringError(_ sql: String) {
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_step(stmt)
+        }
+        sqlite3_finalize(stmt)
+    }
+
+    typealias SQLiteBinder = (OpaquePointer?) -> Void
+
+    @discardableResult
+    nonisolated func executeInsert(_ sql: String, bind: SQLiteBinder) -> Int? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt); return nil
+        }
+        bind(stmt)
+        let rowID: Int? = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_last_insert_rowid(db)) : nil
+        sqlite3_finalize(stmt)
+        return rowID
+    }
+
+    @discardableResult
+    nonisolated func executeUpdate(_ sql: String, bind: SQLiteBinder) -> Int {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt); return 0
+        }
+        bind(stmt)
+        let changes = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_changes(db)) : 0
+        sqlite3_finalize(stmt)
+        return changes
+    }
+
+    nonisolated func queryOne<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer?) -> T?) -> T? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt); return nil
+        }
+        bind(stmt)
+        var result: T? = nil
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            result = decode(stmt)
+        }
+        sqlite3_finalize(stmt)
+        return result
+    }
+
+    nonisolated func queryAll<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer?) -> T?) -> [T] {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt); return []
+        }
+        bind(stmt)
+        var results: [T] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let decoded = decode(stmt) { results.append(decoded) }
+        }
+        sqlite3_finalize(stmt)
+        return results
+    }
+}
+
+extension HUDStore {
+    /// SQLite TRANSIENT marker — instructs SQLite to copy bound text rather
+    /// than retain the caller's pointer. Required for any text/blob bind that
+    /// outlives the prepare/finalize cycle. Scoped to HUDStore namespace so
+    /// it doesn't pollute module globals.
+    static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 }
 
 enum HUDStoreError: Error {
