@@ -54,25 +54,51 @@ final class RetrospectiveJob: ObservableObject {
         self.config = config
     }
 
+    /// Signals the running pipeline to stop. The running task observes
+    /// `Task.isCancelled` at major boundaries; on observation it
+    /// finalizes the in-flight `review_runs` row as `.failed` so it
+    /// doesn't sit in 'running' state until reapStaleRuns (35 min) fires.
+    /// Don't nil `currentTask` here — let the task itself drive the
+    /// state transitions cleanly to `.failed` and then become quiescent.
     func cancel() {
         currentTask?.cancel()
-        currentTask = nil
-        state = .idle
     }
 
     func run(mode: ScopeMode, myUsername: String, myDisplayName: String) {
+        // Reap any prior orphaned 'running' rows from a previous cancel
+        // before starting a new run, so latestCompletedRun() doesn't
+        // see polluted state.
+        _ = store.reapStaleRuns(olderThanSeconds: 0)
+
         currentTask?.cancel()
         currentTask = Task { [weak self] in
             await self?.runInternal(mode: mode, myUsername: myUsername, myDisplayName: myDisplayName)
         }
     }
 
+    /// Helper: finalize as failed + state = .failed, then return true if
+    /// the caller should bail. Called at every major checkpoint.
+    private func bailIfCancelled(runID: Int?, reason: String) -> Bool {
+        guard Task.isCancelled else { return false }
+        if let runID {
+            store.finalizeReviewRun(
+                runID: runID, status: .failed,
+                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                msgCount: 0, failedChats: ["__cancelled__"]
+            )
+        }
+        state = .failed("cancelled: \(reason)")
+        return true
+    }
+
     private func runInternal(mode: ScopeMode, myUsername: String, myDisplayName: String) async {
         state = .resolvingScope
+        if bailIfCancelled(runID: nil, reason: "before scope") { return }
         let dateRange = ScopeResolver.range(mode)
         let allCandidates = await scopeCandidatesProvider.candidates(in: dateRange)
         let filtered = ScopeResolver.filter(candidates: allCandidates).prefix(config.maxChatsPerRun)
         let chatsToAnalyze = Array(filtered)
+        if bailIfCancelled(runID: nil, reason: "after scope") { return }
 
         guard let runID = store.insertReviewRun(
             rangeStart: dateRange.start,
@@ -166,6 +192,15 @@ final class RetrospectiveJob: ObservableObject {
 
         await analysisTask.value
         deadlineTask.cancel()
+        if bailIfCancelled(runID: runID, reason: "during analysis") { return }
+
+        // If the analysis loop terminated early without collecting all
+        // outcomes (e.g. timeout / external cancel), treat the missing
+        // chats as failed so finalStatus reflects reality.
+        let collectedChats = Set(collected.map(\.chat.chatUsername))
+        for chat in included where !collectedChats.contains(chat.chatUsername) {
+            failed.append(chat.chatName)
+        }
 
         // Pre-dedupe carry-forward (BEFORE inserting into DB)
         var newHighlights: [ReviewHighlight] = []
@@ -196,11 +231,13 @@ final class RetrospectiveJob: ObservableObject {
 
         // Synthesize summary
         state = .synthesizingSummary
+        if bailIfCancelled(runID: runID, reason: "before synth") { return }
         let synth = SummarySynthesizer(store: store, aiService: aiService, dataLedger: dataLedger)
         let summary = await synth.synthesize(runID: runID)
 
         // Red banners
         state = .detectingRedBanner
+        if bailIfCancelled(runID: runID, reason: "before banners") { return }
         let detector = RedBannerDetector(store: store, messageQuery: messageQuery)
         let banners = await detector.detect()
         lastRedBanners = banners
