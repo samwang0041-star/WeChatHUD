@@ -117,6 +117,7 @@ final class RetrospectiveJob: ObservableObject {
             for: chatsToAnalyze.map(\.chatUsername), in: dateRange, limit: 20
         )
         let screen = await screener.screen(candidates: chatsToAnalyze, samples: samples)
+        if bailIfCancelled(runID: runID, reason: "after screen") { return }
         let included = screen.included
 
         // Capture local Sendable references so TaskGroup closures don't capture self.
