@@ -377,6 +377,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "显示/隐藏 HUD", action: #selector(toggleHUD), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "打开复盘…", action: #selector(openRetrospective), keyEquivalent: "R"))
         menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
@@ -446,6 +447,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() {
         MainActor.assumeIsolated { panelState.showDetail() }
+    }
+
+    @objc private func openRetrospective() {
+        MainActor.assumeIsolated {
+            RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
+        }
     }
 
     @objc private func quitApp() {
