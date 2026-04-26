@@ -1,6 +1,26 @@
 import SwiftUI
 import AppKit
 
+enum InboxHeaderState: Equatable {
+    case urgent(Int)
+    case pending(Int)
+    case updates(Int)
+    case idle
+}
+
+func visibleInboxItems(_ items: [InboxItem], limit: Int = 10) -> [InboxItem] {
+    Array(items.prefix(limit))
+}
+
+func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
+    let actionItems = items.filter { $0.actionRequired }
+    let urgentCount = actionItems.filter { $0.priority != .p2 }.count
+    if urgentCount > 0 { return .urgent(urgentCount) }
+    if !actionItems.isEmpty { return .pending(actionItems.count) }
+    if !items.isEmpty { return .updates(items.count) }
+    return .idle
+}
+
 /// Unified inbox — shows all messages in a single priority-sorted list
 /// with action items on top, an undo bar, and a collapsible handled section.
 struct InboxView: View {
@@ -13,19 +33,14 @@ struct InboxView: View {
     @State private var showHandled = false
 
     var body: some View {
+        let activeItems = monitor.inboxItems
+        let visibleItems = visibleInboxItems(activeItems)
+
         VStack(alignment: .leading, spacing: 0) {
             if panelState.showSmartDigest {
                 smartDigestBanner
             }
             header
-
-            let actionItems = monitor.inboxItems.filter { $0.actionRequired }
-            // Cap the rendered list. Without an outer ScrollView (the
-            // panel now hugs its content height), unbounded rows would
-            // cause the NSPanel to grow off-screen. 10 is generous
-            // relative to typical inbox volume; overflow is visible via
-            // the detail view.
-            let visibleItems = Array(actionItems.prefix(10))
 
             if visibleItems.isEmpty && monitor.handledItems.isEmpty {
                 emptyState
@@ -51,9 +66,9 @@ struct InboxView: View {
                         })
                     }
 
-                    if actionItems.count > visibleItems.count {
+                    if activeItems.count > visibleItems.count {
                         Button(action: { panelState.showDetail() }) {
-                            Text("+\(actionItems.count - visibleItems.count) 更多 — 查看详情")
+                            Text("+\(activeItems.count - visibleItems.count) 更多 — 查看详情")
                                 .font(.system(size: 10))
                                 .foregroundColor(.white.opacity(0.55))
                                 .padding(.horizontal, 14)
@@ -80,15 +95,16 @@ struct InboxView: View {
             AIBuddyOverlay(mood: extendedBuddyMood)
                 .padding(.trailing, 12)
                 .padding(.bottom, 10)
+                .allowsHitTesting(false)
         }
     }
 
     // MARK: - Header
 
     private var extendedBuddyMood: BuddyMood {
-        let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
+        let activeCount = monitor.inboxItems.count
         let isProcessing = { if case .syncing = monitor.stats.syncStatus { return true }; return false }()
-        return deriveExtendedMood(actionItemCount: actionCount, isAIProcessing: isProcessing)
+        return deriveExtendedMood(actionItemCount: activeCount, isAIProcessing: isProcessing)
     }
 
     /// Top row of the extended panel — lives in the notch-height
@@ -99,26 +115,32 @@ struct InboxView: View {
     /// Middle: notch gap (aligned with hardware on notched Macs,
     /// a small breathing gap on external displays).
     private var header: some View {
-        let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
-        let p0p1Count = monitor.inboxItems.filter { $0.actionRequired && $0.priority != .p2 }.count
         return HStack(spacing: 0) {
             // Left wing — priority status
             HStack(spacing: 6) {
-                if p0p1Count > 0 {
+                switch inboxHeaderState(monitor.inboxItems) {
+                case .urgent(let count):
                     Circle()
                         .fill(Color.red)
                         .frame(width: 7, height: 7)
-                    Text("\(p0p1Count) 条待处理")
+                    Text("\(count) 条待处理")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
-                } else if actionCount > 0 {
+                case .pending(let count):
                     Circle()
                         .fill(Color.yellow)
                         .frame(width: 7, height: 7)
-                    Text("\(actionCount) 条待处理")
+                    Text("\(count) 条待处理")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.75))
-                } else {
+                case .updates(let count):
+                    Circle()
+                        .fill(Color.white.opacity(0.45))
+                        .frame(width: 6, height: 6)
+                    Text("\(count) 条更新")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.6))
+                case .idle:
                     Circle()
                         .fill(Color.green.opacity(0.7))
                         .frame(width: 6, height: 6)
@@ -144,6 +166,15 @@ struct InboxView: View {
                         .font(.system(size: 9))
                         .foregroundColor(.white.opacity(0.35))
                 }
+                // 复盘 entry — opens the independent NSWindow with the
+                // retrospective summary. Spec §2.2 (M6.5 placeholder).
+                Button(action: { RetrospectiveWindowManager.shared.showWindow(monitor: monitor) }) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+                .buttonStyle(.plain)
+                .help("打开复盘窗口")
                 Button(action: { panelState.showDetail() }) {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 10))
@@ -279,7 +310,7 @@ struct InboxView: View {
     private var emptyState: some View {
         VStack(spacing: 6) {
             Spacer()
-            Text("没有待处理消息")
+            Text("没有新动态")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.35))
             if let syncAt = monitor.stats.lastSyncAt {
