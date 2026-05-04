@@ -151,7 +151,7 @@ final class ChatMonitor: ObservableObject {
     ) -> [String] {
         messagesInRange(chatUsername: chatUsername, start: start, end: end, fetchLimit: 1000)
             .prefix(limit)
-            .map { $0.text }
+            .map { AIService.sanitizeForAI($0.text) }
     }
 
     /// Lazy retrospective orchestrator. Owns the @MainActor RetrospectiveJob
@@ -251,6 +251,7 @@ final class ChatMonitor: ObservableObject {
         let timestamp: Int
         let groupAnalysis: ChatAnalyzer.GroupAnalysis?
         let privateAnalysis: ChatAnalyzer.PrivateAnalysis?
+        let analysisError: String?
         let replies: [SuggestedReply]
         let hasProfile: Bool
         /// True once the analysis task has run to completion — lets
@@ -464,6 +465,7 @@ final class ChatMonitor: ObservableObject {
 
             // --- Phase 2: AIGroupCatchup + ContextAnalyzer (fire-and-forget, non-blocking) ---
             // Load recent messages for the chat once; reuse for both downstream services.
+            let supportsDeepActionContext = notification.supportsDeepActionContext
             let contextMessages = (try? readerRef.getMessages(
                 chatUsername: notification.chatUsername,
                 limit: 30,
@@ -474,7 +476,7 @@ final class ChatMonitor: ObservableObject {
             let catchupInput = AIGroupCatchup.Input(
                 chatName: notification.chatName,
                 selfName: myUname,
-                messages: contextMessages.map { ($0.senderName, $0.text) }
+                messages: contextMessages.map { ($0.senderName, AIService.sanitizeForAI($0.text)) }
             )
             if let summary = await catchup.summarize(catchupInput) {
                 await MainActor.run { [weak self] in
@@ -485,7 +487,7 @@ final class ChatMonitor: ObservableObject {
                     if briefing.deepBackground == nil {
                         briefing.deepBackground = summary.headline
                     }
-                    if briefing.deepWhatTheyWant == nil, !summary.highlights.isEmpty {
+                    if supportsDeepActionContext, briefing.deepWhatTheyWant == nil, !summary.highlights.isEmpty {
                         briefing.deepWhatTheyWant = summary.highlights.joined(separator: " · ")
                     }
                     state.briefing = briefing
@@ -494,6 +496,7 @@ final class ChatMonitor: ObservableObject {
             }
 
             // ContextAnalyzer: fill deep* fields using a synthetic PendingAsk.
+            guard supportsDeepActionContext else { return }
             let syntheticAsk = PendingAsk(
                 id: 0,
                 msgUID: "\(notification.chatUsername):\(notification.messageID)",
@@ -1353,7 +1356,7 @@ final class ChatMonitor: ObservableObject {
                     let oldSummary = oldMemory?.summary ?? ""
 
                     let msgText = messages.prefix(20).map {
-                        "\($0.senderName): \($0.text)"
+                        "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
                     }.joined(separator: "\n")
 
                     let oldShared = oldMemory?.sharedContext ?? []
@@ -1374,8 +1377,13 @@ final class ChatMonitor: ObservableObject {
                     {"summary":"一句话摘要(50字内)","key_topics":["最近话题1","话题2"],"pending_items":["待办1"],"shared_context":["共同经历/关系背景"],"communication_notes":["沟通习惯"],"mood_trend":"情绪描述","conversation_phase":"闲聊/讨论/决策/争论/告别/无","stance":"用户当前立场(如有)"}
                     """
 
-                    guard let response = try? await ai.complete(system: "你是对话摘要助手。只输出JSON。", user: prompt) else { continue }
-                    guard let data = response.data(using: .utf8),
+                    guard let response = try? await ai.complete(
+                        system: "你是对话摘要助手。只输出JSON。",
+                        user: prompt,
+                        options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256, responseFormatJSON: true)
+                    ) else { continue }
+                    guard let jsonText = AIJSONExtractor.firstObjectString(from: response),
+                          let data = jsonText.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
                     let memory = ConversationMemory(
@@ -2101,7 +2109,7 @@ final class ChatMonitor: ObservableObject {
     /// Generate AI summaries for inbox items that don't have cached summaries.
     /// Called after scan. Runs async, updates inboxItems progressively.
     private func generateSummaries() {
-        let items = inboxItems.filter { $0.aiSummary == nil }
+        let items = inboxItems.filter { $0.aiSummary == nil && $0.participatesInActionQueue }
         guard !items.isEmpty else { return }
 
         // Sort by priority — P0 summaries first
@@ -2185,7 +2193,7 @@ final class ChatMonitor: ObservableObject {
     /// Cache key: chatUsername. Each slot entry is stamped with
     /// the item's timestamp so a newer message invalidates it.
     private func prefetchActionPanelData() {
-        let items = inboxItems.filter { $0.actionRequired }
+        let items = inboxItems.filter { $0.participatesInActionQueue }
         guard !items.isEmpty else { return }
 
         for item in items {
@@ -2214,15 +2222,18 @@ final class ChatMonitor: ObservableObject {
                 guard let self = self else { return }
                 var group: ChatAnalyzer.GroupAnalysis?
                 var priv: ChatAnalyzer.PrivateAnalysis?
+                var analysisError: String?
                 if captured.isGroup {
                     let (result, err) = await self.analyzeGroupChat(item: captured)
                     group = result
+                    analysisError = err
                     if result == nil {
                         print("[WCHUD] prefetch: analyzeGroupChat nil for '\(captured.chatName)' err=\(err ?? "none")")
                     }
                 } else {
                     let (result, err) = await self.analyzePrivateChat(item: captured)
                     priv = result
+                    analysisError = err
                     if result == nil {
                         print("[WCHUD] prefetch: analyzePrivateChat nil for '\(captured.chatName)' err=\(err ?? "none")")
                     }
@@ -2233,6 +2244,7 @@ final class ChatMonitor: ObservableObject {
                     ts: ts,
                     groupAnalysis: group,
                     privateAnalysis: priv,
+                    analysisError: analysisError,
                     replies: nil,
                     hasProfile: hasProfile,
                     markAnalysisAttempted: true,
@@ -2240,7 +2252,7 @@ final class ChatMonitor: ObservableObject {
                 )
             }
 
-            if hasProfile {
+            if hasProfile && captured.automaticReplySuggestionsAllowed {
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     let replies = (await self.loadReplySuggestions(for: captured)) ?? []
@@ -2250,6 +2262,7 @@ final class ChatMonitor: ObservableObject {
                         ts: ts,
                         groupAnalysis: nil,
                         privateAnalysis: nil,
+                        analysisError: nil,
                         replies: replies,
                         hasProfile: hasProfile,
                         markAnalysisAttempted: false,
@@ -2257,14 +2270,15 @@ final class ChatMonitor: ObservableObject {
                     )
                 }
             } else {
-                // No profile → no replies ever coming. Mark attempted
-                // immediately so UI doesn't wait on a task that
-                // won't run.
+                // No automatic reply path (missing profile or manual/
+                // hidden state). Mark attempted immediately so UI does
+                // not wait on a task that will not run.
                 mergeActionPrefetch(
                     chatUsername: chatUsername,
                     ts: ts,
                     groupAnalysis: nil,
                     privateAnalysis: nil,
+                    analysisError: nil,
                     replies: nil,
                     hasProfile: hasProfile,
                     markAnalysisAttempted: false,
@@ -2297,6 +2311,7 @@ final class ChatMonitor: ObservableObject {
         ts: Int,
         groupAnalysis: ChatAnalyzer.GroupAnalysis?,
         privateAnalysis: ChatAnalyzer.PrivateAnalysis?,
+        analysisError: String?,
         replies: [SuggestedReply]?,
         hasProfile: Bool,
         markAnalysisAttempted: Bool,
@@ -2308,6 +2323,7 @@ final class ChatMonitor: ObservableObject {
             timestamp: ts,
             groupAnalysis: groupAnalysis ?? (sameGeneration ? existing?.groupAnalysis : nil),
             privateAnalysis: privateAnalysis ?? (sameGeneration ? existing?.privateAnalysis : nil),
+            analysisError: analysisError ?? (sameGeneration ? existing?.analysisError : nil),
             replies: replies ?? (sameGeneration ? existing?.replies ?? [] : []),
             hasProfile: hasProfile,
             analysisAttempted: markAnalysisAttempted || (sameGeneration && existing?.analysisAttempted == true),
@@ -2400,7 +2416,7 @@ final class ChatMonitor: ObservableObject {
         }
         if filtered.isEmpty { return (nil, "48小时内没有消息") }
         let myUname = reader.myUsername()
-        let result = await chatAnalyzer.analyzeGroup(
+        let (result, error) = await chatAnalyzer.analyzeGroup(
             chatUsername: item.chatUsername,
             chatName: item.chatName,
             messages: filtered,
@@ -2409,7 +2425,7 @@ final class ChatMonitor: ObservableObject {
             myDisplayName: reader.displayName(for: myUname),
             mySelfNames: reader.mySelfNames
         )
-        return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
+        return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
     }
 
     func analyzePrivateChat(item: InboxItem) async -> (ChatAnalyzer.PrivateAnalysis?, String?) {
@@ -2426,7 +2442,7 @@ final class ChatMonitor: ObservableObject {
         }
         if filtered.isEmpty { return (nil, "48小时内没有消息") }
         let myUname = reader.myUsername()
-        let result = await chatAnalyzer.analyzePrivate(
+        let (result, error) = await chatAnalyzer.analyzePrivate(
             chatUsername: item.chatUsername,
             contactName: item.chatName,
             messages: filtered,
@@ -2435,7 +2451,7 @@ final class ChatMonitor: ObservableObject {
             myDisplayName: reader.displayName(for: myUname),
             mySelfNames: reader.mySelfNames
         )
-        return (result, result == nil ? "AI 分析返回为空，可能超时或解析失败" : nil)
+        return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
     }
 
     func loadReplySuggestions(for item: InboxItem) async -> [SuggestedReply]? {
@@ -2614,4 +2630,3 @@ final class ChatMonitor: ObservableObject {
 
     // performScan, buildReplyDebtItems, debugScanAllTables extracted to ScanEngine.swift.
 }
-

@@ -27,14 +27,22 @@ final class URLRequestRecorder: URLProtocol, @unchecked Sendable {
         installed = false
     }
 
-    static func makeChatCompletionsResponse(content: String) -> (Data, URLResponse) {
-        let body = try! JSONSerialization.data(withJSONObject: [
+    static func makeChatCompletionsResponse(
+        content: String,
+        model: String? = nil,
+        urlString: String = "http://test/chat/completions"
+    ) -> (Data, URLResponse) {
+        var json: [String: Any] = [
             "choices": [[
                 "message": ["role": "assistant", "content": content]
             ]]
-        ])
+        ]
+        if let model {
+            json["model"] = model
+        }
+        let body = try! JSONSerialization.data(withJSONObject: json)
         let resp = HTTPURLResponse(
-            url: URL(string: "http://test/chat/completions")!,
+            url: URL(string: urlString)!,
             statusCode: 200,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]

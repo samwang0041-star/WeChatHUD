@@ -43,7 +43,7 @@ actor RecallAnalyzer {
         } else {
             contextText = context.map { msg in
                 let ts = MessageInfo.formatRelative(msg.createTime)
-                return "[\(ts)] \(msg.senderName): \(msg.text)"
+                return "[\(ts)] \(msg.senderName): \(AIService.sanitizeForAI(msg.text))"
             }.joined(separator: "\n")
         }
 
@@ -65,16 +65,21 @@ actor RecallAnalyzer {
         let started = Date()
         let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
-        let model = await aiService.currentConfig().model
+        let model: String
+        if let actualModel = response.model {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
 
         let inputSummary = "[\(recalled.senderName)@\(recalled.chatName)] recalled: \(recalled.originalText.prefix(60))"
 
-        guard let body = response else {
+        guard let body = response.text else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .recallAnalyzer,
                 model: model, promptVersion: "recall_analyzer_v1",
                 inputText: inputSummary, outputText: "",
-                latencyMs: latency, status: .httpError, errorMessage: "no response"
+                latencyMs: latency, status: .httpError, errorMessage: response.error ?? "no response"
             ))
             return nil
         }
@@ -112,19 +117,26 @@ actor RecallAnalyzer {
 
     // MARK: - Model call
 
-    private func callModel(prompt: String) async -> String? {
+    private struct ModelResponse {
+        let text: String?
+        let error: String?
+        let model: String?
+    }
+
+    private func callModel(prompt: String) async -> ModelResponse {
         let trackID = "recall:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "撤回分析")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            return try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256)
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true)
             )
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return nil
+            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 
@@ -154,19 +166,8 @@ actor RecallAnalyzer {
     // MARK: - Helpers
 
     private func cleanJSON(_ text: String) -> String {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let start = s.range(of: "<think>") {
-            if let end = s.range(of: "</think>") {
-                s.removeSubrange(start.lowerBound..<end.upperBound)
-            } else { break }
-        }
-        s = s.replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let lo = s.firstIndex(of: "{"), let hi = s.lastIndex(of: "}") {
-            s = String(s[lo...hi])
-        }
-        return s
+        AIJSONExtractor.firstObjectString(from: text)
+            ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func escape(_ s: String) -> String {

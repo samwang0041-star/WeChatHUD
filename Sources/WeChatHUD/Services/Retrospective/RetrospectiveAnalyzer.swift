@@ -74,12 +74,12 @@ actor RetrospectiveAnalyzer {
         let byteCount = userPrompt.utf8.count
 
         // 3. AI call with one parse-failure retry (mirrors ChatAnalyzer pattern).
-        let raw: String
+        let firstResult: AICompletionResult
         do {
-            raw = try await aiService.complete(
+            firstResult = try await aiService.completeWithMetadata(
                 system: "你严格按 JSON Schema 输出。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 4096)
+                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true)
             )
         } catch {
             await ledgerFailed(messages: messages.count, byteCount: byteCount)
@@ -87,29 +87,37 @@ actor RetrospectiveAnalyzer {
         }
 
         let parsed: ParsedAnalysis
-        if let p = parse(raw) {
+        var actualProvider = firstResult.providerID
+        var actualModel = firstResult.model
+        if let p = parse(firstResult.text) {
             parsed = p
         } else {
             // Stricter retry — same prompt body + a "JSON only" reminder.
             let strict = userPrompt + "\n\n严格要求:只输出符合 schema 的 JSON 对象,不要任何其它文字或代码围栏。"
-            let raw2 = (try? await aiService.complete(
+            let retry = try? await aiService.completeWithMetadata(
                 system: "你严格按 JSON Schema 输出。",
                 user: strict,
-                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 4096)
-            )) ?? ""
-            guard let p2 = parse(raw2) else {
-                await ledgerFailed(messages: messages.count, byteCount: byteCount)
+                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true)
+            )
+            guard let retry, let p2 = parse(retry.text) else {
+                await ledgerFailed(
+                    messages: messages.count,
+                    byteCount: byteCount,
+                    provider: retry?.providerID ?? firstResult.providerID,
+                    model: retry?.model ?? firstResult.model
+                )
                 throw AnalyzerError.parseFailed
             }
+            actualProvider = retry.providerID
+            actualModel = retry.model
             parsed = p2
         }
 
         // 4. Ledger entry for the successful call.
-        let cfg = await aiService.currentConfig()
         await dataLedger.recordBatch([AILedgerEntry(
             id: 0, ts: Date(),
-            provider: cfg.primarySlot.providerID,
-            model: cfg.primarySlot.model,
+            provider: actualProvider,
+            model: actualModel,
             purpose: .chatAnalysis,
             chatCount: 1, msgCount: messages.count,
             byteCount: byteCount,
@@ -196,12 +204,12 @@ actor RetrospectiveAnalyzer {
         return out
     }
 
-    private func ledgerFailed(messages: Int, byteCount: Int) async {
+    private func ledgerFailed(messages: Int, byteCount: Int, provider actualProvider: String? = nil, model actualModel: String? = nil) async {
         let cfg = await aiService.currentConfig()
         await dataLedger.recordBatch([AILedgerEntry(
             id: 0, ts: Date(),
-            provider: cfg.primarySlot.providerID,
-            model: cfg.primarySlot.model,
+            provider: actualProvider ?? cfg.primarySlot.providerID,
+            model: actualModel ?? cfg.primarySlot.model,
             purpose: .chatAnalysisFailed,
             chatCount: 1, msgCount: messages,
             byteCount: byteCount,
@@ -212,23 +220,7 @@ actor RetrospectiveAnalyzer {
     // MARK: - JSON parsing
 
     nonisolated func parse(_ raw: String) -> ParsedAnalysis? {
-        guard !raw.isEmpty else { return nil }
-        var cleaned = raw
-        if let fence = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fence.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let end = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<end.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(ParsedAnalysis.self, from: data)
+        AIJSONExtractor.decodeFirstObject(from: raw, as: ParsedAnalysis.self)
     }
 }
 

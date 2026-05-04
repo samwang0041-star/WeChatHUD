@@ -98,7 +98,6 @@ enum InboxBuilder {
             guard !seen.contains(notif.chatUsername) else { continue }
             seen.insert(notif.chatUsername)
 
-            let isAction = notif.isAtMention
             let priority: InboxPriority
             if notif.isAtMention && notif.attentionLevel == .vip {
                 priority = .p0
@@ -116,7 +115,10 @@ enum InboxBuilder {
                 preview: notif.snippet,
                 isGroup: notif.kind == .groupAt || notif.kind == .groupMessage,
                 timestamp: notif.timestamp,
-                actionRequired: isAction,
+                // A bare whitelist notification is not action evidence.
+                // Stage 1 renders group @ without stored ask/action
+                // evidence as group_mention_fyi, not "需要你处理".
+                actionRequired: false,
                 priority: priority,
                 isVIP: notif.attentionLevel == .vip,
                 isWhitelisted: notif.attentionLevel == .vip || notif.attentionLevel == .watch,
@@ -160,11 +162,7 @@ enum InboxBuilder {
                 }
             }
 
-            if isAction {
-                actionItems.append(item)
-            } else {
-                infoItems.append(item)
-            }
+            infoItems.append(item)
         }
 
         // 3. Sort: action items by priority then timestamp
@@ -173,14 +171,15 @@ enum InboxBuilder {
             return lhs.timestamp > rhs.timestamp
         }
 
-        // 4. Cap info items at 5, sorted by timestamp
+        // 4. Preserve non-action updates so the UI can render the
+        // "还有 N 条普通更新" aggregate row instead of silently
+        // dropping state.
         infoItems.sort { $0.timestamp > $1.timestamp }
-        let cappedInfo = Array(infoItems.prefix(5))
 
         // 5. Sort handled items by timestamp (most recent first)
         handledItems.sort { $0.timestamp > $1.timestamp }
 
-        return BuildResult(active: actionItems + cappedInfo, handled: handledItems)
+        return BuildResult(active: actionItems + infoItems, handled: handledItems)
     }
 
     // MARK: - Legacy convenience (returns only active items)

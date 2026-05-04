@@ -47,6 +47,7 @@ final class InboxBuilderTests: XCTestCase {
         snippet: String = "FYI info",
         attentionLevel: WhitelistAttentionLevel = .vip,
         isAtMention: Bool = false,
+        kind: HUDNotificationKind = .privateChat,
         timestamp: Date = Date()
     ) -> HUDNotification {
         HUDNotification(
@@ -60,7 +61,7 @@ final class InboxBuilderTests: XCTestCase {
             snippet: snippet,
             isAtMention: isAtMention,
             timestamp: timestamp,
-            kind: .privateChat
+            kind: kind
         )
     }
 
@@ -139,20 +140,26 @@ final class InboxBuilderTests: XCTestCase {
         XCTAssertTrue(items.isEmpty, "stale notification (timestamp < dismissTs) stays handled")
     }
 
-    func testInfoItemsCappedAtFive() {
+    func testInfoItemsArePreservedForAggregation() {
         let notifs = (0..<10).map { i in
             makeNotification(chatUsername: "wxid_\(i)", chatName: "Chat\(i)", attentionLevel: .watch)
         }
         let items = InboxBuilder.build(replyDebtItems: [], notifications: notifs, dismissed: [:])
         let infoItems = items.filter { !$0.actionRequired }
-        XCTAssertEqual(infoItems.count, 5, "info-only items capped at 5")
+        XCTAssertEqual(infoItems.count, 10, "builder preserves info-only items for UI aggregation")
     }
 
-    func testVIPNotificationWithAtMentionIsActionRequired() {
-        let notif = makeNotification(chatUsername: "wxid_vip_at", attentionLevel: .vip, isAtMention: true)
+    func testGroupAtNotificationWithoutActionEvidenceIsFYI() {
+        let notif = makeNotification(
+            chatUsername: "room@chatroom",
+            attentionLevel: .vip,
+            isAtMention: true,
+            kind: .groupAt
+        )
         let items = InboxBuilder.build(replyDebtItems: [], notifications: [notif], dismissed: [:])
         XCTAssertEqual(items.count, 1)
-        XCTAssertTrue(items[0].actionRequired, "@mention from VIP is action-required")
+        XCTAssertFalse(items[0].actionRequired, "bare @ notification is not action evidence")
         XCTAssertEqual(items[0].priority, .p0)
+        XCTAssertEqual(items[0].semanticState, .groupMentionFYI)
     }
 }

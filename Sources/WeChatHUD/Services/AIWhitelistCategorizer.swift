@@ -85,22 +85,22 @@ actor AIWhitelistCategorizer {
 
         let first = await call(userPrompt)
         if let parsed = parse(first.text) {
-            await audit(input: input, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil)
+            await audit(input: input, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil, model: first.model)
             return parsed
         }
         if first.text.isEmpty, let err = first.error {
-            await audit(input: input, output: "", latencyMs: ms(since: started), status: .httpError, error: err)
+            await audit(input: input, output: "", latencyMs: ms(since: started), status: .httpError, error: err, model: first.model)
             return nil
         }
 
         let strict = userPrompt + "\n\n严格要求：上一次输出无法解析为 JSON。只输出符合 schema 的 JSON 对象。"
         let second = await call(strict)
         if let parsed = parse(second.text) {
-            await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry")
+            await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry", model: second.model)
             return parsed
         }
 
-        await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .parseError, error: second.error ?? "JSON parse failed after retry")
+        await audit(input: input, output: second.text, latencyMs: ms(since: started), status: .parseError, error: second.error ?? "JSON parse failed after retry", model: second.model)
         return nil
     }
 
@@ -124,6 +124,10 @@ actor AIWhitelistCategorizer {
             case index, category, reason
             case shouldWhitelist = "should_whitelist"
         }
+    }
+
+    private struct BatchResultEnvelope: Decodable {
+        let items: [BatchResult]
     }
 
     /// Max candidates per AI call. Empirically safe for a 32k-token
@@ -182,22 +186,10 @@ actor AIWhitelistCategorizer {
     }
 
     private func parseBatch(_ raw: String) -> [BatchResult] {
-        var cleaned = raw
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
+        if let envelope = AIJSONExtractor.decodeFirstObject(from: raw, as: BatchResultEnvelope.self) {
+            return envelope.items
         }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("[") {
-            if let lo = cleaned.firstIndex(of: "["), let hi = cleaned.lastIndex(of: "]") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-        guard let data = cleaned.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([BatchResult].self, from: data)) ?? []
+        return AIJSONExtractor.decodeFirstArray(from: raw, as: [BatchResult].self) ?? []
     }
 
     // MARK: - Model call
@@ -205,6 +197,7 @@ actor AIWhitelistCategorizer {
     private struct ModelResponse {
         let text: String
         let error: String?
+        let model: String?
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
@@ -213,43 +206,32 @@ actor AIWhitelistCategorizer {
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是一个联系人分类助手，严格按要求输出 JSON。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.05, maxTokens: 384)
+                options: CompleteOptions(timeout: 60, temperature: 0.05, maxTokens: 384, responseFormatJSON: true)
             )
-            return ModelResponse(text: content, error: nil)
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return ModelResponse(text: "", error: error.localizedDescription)
+            return ModelResponse(text: "", error: error.localizedDescription, model: nil)
         }
     }
 
     // MARK: - Parsing
 
     private func parse(_ raw: String) -> Suggestion? {
-        guard !raw.isEmpty else { return nil }
-        var cleaned = raw
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(Suggestion.self, from: data)
+        AIJSONExtractor.decodeFirstObject(from: raw, as: Suggestion.self)
     }
 
     // MARK: - Audit
 
-    private func audit(input: Input, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func audit(input: Input, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
@@ -270,9 +252,11 @@ actor AIWhitelistCategorizer {
     // MARK: - Helpers
 
     private func clean(_ s: String) -> String {
-        s.replacingOccurrences(of: "\n", with: " ")
-         .replacingOccurrences(of: "\r", with: " ")
-         .trimmingCharacters(in: .whitespacesAndNewlines)
+        AIService.sanitizeForAI(
+            s.replacingOccurrences(of: "\n", with: " ")
+             .replacingOccurrences(of: "\r", with: " ")
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func ms(since start: Date) -> Int {

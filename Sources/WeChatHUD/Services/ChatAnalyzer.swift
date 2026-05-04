@@ -4,8 +4,8 @@ import Foundation
 /// and private chats. Uses the AI service with dedicated prompt templates.
 ///
 /// Two entry points:
-/// - `analyzeGroup(...)` → `GroupAnalysis?`
-/// - `analyzePrivate(...)` → `PrivateAnalysis?`
+/// - `analyzeGroup(...)` → `(GroupAnalysis?, error)`
+/// - `analyzePrivate(...)` → `(PrivateAnalysis?, error)`
 actor ChatAnalyzer {
 
     // MARK: - Result types
@@ -17,6 +17,36 @@ actor ChatAnalyzer {
         let key_speakers: String?
         let status: String
         let one_liner: String
+
+        enum CodingKeys: String, CodingKey {
+            case topics, decisions, my_action_items, key_speakers, status, one_liner
+        }
+
+        init(
+            topics: String,
+            decisions: String?,
+            my_action_items: String?,
+            key_speakers: String?,
+            status: String,
+            one_liner: String
+        ) {
+            self.topics = topics
+            self.decisions = decisions
+            self.my_action_items = my_action_items
+            self.key_speakers = key_speakers
+            self.status = status
+            self.one_liner = one_liner
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            topics = try c.decodeFlexibleStringIfPresent(forKey: .topics) ?? ""
+            decisions = try c.decodeFlexibleStringIfPresent(forKey: .decisions)
+            my_action_items = try c.decodeFlexibleStringIfPresent(forKey: .my_action_items)
+            key_speakers = try c.decodeFlexibleStringIfPresent(forKey: .key_speakers)
+            status = try c.decodeFlexibleStringIfPresent(forKey: .status) ?? "discussing"
+            one_liner = try c.decodeFlexibleStringIfPresent(forKey: .one_liner) ?? topics
+        }
     }
 
     struct PrivateAnalysis: Decodable {
@@ -27,6 +57,39 @@ actor ChatAnalyzer {
         let mood_evidence: String
         let context: String?
         let one_liner: String
+
+        enum CodingKeys: String, CodingKey {
+            case intent, urgency, urgency_reason, mood, mood_evidence, context, one_liner
+        }
+
+        init(
+            intent: String,
+            urgency: String,
+            urgency_reason: String,
+            mood: String,
+            mood_evidence: String,
+            context: String?,
+            one_liner: String
+        ) {
+            self.intent = intent
+            self.urgency = urgency
+            self.urgency_reason = urgency_reason
+            self.mood = mood
+            self.mood_evidence = mood_evidence
+            self.context = context
+            self.one_liner = one_liner
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            intent = try c.decodeFlexibleStringIfPresent(forKey: .intent) ?? ""
+            urgency = try c.decodeFlexibleStringIfPresent(forKey: .urgency) ?? "normal"
+            urgency_reason = try c.decodeFlexibleStringIfPresent(forKey: .urgency_reason) ?? ""
+            mood = try c.decodeFlexibleStringIfPresent(forKey: .mood) ?? "neutral"
+            mood_evidence = try c.decodeFlexibleStringIfPresent(forKey: .mood_evidence) ?? ""
+            context = try c.decodeFlexibleStringIfPresent(forKey: .context)
+            one_liner = try c.decodeFlexibleStringIfPresent(forKey: .one_liner) ?? intent
+        }
     }
 
     // MARK: - Dependencies
@@ -52,13 +115,13 @@ actor ChatAnalyzer {
         myName: String,
         myDisplayName: String = "",
         mySelfNames: Set<String> = []
-    ) async -> GroupAnalysis? {
+    ) async -> (GroupAnalysis?, String?) {
         let template: String
         do {
             template = try promptLoader.load(version: "group_analysis_v1")
         } catch {
             print("[WCHUD] ChatAnalyzer: failed to load group_analysis_v1 prompt: \(error)")
-            return nil
+            return (nil, "加载群聊分析 Prompt 失败: \(error.localizedDescription)")
         }
 
         let formatted = formatMessages(
@@ -76,27 +139,27 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{messages}", with: formatted)
 
         print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(messages.count) messages")
-        let raw = await call(userPrompt)
-        if raw.isEmpty {
+        let first = await call(userPrompt)
+        if first.text.isEmpty {
             print("[WCHUD] ChatAnalyzer: group analysis got empty response")
-            return nil
+            return (nil, first.error ?? "AI 返回空内容")
         }
 
-        if let result: GroupAnalysis = parseJSON(raw) {
+        if let result: GroupAnalysis = parseJSON(first.text) {
             print("[WCHUD] ChatAnalyzer: group analysis success for \(chatName)")
-            return result
+            return (result, nil)
         }
-        print("[WCHUD] ChatAnalyzer: group analysis parse failed, retrying. Raw: \(raw.prefix(200))")
+        print("[WCHUD] ChatAnalyzer: group analysis parse failed, retrying. Raw: \(first.text.prefix(200))")
 
         // Retry with stricter instruction
         let strict = userPrompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
-        let raw2 = await call(strict)
-        if let result: GroupAnalysis = parseJSON(raw2) {
+        let second = await call(strict)
+        if let result: GroupAnalysis = parseJSON(second.text) {
             print("[WCHUD] ChatAnalyzer: group analysis retry success")
-            return result
+            return (result, nil)
         }
-        print("[WCHUD] ChatAnalyzer: group analysis retry also failed. Raw2: \(raw2.prefix(200))")
-        return nil
+        print("[WCHUD] ChatAnalyzer: group analysis retry also failed. Raw2: \(second.text.prefix(200))")
+        return (nil, second.error ?? "AI JSON 解析失败: \(String(second.text.prefix(120)))")
     }
 
     /// Analyze a private chat. `messages` come newest-first from the reader.
@@ -108,13 +171,13 @@ actor ChatAnalyzer {
         myName: String,
         myDisplayName: String = "",
         mySelfNames: Set<String> = []
-    ) async -> PrivateAnalysis? {
+    ) async -> (PrivateAnalysis?, String?) {
         let template: String
         do {
             template = try promptLoader.load(version: "private_analysis_v1")
         } catch {
             print("[WCHUD] ChatAnalyzer: failed to load private_analysis_v1 prompt: \(error)")
-            return nil
+            return (nil, "加载私聊分析 Prompt 失败: \(error.localizedDescription)")
         }
 
         let formatted = formatMessages(
@@ -141,17 +204,22 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{relationship}", with: relationship)
             .replacingOccurrences(of: "{messages}", with: formatted)
 
-        let raw = await call(userPrompt)
-        guard !raw.isEmpty else { return nil }
+        let first = await call(userPrompt)
+        guard !first.text.isEmpty else {
+            return (nil, first.error ?? "AI 返回空内容")
+        }
 
-        if let result: PrivateAnalysis = parseJSON(raw) {
-            return result
+        if let result: PrivateAnalysis = parseJSON(first.text) {
+            return (result, nil)
         }
 
         // Retry with stricter instruction
         let strict = userPrompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
-        let raw2 = await call(strict)
-        return parseJSON(raw2)
+        let second = await call(strict)
+        if let result: PrivateAnalysis = parseJSON(second.text) {
+            return (result, nil)
+        }
+        return (nil, second.error ?? "AI JSON 解析失败: \(String(second.text.prefix(120)))")
     }
 
     // MARK: - Message formatting
@@ -173,39 +241,50 @@ actor ChatAnalyzer {
                 ? (myName.isEmpty ? "我" : myName)
                 : (msg.senderName.isEmpty ? msg.senderUsername : msg.senderName)
             let time = MessageInfo.formatRelative(msg.createTime)
-            let body = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let body = AIService.sanitizeForAI(msg.text)
             return "[\(time)] \(sender): \(body)"
         }.joined(separator: "\n")
     }
 
     // MARK: - AI call
 
-    private func call(_ userPrompt: String) async -> String {
+    private struct CallResult {
+        let text: String
+        let error: String?
+        let model: String?
+    }
+
+    private func call(_ userPrompt: String) async -> CallResult {
         let started = Date()
         let trackID = "chatanalyzer:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "聊天分析")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是一个消息分析助手，严格按要求输出 JSON。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 512)
+                options: CompleteOptions(timeout: 120, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true)
             )
             let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
-            await writeAudit(input: userPrompt, output: content, latencyMs: latencyMs, status: .ok, error: nil)
-            return content
+            await writeAudit(input: userPrompt, output: result.text, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
+            return CallResult(text: result.text, error: nil, model: result.model)
         } catch {
             let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
             let status: AIAuditStatus = (error as? URLError)?.code == .timedOut ? .timeout : .httpError
             print("[WCHUD] ChatAnalyzer: call failed (\(status)) latencyMs=\(latencyMs) err=\(error.localizedDescription)")
-            await writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: status, error: error.localizedDescription)
-            return ""
+            await writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: status, error: error.localizedDescription, model: nil)
+            return CallResult(text: "", error: error.localizedDescription, model: nil)
         }
     }
 
-    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),
@@ -226,28 +305,54 @@ actor ChatAnalyzer {
     // MARK: - JSON parsing
 
     private func parseJSON<T: Decodable>(_ raw: String) -> T? {
-        guard !raw.isEmpty else { return nil }
-        var cleaned = raw
-
-        // Strip markdown fences
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Extract JSON between first { and last }
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
+        AIJSONExtractor.decodeFirstObject(from: raw, as: T.self)
     }
 
+}
+
+private struct FlexibleStringAtom: Decodable {
+    let value: String
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) {
+            value = s
+        } else if let i = try? c.decode(Int.self) {
+            value = String(i)
+        } else if let d = try? c.decode(Double.self) {
+            value = String(d)
+        } else if let b = try? c.decode(Bool.self) {
+            value = b ? "true" : "false"
+        } else {
+            value = ""
+        }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeFlexibleStringIfPresent(forKey key: Key) throws -> String? {
+        if !contains(key) {
+            return nil
+        }
+        if try decodeNil(forKey: key) {
+            return nil
+        }
+        if let value = try? decode(String.self, forKey: key) {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let values = try? decode([FlexibleStringAtom].self, forKey: key) {
+            let joined = values
+                .map(\.value)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "；")
+            return joined.isEmpty ? nil : joined
+        }
+        if let value = try? decode(FlexibleStringAtom.self, forKey: key) {
+            let trimmed = value.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return nil
+    }
 }

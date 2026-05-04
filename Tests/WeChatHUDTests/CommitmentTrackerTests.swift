@@ -9,9 +9,14 @@ final class CommitmentTrackerTests: XCTestCase {
         let tmp = NSTemporaryDirectory() + "test_commit_\(UUID().uuidString).sqlite3"
         store = HUDStore(dbPath: tmp)
         try! store.open()
+        URLRequestRecorder.install()
     }
 
-    override func tearDown() { store.close(); super.tearDown() }
+    override func tearDown() {
+        URLRequestRecorder.uninstall()
+        store.close()
+        super.tearDown()
+    }
 
     func testPromptLoads() {
         let loader = PromptLoader()
@@ -41,5 +46,43 @@ final class CommitmentTrackerTests: XCTestCase {
         try! store.updateCommitmentStatus(msgUID: "c1", status: .fulfilled)
         XCTAssertEqual(store.loadCommitments(status: .fulfilled).count, 1)
         XCTAssertEqual(store.loadCommitments(status: .pending).count, 0)
+    }
+
+    func testAuditUsesProviderReturnedModel() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: """
+            {"is_commitment":true,"content":"明天发方案","commit_to":"张三","deadline_extracted":"明天","confidence":0.92}
+            """,
+            model: "actual-provider-model"
+        )
+
+        let tracker = CommitmentTracker(store: store, aiService: makeAIService())
+        let result = await tracker.analyze(
+            yourMessage: MessageInfo(
+                id: "m1", chatUsername: "chat1", chatName: "项目群",
+                senderUsername: "me", senderName: "我",
+                text: "好的，我明天发方案",
+                baseType: 1, subType: 0, createTime: Int(Date().timeIntervalSince1970)
+            ),
+            contextMessages: [],
+            recipientName: "张三",
+            recipientRole: .colleague
+        )
+
+        XCTAssertEqual(result?.content, "明天发方案")
+        let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .commitmentTracker).first)
+        XCTAssertEqual(audit.model, "actual-provider-model")
+    }
+
+    private func makeAIService() -> AIService {
+        var cfg = AIConfig()
+        cfg.cloudProvider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://localhost:9999",
+            model: "requested-model",
+            apiKey: "sk-test"
+        )
+        cfg.activeMode = .cloud
+        return AIService(config: cfg)
     }
 }

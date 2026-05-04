@@ -86,7 +86,7 @@ actor DiscussionTracker {
             )
             let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : msg.senderName)
             let ts = MessageInfo.formatRelative(msg.createTime)
-            return "[\(ts)] \(speaker): \(msg.text)"
+            return "[\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))"
         }.joined(separator: "\n")
 
         let knownList = existing.map { "- \($0.kind.label): \($0.content)" }.joined(separator: "\n")
@@ -96,33 +96,45 @@ actor DiscussionTracker {
             .replacingOccurrences(of: "{known_items}", with: knownList.isEmpty ? "（暂无）" : knownList)
 
         let started = Date()
-        let body = await callModel(prompt: prompt)
+        let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
-        let model = await aiService.currentConfig().model
-        guard let body = body else {
+        let model: String
+        if let actualModel = response.model {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
+        var auditModel = model
+        guard let body = response.text else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
                 model: model, promptVersion: promptVersion,
                 inputText: "chat=\(chatName), msgs=\(messages.count)",
                 outputText: "", latencyMs: latency,
-                status: .httpError, errorMessage: "no response"
+                status: .httpError, errorMessage: response.error ?? "no response"
             ))
             return 0
         }
 
         var items = parseItems(body)
+        var outputBody = body
         // One strict-retry, same pattern as CommitmentTracker / Classifier
         if items == nil {
             let strictPrompt = prompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要 markdown 代码块，不要任何解释性文字。"
-            if let retryBody = await callModel(prompt: strictPrompt) {
+            let retry = await callModel(prompt: strictPrompt)
+            if let retryModel = retry.model {
+                auditModel = retryModel
+            }
+            if let retryBody = retry.text {
+                outputBody = retryBody
                 items = parseItems(retryBody)
             }
         }
         guard let parsed = items else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: model, promptVersion: promptVersion,
-                inputText: "chat=\(chatName)", outputText: body,
+                model: auditModel, promptVersion: promptVersion,
+                inputText: "chat=\(chatName)", outputText: outputBody,
                 latencyMs: latency, status: .parseError,
                 errorMessage: "JSON parse failed after strict retry"
             ))
@@ -154,7 +166,7 @@ actor DiscussionTracker {
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .commitmentTracker,
-            model: model, promptVersion: promptVersion,
+            model: auditModel, promptVersion: promptVersion,
             inputText: "chat=\(chatName), msgs=\(fresh.count)",
             outputText: "inserted=\(inserted)",
             latencyMs: latency, status: .ok, errorMessage: nil
@@ -194,38 +206,32 @@ actor DiscussionTracker {
     }
 
     private static func cleanJSON(_ text: String) -> String {
-        var s = text
-        if let fence = s.range(of: "```") {
-            s = String(s[fence.upperBound...])
-            if s.hasPrefix("json") { s = String(s.dropFirst(4)) }
-            if let endFence = s.range(of: "```") {
-                s = String(s[..<endFence.lowerBound])
-            }
-        }
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !s.hasPrefix("{") {
-            if let lo = s.firstIndex(of: "{"), let hi = s.lastIndex(of: "}") {
-                s = String(s[lo...hi])
-            }
-        }
-        return s
+        AIJSONExtractor.firstObjectString(from: text)
+            ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - AI call
 
-    private func callModel(prompt: String) async -> String? {
+    private struct ModelResponse {
+        let text: String?
+        let error: String?
+        let model: String?
+    }
+
+    private func callModel(prompt: String) async -> ModelResponse {
         let trackID = "discussion:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "事项提取")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            return try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是对话事项提取助手。只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 800)
+                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 800, responseFormatJSON: true)
             )
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return nil
+            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 }

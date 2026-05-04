@@ -182,7 +182,7 @@ enum InboxContextBuilder {
             let speaker = isSelf
                 ? "我"
                 : (msg.senderName.isEmpty ? "对方" : msg.senderName)
-            return "\(speaker): \(msg.text)"
+            return "\(speaker): \(AIService.sanitizeForAI(msg.text))"
         }
         let taggedTranscript = transcriptLines.joined(separator: "\n")
 

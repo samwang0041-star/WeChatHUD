@@ -546,7 +546,7 @@ actor AutopilotService {
             contextText = window.serialize()
         } else {
             contextText = allMessages.prefix(10).map {
-                "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \($0.text)"
+                "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
             }.joined(separator: "\n")
         }
 
@@ -921,7 +921,7 @@ actor AutopilotService {
         let oldComm = oldMemory?.communicationNotes ?? []
 
         let msgText = messages.prefix(20).map {
-            "\($0.senderName): \($0.text)"
+            "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
         }.joined(separator: "\n")
 
         let prompt = """
@@ -944,17 +944,13 @@ actor AutopilotService {
             content = try await aiService.complete(
                 system: "你是对话摘要助手。只输出JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256)
+                options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256, responseFormatJSON: true)
             )
         } catch {
             return
         }
 
-        // Strip thinking tags and parse JSON
-        let cleaned: String
-        if let lo = content.firstIndex(of: "{"), let hi = content.lastIndex(of: "}") {
-            cleaned = String(content[lo...hi])
-        } else { return }
+        guard let cleaned = AIJSONExtractor.firstObjectString(from: content) else { return }
 
         guard let jsonData = cleaned.data(using: .utf8),
               let result = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { return }

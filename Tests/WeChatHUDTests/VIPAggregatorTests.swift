@@ -9,9 +9,14 @@ final class VIPAggregatorTests: XCTestCase {
         let tmp = NSTemporaryDirectory() + "test_vipagg_\(UUID().uuidString).sqlite3"
         store = HUDStore(dbPath: tmp)
         try! store.open()
+        URLRequestRecorder.install()
     }
 
-    override func tearDown() { store.close(); super.tearDown() }
+    override func tearDown() {
+        URLRequestRecorder.uninstall()
+        store.close()
+        super.tearDown()
+    }
 
     func testPromptLoads() {
         let loader = PromptLoader()
@@ -60,5 +65,46 @@ final class VIPAggregatorTests: XCTestCase {
         }
         semaphore.wait()
         XCTAssertNil(result) // no traces = nil
+    }
+
+    func testAuditUsesProviderReturnedModel() async throws {
+        try store.insertVIPTrace(
+            vipUsername: "boss1", vipName: "王总",
+            chatUsername: "g1", chatName: "产品群",
+            msgUID: "m-ai", rawText: "预算这周要定", msgTime: 2_000
+        )
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: """
+            {"summary":"王总在推进预算","involves_user":true,"involve_detail":"需要你跟进","mood":"focused","mood_evidence":"催预算","mood_trend_analysis":"稳定","urgency":"medium","urgency_reason":"本周要定","recommended_action":"跟进预算","action_timing":"今天","key_topics":["预算"]}
+            """,
+            model: "actual-provider-model"
+        )
+
+        let agg = VIPAggregator(store: store, aiService: makeAIService())
+        let result = await agg.aggregate(
+            vipUsername: "boss1",
+            vipName: "王总",
+            vipRole: .boss,
+            userNameVariants: ["我"],
+            recentMoodHistory: "",
+            lastInteraction: "",
+            commitmentCount: 0
+        )
+
+        XCTAssertEqual(result?.summary, "王总在推进预算")
+        let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .vipAggregator).first)
+        XCTAssertEqual(audit.model, "actual-provider-model")
+    }
+
+    private func makeAIService() -> AIService {
+        var cfg = AIConfig()
+        cfg.cloudProvider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://localhost:9999",
+            model: "requested-model",
+            apiKey: "sk-test"
+        )
+        cfg.activeMode = .cloud
+        return AIService(config: cfg)
     }
 }

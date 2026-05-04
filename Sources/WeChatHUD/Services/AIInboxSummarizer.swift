@@ -64,9 +64,9 @@ actor AIInboxSummarizer {
             .replacingOccurrences(of: "{sender_role}", with: context.senderRole.rawValue)
             .replacingOccurrences(of: "{chat_name}", with: context.triggerMessage.chatName)
             .replacingOccurrences(of: "{chat_kind}", with: context.isGroupChat ? "群聊" : "私聊")
-            .replacingOccurrences(of: "{message_body}", with: context.triggerMessageText)
-            .replacingOccurrences(of: "{context_messages}", with: contextStr)
-            .replacingOccurrences(of: "{my_last_reply}", with: context.myLastReplyText ?? "无")
+            .replacingOccurrences(of: "{message_body}", with: AIService.sanitizeForAI(context.triggerMessageText))
+            .replacingOccurrences(of: "{context_messages}", with: AIService.sanitizeForAI(contextStr))
+            .replacingOccurrences(of: "{my_last_reply}", with: AIService.sanitizeForAI(context.myLastReplyText ?? "无"))
 
         let result = await call(userPrompt)
         let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
@@ -79,7 +79,7 @@ actor AIInboxSummarizer {
                 .replacingOccurrences(of: "\u{201C}", with: "")
                 .replacingOccurrences(of: "\u{201D}", with: "")
             let summary = String(cleaned.prefix(30))
-            await audit(input: context.triggerMessageText, output: summary, latencyMs: latencyMs, status: .ok, error: nil)
+            await audit(input: context.triggerMessageText, output: summary, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
             return summary
         }
 
@@ -88,7 +88,8 @@ actor AIInboxSummarizer {
             output: "",
             latencyMs: latencyMs,
             status: result.error != nil ? .httpError : .parseError,
-            error: result.error
+            error: result.error,
+            model: result.model
         )
         return nil
     }
@@ -98,6 +99,7 @@ actor AIInboxSummarizer {
     private struct CallResult {
         let text: String?
         let error: String?
+        let model: String?
     }
 
     private func call(_ userPrompt: String) async -> CallResult {
@@ -106,21 +108,26 @@ actor AIInboxSummarizer {
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是用户的微信消息管家。只输出摘要文本，不要任何其他内容。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.1, maxTokens: 100)
+                options: CompleteOptions(timeout: 30, temperature: 0.1, maxTokens: 2048)
             )
-            return CallResult(text: content, error: nil)
+            return CallResult(text: result.text, error: nil, model: result.model)
         } catch {
-            return CallResult(text: nil, error: error.localizedDescription)
+            return CallResult(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 
     // MARK: - Audit
 
-    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),

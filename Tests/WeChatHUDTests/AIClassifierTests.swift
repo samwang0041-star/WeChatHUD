@@ -237,12 +237,11 @@ final class AIClassifierTests: XCTestCase {
     ///
     /// Two files are loaded if present:
     ///   - `labeled_messages.json`         — committed, synthetic seed cases
-    ///   - `labeled_messages_private.json` — gitignored, grown from real
-    ///                                       WeChat data via `classify-real`
+    ///   - `labeled_messages_private.json` — optional local synthetic extras
     ///
-    /// The private file is optional and only filtered to entries whose
-    /// `expected.is_ask` field has been hand-set (the file as written
-    /// by `classify-real` has `expected: null` until reviewed).
+    /// The optional file must contain generated or fully rewritten synthetic
+    /// examples only. Raw chat exports must never be copied into repo fixtures.
+    /// Entries with `expected: null` are ignored until hand-labeled.
     private func loadFixtureCases() throws -> [LabeledCase] {
         let here = URL(fileURLWithPath: #filePath)
         let fixturesDir = here

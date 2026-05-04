@@ -10,14 +10,17 @@ final class RetrospectiveWindowManager {
     static let shared = RetrospectiveWindowManager()
 
     private var window: NSWindow?
-    private var delegateProxy: WindowDelegateProxy?
+    private var contentController: NSViewController?
 
     private init() {}
 
     func showWindow(monitor: ChatMonitor) {
         if let w = window {
-            w.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            DispatchQueue.main.async {
+                w.makeKeyAndOrderFront(nil)
+                w.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+            }
             return
         }
         let view = RetrospectiveWindow().environmentObject(monitor)
@@ -27,29 +30,36 @@ final class RetrospectiveWindowManager {
             backing: .buffered, defer: false
         )
         w.title = "复盘"
-        w.contentView = NSHostingView(rootView: view)
         w.minSize = NSSize(width: 600, height: 500)
+        w.isReleasedWhenClosed = false
+        w.collectionBehavior = [.moveToActiveSpace]
         w.center()
-        let proxy = WindowDelegateProxy { [weak self] in
-            self?.window = nil
-            self?.delegateProxy = nil
-        }
-        w.delegate = proxy
-        delegateProxy = proxy
+        // Disable the default window-show animation to avoid _NSWindowTransformAnimation
+        // lifetime crashes when this races with FloatingPanel frame animations.
+        w.animationBehavior = .none
+
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.backgroundColor = .black
+
+        // Use a hosting controller and retain it explicitly through the
+        // manager. This matches AppKit's regular content-controller
+        // ownership model and avoids custom close interception around a raw
+        // NSHostingView tree.
+        let hostingController = NSHostingController(rootView: view)
+        w.contentViewController = hostingController
+        contentController = hostingController
         window = w
-        w.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Defer makeKeyAndOrderFront by one runloop tick so any in-flight
+        // panel animations finish their CA transaction before AppKit starts
+        // a new window-ordering transaction.
+        DispatchQueue.main.async {
+            w.makeKeyAndOrderFront(nil)
+            w.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func closeWindow() {
-        window?.close()
-        window = nil
-        delegateProxy = nil
+        window?.orderOut(nil)
     }
-}
-
-private final class WindowDelegateProxy: NSObject, NSWindowDelegate {
-    let onClose: () -> Void
-    init(onClose: @escaping () -> Void) { self.onClose = onClose }
-    func windowWillClose(_ notification: Notification) { onClose() }
 }

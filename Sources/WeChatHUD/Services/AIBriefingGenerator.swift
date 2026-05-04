@@ -38,7 +38,7 @@ actor AIBriefingGenerator {
 
         // Build context messages string
         let contextStr = context.recentMessages.prefix(8).map { msg in
-            "\(msg.senderName): \(String(msg.text.prefix(80)))"
+            "\(msg.senderName): \(String(AIService.sanitizeForAI(msg.text).prefix(80)))"
         }.joined(separator: "\n")
 
         let commitmentsStr = context.pendingCommitments.isEmpty
@@ -84,11 +84,11 @@ actor AIBriefingGenerator {
         // First attempt
         let first = await call(userPrompt)
         if let briefing = parse(first.text) {
-            await audit(input: context.triggerMessageText, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil)
+            await audit(input: context.triggerMessageText, output: first.text, latencyMs: ms(since: started), status: .ok, error: nil, model: first.model)
             return briefing
         }
         if first.text.isEmpty, let err = first.error {
-            await audit(input: context.triggerMessageText, output: "", latencyMs: ms(since: started), status: .httpError, error: err)
+            await audit(input: context.triggerMessageText, output: "", latencyMs: ms(since: started), status: .httpError, error: err, model: first.model)
             return nil
         }
 
@@ -96,7 +96,7 @@ actor AIBriefingGenerator {
         let strict = userPrompt + "\n\n严格要求：上一次输出无法解析为 JSON。只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
         let second = await call(strict)
         if let briefing = parse(second.text) {
-            await audit(input: context.triggerMessageText, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry")
+            await audit(input: context.triggerMessageText, output: second.text, latencyMs: ms(since: started), status: .ok, error: "recovered after retry", model: second.model)
             return briefing
         }
 
@@ -105,7 +105,8 @@ actor AIBriefingGenerator {
             output: second.text,
             latencyMs: ms(since: started),
             status: .parseError,
-            error: second.error ?? "JSON parse failed after retry"
+            error: second.error ?? "JSON parse failed after retry",
+            model: second.model
         )
         return nil
     }
@@ -115,6 +116,7 @@ actor AIBriefingGenerator {
     private struct ModelResponse {
         let text: String
         let error: String?
+        let model: String?
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
@@ -123,48 +125,22 @@ actor AIBriefingGenerator {
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是用户的微信消息管家。严格按要求输出 JSON，不要任何其他内容。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.3, maxTokens: 512)
+                options: CompleteOptions(timeout: 60, temperature: 0.3, maxTokens: 512, responseFormatJSON: true)
             )
-            return ModelResponse(text: content, error: nil)
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return ModelResponse(text: "", error: error.localizedDescription)
+            return ModelResponse(text: "", error: error.localizedDescription, model: nil)
         }
     }
 
     // MARK: - Parsing
 
     private func parse(_ raw: String) -> InboxBriefing? {
-        guard !raw.isEmpty else { return nil }
-        var cleaned = raw
-
-        // Strip markdown code fences
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Extract JSON object
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        do {
-            let briefing = try JSONDecoder().decode(InboxBriefing.self, from: data)
-            // Validate: must have at least 1 reply
-            return briefing.replies.isEmpty ? nil : briefing
-        } catch {
-            return nil
-        }
+        guard let briefing = AIJSONExtractor.decodeFirstObject(from: raw, as: InboxBriefing.self) else { return nil }
+        return briefing.replies.isEmpty ? nil : briefing
     }
 
     // MARK: - Helpers
@@ -175,8 +151,13 @@ actor AIBriefingGenerator {
 
     // MARK: - Audit
 
-    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func audit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),

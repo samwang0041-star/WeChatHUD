@@ -100,6 +100,53 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         XCTAssertEqual(recent[0].outputText, "not-json")
     }
 
+    func testBareMentionFallbackUsesFYICopy() async {
+        let notification = makeNotification(messageID: "m-fyi", rawText: "@你 前面大家在聊示例主题", ts: 200)
+        let provider = FakeGroupContextMessageProvider(messages: [
+            makeMessage(id: "m1", sender: "Alice", text: "大家在聊示例主题", ts: 160),
+            makeMessage(id: "m-fyi", sender: "Bob", text: "@你 前面大家在聊示例主题", ts: 200)
+        ])
+        let client = FakeGroupContextLLMClient(response: "", configured: false)
+        let service = GroupContextBriefingService(
+            reader: provider,
+            store: store,
+            client: client
+        )
+
+        let result = await service.explain(notification: notification)
+
+        XCTAssertEqual(result.briefing.source, .fallback)
+        XCTAssertTrue(result.briefing.whyMentioned.contains("同步"))
+        XCTAssertTrue(result.briefing.currentStatus.contains("没有明确"))
+        XCTAssertFalse(result.briefing.whyMentioned.contains("需要你"))
+        XCTAssertFalse(result.briefing.currentStatus.contains("卡点"))
+        XCTAssertFalse(result.briefing.nextStep.contains("说明你当前进度"))
+    }
+
+    func testNotificationSemanticKeepsBareMentionFYIAndDeepActionOptIn() {
+        let bare = makeNotification(messageID: "m-bare", rawText: "@你 前面大家在聊示例主题", ts: 200)
+        let ask = makeNotification(messageID: "m-ask", rawText: "@你 看下预算能不能过", ts: 210)
+        let privateVIP = HUDNotification(
+            chatUsername: "wxid_vip",
+            chatName: "老板",
+            senderUsername: "wxid_vip",
+            senderName: "老板",
+            attentionLevel: .vip,
+            messageID: "m-vip",
+            rawText: "更新一下进展",
+            snippet: "更新一下进展",
+            isAtMention: false,
+            timestamp: Date(timeIntervalSince1970: 220),
+            kind: .privateChat
+        )
+
+        XCTAssertEqual(bare.presentationSemanticState, .groupMentionFYI)
+        XCTAssertFalse(bare.supportsDeepActionContext)
+        XCTAssertEqual(ask.presentationSemanticState, .groupMentionFYI)
+        XCTAssertTrue(ask.supportsDeepActionContext)
+        XCTAssertEqual(privateVIP.presentationSemanticState, .privateVIPRisk)
+    }
+
     func testServiceParsesAIBriefingAndCachesIt() async {
         let notification = makeNotification(messageID: "m-ai", rawText: "@你 看下预算能不能过", ts: 300)
         let provider = FakeGroupContextMessageProvider(messages: [
@@ -128,6 +175,32 @@ final class GroupContextBriefingServiceTests: XCTestCase {
             inputHash: notification.briefingKey
         )
         XCTAssertNotNil(cached)
+    }
+
+    func testServiceParsesTrailingProseAndRequestsJSONMode() async {
+        let notification = makeNotification(messageID: "m-trailing", rawText: "@你 看下预算能不能过", ts: 300)
+        let provider = FakeGroupContextMessageProvider(messages: [
+            makeMessage(id: "m1", sender: "Alice", text: "预算还差你确认", ts: 250),
+            makeMessage(id: "m-trailing", sender: "Bob", text: "@你 看下预算能不能过", ts: 300)
+        ])
+        let client = FakeGroupContextLLMClient(response: """
+        {"situation":"群里在确认预算是否通过","why_mentioned":"大家在等你拍板预算","current_status":"预算卡在你的确认","next_step":"直接回预算是否通过或给明确时间","participants":["Alice","Bob"],"confidence":0.93}
+        补充说明：以上为模型解释。
+        """)
+        let service = GroupContextBriefingService(
+            reader: provider,
+            store: store,
+            client: client
+        )
+
+        let result = await service.explain(notification: notification)
+
+        XCTAssertEqual(result.briefing.source, .ai)
+        XCTAssertNil(result.errorMessage)
+        let options = await client.optionsSeen
+        XCTAssertEqual(options.count, 1)
+        XCTAssertTrue(options[0].responseFormatJSON)
+        XCTAssertEqual(options[0].thinkingEnabled, nil)
     }
 
     private func makeNotification(
@@ -180,6 +253,7 @@ private struct FakeGroupContextMessageProvider: GroupContextMessageProvider {
 
 private actor FakeGroupContextLLMClient: GroupContextLLMClient {
     private(set) var callCount = 0
+    private(set) var optionsSeen: [CompleteOptions] = []
 
     let response: String
     let configured: Bool
@@ -192,6 +266,18 @@ private actor FakeGroupContextLLMClient: GroupContextLLMClient {
     func complete(system: String, user: String) async throws -> String {
         callCount += 1
         return response
+    }
+
+    func complete(system: String, user: String, options: CompleteOptions) async throws -> String {
+        callCount += 1
+        optionsSeen.append(options)
+        return response
+    }
+
+    func completeWithMetadata(system: String, user: String, options: CompleteOptions) async throws -> AICompletionResult {
+        callCount += 1
+        optionsSeen.append(options)
+        return AICompletionResult(text: response, providerID: "test", model: "test-model")
     }
 
     func isConfigured() async -> Bool {

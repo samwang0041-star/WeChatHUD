@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WhitelistSuggestionBadge: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
     let chatUsername: String
     let suggestion: AIWhitelistCategorizer.Suggestion
     @State private var showConfirm = false
@@ -17,6 +18,9 @@ struct WhitelistSuggestionBadge: View {
                 .cornerRadius(3)
         }
         .buttonStyle(.plain)
+        .onChange(of: showConfirm) { _, isOpen in
+            panelState.popoverOpen = isOpen
+        }
         .popover(isPresented: $showConfirm) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("AI 建议将此联系人加入白名单")
