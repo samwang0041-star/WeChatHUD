@@ -127,7 +127,7 @@ actor CommitmentTracker {
             ? "算法检测到承诺信号词" : "算法未检测到明显信号词"
 
         let contextText = contextMessages.map {
-            "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \($0.text)"
+            "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
         }.joined(separator: "\n")
 
         let prompt = template
@@ -135,19 +135,24 @@ actor CommitmentTracker {
             .replacingOccurrences(of: "{recipient_role}", with: recipientRole.label)
             .replacingOccurrences(of: "{commitment_signals}", with: signals)
             .replacingOccurrences(of: "{context_messages}", with: contextText)
-            .replacingOccurrences(of: "{user_message}", with: yourMessage.text)
+            .replacingOccurrences(of: "{user_message}", with: AIService.sanitizeForAI(yourMessage.text))
 
         let started = Date()
         let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
-        let model = await aiService.currentConfig().model
+        let model: String
+        if let actualModel = response.model {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
 
-        guard let body = response else {
+        guard let body = response.text else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
                 model: model, promptVersion: "commitment_v1",
                 inputText: yourMessage.text, outputText: "",
-                latencyMs: latency, status: .httpError, errorMessage: "no response"
+                latencyMs: latency, status: .httpError, errorMessage: response.error ?? "no response"
             ))
             return nil
         }
@@ -167,12 +172,13 @@ actor CommitmentTracker {
         // cooperate the second time even when the first answer had
         // a trailing comma, code fence, or chatty preamble.
         let strictPrompt = prompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要 markdown 代码块，不要任何解释性文字。"
-        let retryBody = await callModel(prompt: strictPrompt)
+        let retry = await callModel(prompt: strictPrompt)
         let retryLatency = Int(Date().timeIntervalSince(started) * 1000)
-        if let retryBody = retryBody, let result = parseResult(retryBody) {
+        let retryModel = retry.model ?? model
+        if let retryBody = retry.text, let result = parseResult(retryBody) {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .commitmentTracker,
-                model: model, promptVersion: "commitment_v1_retry",
+                model: retryModel, promptVersion: "commitment_v1_retry",
                 inputText: yourMessage.text, outputText: retryBody,
                 latencyMs: retryLatency, status: .ok, errorMessage: nil
             ))
@@ -181,7 +187,7 @@ actor CommitmentTracker {
 
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .commitmentTracker,
-            model: model, promptVersion: "commitment_v1",
+            model: retryModel, promptVersion: "commitment_v1",
             inputText: yourMessage.text, outputText: body,
             latencyMs: retryLatency, status: .parseError,
             errorMessage: "JSON parse failed on both initial and strict-retry"
@@ -189,19 +195,26 @@ actor CommitmentTracker {
         return nil
     }
 
-    private func callModel(prompt: String) async -> String? {
+    private struct ModelResponse {
+        let text: String?
+        let error: String?
+        let model: String?
+    }
+
+    private func callModel(prompt: String) async -> ModelResponse {
         let trackID = "commitment:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "承诺识别")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            return try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256)
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true)
             )
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return nil
+            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 
@@ -236,18 +249,7 @@ actor CommitmentTracker {
     }
 
     private func cleanJSON(_ text: String) -> String {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let range = s.range(of: "<think>") {
-            if let end = s.range(of: "</think>") {
-                s.removeSubrange(range.lowerBound..<end.upperBound)
-            } else { break }
-        }
-        s = s.replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let start = s.firstIndex(of: "{"), let end = s.lastIndex(of: "}") {
-            s = String(s[start...end])
-        }
-        return s
+        AIJSONExtractor.firstObjectString(from: text)
+            ?? text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

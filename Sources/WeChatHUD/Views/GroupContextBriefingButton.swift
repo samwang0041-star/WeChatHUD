@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GroupContextBriefingButton: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
 
     let notification: HUDNotification
     let compact: Bool
@@ -44,6 +45,10 @@ struct GroupContextBriefingButton: View {
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             GroupContextBriefingPopover(notification: notification)
                 .environmentObject(monitor)
+                .environmentObject(panelState)
+        }
+        .onChange(of: showingPopover) { _, isOpen in
+            panelState.popoverOpen = isOpen
         }
     }
 
@@ -64,6 +69,10 @@ private struct GroupContextBriefingPopover: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     let notification: HUDNotification
+
+    private var allowsDeepActionContext: Bool {
+        notification.supportsDeepActionContext
+    }
 
     var body: some View {
         let state = monitor.groupContextState(for: notification)
@@ -129,14 +138,14 @@ private struct GroupContextBriefingPopover: View {
                 }
             }
 
-            if let bg = briefing.deepBackground {
+            if allowsDeepActionContext, let bg = briefing.deepBackground {
                 Divider().padding(.vertical, 4)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("深度分析")
                         .font(.system(size: 11, weight: .bold))
                     section("背景", text: bg)
                     if let want = briefing.deepWhatTheyWant {
-                        section("他想要什么", text: want)
+                        section("为什么提到你", text: want)
                     }
                     if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
@@ -150,7 +159,7 @@ private struct GroupContextBriefingPopover: View {
                         section("你的立场", text: position)
                     }
                     if let action = briefing.deepSuggestedAction {
-                        section("建议行动", text: action)
+                        section("下一步参考", text: action)
                     }
                     if let timing = briefing.deepSuggestedTiming {
                         section("建议时机", text: timing)
@@ -198,7 +207,7 @@ private struct GroupContextBriefingPopover: View {
 
             if let briefing = state.briefing {
                 Button("复制结果") {
-                    WeChatLauncher.copyText(copyText(for: briefing))
+                    WeChatLauncher.copyText(copyText(for: briefing, includeDeepAction: allowsDeepActionContext))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -226,20 +235,21 @@ private struct GroupContextBriefingPopover: View {
         }
     }
 
-    private func copyText(for briefing: GroupContextBriefing) -> String {
+    private func copyText(for briefing: GroupContextBriefing, includeDeepAction: Bool) -> String {
         var lines = [
             "发生了什么：\(briefing.situation)",
             "为什么@你：\(briefing.whyMentioned)",
             "当前状态：\(briefing.currentStatus)",
             "下一步：\(briefing.nextStep)"
         ]
+        guard includeDeepAction else { return lines.joined(separator: "\n") }
         if let bg = briefing.deepBackground {
             lines.append("")
             lines.append("【深度分析】")
             lines.append("背景：\(bg)")
         }
         if let want = briefing.deepWhatTheyWant {
-            lines.append("他想要什么：\(want)")
+            lines.append("为什么提到你：\(want)")
         }
         if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
             lines.append("利益相关方：\(stakeholders.joined(separator: "、"))")
@@ -248,7 +258,7 @@ private struct GroupContextBriefingPopover: View {
             lines.append("你的立场：\(position)")
         }
         if let action = briefing.deepSuggestedAction {
-            lines.append("建议行动：\(action)")
+            lines.append("下一步参考：\(action)")
         }
         if let timing = briefing.deepSuggestedTiming {
             lines.append("建议时机：\(timing)")

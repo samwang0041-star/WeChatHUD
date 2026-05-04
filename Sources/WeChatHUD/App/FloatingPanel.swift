@@ -59,8 +59,42 @@ final class PillContainerView: NSView {
 /// poll, so the host returning `true` is enough to bypass AppKit's
 /// window-activation-swallow behavior for the whole SwiftUI tree.
 final class FirstMouseHostingView<Content: SwiftUI.View>: NSHostingView<Content> {
+    required init(rootView: Content) {
+        super.init(rootView: rootView)
+        sizingOptions = []
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) {
+        super.init(coder: coder)
+        sizingOptions = []
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         return true
+    }
+
+    /// The floating window frame is animated manually by `FloatingPanel`.
+    /// `NSHostingView` normally exposes SwiftUI's current intrinsic size
+    /// (for example the 420pt-wide extended inbox) to AppKit Auto Layout.
+    /// If the hosting view keeps that intrinsic size, `NSPanel.setFrame`
+    /// refuses intermediate animation sizes and jumps straight to the
+    /// final width/height on the first tick. Returning no intrinsic metric
+    /// lets the panel own its frame while SwiftUI content clips/layouts
+    /// inside whatever size the animation has reached.
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    override var fittingSize: NSSize {
+        NSSize(width: 1, height: 1)
     }
 }
 
@@ -76,7 +110,7 @@ class FloatingPanel: NSPanel {
     /// the mouse enter/exit closures to PanelState.
     let pillContainer: PillContainerView
 
-    init(contentView: NSView) {
+    init(contentView: NSView, displayScreen: DisplayScreen = .builtIn) {
         // Allocate the container before super.init so we can assign self.pillContainer.
         let container = PillContainerView()
         self.pillContainer = container
@@ -100,6 +134,8 @@ class FloatingPanel: NSPanel {
         self.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         self.isOpaque = false
         self.backgroundColor = .clear
+        self.minSize = NSSize(width: 1, height: 1)
+        self.contentMinSize = NSSize(width: 1, height: 1)
         // No drop shadow — the pill's top edge is flush with the
         // hardware notch, and a shadow would paint a visible halo
         // above/around the notch that breaks the "island" illusion.
@@ -121,6 +157,19 @@ class FloatingPanel: NSPanel {
         // Set a window appearance so SwiftUI controls render correctly in the
         // dark pill states. The detail (settings) state will override this.
         self.appearance = NSAppearance(named: .darkAqua)
+        self.displayScreen = displayScreen
+
+        // Wire ourselves into AppDelegate BEFORE adding the SwiftUI
+        // hosting view. NSHostingView can trigger layout on addSubview,
+        // at which point CompactInboxBar reads app.panel.notchWidth.
+        // If app.panel is still nil it falls back to the placeholder 200,
+        // producing a bogus first measurement that later bounces.
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.panel = self
+        }
+
+        // Refresh notch so the first SwiftUI render sees real geometry.
+        refreshNotchGeometry()
 
         container.addSubview(contentView)
         contentView.translatesAutoresizingMaskIntoConstraints = false
@@ -143,12 +192,21 @@ class FloatingPanel: NSPanel {
         let screens = NSScreen.screens
         switch displayScreen {
         case .builtIn:
-            // Built-in display has localizedName containing "Built-in" or is the first screen
-            return screens.first { $0.localizedName.contains("Built") || $0.localizedName.contains("内置") }
-                ?? NSScreen.main ?? screens[0]
+            // Prefer the screen with a physical notch (safeAreaInsets.top > 0).
+            // This is more reliable than localizedName matching, which fails on
+            // systems where the built-in display is named "Color LCD" etc.
+            let notched = screens.first { $0.safeAreaInsets.top > 0 }
+            let byName = screens.first {
+                $0.localizedName.contains("Built") || $0.localizedName.contains("内置")
+            }
+            return notched ?? byName ?? NSScreen.main ?? screens[0]
         case .external:
-            // External = any screen that is NOT built-in
-            return screens.first { !$0.localizedName.contains("Built") && !$0.localizedName.contains("内置") }
+            // External = any screen without a notch AND not named built-in.
+            // Prefer the one without a notch first.
+            return screens.first { $0.safeAreaInsets.top == 0 }
+                ?? screens.first {
+                    !$0.localizedName.contains("Built") && !$0.localizedName.contains("内置")
+                }
                 ?? NSScreen.main ?? screens[0]
         }
     }
@@ -162,7 +220,7 @@ class FloatingPanel: NSPanel {
     )
 
     /// Refresh `notch` from the current `targetScreen`. Cheap.
-    private func refreshNotchGeometry() {
+    func refreshNotchGeometry(caller: String = #function) {
         notch = NotchGeometry.detect(on: targetScreen)
     }
 
@@ -181,11 +239,75 @@ class FloatingPanel: NSPanel {
         setFrameOrigin(NSPoint(x: x, y: y))
     }
 
+    private var animationTimer: Timer?
+    var onFrameAnimationStarted: (() -> Void)?
+    var onFrameAnimationEnded: (() -> Void)?
+
+    private func cancelFrameAnimation(notify: Bool = true) {
+        guard animationTimer != nil else { return }
+        animationTimer?.invalidate()
+        animationTimer = nil
+        if notify {
+            onFrameAnimationEnded?()
+        }
+    }
+
     /// Animate the panel frame, keeping its top edge locked to the
-    /// screen top (i.e., to the notch). Uses AppKit's default animator.
-    func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil) {
-        let frame = targetFrame(height: newHeight, width: width)
-        animator().setFrame(frame, display: true)
+    /// screen top (i.e., to the notch).
+    ///
+    /// We manually interpolate the frame on a 60 Hz timer instead of
+    /// using AppKit's `NSViewAnimation` or `animator()` because both
+    /// have proven unreliable for `NSPanel` — they often snap width/
+    /// height instantly while only animating the origin, or they use
+    /// easing curves that don't keep the panel visually centred.
+    /// Manual interpolation gives us pixel-perfect symmetric expansion.
+    func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil, caller: String = #function) {
+        let newWidth = width ?? frame.width
+        let duration = AnimationDebugger.isEnabled ? AnimationDebugger.slowDuration : 0.25
+
+        // Anchor every animated target to the notch center and screen top.
+        // Using the current frame center lets stale compact measurements
+        // leak into the next hover, which shows up as a horizontal flash.
+        refreshNotchGeometry(caller: caller)
+        let x = notch.notchCenterX - newWidth / 2
+        let y = targetScreen.frame.maxY - newHeight
+        let target = NSRect(x: x, y: y, width: newWidth, height: newHeight)
+
+        AnimationDebugger.logStart(from: self.frame, to: target, caller: caller, duration: duration)
+
+        // Cancel any in-flight animation before starting the new one. This is
+        // a retarget, not a real end event, so don't bounce PanelState through
+        // frameAnimationEnded just before starting again.
+        cancelFrameAnimation(notify: false)
+        onFrameAnimationStarted?()
+
+        let startFrame = self.frame
+        let startTime = Date()
+
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            let elapsed = Date().timeIntervalSince(startTime)
+            let rawT = min(elapsed / duration, 1.0)
+            // Cubic ease-in-out for a native macOS feel.
+            let progress = rawT < 0.5
+                ? 4 * rawT * rawT * rawT
+                : 1 - pow(-2 * rawT + 2, 3) / 2
+
+            let ix = startFrame.origin.x + (target.origin.x - startFrame.origin.x) * progress
+            let iy = startFrame.origin.y + (target.origin.y - startFrame.origin.y) * progress
+            let iw = startFrame.size.width + (target.size.width - startFrame.size.width) * progress
+            let ih = startFrame.size.height + (target.size.height - startFrame.size.height) * progress
+            self.setFrame(NSRect(x: ix, y: iy, width: iw, height: ih), display: true)
+
+            AnimationDebugger.logSample(window: self, startTime: startTime, elapsed: elapsed)
+
+            if rawT >= 1.0 {
+                timer.invalidate()
+                self.animationTimer = nil
+                self.onFrameAnimationEnded?()
+                AnimationDebugger.logEnd(frame: self.frame)
+            }
+        }
     }
 
     /// Snap the panel to the target size with NO animation. Used on
@@ -193,7 +315,16 @@ class FloatingPanel: NSPanel {
     /// doesn't animate down to the real compact size — that's the
     /// "first animation is wrong" artifact on launch.
     func setFrameInstantly(height: CGFloat, width: CGFloat? = nil) {
+        cancelFrameAnimation()
         setFrame(targetFrame(height: height, width: width), display: true)
+    }
+
+    func setFrameInstantlyCentered(height newHeight: CGFloat, width newWidth: CGFloat) {
+        cancelFrameAnimation()
+        let centerX = frame.midX
+        let x = centerX - newWidth / 2
+        let y = frame.maxY - newHeight
+        setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
     }
 
     /// Compute the target NSRect given a desired height/width. Keeps
@@ -256,4 +387,36 @@ class FloatingPanel: NSPanel {
     }
     override var canBecomeKey: Bool { allowsBecomeKey }
     override var canBecomeMain: Bool { false }
+}
+
+// MARK: - Animation Debugger
+
+struct AnimationDebugger {
+    static let isEnabled = ProcessInfo.processInfo.environment["WCHUD_ANIMATION_DEBUG"] == "1"
+    static let slowDuration: TimeInterval = 2.0
+    private static let boot = Date()
+
+    static func logEvent(_ message: String) {
+        guard isEnabled else { return }
+        let ms = Date().timeIntervalSince(boot) * 1000
+        print(String(format: "[ANIM] @%08.1fms %@", ms, message))
+    }
+
+    static func logStart(from: NSRect, to: NSRect, caller: String, duration: TimeInterval) {
+        guard isEnabled else { return }
+        logEvent(">>> START caller=\(caller) duration=\(duration)s")
+        print("[ANIM]      from=(x:\(String(format: "%.1f", from.origin.x)) y:\(String(format: "%.1f", from.origin.y)) w:\(String(format: "%.1f", from.size.width)) h:\(String(format: "%.1f", from.size.height)))")
+        print("[ANIM]      to  =(x:\(String(format: "%.1f", to.origin.x)) y:\(String(format: "%.1f", to.origin.y)) w:\(String(format: "%.1f", to.size.width)) h:\(String(format: "%.1f", to.size.height)))")
+    }
+
+    static func logSample(window: NSWindow, startTime: Date, elapsed: TimeInterval) {
+        guard isEnabled else { return }
+        let f = window.frame
+        print(String(format: "[ANIM] %06.1fms frame=(x:%.1f y:%.1f w:%.1f h:%.1f)", elapsed * 1000, f.origin.x, f.origin.y, f.size.width, f.size.height))
+    }
+
+    static func logEnd(frame: NSRect) {
+        guard isEnabled else { return }
+        print("[ANIM] <<< END   final=(x:\(String(format: "%.1f", frame.origin.x)) y:\(String(format: "%.1f", frame.origin.y)) w:\(String(format: "%.1f", frame.size.width)) h:\(String(format: "%.1f", frame.size.height)))")
+    }
 }

@@ -66,19 +66,19 @@ actor ContextAnalyzer {
             .replacingOccurrences(of: "{user_commitments}", with: userCommitments.isEmpty ? "（无未完成承诺）" : userCommitments)
 
         let started = Date()
-        guard let response = await callModel(prompt: prompt) else {
-            await writeAudit(input: ask.summary, output: "", latency: ms(since: started), status: .httpError, error: "no response")
+        let response = await callModel(prompt: prompt)
+        guard let responseText = response.text else {
+            await writeAudit(input: ask.summary, output: "", latency: ms(since: started), status: .httpError, error: response.error ?? "no response", model: response.model)
             return nil
         }
 
         let latency = ms(since: started)
-        guard let data = cleanJSON(response).data(using: .utf8),
-              let result = try? JSONDecoder().decode(AnalysisResult.self, from: data) else {
-            await writeAudit(input: ask.summary, output: response, latency: latency, status: .parseError, error: "JSON parse failed")
+        guard let result = AIJSONExtractor.decodeFirstObject(from: responseText, as: AnalysisResult.self) else {
+            await writeAudit(input: ask.summary, output: responseText, latency: latency, status: .parseError, error: "JSON parse failed", model: response.model)
             return nil
         }
 
-        await writeAudit(input: ask.summary, output: response, latency: latency, status: .ok, error: nil)
+        await writeAudit(input: ask.summary, output: responseText, latency: latency, status: .ok, error: nil, model: response.model)
         return result
     }
 
@@ -88,8 +88,13 @@ actor ContextAnalyzer {
         Int(Date().timeIntervalSince(start) * 1000)
     }
 
-    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func writeAudit(input: String, output: String, latency: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         try? store.writeAIAudit(AIAuditEntry(
             id: 0, ts: Date(), role: .contextAnalyzer,
             model: model, promptVersion: "context_analyzer_v1",
@@ -98,35 +103,27 @@ actor ContextAnalyzer {
         ))
     }
 
-    private func callModel(prompt: String) async -> String? {
+    private struct ModelResponse {
+        let text: String?
+        let error: String?
+        let model: String?
+    }
+
+    private func callModel(prompt: String) async -> ModelResponse {
         let trackID = "context:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "上下文分析")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            return try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 384)
+                options: CompleteOptions(timeout: 45, temperature: 0.1, maxTokens: 384, responseFormatJSON: true)
             )
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return nil
+            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 
-    private func cleanJSON(_ text: String) -> String {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let range = s.range(of: "<think>") {
-            if let end = s.range(of: "</think>") {
-                s.removeSubrange(range.lowerBound..<end.upperBound)
-            } else { break }
-        }
-        s = s.replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let start = s.firstIndex(of: "{"), let end = s.lastIndex(of: "}") {
-            s = String(s[start...end])
-        }
-        return s
-    }
 }

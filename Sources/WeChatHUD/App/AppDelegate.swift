@@ -13,28 +13,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
 
-    /// Cached SwiftUI-measured size of the extended inbox. Used as the
-    /// target for the STATE-CHANGE animation so we don't animate to a
-    /// numeric estimate and then re-animate to the measured size mid-
-    /// flight (which produced the visible "dropdown stutters" the user
-    /// reported).
-    ///
-    /// Staleness: the cache can be wrong (e.g. user expanded an
-    /// ActionPanel last session but SwiftUI rebuilt @State on re-open,
-    /// so content is now shorter). The measurement sink below
-    /// unconditionally corrects the frame — no suppression window —
-    /// so a stale cache produces a brief "overshoot + pull back"
-    /// animation rather than a stuck-at-wrong-size panel.
-    private var lastMeasuredExtendedSize: CGSize?
-
-    /// Separate cache for compact state. compact and extended share
-    /// the same `measuredExtendedSize` pipe (SwiftUI PreferenceKey →
-    /// PanelState), but their cached target sizes MUST be stored
-    /// separately — otherwise a compact→extended transition would
-    /// animate the panel toward the old compact width, and vice
-    /// versa, producing wrong-sized intermediate frames.
-    private var lastMeasuredCompactSize: CGSize?
-
     /// `@Published` fires an initial emission to every new subscriber.
     /// We ride that to position the panel on launch, but do it
     /// without animation — otherwise the 250pt placeholder
@@ -96,9 +74,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let hostingView = FirstMouseHostingView(rootView: rootView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
 
-        panel = FloatingPanel(contentView: hostingView)
-        panel.displayScreen = syncCfg.displayScreen
+        panel = FloatingPanel(contentView: hostingView, displayScreen: syncCfg.displayScreen)
         panel.positionAtTop()
+        panel.onFrameAnimationStarted = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.panelState.frameAnimationStarted()
+            }
+        }
+        panel.onFrameAnimationEnded = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self = self else { return }
+                self.panelState.frameAnimationEnded(mouseInside: self.panel.frame.contains(NSEvent.mouseLocation))
+            }
+        }
         panel.orderFrontRegardless()
 
         // Hook mouse enter/exit to PanelState. PillContainerView handles
@@ -125,11 +113,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // @Published fires in willSet, so `panelState.currentState` inside
         // the sink still reads the OLD value. We MUST compute the target
         // size from the `state` parameter (which is the new value) via the
-        // static PanelState.width(for:)/height(for:) helpers — reading
-        // `panelState.panelWidth` here would lag by one transition.
+        // the `state` parameter (the new value) instead of reading
+        // `panelState.currentState` which still holds the old value.
         panelState.$currentState
             .sink { [weak self] state in
                 guard let self = self else { return }
+                AnimationDebugger.logEvent("state -> \(state)")
                 // Re-read display screen preference on every state change
                 let latestSync = self.store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
                 self.panel.displayScreen = latestSync.displayScreen
@@ -149,43 +138,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 //
                 // All other states (compact / notification / detail)
                 // use the regular `panelSize(for:)` targets.
-                // Both .compact and .extended now self-size via
-                // PreferenceKey — SwiftUI reports the natural width
-                // of the rendered content, the measurement sink
-                // animates the panel to match. Cached targets are
-                // per-state so a cache populated in extended isn't
-                // reused for compact (they have wildly different
-                // dimensions).
-                let stateCache: CGSize?
-                switch state {
-                case .extended: stateCache = self.lastMeasuredExtendedSize
-                case .compact:  stateCache = self.lastMeasuredCompactSize
-                default:        stateCache = nil
-                }
-                let drivenByMeasurement = (
-                    (state == .extended || state == .compact) &&
-                    stateCache == nil
-                )
-
-                let (w, h): (CGFloat, CGFloat)
-                if let cached = stateCache, cached.height > 1, cached.width > 1 {
-                    w = cached.width
-                    h = cached.height
-                } else {
-                    (w, h) = self.panelSize(for: state)
-                }
+                // `.compact` and `.extended` are measurement-driven:
+                // SwiftUI renders the content, reports its natural size
+                // via PreferenceKey, and the measurement sink animates
+                // the panel frame to match. The state sink only snaps
+                // the initial frame on launch (to avoid animating from
+                // the 320×32 placeholder `contentRect`).
+                let (w, h) = self.panelSize(for: state)
 
                 // First emission on launch: snap instantly so the
-                // placeholder 250×36 `contentRect` doesn't animate to
+                // placeholder 320×32 `contentRect` doesn't animate to
                 // the real compact size.
                 if !self.didHandleInitialStateEmission {
                     self.didHandleInitialStateEmission = true
                     self.panel.setFrameInstantly(height: h, width: w)
-                } else if !drivenByMeasurement {
-                    self.panel.animateHeight(to: h, width: w)
+                } else if state == .extended || state == .notification || state == .detail {
+                    // Start the resize synchronously with the state change.
+                    // Extended still accepts the later SwiftUI measurement,
+                    // but this first target prevents the 420pt inbox from
+                    // rendering for one frame inside the old compact window.
+                    self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.\(state)")
                 }
-                // else: leave the current frame alone; the measurement
-                // sink will drive the one animation that matters.
+                // compact is left for the measurement sink to drive because
+                // its layout can change while idle/pending/urgent content
+                // updates inside the same state.
 
                 // Force the next SwiftUI measurement to re-publish by
                 // resetting our locally-held size expectation. Needed
@@ -206,15 +182,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // `.detail` needs key status so TextFields can accept
                 // input — we also force `makeKey()` on entry.
                 //
-                // `.extended` also needs `canBecomeKey = true`, BUT we
-                // do NOT call `makeKey()`. The panel only becomes key
-                // when the user actually clicks it (standard AppKit
-                // mouseDown → tryMakeKeyAndOrderFront flow). Without
-                // this, SwiftUI tap gestures never complete because
-                // mouseUp isn't routed to a non-key window. Hovering
-                // alone does not grab focus. Combined with the
-                // `.nonactivatingPanel` style, clicking never activates
-                // the HUD application either.
+                // `.extended` stays non-key too. FirstMouseHostingView
+                // accepts the click so SwiftUI buttons and row gestures
+                // still work, but a passive row click must not steal key
+                // focus from the app the user was typing in.
                 switch state {
                 case .detail:
                     self.panel.allowsBecomeKey = true
@@ -223,8 +194,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     let isSettings = self.panelState.selectedChatUsername == nil
                     self.panel.setDetailAppearance(isSettings)
                 case .extended:
-                    self.panel.allowsBecomeKey = true
-                    self.panel.makeKey()
+                    self.panel.allowsBecomeKey = false
                     self.panel.setDetailAppearance(false)
                 case .compact, .notification:
                     self.panel.allowsBecomeKey = false
@@ -236,32 +206,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Both .compact and .extended self-size via SwiftUI
         // PreferenceKey. Compact reports its natural pill width
         // (left wing + notch + right wing), extended reports its
-        // natural inbox height. We animate the NSPanel frame to
-        // match and cache the result per-state for fast re-open.
+        // natural inbox height. We animate the NSPanel frame to match.
         panelState.$measuredExtendedSize
             .dropFirst()
+            .filter { [weak self] _ in self?.panelState.isReady == true }
             .removeDuplicates()
             .sink { [weak self] size in
                 guard let self = self else { return }
                 let current = self.panelState.currentState
                 guard current == .extended || current == .compact,
                       size.height > 1, size.width > 1 else { return }
-                // Stash in the per-state cache so next transition
-                // animates straight to the right target.
-                switch current {
-                case .extended: self.lastMeasuredExtendedSize = size
-                case .compact:  self.lastMeasuredCompactSize = size
-                default: break
+                let targetSize: CGSize
+                if current == .compact {
+                    let (w, h) = self.panelSize(for: .compact)
+                    targetSize = CGSize(width: w, height: h)
+                } else {
+                    targetSize = size
                 }
+
+                AnimationDebugger.logEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
                 // Tolerance — don't re-animate for sub-pixel jitter.
-                // This also absorbs the common "cache matches rendered
-                // content" case so we don't queue a second animation
-                // on top of the state-change animation.
                 let curr = self.panel.frame
-                if abs(size.height - curr.height) < 2, abs(size.width - curr.width) < 2 {
+                if abs(targetSize.height - curr.height) < 2, abs(targetSize.width - curr.width) < 2 {
                     return
                 }
-                self.panel.animateHeight(to: size.height, width: size.width)
+                if current == .compact {
+                    if curr.height > targetSize.height + 8 {
+                        // Real collapse from extended → compact: animate it.
+                        self.panel.animateHeight(to: targetSize.height, width: targetSize.width, caller: "AppDelegate.compactCollapse")
+                    } else {
+                        // Compact-only width changes (idle → pending → urgent)
+                        // should not animate — snap instantly back to the
+                        // notch center so a bad compact self-measurement
+                        // cannot poison the next hover animation.
+                        self.panel.setFrameInstantly(height: targetSize.height, width: targetSize.width)
+                    }
+                } else {
+                    self.panel.animateHeight(to: targetSize.height, width: targetSize.width, caller: "AppDelegate.measuredExtendedSize")
+                }
             }
             .store(in: &cancellables)
 
@@ -290,20 +272,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self = self else { return }
                 let cfg = self.store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
 
-                // Apply notification filter toggles
-                let shouldNotify: Bool
-                switch notif.kind {
-                case .groupAt:
-                    shouldNotify = cfg.atMention
-                case .privateChat:
-                    if notif.attentionLevel == .vip {
-                        shouldNotify = cfg.important
-                    } else {
-                        shouldNotify = cfg.allWhitelist
+                // Apply notification filter toggles through the Stage 1
+                // presentation semantics. Raw group @ is FYI unless a
+                // later action item supplies ask/action evidence.
+                let semantic = notif.presentationSemanticState
+                let shouldNotify: Bool = {
+                    switch semantic {
+                    case .privateVIPRisk:
+                        return cfg.important
+                    case .groupMentionFYI:
+                        return cfg.atMention && (notif.attentionLevel == .vip || cfg.allWhitelist)
+                    case .privateInfoOnly, .groupInfoOnly:
+                        return cfg.allWhitelist
+                    default:
+                        return false
                     }
-                case .groupMessage:
-                    shouldNotify = cfg.allWhitelist
-                }
+                }()
 
                 guard shouldNotify else { return }
                 self.panelState.showNotification(duration: TimeInterval(cfg.durationSeconds))
@@ -343,6 +327,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self,
+                      self.panelState.currentState == .extended,
+                      self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                self.panelState.popoverOpen = true
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                self.panelState.updateMouseInside(self.panel.frame.contains(NSEvent.mouseLocation))
+                self.panelState.popoverOpen = false
+            }
+            .store(in: &cancellables)
+
         // VIP escalation: when the engine advances a chat to T3+,
         // surface a toast on top of whatever the user is currently
         // doing. We intentionally don't auto-open the extended panel
@@ -365,6 +368,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self else { return event }
             return MainActor.assumeIsolated { self.handleKeyDown(event) ? nil : event }
         }
+
     }
 
     /// Set up menu bar status item with unread badge.
@@ -422,6 +426,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 MenuBarController.shared.jobState = state
             }
             .store(in: &cancellables)
+
+        // Mark the panel geometry as fully configured. Until this point
+        // the measurement sink ignores any SwiftUI size reports to avoid
+        // reacting to stale geometry produced during window creation.
+        panelState.isReady = true
     }
 
     private func updateMenuBarIcon() {
@@ -457,6 +466,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     /// Show first-launch onboarding in a separate window.
@@ -510,45 +523,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// scales with content (longer AI summary = wider left wing).
     @MainActor
     private func panelSize(for state: HUDState) -> (CGFloat, CGFloat) {
+        // Ensure we read the freshest notch geometry — the cached
+        // `panel.notch` may be stale (initial placeholder or from a
+        // previous screen) and using it produces a width/height
+        // mismatch against the SwiftUI-measured content.
+        panel.refreshNotchGeometry()
         let notch = panel.notch
         switch state {
         case .compact:
-            let items = monitor.inboxItems
-            let hasUrgent = items.contains { $0.priority != .p2 }
-            let aiTaskCount = AIActivityTracker.shared.activeTasks.count
-
-            // Tight right wing — just enough for the buddy (18pt
-            // crop) + inner padding. Previously 56pt, which left a
-            // big gap between buddy and the right edge.
-            let wingRight: CGFloat = 32
-
-            // Left wing sized to the content actually rendered:
-            //   idle      → priority dot (~7pt)
-            //   pending   → dot + "N条待处理" text (~80pt)
-            //   urgent    → dot + AI summary + overdue badge (~240pt)
-            // aiTick adds 14pt (single spinner) or 38pt (sparkle pill).
-            // +12pt accounts for inner HStack padding.
-            let aiTickWidth: CGFloat
-            if aiTaskCount == 0 {
-                aiTickWidth = 0
-            } else if aiTaskCount == 1 {
-                aiTickWidth = 14
-            } else {
-                aiTickWidth = 38
-            }
-            let leftBase: CGFloat
-            if hasUrgent {
-                leftBase = 240
-            } else if !items.isEmpty {
-                leftBase = 80
-            } else {
-                leftBase = 14
-            }
-            let wingLeft = leftBase + aiTickWidth + 12
-            let width = notch.notchWidth + wingLeft + wingRight
+            // Compact is an ambient notch-integrated state, not a
+            // readable message preview. Keep both wings equal-width so
+            // the middle void remains physically aligned with the
+            // hardware notch; message text appears only after hover.
+            let width = notch.notchWidth + CompactInboxMetrics.wingWidth * 2
             return (width, notch.notchHeight)
         case .extended:
-            let actionCount = monitor.inboxItems.filter { $0.actionRequired }.count
+            let actionCount = monitor.inboxItems.filter { $0.participatesInActionQueue }.count
             let hasHandled = !monitor.handledItems.isEmpty
             return inboxSize(actionCount: actionCount, hasHandled: hasHandled)
         case .notification:

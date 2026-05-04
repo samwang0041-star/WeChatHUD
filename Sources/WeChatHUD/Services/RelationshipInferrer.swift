@@ -58,7 +58,7 @@ actor RelationshipInferrer {
         let formatted = messages.prefix(50).map { msg in
             let isMe = MessageHelpers.isFromSelf(msg, chatUsername: contactUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
             let sender = isMe ? "用户" : (msg.senderName.isEmpty ? contactName : msg.senderName)
-            return "\(sender): \(msg.text)"
+            return "\(sender): \(AIService.sanitizeForAI(msg.text))"
         }.joined(separator: "\n")
 
         let userPrompt = template
@@ -71,7 +71,8 @@ actor RelationshipInferrer {
         do {
             raw = try await ai.complete(
                 system: "你是一个关系分析助手，严格按要求输出 JSON。",
-                user: userPrompt
+                user: userPrompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.1, maxTokens: 512, responseFormatJSON: true)
             )
         } catch {
             print("[WCHUD] RelationshipInferrer: AI call failed: \(error)")
@@ -111,21 +112,6 @@ actor RelationshipInferrer {
     }
 
     private func parseResult(_ raw: String) -> InferResult? {
-        var cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(InferResult.self, from: data)
+        AIJSONExtractor.decodeFirstObject(from: raw, as: InferResult.self)
     }
 }

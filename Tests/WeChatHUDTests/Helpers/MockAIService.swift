@@ -26,10 +26,15 @@ actor MockAIService: AIServiceProtocol {
     // MARK: - AIServiceProtocol
 
     func complete(system: String, user: String, options: CompleteOptions) async throws -> String {
+        try await completeWithMetadata(system: system, user: user, options: options).text
+    }
+
+    func completeWithMetadata(system: String, user: String, options: CompleteOptions) async throws -> AICompletionResult {
         calls.append((system, user, options))
         if let err = shouldThrow { throw err }
-        for r in routes where user.contains(r.needle) { return r.response }
-        return defaultResponse
+        let text = routes.first { user.contains($0.needle) }?.response ?? defaultResponse
+        let model = configToReturn.primarySlot.model.isEmpty ? "mock-model" : configToReturn.primarySlot.model
+        return AICompletionResult(text: text, providerID: configToReturn.primarySlot.providerID, model: model)
     }
 
     func currentConfig() async -> AIConfig {

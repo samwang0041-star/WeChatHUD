@@ -1248,7 +1248,7 @@ final class HUDStore: ObservableObject {
             apiKey: ""
         )
         cfg.cloudProvider = AIProviderSlot(
-            providerID: "custom",
+            providerID: "kimicode",
             baseURL: "https://api.kimi.com/coding/v1",
             model: "kimi-for-coding",
             apiKey: ""

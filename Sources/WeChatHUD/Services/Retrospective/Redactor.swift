@@ -43,9 +43,10 @@ actor Redactor {
     }
 
     /// Replaces registered display names with their codenames + applies
-    /// sensitive-pattern masks. Idempotent within a run.
+    /// sensitive-pattern masks + strips WeChat placeholders that trigger
+    /// provider content filters. Idempotent within a run.
     func redactText(_ s: String) -> String {
-        var out = s
+        var out = AIService.sanitizeForAI(s)
         // Codenames first: longest displayName first to avoid partial collisions.
         let names = displayNameByCodename
             .compactMap { (code, name) -> (String, String)? in

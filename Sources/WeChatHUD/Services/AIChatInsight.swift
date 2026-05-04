@@ -90,7 +90,8 @@ actor AIChatInsight {
                 output: response.text,
                 latencyMs: latencyMs,
                 status: .ok,
-                error: nil
+                error: nil,
+                model: response.model
             )
             return result
         }
@@ -106,7 +107,8 @@ actor AIChatInsight {
                 output: retryResponse.text,
                 latencyMs: latencyMs,
                 status: .parseError,
-                error: "JSON parse failed after retry"
+                error: "JSON parse failed after retry",
+                model: retryResponse.model
             )
             return nil
         }
@@ -124,7 +126,8 @@ actor AIChatInsight {
             output: retryResponse.text,
             latencyMs: latencyMs,
             status: .ok,
-            error: "recovered after retry"
+            error: "recovered after retry",
+            model: retryResponse.model
         )
         return retryResult
     }
@@ -181,6 +184,7 @@ actor AIChatInsight {
     private struct ModelResponse {
         let text: String
         let error: String?
+        let model: String?
     }
 
     private func call(_ userPrompt: String) async -> ModelResponse {
@@ -189,42 +193,25 @@ actor AIChatInsight {
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 1200)
+                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 1200, responseFormatJSON: true)
             )
-            return ModelResponse(text: content, error: nil)
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return ModelResponse(text: "", error: error.localizedDescription)
+            return ModelResponse(text: "", error: error.localizedDescription, model: nil)
         }
     }
 
     // MARK: - JSON parsing
 
     private func parseInsight(_ raw: String) -> ChatInsightResult? {
-        guard let jsonStr = extractJSON(raw),
-              let data = jsonStr.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(ChatInsightResult.self, from: data)
+        AIJSONExtractor.decodeFirstObject(from: raw, as: ChatInsightResult.self)
     }
 
     private func parseGlobalBriefing(_ raw: String) -> GlobalBriefing? {
-        guard let jsonStr = extractJSON(raw),
-              let data = jsonStr.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(GlobalBriefing.self, from: data)
-    }
-
-    /// Extract JSON object from raw AI response (handles markdown fences, leading text).
-    private func extractJSON(_ raw: String) -> String? {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Strip markdown fences
-        s = s.replacingOccurrences(of: "```json", with: "")
-        s = s.replacingOccurrences(of: "```", with: "")
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Find JSON boundaries
-        guard let start = s.firstIndex(of: "{") else { return nil }
-        guard let end = s.lastIndex(of: "}") else { return nil }
-        return String(s[start...end])
+        AIJSONExtractor.decodeFirstObject(from: raw, as: GlobalBriefing.self)
     }
 
     // MARK: - Helpers
@@ -240,9 +227,15 @@ actor AIChatInsight {
         output: String,
         latencyMs: Int,
         status: AIAuditStatus,
-        error: String?
+        error: String?,
+        model actualModel: String?
     ) async {
-        let model = await aiService.currentConfig().model
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),

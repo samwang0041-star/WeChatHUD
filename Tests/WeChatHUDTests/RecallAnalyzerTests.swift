@@ -9,9 +9,14 @@ final class RecallAnalyzerTests: XCTestCase {
         let tmp = NSTemporaryDirectory() + "test_recall_\(UUID().uuidString).sqlite3"
         store = HUDStore(dbPath: tmp)
         try! store.open()
+        URLRequestRecorder.install()
     }
 
-    override func tearDown() { store.close(); super.tearDown() }
+    override func tearDown() {
+        URLRequestRecorder.uninstall()
+        store.close()
+        super.tearDown()
+    }
 
     func testPromptLoads() {
         let loader = PromptLoader()
@@ -53,5 +58,57 @@ final class RecallAnalyzerTests: XCTestCase {
         XCTAssertEqual(msgs[0].aiReason, "said_too_much")
         XCTAssertEqual(msgs[0].aiIntelligenceValue, "high")
         XCTAssertEqual(msgs[0].aiShouldNotify, true)
+    }
+
+    func testAuditUsesProviderReturnedModel() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: """
+            {"likely_reason":"said_too_much","intelligence_value":"high","detail":"涉及预算决策","should_notify":true,"notify_level":"strong"}
+            """,
+            model: "actual-provider-model"
+        )
+
+        let analyzer = RecallAnalyzer(store: store, aiService: makeAIService())
+        let result = await analyzer.analyze(
+            recalled: RecalledMessage(
+                id: 0,
+                msgUID: "r-ai",
+                senderUsername: "wxid_boss",
+                senderName: "王总",
+                senderLevel: .vip,
+                senderRole: .boss,
+                chatUsername: "group1",
+                chatName: "产品群",
+                chatType: .group,
+                originalText: "预算先别发",
+                sentAt: 2_000,
+                recalledAt: 2_010,
+                recallDelaySeconds: 10,
+                aiReason: nil,
+                aiIntelligenceValue: nil,
+                aiDetail: nil,
+                aiShouldNotify: nil,
+                aiNotifyLevel: nil,
+                aiAnalyzedAt: nil,
+                createdAt: Date()
+            ),
+            context: []
+        )
+
+        XCTAssertEqual(result?.reason, "said_too_much")
+        let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .recallAnalyzer).first)
+        XCTAssertEqual(audit.model, "actual-provider-model")
+    }
+
+    private func makeAIService() -> AIService {
+        var cfg = AIConfig()
+        cfg.cloudProvider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://localhost:9999",
+            model: "requested-model",
+            apiKey: "sk-test"
+        )
+        cfg.activeMode = .cloud
+        return AIService(config: cfg)
     }
 }

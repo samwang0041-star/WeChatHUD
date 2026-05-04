@@ -97,12 +97,12 @@ actor GroupScreener {
         }
         let userPrompt = template.replacingOccurrences(of: "{groups_json}", with: groupsStr)
 
-        let response: String
+        let response: AICompletionResult
         do {
-            response = try await aiService.complete(
-                system: "你严格输出 JSON 数组。",
+            response = try await aiService.completeWithMetadata(
+                system: "你严格输出 JSON 对象。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 2048)
+                options: CompleteOptions(timeout: 60, temperature: 0.2, maxTokens: 2048, responseFormatJSON: true)
             )
         } catch {
             print("[Retrospective] GroupScreener AI call failed: \(error)")
@@ -111,11 +111,10 @@ actor GroupScreener {
 
         // Ledger entry — note this happens regardless of parse outcome
         // (we sent bytes either way).
-        let cfg = await aiService.currentConfig()
         await dataLedger.recordBatch([AILedgerEntry(
             id: 0, ts: Date(),
-            provider: cfg.primarySlot.providerID,
-            model: cfg.primarySlot.model,
+            provider: response.providerID,
+            model: response.model,
             purpose: .groupScreen,
             chatCount: candidates.count, msgCount: nil,
             byteCount: userPrompt.utf8.count,
@@ -123,12 +122,11 @@ actor GroupScreener {
             redacted: false  // group screen sees plain chat names + sample text
         )])
 
-        return GroupScreener.parse(response, candidates: candidates)
+        return GroupScreener.parse(response.text, candidates: candidates)
     }
 
     static func parse(_ raw: String, candidates: [ScopeCandidate]) -> [(ScopeCandidate, ScopeDecision, Double)] {
-        guard let data = extractJSON(raw),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        guard let arr = extractItems(raw) else {
             return candidates.map { ($0, .askEachTime, 0.0) }
         }
         var out: [(ScopeCandidate, ScopeDecision, Double)] = []
@@ -146,21 +144,21 @@ actor GroupScreener {
     }
 
     static func extractJSON(_ s: String) -> Data? {
-        var cleaned = s
-        if let fence = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fence.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let end = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<end.lowerBound])
-            }
+        AIJSONExtractor.firstArrayString(from: s)?.data(using: .utf8)
+    }
+
+    private static func extractItems(_ s: String) -> [[String: Any]]? {
+        if let objectText = AIJSONExtractor.firstObjectString(from: s),
+           let data = objectText.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let items = root["items"] as? [[String: Any]] {
+            return items
         }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("[") {
-            if let lo = cleaned.firstIndex(of: "["), let hi = cleaned.lastIndex(of: "]") {
-                cleaned = String(cleaned[lo...hi])
-            }
+        guard let data = extractJSON(s),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
         }
-        return cleaned.data(using: .utf8)
+        return arr
     }
 
     static func hashSamples(_ samples: [String]) -> String {

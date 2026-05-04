@@ -74,7 +74,7 @@ actor VIPAggregator {
         let activityByGroup = byGroup.map { (chatName, groupTraces) -> String in
             let lines = groupTraces.map { t -> String in
                 let ts = formatTime(t.msgTime)
-                return "  [\(ts)] \(t.rawText)"
+                return "  [\(ts)] \(AIService.sanitizeForAI(t.rawText))"
             }.joined(separator: "\n")
             return "【\(chatName)】\n\(lines)"
         }.joined(separator: "\n\n")
@@ -108,15 +108,20 @@ actor VIPAggregator {
         let started = Date()
         let response = await callModel(prompt: prompt)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
-        let model = await aiService.currentConfig().model
+        let model: String
+        if let actualModel = response.model {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
 
-        guard let body = response else {
+        guard let body = response.text else {
             try? store.writeAIAudit(AIAuditEntry(
                 id: 0, ts: Date(), role: .vipAggregator,
                 model: model, promptVersion: "vip_aggregator_v1",
                 inputText: "vip:\(vipUsername) traces:\(traces.count)",
                 outputText: "",
-                latencyMs: latency, status: .httpError, errorMessage: "no response"
+                latencyMs: latency, status: .httpError, errorMessage: response.error ?? "no response"
             ))
             return nil
         }
@@ -148,43 +153,31 @@ actor VIPAggregator {
 
     // MARK: - Private helpers
 
-    private func callModel(prompt: String) async -> String? {
+    private struct ModelResponse {
+        let text: String?
+        let error: String?
+        let model: String?
+    }
+
+    private func callModel(prompt: String) async -> ModelResponse {
         let trackID = "vip:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "VIP 摘要")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            return try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.1, maxTokens: 512)
+                options: CompleteOptions(timeout: 60, temperature: 0.1, maxTokens: 512, responseFormatJSON: true)
             )
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return nil
+            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
         }
     }
 
     private func parseResult(_ text: String) -> AggregateResult? {
-        let cleaned = cleanJSON(text)
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(AggregateResult.self, from: data)
-    }
-
-    private func cleanJSON(_ text: String) -> String {
-        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Strip <think>...</think> blocks
-        while let start = s.range(of: "<think>") {
-            if let end = s.range(of: "</think>") {
-                s.removeSubrange(start.lowerBound..<end.upperBound)
-            } else { break }
-        }
-        s = s.replacingOccurrences(of: "```json", with: "")
-            .replacingOccurrences(of: "```", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let lo = s.firstIndex(of: "{"), let hi = s.lastIndex(of: "}") {
-            s = String(s[lo...hi])
-        }
-        return s
+        AIJSONExtractor.decodeFirstObject(from: text, as: AggregateResult.self)
     }
 
     private func formatTime(_ unixSeconds: Int) -> String {

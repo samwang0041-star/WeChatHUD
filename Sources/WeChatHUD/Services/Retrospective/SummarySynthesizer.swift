@@ -47,12 +47,12 @@ actor SummarySynthesizer {
         }
         let userPrompt = template.replacingOccurrences(of: "{aggregated_json}", with: aggregated)
 
-        let raw: String
+        let result: AICompletionResult
         do {
-            raw = try await aiService.complete(
+            result = try await aiService.completeWithMetadata(
                 system: "你严格按 JSON Schema 输出。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 60, temperature: 0.3, maxTokens: 1024)
+                options: CompleteOptions(timeout: 60, temperature: 0.3, maxTokens: 1024, responseFormatJSON: true)
             )
         } catch {
             print("[Retrospective] SummarySynthesizer AI call failed: \(error)")
@@ -60,18 +60,17 @@ actor SummarySynthesizer {
         }
 
         // Ledger
-        let cfg = await aiService.currentConfig()
         await dataLedger.recordBatch([AILedgerEntry(
             id: 0, ts: Date(),
-            provider: cfg.primarySlot.providerID,
-            model: cfg.primarySlot.model,
+            provider: result.providerID,
+            model: result.model,
             purpose: .summarySynth,
             chatCount: nil, msgCount: highlights.count + todos.count,
             byteCount: userPrompt.utf8.count,
             tokenIn: nil, tokenOut: nil, redacted: true
         )])
 
-        guard let parsed = SummarySynthesizer.parse(raw) else {
+        guard let parsed = SummarySynthesizer.parse(result.text) else {
             return SummarySynthesizer.fallbackSummary(highlights: highlights)
         }
         return parsed
@@ -112,19 +111,8 @@ actor SummarySynthesizer {
     }
 
     static func parse(_ raw: String) -> SynthesizedSummary? {
-        var cleaned = raw
-        if let fence = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fence.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let end = cleaned.range(of: "```") { cleaned = String(cleaned[..<end.lowerBound]) }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-        guard let data = cleaned.data(using: .utf8),
+        guard let cleaned = AIJSONExtractor.firstObjectString(from: raw),
+              let data = cleaned.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 

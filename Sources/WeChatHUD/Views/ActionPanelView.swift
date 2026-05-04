@@ -15,6 +15,7 @@ import SwiftUI
 /// content is already cached and the panel renders instantly.
 struct ActionPanelView: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
     let item: InboxItem
 
     // MARK: - State
@@ -37,6 +38,7 @@ struct ActionPanelView: View {
     @State private var analysisState: AnalysisState = .idle
     @State private var replyState: ReplyState = .idle
     @State private var hasProfile: Bool = false
+    @State private var replyRequested: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,9 +67,7 @@ struct ActionPanelView: View {
                     EmptyView()
                 }
 
-                if case .error(let msg) = analysisState {
-                    errorRow(label: msg)
-                }
+                EmptyView()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -88,10 +88,10 @@ struct ActionPanelView: View {
             let hasEntry = monitor.actionPrefetch[item.chatUsername]?.timestamp == ts
             if !hasEntry {
                 if case .idle = analysisState { runAnalysis() }
-                if case .idle = replyState, hasProfile { runReplySuggestions() }
+                if case .idle = replyState, hasProfile, item.automaticReplySuggestionsAllowed { runReplySuggestions() }
             } else {
                 if case .idle = analysisState { analysisState = .loading }
-                if case .idle = replyState, hasProfile { replyState = .loading }
+                if case .idle = replyState, hasProfile, item.automaticReplySuggestionsAllowed { replyState = .loading }
             }
         }
         // Pick up prefetch slots as they land. Progressive commits
@@ -123,6 +123,7 @@ struct ActionPanelView: View {
 
         case .groupResult(let result):
             headlineCard(
+                title: item.actionPanelTitle,
                 primary: groupPrimary(result),
                 context: groupContext(result),
                 vibe: nil
@@ -130,13 +131,19 @@ struct ActionPanelView: View {
 
         case .privateResult(let result):
             headlineCard(
+                title: item.actionPanelTitle,
                 primary: result.intent,
                 context: privateContext(result),
                 vibe: privateVibe(result)
             )
 
-        case .error:
-            EmptyView()
+        case .error(let message):
+            headlineCard(
+                title: "分析暂不可用",
+                primary: item.aiSummary ?? item.preview,
+                context: message,
+                vibe: nil
+            )
         }
     }
 
@@ -145,13 +152,13 @@ struct ActionPanelView: View {
     /// situates the message (what's being discussed, what you said
     /// last, etc.). `vibe` is a compact tonal/urgency descriptor
     /// — lives in a discreet pill to the right of the header label.
-    private func headlineCard(primary: String, context: String?, vibe: String?) -> some View {
+    private func headlineCard(title: String, primary: String, context: String?, vibe: String?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11))
                     .foregroundColor(.accentColor)
-                Text("他想要什么")
+                Text(title)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.accentColor.opacity(0.85))
                 if let vibe = vibe, !vibe.isEmpty {
@@ -191,7 +198,11 @@ struct ActionPanelView: View {
     // MARK: - Headline content helpers
 
     private func groupPrimary(_ r: ChatAnalyzer.GroupAnalysis) -> String {
-        if let actions = r.my_action_items, !actions.isEmpty { return actions }
+        if item.semanticState == .groupActionRequired,
+           let actions = r.my_action_items,
+           !actions.isEmpty {
+            return actions
+        }
         return r.one_liner
     }
 
@@ -255,12 +266,12 @@ struct ActionPanelView: View {
     private var primaryCTAs: some View {
         HStack(spacing: 8) {
             Button(action: {
-                WeChatLauncher.openChat(named: item.chatName)
+                runPrimaryCTA()
             }) {
                 HStack(spacing: 5) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .font(.system(size: 11))
-                    Text("打开微信回复")
+                    Text(item.primaryCTATitle)
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .foregroundColor(.white)
@@ -271,7 +282,7 @@ struct ActionPanelView: View {
             }
             .buttonStyle(.plain)
 
-            if hasProfile {
+            if hasProfile && item.replySuggestionMode != .hidden {
                 Button(action: runReplySuggestions) {
                     HStack(spacing: 5) {
                         if case .loading = replyState {
@@ -280,7 +291,7 @@ struct ActionPanelView: View {
                             Image(systemName: "lightbulb.fill")
                                 .font(.system(size: 11))
                         }
-                        Text("回复建议")
+                        Text(item.replySuggestionButtonTitle)
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(.white.opacity(0.9))
@@ -366,7 +377,7 @@ struct ActionPanelView: View {
             } else if let p = entry.privateAnalysis {
                 analysisState = .privateResult(p)
             } else if entry.analysisAttempted {
-                analysisState = .error("分析失败，可能是 AI 服务超时")
+                analysisState = .error(entry.analysisError ?? "分析失败，可能是 AI 服务超时")
             }
         }
 
@@ -376,11 +387,22 @@ struct ActionPanelView: View {
             return false
         }()
         if isReplyWaitable {
-            if !entry.replies.isEmpty {
+            if !entry.replies.isEmpty && shouldExposeReplies {
                 replyState = .results(entry.replies)
-            } else if entry.repliesAttempted && hasProfile {
+            } else if entry.repliesAttempted && hasProfile && item.automaticReplySuggestionsAllowed {
                 replyState = .error
             }
+        }
+    }
+
+    private func runPrimaryCTA() {
+        switch item.semanticState {
+        case .groupMentionFYI:
+            panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+        case .handled:
+            monitor.restoreInboxItem(item)
+        default:
+            WeChatLauncher.openChat(named: item.chatName)
         }
     }
 
@@ -406,6 +428,8 @@ struct ActionPanelView: View {
     }
 
     private func runReplySuggestions() {
+        guard item.replySuggestionMode != .hidden else { return }
+        replyRequested = true
         replyState = .loading
         Task {
             if let results = await monitor.loadReplySuggestions(for: item) {
@@ -419,6 +443,10 @@ struct ActionPanelView: View {
     private var replyIsLoading: Bool {
         if case .loading = replyState { return true }
         return false
+    }
+
+    private var shouldExposeReplies: Bool {
+        item.automaticReplySuggestionsAllowed || replyRequested
     }
 
     // MARK: - Loading / Error
@@ -441,15 +469,23 @@ struct ActionPanelView: View {
     // MARK: - Tone badge (for reply suggestions)
 
     private func toneBadge(_ tone: String) -> some View {
+        let label: String = {
+            switch tone.lowercased() {
+            case "friendly": return "友好"
+            case "formal", "professional": return "正式"
+            case "brief", "concise": return "简洁"
+            default: return tone
+            }
+        }()
         let color: Color = {
-            switch tone {
+            switch label {
             case "友好": return .green
             case "正式": return .blue
             case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)
             default: return .gray
             }
         }()
-        return Text(tone)
+        return Text(label)
             .font(.system(size: 9, weight: .semibold))
             .foregroundColor(color)
             .padding(.horizontal, 4)

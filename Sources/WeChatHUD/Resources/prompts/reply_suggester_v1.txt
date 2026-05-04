@@ -69,13 +69,13 @@ ask_type: review
   {"text":"OK","tone":"brief","rationale":"先确认"}
 ]}
 
-输入消息: "饼饼今天打针"
-发送者: 老婆 (life)
+输入消息: "示例事项今天已经处理完"
+发送者: 个人事务 (life)
 ask_type: none
 输出: {"suggestions":[
-  {"text":"辛苦了，记得给他喝口水安抚一下","tone":"friendly","rationale":"共情+实用建议"},
-  {"text":"啊我也想去陪","tone":"friendly","rationale":"参与感"},
-  {"text":"💪","tone":"brief","rationale":"快速回应"}
+  {"text":"好，我晚点看一下记录","tone":"friendly","rationale":"确认已知悉"},
+  {"text":"辛苦，先按这个版本走","tone":"friendly","rationale":"轻量确认"},
+  {"text":"收到","tone":"brief","rationale":"快速回应"}
 ]}
 
 # 核心强化规则
@@ -88,7 +88,7 @@ ask_type: none
    - external（外部）: 职业化
    - personal（私人）: 随意、亲切
 8. **如果对方在等具体答案**（文件/决定/时间），回复里必须包含具体承诺或明确推迟理由，不要只说"好的"
-9. **recommended 只标一条**，选择最符合关系和场景的那条
+9. **排序即推荐**，把最符合关系和场景的候选放在第一条，不要额外增加 schema 外字段
 
 # 现在为下面这条消息生成 3 条回复建议
 

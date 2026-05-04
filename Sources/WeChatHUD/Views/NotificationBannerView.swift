@@ -16,10 +16,23 @@ struct NotificationBannerView: View {
         }
     }
 
+    private var badgeColor: Color {
+        switch notification.presentationSemanticState {
+        case .privateVIPRisk:
+            return .yellow
+        case .groupMentionFYI:
+            return .blue
+        case .privateInfoOnly, .groupInfoOnly:
+            return .white.opacity(0.45)
+        default:
+            return .orange
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(notification.isVIP ? Color.yellow : (notification.isAtMention ? Color.red : Color.orange))
+                .fill(badgeColor)
                 .frame(width: 8, height: 8)
 
             Text(previewText)

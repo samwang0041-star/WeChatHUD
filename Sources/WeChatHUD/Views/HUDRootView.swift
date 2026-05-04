@@ -169,7 +169,7 @@ func inboxSize(actionCount: Int, hasHandled: Bool) -> (CGFloat, CGFloat) {
 
     // Empty inbox — just the "没有待处理消息" stub.
     if actionCount == 0 && !hasHandled {
-        return (260, 92)
+        return (width, 92)
     }
 
     let rows = min(max(actionCount, 1), 10)

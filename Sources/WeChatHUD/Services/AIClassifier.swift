@@ -52,7 +52,8 @@ actor AIClassifier {
                 output: firstResponse.text,
                 latencyMs: ms(since: started),
                 status: .ok,
-                error: nil
+                error: nil,
+                model: firstResponse.model
             )
             return parsed.with(promptVersion: promptVersion)
         }
@@ -65,7 +66,8 @@ actor AIClassifier {
                 output: "",
                 latencyMs: ms(since: started),
                 status: .httpError,
-                error: err
+                error: err,
+                model: firstResponse.model
             )
             return nil
         }
@@ -78,7 +80,8 @@ actor AIClassifier {
                 output: secondResponse.text,
                 latencyMs: ms(since: started),
                 status: .ok,
-                error: "recovered after retry"
+                error: "recovered after retry",
+                model: secondResponse.model
             )
             return parsed.with(promptVersion: promptVersion)
         }
@@ -88,7 +91,8 @@ actor AIClassifier {
             output: secondResponse.text,
             latencyMs: ms(since: started),
             status: .parseError,
-            error: secondResponse.error ?? "could not parse JSON after retry"
+            error: secondResponse.error ?? "could not parse JSON after retry",
+            model: secondResponse.model
         )
         return nil
     }
@@ -98,6 +102,7 @@ actor AIClassifier {
     private struct ModelResponse {
         let text: String
         let error: String?
+        let model: String?
     }
 
     /// Chat completion routed through `AIService.complete` so the Codex /
@@ -110,14 +115,14 @@ actor AIClassifier {
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
-            let content = try await aiService.complete(
+            let result = try await aiService.completeWithMetadata(
                 system: "你是一个微信消息分类器。严格按要求输出 JSON。",
                 user: userPrompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256)
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true)
             )
-            return ModelResponse(text: content, error: nil)
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return ModelResponse(text: "", error: error.localizedDescription)
+            return ModelResponse(text: "", error: error.localizedDescription, model: nil)
         }
     }
 
@@ -146,47 +151,19 @@ actor AIClassifier {
     /// Strategy: strip code fences → trim whitespace → if there's still
     /// junk around the JSON, find the first `{` and last `}` and slice.
     private func parseResult(_ raw: String) -> ClassifierResult? {
-        guard !raw.isEmpty else { return nil }
-
-        var cleaned = raw
-
-        // Remove ```json ... ``` fences if present.
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            // Drop a possible "json" language tag right after the fence.
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // If there's still leading prose, slice from the first '{' to the
-        // matching last '}'. Naive but works for the model envelopes we see.
-        if !cleaned.hasPrefix("{") {
-            if let lo = cleaned.firstIndex(of: "{"), let hi = cleaned.lastIndex(of: "}") {
-                cleaned = String(cleaned[lo...hi])
-            }
-        }
-
-        guard let data = cleaned.data(using: .utf8) else { return nil }
-
-        do {
-            let dto = try JSONDecoder().decode(ResultDTO.self, from: data)
-            let askType = AskType(rawValue: dto.type) ?? .none
-            let confidence = max(0, min(1, dto.confidence))
-            return ClassifierResult(
-                isAsk: dto.isAsk,
-                type: askType,
-                summary: dto.summary,
-                deadlineRelative: (dto.deadlineRelative?.isEmpty == true) ? nil : dto.deadlineRelative,
-                confidence: confidence,
-                promptVersion: promptVersion
-            )
-        } catch {
+        guard let dto = AIJSONExtractor.decodeFirstObject(from: raw, as: ResultDTO.self) else {
             return nil
         }
+        let askType = AskType(rawValue: dto.type) ?? .none
+        let confidence = max(0, min(1, dto.confidence))
+        return ClassifierResult(
+            isAsk: dto.isAsk,
+            type: askType,
+            summary: dto.summary,
+            deadlineRelative: (dto.deadlineRelative?.isEmpty == true) ? nil : dto.deadlineRelative,
+            confidence: confidence,
+            promptVersion: promptVersion
+        )
     }
 
     // MARK: - Prompt interpolation
@@ -197,7 +174,7 @@ actor AIClassifier {
             .replacingOccurrences(of: "{sender_name}", with: escape(message.senderName))
             .replacingOccurrences(of: "{chat_name}", with: escape(message.chatName))
             .replacingOccurrences(of: "{chat_kind}", with: chatKind)
-            .replacingOccurrences(of: "{message_body}", with: escape(message.text))
+            .replacingOccurrences(of: "{message_body}", with: escape(AIService.sanitizeForAI(message.text)))
     }
 
     /// Strip newlines / control characters from interpolated values so they
@@ -211,8 +188,13 @@ actor AIClassifier {
 
     // MARK: - Audit
 
-    private func writeAudit(message: ClassifierInput, output: String, latencyMs: Int, status: AIAuditStatus, error: String?) async {
-        let model = await aiService.currentConfig().model
+    private func writeAudit(message: ClassifierInput, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
+        let model: String
+        if let actualModel {
+            model = actualModel
+        } else {
+            model = await aiService.currentConfig().model
+        }
         let entry = AIAuditEntry(
             id: 0,
             ts: Date(),

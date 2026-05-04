@@ -59,6 +59,12 @@ final class PanelState: ObservableObject {
     /// `.zero` means "not yet measured" — AppDelegate should ignore it.
     @Published var measuredExtendedSize: CGSize = .zero
 
+    /// Set to `true` after `applicationDidFinishLaunching` has fully
+    /// configured the panel (screen, notch geometry, sinks). Until then
+    /// the measurement sink ignores any sizes reported by SwiftUI to
+    /// avoid reacting to stale geometry produced during window creation.
+    @Published var isReady: Bool = false
+
     /// Transient toast message shown at the top of the panel, typically
     /// to surface silent failures (e.g. WeChatLauncher can't open a
     /// chat because Accessibility isn't granted). Nil = no toast.
@@ -71,7 +77,17 @@ final class PanelState: ObservableObject {
     /// the popover content — which would otherwise trigger the
     /// extended→compact collapse and take the popover down with it.
     /// `mouseExited()` honors this flag and skips the collapse.
-    @Published var popoverOpen: Bool = false
+    @Published var popoverOpen: Bool = false {
+        didSet {
+            guard oldValue != popoverOpen else { return }
+            if !popoverOpen {
+                scheduleExitCollapseAfterTransientSurfaceClosed()
+            }
+        }
+    }
+
+    private var frameAnimationInProgress = false
+    private var exitRequestedDuringFrameAnimation = false
 
     /// Show a toast that auto-dismisses after `duration` seconds. New
     /// calls replace the previous message and reset the timer, so
@@ -137,18 +153,58 @@ final class PanelState: ObservableObject {
         // pill (and the popover with it) stay put.
         guard !popoverOpen else { return }
 
+        if frameAnimationInProgress {
+            exitRequestedDuringFrameAnimation = true
+            return
+        }
+
+        scheduleExitCollapse()
+    }
+
+    func frameAnimationStarted() {
+        frameAnimationInProgress = true
+        exitRequestedDuringFrameAnimation = false
+    }
+
+    func frameAnimationEnded(mouseInside: Bool) {
+        frameAnimationInProgress = false
+        isMouseInside = mouseInside
+        if !mouseInside || exitRequestedDuringFrameAnimation {
+            exitRequestedDuringFrameAnimation = false
+            scheduleExitCollapse()
+        }
+    }
+
+    func updateMouseInside(_ inside: Bool) {
+        isMouseInside = inside
+    }
+
+    private func scheduleExitCollapse() {
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: exitDebounce, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 // Only collapse if the mouse actually stayed outside AND
                 // no popover re-opened during the debounce window.
-                if !self.isMouseInside && !self.popoverOpen && self.currentState == .extended {
+                if !self.isMouseInside && !self.popoverOpen && self.collapsesWhenMouseOutside {
                     self.currentState = .compact
                 }
                 self.exitDebounceTimer = nil
             }
         }
+    }
+
+    private func scheduleExitCollapseAfterTransientSurfaceClosed() {
+        guard !isMouseInside, collapsesWhenMouseOutside else { return }
+        if frameAnimationInProgress {
+            exitRequestedDuringFrameAnimation = true
+        } else {
+            scheduleExitCollapse()
+        }
+    }
+
+    private var collapsesWhenMouseOutside: Bool {
+        currentState == .extended || currentState == .notification
     }
 
     /// Open settings in a separate window (gear click).
@@ -222,6 +278,7 @@ final class PanelState: ObservableObject {
     /// the size hasn't changed (SwiftUI can fire the same value).
     func reportExtendedSize(_ size: CGSize) {
         guard size != .zero, size != measuredExtendedSize else { return }
+        AnimationDebugger.logEvent("reportSize state=\(currentState) size=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) ready=\(isReady)")
         measuredExtendedSize = size
     }
 
@@ -267,12 +324,12 @@ final class PanelState: ObservableObject {
         }
     }
 
-    var panelHeight: CGFloat { Self.height(for: currentState) }
-    var panelWidth: CGFloat { Self.width(for: currentState) }
-
     static func height(for state: HUDState) -> CGFloat {
         switch state {
-        case .compact, .extended: return 36
+        case .compact, .extended:
+            // These states are measurement-driven; the static value is
+            // only a placeholder for SwiftUI previews.
+            return 32
         case .notification: return 90
         case .detail: return 500
         }
@@ -280,8 +337,10 @@ final class PanelState: ObservableObject {
 
     static func width(for state: HUDState) -> CGFloat {
         switch state {
-        case .compact: return 280
-        case .extended: return 340
+        case .compact, .extended:
+            // These states are measurement-driven; the static value is
+            // only a placeholder for SwiftUI previews.
+            return 320
         case .notification: return 420
         case .detail: return 700
         }

@@ -204,14 +204,13 @@ enum ClassifierCLI {
     // MARK: - classify-real <flags>
     //
     // Pulls real messages from the user's WeChat DB (whitelist contacts
-    // by default), runs each through the classifier, and writes a fixture-
-    // shaped JSON the user can hand-label and add to a private fixture.
+    // by default), runs each through the classifier, and writes a local
+    // review-only JSON file. Do not copy raw rows into repo fixtures.
     //
     // Privacy: defaults to writing to /tmp so nothing accidentally lands
-    // in git. The committed `Tests/Fixtures/labeled_messages.json` should
-    // stay small and synthetic; the private file at
-    // `Tests/Fixtures/labeled_messages_private.json` (gitignored) is where
-    // real-message growth happens.
+    // in git. Any test coverage promoted from this output must first be
+    // rewritten into synthetic examples that preserve only the classifier
+    // behavior being tested.
 
     private static func runReal(args: [String]) -> Never {
         var perChat = 10
@@ -233,6 +232,12 @@ enum ClassifierCLI {
             default:
                 i += 1
             }
+        }
+
+        guard !isUnsafeClassifyRealOutputPath(outPath) else {
+            fputs("拒绝写入 \(outPath)：classify-real 会包含原始微信文本，只能输出到仓库外的临时/私有路径。\n", stderr)
+            fputs("示例：--out /tmp/wchud_classify_real.json。需要加入测试时，请先重写为合成语料。\n", stderr)
+            exit(2)
         }
 
         let store = makeStore()
@@ -408,7 +413,7 @@ enum ClassifierCLI {
             )
             try json.write(to: URL(fileURLWithPath: outPath))
             print("\n已写入: \(outPath)")
-            print("下一步：人工核对 `expected` 字段，把好用的样本合并到 Tests/Fixtures/labeled_messages_private.json")
+            print("下一步：只提炼分类行为，把样本重写为合成语料后再加入 Tests/Fixtures")
         } catch {
             fputs("写入 \(outPath) 失败: \(error)\n", stderr)
             exit(1)
@@ -754,6 +759,50 @@ enum ClassifierCLI {
     /// never carries an inline endpoint URL or model name.
     private static func makeClassifierConfig(store: HUDStore) -> AIConfig {
         store.loadAIConfig()
+    }
+
+    static func isUnsafeClassifyRealOutputPath(
+        _ path: String,
+        currentDirectory: String = FileManager.default.currentDirectoryPath
+    ) -> Bool {
+        let normalizedPath = normalizedOutputPath(path, currentDirectory: currentDirectory)
+        let components = URL(fileURLWithPath: normalizedPath).pathComponents
+        if components.contains("Tests") || components.contains("Sources") || components.contains(".git") {
+            return true
+        }
+        return packageRoot(containingOutputPath: normalizedPath) != nil
+    }
+
+    private static func normalizedOutputPath(_ path: String, currentDirectory: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        let absolutePath: String
+        if expanded.hasPrefix("/") {
+            absolutePath = expanded
+        } else {
+            absolutePath = URL(fileURLWithPath: currentDirectory)
+                .appendingPathComponent(expanded)
+                .path
+        }
+        return URL(fileURLWithPath: absolutePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private static func packageRoot(containingOutputPath path: String) -> String? {
+        let fm = FileManager.default
+        var cursor = URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL
+
+        while true {
+            if fm.fileExists(atPath: cursor.appendingPathComponent("Package.swift").path) {
+                return cursor.path
+            }
+            let parent = cursor.deletingLastPathComponent()
+            if parent.path == cursor.path {
+                return nil
+            }
+            cursor = parent
+        }
     }
 
     /// Park the current (non-async) thread on a semaphore until the

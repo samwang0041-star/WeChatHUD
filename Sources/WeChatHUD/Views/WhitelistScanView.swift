@@ -8,6 +8,8 @@ struct WhitelistScanView: View {
     @State private var results: [ScanResultItem] = []
     @State private var dismissed: [ScanDismissedEntry] = []
     @State private var showDismissed = false
+    @State private var statusMessage: String?
+    @State private var statusIsError = false
 
     struct ScanResultItem: Identifiable {
         let id: String
@@ -64,6 +66,13 @@ struct WhitelistScanView: View {
                 }
             }
             .padding(.bottom, 12)
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.system(size: 11))
+                    .foregroundColor(statusIsError ? .red : .secondary)
+                    .padding(.bottom, 8)
+            }
 
             // Scrollable results
             ScrollView {
@@ -172,34 +181,91 @@ struct WhitelistScanView: View {
 
     private func accept(_ item: ScanResultItem) {
         let cat: WhitelistCategory = item.category == "work" ? .work : item.category == "life" ? .life : .other
-        try? store.addToWhitelist(username: item.username, displayName: item.displayName,
-                                  isGroup: item.isGroup, category: cat, attentionLevel: .watch)
-        if let idx = results.firstIndex(where: { $0.id == item.id }) { results[idx].accepted = true }
+        do {
+            try store.addToWhitelist(
+                username: item.username,
+                displayName: item.displayName,
+                isGroup: item.isGroup,
+                category: cat,
+                attentionLevel: .watch
+            )
+            if let idx = results.firstIndex(where: { $0.id == item.id }) {
+                results[idx].accepted = true
+            }
+            setStatus("已加入白名单：\(displayName(for: item.username, fallback: item.displayName))")
+            print("[WCHUD] AI scan: accepted \(item.username)")
+        } catch {
+            setStatus("加入白名单失败：\(displayName(for: item.username, fallback: item.displayName))", isError: true)
+            print("[WCHUD] AI scan: accept failed for \(item.username): \(error)")
+        }
     }
 
     private func dismiss(_ item: ScanResultItem) {
-        try? store.dismissScanResult(username: item.username, displayName: item.displayName)
-        results.removeAll { $0.id == item.id }
-        loadDismissed()
+        do {
+            try store.dismissScanResult(username: item.username, displayName: item.displayName)
+            results.removeAll { $0.id == item.id }
+            loadDismissed()
+            showDismissed = true
+            setStatus("已忽略：\(displayName(for: item.username, fallback: item.displayName))")
+            print("[WCHUD] AI scan: dismissed \(item.username)")
+        } catch {
+            setStatus("忽略失败：\(displayName(for: item.username, fallback: item.displayName))", isError: true)
+            print("[WCHUD] AI scan: dismiss failed for \(item.username): \(error)")
+        }
     }
 
-    private func acceptAll() { for item in pendingResults { accept(item) } }
-    private func dismissAll() { for item in pendingResults { dismiss(item) } }
+    private func acceptAll() {
+        let items = pendingResults
+        for item in items { accept(item) }
+    }
+
+    private func dismissAll() {
+        let items = pendingResults
+        for item in items { dismiss(item) }
+    }
 
     private func acceptDismissed(_ entry: ScanDismissedEntry) {
-        try? store.addToWhitelist(username: entry.username, displayName: entry.displayName,
-                                  isGroup: entry.username.contains("@chatroom"),
-                                  category: .other, attentionLevel: .watch)
-        try? store.undismissScanResult(username: entry.username)
-        loadDismissed()
+        do {
+            try store.addToWhitelist(
+                username: entry.username,
+                displayName: entry.displayName,
+                isGroup: entry.username.contains("@chatroom"),
+                category: .other,
+                attentionLevel: .watch
+            )
+            try store.undismissScanResult(username: entry.username)
+            loadDismissed()
+            setStatus("已从忽略列表加入白名单：\(displayName(for: entry.username, fallback: entry.displayName))")
+            print("[WCHUD] AI scan: accepted dismissed \(entry.username)")
+        } catch {
+            setStatus("从忽略列表加入白名单失败：\(displayName(for: entry.username, fallback: entry.displayName))", isError: true)
+            print("[WCHUD] AI scan: accept dismissed failed for \(entry.username): \(error)")
+        }
     }
 
     private func removeDismissed(_ entry: ScanDismissedEntry) {
-        try? store.undismissScanResult(username: entry.username)
-        loadDismissed()
+        do {
+            try store.undismissScanResult(username: entry.username)
+            loadDismissed()
+            setStatus("已删除忽略记录：\(displayName(for: entry.username, fallback: entry.displayName))")
+            print("[WCHUD] AI scan: removed dismissed \(entry.username)")
+        } catch {
+            setStatus("删除忽略记录失败：\(displayName(for: entry.username, fallback: entry.displayName))", isError: true)
+            print("[WCHUD] AI scan: remove dismissed failed for \(entry.username): \(error)")
+        }
     }
 
     private func loadDismissed() { dismissed = store.loadDismissedScanResults() }
+
+    private func setStatus(_ message: String, isError: Bool = false) {
+        statusMessage = message
+        statusIsError = isError
+    }
+
+    private func displayName(for username: String, fallback: String) -> String {
+        let trimmed = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? username : trimmed
+    }
 
     // MARK: - Scan
 

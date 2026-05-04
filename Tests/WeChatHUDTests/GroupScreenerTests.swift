@@ -74,12 +74,13 @@ struct GroupScreenerTests {
         let store = try tempStore()
         let g = candidate("new_team")
         let mock = MockAIService()
-        let response = #"[{"chat_name":"new_team","decision":"include","confidence":0.9,"reason":"work talk"}]"#
+        let response = #"{"items":[{"chat_name":"new_team","decision":"include","confidence":0.9,"reason":"work talk"}]}"#
         await mock.setRoute(needle: "new_team", response: response)
         let ledger = DataLedger(store: store)
         let screener = GroupScreener(store: store, aiService: mock, dataLedger: ledger)
         let result = await screener.screen(candidates: [g], samples: ["wxid_new_team@chatroom": ["msg1"]])
         #expect(result.included.count == 1)
+        #expect(await mock.calls.first?.options.responseFormatJSON == true)
         // Cached now
         #expect(store.groupScopePolicy(chatUsername: g.chatUsername)?.decision == .include)
     }

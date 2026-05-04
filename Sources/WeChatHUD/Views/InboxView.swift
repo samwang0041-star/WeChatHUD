@@ -8,12 +8,29 @@ enum InboxHeaderState: Equatable {
     case idle
 }
 
-func visibleInboxItems(_ items: [InboxItem], limit: Int = 10) -> [InboxItem] {
-    Array(items.prefix(limit))
+func visibleInboxItems(_ items: [InboxItem], showAllPassive: Bool = false, passiveLimit: Int = 3, limit: Int = 10) -> [InboxItem] {
+    let actionItems = items.filter { $0.participatesInActionQueue }
+    let fyiItems = items.filter { $0.semanticState == .groupMentionFYI }
+    let passiveItems = items.filter { $0.isAggregatablePassiveUpdate }
+    let nonPassiveItems = actionItems + fyiItems
+    let remainingSlots = max(0, limit - nonPassiveItems.count)
+    let passiveVisibleLimit = showAllPassive ? remainingSlots : min(passiveLimit, remainingSlots)
+    let visiblePassive = Array(passiveItems.prefix(passiveVisibleLimit))
+    return Array((nonPassiveItems + visiblePassive).prefix(limit))
+}
+
+func hiddenPassiveUpdateCount(_ items: [InboxItem], showAllPassive: Bool = false, passiveLimit: Int = 3, limit: Int = 10) -> Int {
+    guard !showAllPassive else { return 0 }
+    let actionItems = items.filter { $0.participatesInActionQueue }
+    let fyiItems = items.filter { $0.semanticState == .groupMentionFYI }
+    let passiveCount = items.filter { $0.isAggregatablePassiveUpdate }.count
+    let remainingSlots = max(0, limit - actionItems.count - fyiItems.count)
+    let visiblePassiveCount = min(passiveLimit, remainingSlots)
+    return max(0, passiveCount - visiblePassiveCount)
 }
 
 func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
-    let actionItems = items.filter { $0.actionRequired }
+    let actionItems = items.filter { $0.participatesInActionQueue }
     let urgentCount = actionItems.filter { $0.priority != .p2 }.count
     if urgentCount > 0 { return .urgent(urgentCount) }
     if !actionItems.isEmpty { return .pending(actionItems.count) }
@@ -31,10 +48,12 @@ struct InboxView: View {
     @State private var undoAction: String = ""  // "已忽略" or "已贪睡" or "已静音"
     @State private var undoTimer: Timer? = nil
     @State private var showHandled = false
+    @State private var showAllPassiveUpdates = false
 
     var body: some View {
         let activeItems = monitor.inboxItems
-        let visibleItems = visibleInboxItems(activeItems)
+        let visibleItems = visibleInboxItems(activeItems, showAllPassive: showAllPassiveUpdates)
+        let hiddenPassiveCount = hiddenPassiveUpdateCount(activeItems, showAllPassive: showAllPassiveUpdates)
 
         VStack(alignment: .leading, spacing: 0) {
             if panelState.showSmartDigest {
@@ -66,9 +85,23 @@ struct InboxView: View {
                         })
                     }
 
-                    if activeItems.count > visibleItems.count {
+                    if hiddenPassiveCount > 0 || showAllPassiveUpdates {
+                        Button(action: { showAllPassiveUpdates.toggle() }) {
+                            Text(showAllPassiveUpdates ? "收起普通更新" : "还有 \(hiddenPassiveCount) 条普通更新")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.55))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
+                    if hiddenTotalCount > 0 {
                         Button(action: { panelState.showDetail() }) {
-                            Text("+\(activeItems.count - visibleItems.count) 更多 — 查看详情")
+                            Text("+\(hiddenTotalCount) 更多 — 查看详情")
                                 .font(.system(size: 10))
                                 .foregroundColor(.white.opacity(0.55))
                                 .padding(.horizontal, 14)

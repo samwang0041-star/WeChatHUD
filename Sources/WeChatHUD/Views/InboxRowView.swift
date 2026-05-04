@@ -101,6 +101,16 @@ struct InboxRowView: View {
                     .cornerRadius(2)
             }
 
+            if item.semanticState == .groupMentionFYI {
+                Text("提到你")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.blue.opacity(0.9))
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 1)
+                    .background(Color.blue.opacity(0.12))
+                    .cornerRadius(2)
+            }
+
             if item.isVIP, let mood = item.moodEmoji, !mood.isEmpty {
                 Text(mood)
                     .font(.system(size: 11))
@@ -190,12 +200,15 @@ struct InboxRowView: View {
                         .foregroundColor(.white.opacity(0.4))
                 }
             } else if let briefing = state.briefing {
-                // Prefer the actionable "what should you do" line when
-                // deep analysis is ready; fall back to the briefing's
-                // `nextStep`, then to plain `whyMentioned`.
+                // Only true action rows get the actionable line. FYI
+                // mentions stay neutral so a plain @ does not become
+                // "需要你处理" by copy alone.
                 let summaryText: String = {
-                    if let action = briefing.deepSuggestedAction, !action.isEmpty { return action }
-                    if !briefing.nextStep.isEmpty { return briefing.nextStep }
+                    if item.semanticState == .groupActionRequired,
+                       let action = briefing.deepSuggestedAction,
+                       !action.isEmpty {
+                        return action
+                    }
                     return briefing.whyMentioned
                 }()
                 HStack(spacing: 4) {
@@ -225,11 +238,17 @@ struct InboxRowView: View {
     }
 
     private var priorityColor: Color {
-        guard item.actionRequired else { return .white.opacity(0.2) }
-        switch item.priority {
-        case .p0: return .red
-        case .p1: return .yellow
-        case .p2: return .white.opacity(0.35)
+        switch item.semanticState {
+        case .privateActionRequired, .privateVIPRisk, .groupActionRequired:
+            switch item.priority {
+            case .p0: return .red
+            case .p1: return .yellow
+            case .p2: return .white.opacity(0.35)
+            }
+        case .groupMentionFYI, .groupDecisionOnly:
+            return .blue.opacity(0.75)
+        default:
+            return .white.opacity(0.2)
         }
     }
 
@@ -238,7 +257,10 @@ struct InboxRowView: View {
     private var hoverButtons: some View {
         HStack(spacing: 6) {
             if !item.replied {
-                Button(action: { showSnoozePopover = true }) {
+                Button(action: {
+                    panelState.popoverOpen = true
+                    showSnoozePopover = true
+                }) {
                     Text("\u{23F0}")
                         .font(.system(size: 12))
                 }
@@ -246,8 +268,12 @@ struct InboxRowView: View {
                 .popover(isPresented: $showSnoozePopover, arrowEdge: .bottom) {
                     SnoozePopoverContent { date in
                         showSnoozePopover = false
+                        panelState.popoverOpen = false
                         onSnooze?(date)
                     }
+                }
+                .onChange(of: showSnoozePopover) { _, isOpen in
+                    panelState.popoverOpen = isOpen
                 }
             }
 

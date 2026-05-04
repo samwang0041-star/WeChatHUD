@@ -37,6 +37,27 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.model, "test-model")
     }
 
+    func testAIProviderSlotToleratesMissingFields() throws {
+        try store.setSetting("ai", value: """
+        {
+          "localProvider": {
+            "providerID": "custom",
+            "baseURL": "http://test:8080/v1",
+            "model": "test-model"
+          },
+          "activeMode": "local"
+        }
+        """)
+
+        let cfg = store.loadAIConfig()
+
+        XCTAssertEqual(cfg.localProvider.providerID, "custom")
+        XCTAssertEqual(cfg.localProvider.baseURL, "http://test:8080/v1")
+        XCTAssertEqual(cfg.localProvider.model, "test-model")
+        XCTAssertEqual(cfg.localProvider.apiKey, "")
+        XCTAssertEqual(cfg.baseURL, "http://test:8080/v1")
+    }
+
     func testReplyDebtConfigRoundTrip() throws {
         let cfg = ReplyDebtConfig(
             maxSessions: 50,
@@ -122,9 +143,12 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(list[0].displayName, "Test User")
         XCTAssertEqual(list[0].category, .work)
         XCTAssertEqual(list[0].attentionLevel, .watch)
+        XCTAssertEqual(store.getContact(username: "user1")?.attentionLevel, .whitelist)
+        XCTAssertEqual(store.getContact(username: "user1")?.role, .colleague)
 
         try store.removeFromWhitelist(username: "user1")
         XCTAssertFalse(store.isWhitelisted("user1"))
+        XCTAssertNil(store.getContact(username: "user1"))
     }
 
     // Regression: removing a whitelist entry must drop its baseline and
@@ -169,6 +193,34 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(list.count, 1)
         XCTAssertEqual(list[0].category, .life)
         XCTAssertEqual(list[0].attentionLevel, .vip)
+        XCTAssertEqual(store.getContact(username: "user1")?.attentionLevel, .vip)
+        XCTAssertEqual(store.getContact(username: "user1")?.role, .colleague)
+    }
+
+    func testAddToWhitelistPreservesExistingContactSettings() throws {
+        try store.upsertContact(
+            username: "user1",
+            displayName: "Old Name",
+            attentionLevel: .greylist,
+            role: .supplier,
+            roleNote: "keep me",
+            replyWindowMinutes: 480
+        )
+
+        try store.addToWhitelist(
+            username: "user1",
+            displayName: "New Name",
+            isGroup: false,
+            category: .life,
+            attentionLevel: .watch
+        )
+
+        let contact = store.getContact(username: "user1")
+        XCTAssertEqual(contact?.displayName, "New Name")
+        XCTAssertEqual(contact?.attentionLevel, .whitelist)
+        XCTAssertEqual(contact?.role, .supplier)
+        XCTAssertEqual(contact?.roleNote, "keep me")
+        XCTAssertEqual(contact?.replyWindowMinutes, 480)
     }
 
     func testIgnoredSenderRoundTrip() throws {

@@ -2,15 +2,19 @@ import SwiftUI
 import AppKit
 
 /// Dynamic Island-style compact bar. The pill wraps the hardware notch
-/// (or a fake notch on external displays); content lives in two wings
-/// that extend past the notch edges:
+/// (or a fake notch on external displays); compact content lives only
+/// in two small, equal-width wings outside the notch:
 ///
-///   [  status · summary · badges ]  ( notch )  [ buddy ]
+///   [ status ]  ( notch )  [ buddy ]
 ///
-/// On notched Macs the middle `notchWidth`-sized spacer aligns with
-/// the hardware cutout so only the wings read as visible UI. On
-/// external / non-notched displays the same layout leaves a visually
-/// unified empty center, preserving the island metaphor.
+/// The compact state is intentionally ambient: never render sender
+/// names or message previews here, because screenshots can show pixels
+/// that the user cannot see behind the physical notch. Message content
+/// belongs in the hover-expanded inbox.
+enum CompactInboxMetrics {
+    static let wingWidth: CGFloat = 44
+}
+
 struct CompactInboxBar: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
@@ -22,20 +26,25 @@ struct CompactInboxBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 7) {
+            ZStack(alignment: .trailing) {
                 leftWing
-                aiTick
-                AutopilotIndicator()
             }
-            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
-            // Middle void — EXACTLY notch width. Spacer minLength
-            // collapses to its minimum in a fixed-width HStack,
-            // keeping the camera gap exactly aligned.
-            Spacer(minLength: notchWidth)
+            // Middle void — EXACTLY notch width. Because the two
+            // wings are equal width, this spacer's center stays
+            // aligned with the panel center, which is locked to the
+            // physical notch center by FloatingPanel.
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: notchWidth)
 
-            rightWing
-                .padding(.trailing, 14)
+            ZStack(alignment: .leading) {
+                rightWing
+            }
+            .padding(.leading, 8)
+            .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
         }
         // Horizontal: natural content width (drives panel width via
         // the PreferenceKey feedback loop below).
@@ -88,17 +97,23 @@ struct CompactInboxBar: View {
         return 32
     }
 
-    /// Red translucent glow behind the wings when any VIP escalation
-    /// is at T2+. Confined to the wings (via the HStack padding)
-    /// so it doesn't paint across the notch void.
+    /// Subtle VIP escalation affordance. It is intentionally tied to a
+    /// visible urgent action item, not just `vipAlertTiers`, because the
+    /// compact bar's idle dot otherwise says "normal" while the whole pill
+    /// turns red.
     private var escalationGlow: some View {
-        let worstTier = monitor.vipAlertTiers.values.max() ?? .none
+        let worstTier = monitor.inboxItems.compactMap { item -> VIPAlertTier? in
+            guard item.surfacesInCompact,
+                  item.participatesInActionQueue,
+                  item.isVIP,
+                  item.priority == .p0 || item.isOverdue else { return nil }
+            return monitor.vipAlertTiers[item.chatUsername]
+        }.max() ?? .none
         let active = worstTier >= .t2
         return ZStack {
             if active {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.red.opacity(worstTier >= .t3 ? 0.22 : 0.14))
-                    .blendMode(.screen)
+                Capsule(style: .continuous)
+                    .strokeBorder(Color.red.opacity(worstTier >= .t3 ? 0.55 : 0.35), lineWidth: 1)
                     .modifier(PulsingOpacity(active: active))
                     .allowsHitTesting(false)
             }
@@ -107,156 +122,86 @@ struct CompactInboxBar: View {
 
     // MARK: - Left wing
 
-    @ViewBuilder
     private var leftWing: some View {
-        let actionItems = monitor.inboxItems.filter { $0.actionRequired }
+        let status = compactStatus
+        let aiCount = aiTracker.activeTasks.count
+        return HStack(spacing: 4) {
+            if status.isError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.yellow)
+            } else {
+                Circle()
+                    .fill(status.color)
+                    .frame(width: 7, height: 7)
+            }
+
+            if let badge = status.badge {
+                Text(badge)
+                    .font(.system(size: 9, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundColor(.white.opacity(0.78))
+                    .lineLimit(1)
+            }
+
+            if aiCount > 0 {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundColor(.orange.opacity(0.9))
+            }
+        }
+    }
+
+    private struct CompactStatus {
+        let color: Color
+        let badge: String?
+        let isError: Bool
+    }
+
+    private var compactStatus: CompactStatus {
+        let surfacedItems = monitor.inboxItems.filter { $0.surfacesInCompact }
+        let actionItems = surfacedItems.filter { $0.participatesInActionQueue }
+        let fyiItems = surfacedItems.filter { !$0.participatesInActionQueue }
         let p0p1Items = actionItems.filter { $0.priority != .p2 }
         let hasUrgent = !p0p1Items.isEmpty
 
-        if hasUrgent, let top = actionItems.first {
-            urgentWing(top: top, extraCount: p0p1Items.count - 1)
-        } else if !actionItems.isEmpty {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.white.opacity(0.4))
-                    .frame(width: 6, height: 6)
-                Text("\(actionItems.count)条待处理")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.55))
-                    .lineLimit(1)
-            }
-        } else if !syncIsOK {
-            HStack(spacing: 4) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.yellow)
-                Text(syncErrorText)
-                    .font(.system(size: 11))
-                    .foregroundColor(.yellow.opacity(0.85))
-                    .lineLimit(1)
-            }
-        } else {
-            // Idle — single green dot, tight against the notch edge.
-            Circle()
-                .fill(Color.green.opacity(0.7))
-                .frame(width: 7, height: 7)
+        if hasUrgent {
+            let topPriority = p0p1Items.sorted(by: compactPrioritySort).first?.priority ?? .p1
+            return CompactStatus(
+                color: topPriority == .p0 ? .red : .yellow,
+                badge: compactCountBadge(p0p1Items.count),
+                isError: false
+            )
         }
+        if !actionItems.isEmpty {
+            return CompactStatus(
+                color: .white.opacity(0.42),
+                badge: compactCountBadge(actionItems.count),
+                isError: false
+            )
+        }
+        if !fyiItems.isEmpty {
+            return CompactStatus(
+                color: .blue.opacity(0.78),
+                badge: compactCountBadge(fyiItems.count),
+                isError: false
+            )
+        }
+        if !syncIsOK {
+            return CompactStatus(color: .yellow, badge: nil, isError: true)
+        }
+        return CompactStatus(color: .green.opacity(0.72), badge: nil, isError: false)
     }
 
-    private func urgentWing(top: InboxItem, extraCount: Int) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(top.priority == .p0 ? Color.red : Color.yellow)
-                .frame(width: 7, height: 7)
-
-            // Context chip — who is asking, which chat. Without this
-            // the compact bar just reads "啥时候拉群" with no idea
-            // which chat or sender it came from. Cap chars so a long
-            // name doesn't eat the summary budget.
-            Text(contextLabel(top))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white.opacity(0.95))
-                .lineLimit(1)
-
-            Text(top.aiSummary ?? top.preview)
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.75))
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            if top.isOverdue {
-                Text(overdueLabel(minutes: top.overdueMinutes))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.red.opacity(0.15))
-                    .cornerRadius(3)
-            }
-
-            if extraCount > 0 {
-                Text("+\(extraCount)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.4))
-            }
-        }
-    }
-
-    /// Short "who" label for the urgent wing. Group chats prefer the
-    /// sender's name (who actually asked), falling back to the chat
-    /// name; private chats use the chat (peer) name directly.
-    /// Emoji-prefixed names (e.g. "💰个金互联网搞钱组💰") are stripped
-    /// down to the inner text so the 6-char cap lands on useful
-    /// content instead of decorative runes.
-    private func contextLabel(_ item: InboxItem) -> String {
-        let raw: String
-        if item.isGroup, !item.senderName.isEmpty {
-            raw = item.senderName
-        } else {
-            raw = item.chatName
-        }
-        let stripped = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .drop { $0.isSymbol || $0.isPunctuation || !$0.isLetter && !$0.isNumber && $0.unicodeScalars.first.map { $0.value > 0x1F000 } == true }
-        let cleaned = String(stripped).isEmpty ? raw : String(stripped)
-        return cleaned.count > 6 ? String(cleaned.prefix(6)) + "…" : cleaned
-    }
-
-    /// Compact overdue badge text. Minutes → "超时Nm" up to 1h,
-    /// hours → "超时Nh" up to a day, days → "超时Nd". The compact
-    /// bar has limited width — never render three-digit minute
-    /// counts like "超时143分" that blow out the summary budget.
-    private func overdueLabel(minutes: Int) -> String {
-        if minutes < 60 { return "\(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h" }
-        return "\(hours / 24)d"
+    private func compactCountBadge(_ count: Int) -> String? {
+        guard count > 1 else { return nil }
+        return count > 9 ? "9+" : "\(count)"
     }
 
     // MARK: - Right wing
 
     private var rightWing: some View {
         PixelBuddyView(mood: buddyMood)
-    }
-
-    // MARK: - AI activity tick
-
-    /// Tiny always-on indicator for background AI work. Living in the
-    /// left wing next to the status keeps the AI signal inside the
-    /// island language instead of popping a separate rectangular
-    /// overlay that covered half the panel.
-    ///
-    ///   0 running  → invisible (takes zero space)
-    ///   1 running  → small spinning indicator
-    ///   2+ running → "AI·N" pill (N = count)
-    ///
-    /// Hover on the right-wing buddy still surfaces the full task
-    /// breakdown — this is just the passive ambient signal.
-    @ViewBuilder
-    private var aiTick: some View {
-        let count = aiTracker.activeTasks.count
-        if count == 0 {
-            EmptyView()
-        } else if count == 1 {
-            ProgressView()
-                .scaleEffect(0.45)
-                .frame(width: 10, height: 10)
-                .tint(.white.opacity(0.7))
-        } else {
-            HStack(spacing: 2) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.orange.opacity(0.85))
-                Text("\(count)")
-                    .font(.system(size: 9, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.85))
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(
-                Capsule().fill(Color.orange.opacity(0.18))
-            )
-        }
     }
 
     // MARK: - Sync state helpers
@@ -268,23 +213,19 @@ struct CompactInboxBar: View {
         }
     }
 
-    private var syncErrorText: String {
-        switch monitor.stats.syncStatus {
-        case .stale:
-            return "未同步"
-        case .waitingForWeChat:
-            return "微信未运行"
-        case .accountSwitched:
-            return "已切换账号 · 重启"
-        case .error(let msg):
-            return msg.localizedCaseInsensitiveContains("WeChat") ? "微信未运行" : "未同步"
-        default:
-            return ""
+    private func compactPrioritySort(_ lhs: InboxItem, _ rhs: InboxItem) -> Bool {
+        if lhs.priority != rhs.priority {
+            return lhs.priority < rhs.priority
         }
+        if lhs.isVIP != rhs.isVIP {
+            return lhs.isVIP
+        }
+        return lhs.timestamp > rhs.timestamp
     }
 
     private var buddyMood: BuddyMood {
-        let actionItems = monitor.inboxItems.filter { $0.actionRequired }
+        let surfacedItems = monitor.inboxItems.filter { $0.surfacesInCompact }
+        let actionItems = surfacedItems.filter { $0.participatesInActionQueue }
         let hasUrgent = actionItems.contains { $0.priority == .p0 }
         let hasPending = !actionItems.isEmpty
         let base = deriveCompactMood(
@@ -313,8 +254,8 @@ struct CompactInboxBar: View {
             DispatchQueue.main.async {
                 let baseMood = deriveCompactMood(
                     syncStatus: monitor.stats.syncStatus,
-                    hasUrgent: monitor.inboxItems.contains { $0.priority == .p0 },
-                    hasPending: monitor.inboxItems.contains { $0.actionRequired },
+                    hasUrgent: monitor.inboxItems.contains { $0.surfacesInCompact && $0.participatesInActionQueue && $0.priority == .p0 },
+                    hasPending: monitor.inboxItems.contains { $0.surfacesInCompact && $0.participatesInActionQueue },
                     idleMinutes: 0
                 )
                 if baseMood == .idle {
@@ -328,27 +269,6 @@ struct CompactInboxBar: View {
             }
         }
     }
-}
-
-// MARK: - Compact width helper (kept for HUDRootView compat)
-
-/// Legacy helper — retained so existing call sites don't need touching.
-/// Returns a width that matches the new `panelSize(for: .compact)`
-/// logic in AppDelegate (notch + scaled wings). The specific values
-/// here are overridden by AppDelegate; this is purely a fallback.
-func compactBarWidth(inboxItems: [InboxItem], syncStatus: SyncStatus) -> CGFloat {
-    let hasUrgent = inboxItems.contains { $0.priority != .p2 }
-    let notchWidth: CGFloat = 200  // MBP-ish default
-    let wingRight: CGFloat = 56
-    let wingLeft: CGFloat
-    if hasUrgent {
-        wingLeft = 200
-    } else if !inboxItems.isEmpty {
-        wingLeft = 130
-    } else {
-        wingLeft = 56
-    }
-    return notchWidth + wingLeft + wingRight
 }
 
 /// Slow auto-reverse pulsing opacity. Used for the escalation glow —

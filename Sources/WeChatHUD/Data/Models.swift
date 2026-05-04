@@ -308,6 +308,34 @@ struct HUDNotification: Identifiable {
         kind == .groupAt
     }
 
+    var presentationSemanticState: InboxSemanticState {
+        switch kind {
+        case .privateChat:
+            return isVIP ? .privateVIPRisk : .privateInfoOnly
+        case .groupAt:
+            return .groupMentionFYI
+        case .groupMessage:
+            return .groupInfoOnly
+        }
+    }
+
+    var supportsDeepActionContext: Bool {
+        guard kind == .groupAt else { return false }
+        let text = rawText
+        return text.contains("?")
+            || text.contains("？")
+            || text.contains("吗")
+            || text.contains("能否")
+            || text.contains("能不能")
+            || text.contains("要不要")
+            || text.contains("是不是")
+            || text.contains("确认")
+            || text.contains("决定")
+            || text.contains("拍板")
+            || text.contains("看下")
+            || text.contains("看看")
+    }
+
     var isVIP: Bool {
         attentionLevel == .vip
     }
@@ -619,6 +647,38 @@ struct AIProviderSlot: Codable, Equatable {
     var baseURL: String = ""
     var model: String = ""
     var apiKey: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case providerID, baseURL, model, apiKey
+    }
+
+    init(
+        providerID: String = "custom",
+        baseURL: String = "",
+        model: String = "",
+        apiKey: String = ""
+    ) {
+        self.providerID = providerID
+        self.baseURL = baseURL
+        self.model = model
+        self.apiKey = apiKey
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providerID = try container.decodeIfPresent(String.self, forKey: .providerID) ?? "custom"
+        baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
+        apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(model, forKey: .model)
+        try container.encode(apiKey, forKey: .apiKey)
+    }
 }
 
 /// Which provider to use for requests.
@@ -652,6 +712,7 @@ struct AIConfig: Codable {
     var moodDetectionEnabled: Bool = true
     var debtJudgeEnabled: Bool = true
     var debtJudgeShadowMode: Bool = true
+    var thinkingEnabled: Bool = false
 
     // ── Compatibility shims ──
     // All existing services read `config.baseURL` / `.model` / `.apiKey`.
@@ -707,7 +768,49 @@ struct AIConfig: Codable {
         case _legacyProviderID = "providerID"
         case maxTokens, temperature
         case summaryEnabled, suggestionsEnabled, moodDetectionEnabled
-        case debtJudgeEnabled, debtJudgeShadowMode
+        case debtJudgeEnabled, debtJudgeShadowMode, thinkingEnabled
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cloudProvider = try container.decodeIfPresent(AIProviderSlot.self, forKey: .cloudProvider) ?? AIProviderSlot()
+        localProvider = try container.decodeIfPresent(AIProviderSlot.self, forKey: .localProvider) ?? AIProviderSlot()
+        activeMode = try container.decodeIfPresent(AIActiveMode.self, forKey: .activeMode) ?? .local
+        autoCloudFirst = try container.decodeIfPresent(Bool.self, forKey: .autoCloudFirst) ?? true
+        _legacyBaseURL = try container.decodeIfPresent(String.self, forKey: ._legacyBaseURL)
+        _legacyModel = try container.decodeIfPresent(String.self, forKey: ._legacyModel)
+        _legacyApiKey = try container.decodeIfPresent(String.self, forKey: ._legacyApiKey)
+        _legacyProviderID = try container.decodeIfPresent(String.self, forKey: ._legacyProviderID)
+        maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.3
+        summaryEnabled = try container.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
+        suggestionsEnabled = try container.decodeIfPresent(Bool.self, forKey: .suggestionsEnabled) ?? true
+        moodDetectionEnabled = try container.decodeIfPresent(Bool.self, forKey: .moodDetectionEnabled) ?? true
+        debtJudgeEnabled = try container.decodeIfPresent(Bool.self, forKey: .debtJudgeEnabled) ?? true
+        debtJudgeShadowMode = try container.decodeIfPresent(Bool.self, forKey: .debtJudgeShadowMode) ?? true
+        thinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(cloudProvider, forKey: .cloudProvider)
+        try container.encode(localProvider, forKey: .localProvider)
+        try container.encode(activeMode, forKey: .activeMode)
+        try container.encode(autoCloudFirst, forKey: .autoCloudFirst)
+        try container.encodeIfPresent(_legacyBaseURL, forKey: ._legacyBaseURL)
+        try container.encodeIfPresent(_legacyModel, forKey: ._legacyModel)
+        try container.encodeIfPresent(_legacyApiKey, forKey: ._legacyApiKey)
+        try container.encodeIfPresent(_legacyProviderID, forKey: ._legacyProviderID)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(temperature, forKey: .temperature)
+        try container.encode(summaryEnabled, forKey: .summaryEnabled)
+        try container.encode(suggestionsEnabled, forKey: .suggestionsEnabled)
+        try container.encode(moodDetectionEnabled, forKey: .moodDetectionEnabled)
+        try container.encode(debtJudgeEnabled, forKey: .debtJudgeEnabled)
+        try container.encode(debtJudgeShadowMode, forKey: .debtJudgeShadowMode)
+        try container.encode(thinkingEnabled, forKey: .thinkingEnabled)
     }
 }
 
@@ -734,7 +837,7 @@ struct AIProvider: Identifiable, Hashable {
             id: "deepseek",
             name: "DeepSeek",
             baseURL: "https://api.deepseek.com",
-            models: ["deepseek-chat", "deepseek-reasoner"],
+            models: ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
             requiresKey: true,
             signupURL: "https://platform.deepseek.com/"
         ),
@@ -750,9 +853,17 @@ struct AIProvider: Identifiable, Hashable {
             id: "moonshot",
             name: "月之暗面 (Kimi)",
             baseURL: "https://api.moonshot.cn",
-            models: ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+            models: ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
             requiresKey: true,
             signupURL: "https://platform.moonshot.cn/"
+        ),
+        AIProvider(
+            id: "kimicode",
+            name: "Kimi Coding Plan (kimi.com)",
+            baseURL: "https://api.kimi.com/coding/v1",
+            models: ["kimi-for-coding", "kimi-k2.6", "k2p6", "kimi-k2.5", "k2p5", "kimi-k2-thinking", "kimi-k2-turbo-preview"],
+            requiresKey: true,
+            signupURL: "https://kimi.com"
         ),
         AIProvider(
             id: "zhipu",

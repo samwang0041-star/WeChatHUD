@@ -2,6 +2,8 @@ import Foundation
 
 protocol GroupContextLLMClient: Sendable {
     func complete(system: String, user: String) async throws -> String
+    func complete(system: String, user: String, options: CompleteOptions) async throws -> String
+    func completeWithMetadata(system: String, user: String, options: CompleteOptions) async throws -> AICompletionResult
     func isConfigured() async -> Bool
     func currentConfig() async -> AIConfig
 }
@@ -109,17 +111,17 @@ actor GroupContextBriefingService {
         let userPrompt = template
             .replacingOccurrences(of: "{chat_name}", with: escape(notification.chatName))
             .replacingOccurrences(of: "{sender_name}", with: escape(notification.senderName))
-            .replacingOccurrences(of: "{target_text}", with: escape(notification.rawText))
+            .replacingOccurrences(of: "{target_text}", with: escape(AIService.sanitizeForAI(notification.rawText)))
             .replacingOccurrences(of: "{context_json}", with: payload)
 
         let started = Date()
-        let model = await client.currentConfig().model
+        let initialModel = await client.currentConfig().model
 
         let firstResponse = await request(client: client, userPrompt: userPrompt)
         if let briefing = parseBriefing(firstResponse.text) {
             let final = finalize(briefing: briefing, source: .ai)
             writeAudit(
-                model: model,
+                model: firstResponse.model ?? initialModel,
                 inputText: payload,
                 outputText: firstResponse.text,
                 latencyMs: ms(since: started),
@@ -132,7 +134,7 @@ actor GroupContextBriefingService {
 
         if firstResponse.text.isEmpty, let error = firstResponse.error {
             writeAudit(
-                model: model,
+                model: firstResponse.model ?? initialModel,
                 inputText: payload,
                 outputText: "",
                 latencyMs: ms(since: started),
@@ -150,7 +152,7 @@ actor GroupContextBriefingService {
         if let briefing = parseBriefing(secondResponse.text) {
             let final = finalize(briefing: briefing, source: .ai)
             writeAudit(
-                model: model,
+                model: secondResponse.model ?? initialModel,
                 inputText: payload,
                 outputText: secondResponse.text,
                 latencyMs: ms(since: started),
@@ -162,7 +164,7 @@ actor GroupContextBriefingService {
         }
 
         writeAudit(
-            model: model,
+            model: secondResponse.model ?? initialModel,
             inputText: payload,
             outputText: secondResponse.text,
             latencyMs: ms(since: started),
@@ -230,13 +232,13 @@ actor GroupContextBriefingService {
         let situation = "群里最近在围绕“\(topic)”推进，最后 \(notification.senderName) 直接 @ 了你。"
         let whyMentioned = needsDecision
             ? "这条 @ 更像是在向你要确认、判断或补充信息。"
-            : "讨论已经推进到需要你接手或给态度的阶段。"
+            : "这条 @ 更像是在把相关讨论同步给你。"
         let currentStatus = containsUrgentSignal(notification.rawText)
-            ? "当前语气偏着急，群里希望尽快得到你的回应。"
-            : "当前卡点在你的确认或下一步动作。"
+            ? "当前语气偏着急，建议先看上下文再决定是否回应。"
+            : "目前没有明确要你拍板或回复的信号。"
         let nextStep = needsDecision
             ? "先回这条 @，给一个明确判断或时间点。"
-            : "先说明你当前进度，再决定是否需要拉齐更多人。"
+            : "先打开上下文确认讨论与你的关系。"
         return GroupContextBriefing(
             situation: trim(situation, limit: 90),
             whyMentioned: trim(whyMentioned, limit: 70),
@@ -266,6 +268,7 @@ actor GroupContextBriefingService {
     private struct ModelResponse {
         let text: String
         let error: String?
+        let model: String?
     }
 
     private struct BriefingDTO: Decodable {
@@ -298,7 +301,7 @@ actor GroupContextBriefingService {
                 PromptMessage(
                     timestamp: msg.createTime,
                     sender: msg.senderName,
-                    text: trim(msg.text, limit: 140),
+                    text: trim(AIService.sanitizeForAI(msg.text), limit: 140),
                     isTarget: msg.id == notification.messageID
                 )
             }
@@ -318,13 +321,14 @@ actor GroupContextBriefingService {
         userPrompt: String
     ) async -> ModelResponse {
         do {
-            let text = try await client.complete(
+            let result = try await client.completeWithMetadata(
                 system: "你是一个微信群聊上下文解释器。严格按要求输出 JSON。",
-                user: userPrompt
+                user: userPrompt,
+                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 512, responseFormatJSON: true)
             )
-            return ModelResponse(text: text, error: nil)
+            return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
-            return ModelResponse(text: "", error: String(describing: error))
+            return ModelResponse(text: "", error: String(describing: error), model: nil)
         }
     }
 
@@ -347,22 +351,7 @@ actor GroupContextBriefingService {
     }
 
     private func extractJSONObject(from raw: String) -> String? {
-        guard !raw.isEmpty else { return nil }
-        var cleaned = raw
-        if let fenceRange = cleaned.range(of: "```") {
-            cleaned = String(cleaned[fenceRange.upperBound...])
-            if cleaned.hasPrefix("json") { cleaned = String(cleaned.dropFirst(4)) }
-            if let endFence = cleaned.range(of: "```") {
-                cleaned = String(cleaned[..<endFence.lowerBound])
-            }
-        }
-        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleaned.hasPrefix("{"),
-           let lo = cleaned.firstIndex(of: "{"),
-           let hi = cleaned.lastIndex(of: "}") {
-            cleaned = String(cleaned[lo...hi])
-        }
-        return cleaned.hasPrefix("{") && cleaned.hasSuffix("}") ? cleaned : nil
+        AIJSONExtractor.firstObjectString(from: raw)
     }
 
     private func writeAudit(

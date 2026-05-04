@@ -50,6 +50,30 @@ enum InboxStatus {
     case silenced
 }
 
+enum InboxSemanticState: String, Codable, Equatable {
+    case idle = "idle"
+    case syncIssue = "sync_issue"
+    case privateInfoOnly = "private_info_only"
+    case privateActionRequired = "private_action_required"
+    case privateVIPRisk = "private_vip_risk"
+    case groupInfoOnly = "group_info_only"
+    case groupMentionFYI = "group_mention_fyi"
+    case groupActionRequired = "group_action_required"
+    case groupDecisionOnly = "group_decision_only"
+    case replyOptional = "reply_optional"
+    case commitmentDue = "commitment_due"
+    case autopilotReview = "autopilot_review"
+    case aiLoading = "ai_loading"
+    case aiFailed = "ai_failed"
+    case handled = "handled"
+}
+
+enum ReplySuggestionMode: Equatable {
+    case hidden
+    case manual
+    case automatic
+}
+
 /// AI-generated briefing for an expanded inbox item.
 /// Contains situation analysis, recommended action, and reply suggestions.
 struct InboxBriefing: Decodable {
@@ -68,6 +92,141 @@ struct SuggestedReply: Decodable, Identifiable {
 }
 
 extension InboxItem {
+    var semanticState: InboxSemanticState {
+        if status != .active || replied || silenced {
+            return .handled
+        }
+
+        if isGroup {
+            if isAtMention {
+                return hasStoredGroupActionEvidence ? .groupActionRequired : .groupMentionFYI
+            }
+            return .groupInfoOnly
+        }
+
+        if isVIP {
+            return .privateVIPRisk
+        }
+        if actionRequired {
+            return .privateActionRequired
+        }
+        return .privateInfoOnly
+    }
+
+    var replySuggestionMode: ReplySuggestionMode {
+        switch semanticState {
+        case .privateActionRequired, .groupActionRequired:
+            return .automatic
+        case .privateVIPRisk:
+            return (isOverdue || priority != .p2 || actionRequired) ? .automatic : .manual
+        case .privateInfoOnly, .groupMentionFYI, .replyOptional:
+            return .manual
+        default:
+            return .hidden
+        }
+    }
+
+    var participatesInActionQueue: Bool {
+        switch semanticState {
+        case .privateActionRequired, .privateVIPRisk, .groupActionRequired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isAggregatablePassiveUpdate: Bool {
+        switch semanticState {
+        case .privateInfoOnly, .groupInfoOnly, .groupDecisionOnly, .replyOptional:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var surfacesInCompact: Bool {
+        participatesInActionQueue || (semanticState == .groupMentionFYI && (isVIP || priority != .p2))
+    }
+
+    var actionPanelTitle: String {
+        switch semanticState {
+        case .privateVIPRisk:
+            return isOverdue || priority == .p0 ? "需要尽快回复" : "重要联系人消息"
+        case .privateActionRequired:
+            return "他想要什么"
+        case .privateInfoOnly:
+            return "对话更新"
+        case .replyOptional:
+            return "可以回一句"
+        case .groupInfoOnly:
+            return "群里在聊什么"
+        case .groupMentionFYI:
+            return "为什么@你"
+        case .groupActionRequired:
+            return "需要你处理"
+        case .groupDecisionOnly:
+            return "已有决议"
+        case .commitmentDue:
+            return isOverdue ? "承诺已到期" : "承诺快到期"
+        case .autopilotReview:
+            return "托管待确认"
+        case .aiLoading:
+            return "AI 正在整理重点"
+        case .aiFailed:
+            return "分析暂不可用"
+        case .handled:
+            return "已处理"
+        case .idle, .syncIssue:
+            return ""
+        }
+    }
+
+    var primaryCTATitle: String {
+        switch semanticState {
+        case .privateActionRequired:
+            return "打开微信回复"
+        case .privateVIPRisk:
+            return "立即回复"
+        case .groupActionRequired:
+            return "打开群聊回复"
+        case .groupMentionFYI:
+            return "查看上下文"
+        case .groupInfoOnly:
+            return "打开群聊查看"
+        case .groupDecisionOnly:
+            return "打开查看"
+        case .replyOptional:
+            return "想回一句"
+        case .aiFailed, .aiLoading, .privateInfoOnly:
+            return "打开微信查看"
+        case .handled:
+            return "恢复"
+        case .idle, .syncIssue, .commitmentDue, .autopilotReview:
+            return "打开微信查看"
+        }
+    }
+
+    var automaticReplySuggestionsAllowed: Bool {
+        replySuggestionMode == .automatic
+    }
+
+    var replySuggestionButtonTitle: String {
+        switch replySuggestionMode {
+        case .automatic:
+            return "回复建议"
+        case .manual:
+            return semanticState == .replyOptional ? "想回一句" : "生成回复"
+        case .hidden:
+            return ""
+        }
+    }
+
+    private var hasStoredGroupActionEvidence: Bool {
+        guard actionRequired else { return false }
+        let actionCodes: Set<ReplyDebtReasonCode> = [.askSignal]
+        return reasons.contains { actionCodes.contains($0.code) }
+    }
+
     /// Convert to ReplyDebtItem for compatibility with ReplyDebtExpandedView.
     func toReplyDebtItem() -> ReplyDebtItem {
         ReplyDebtItem(
