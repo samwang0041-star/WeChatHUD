@@ -1711,11 +1711,13 @@ final class ChatMonitor: ObservableObject {
         }
 
         async let enrichedReport = dailyReportGenerator.enrich(baseReport)
-        async let freshInsights = dailyReportActionInsightGenerator.generate(
-            for: urgentActions, dateKey: dateKey
-        )
+        let aiConfig = await aiService.currentConfig()
+        let insightsTask: Task<[DailyReportActionInsight], Never>? = aiConfig.dailyReportActionInsightsEnabled
+            ? Task { await dailyReportActionInsightGenerator.generate(for: urgentActions, dateKey: dateKey) }
+            : nil
 
-        let (report, insights) = await (enrichedReport, freshInsights)
+        let report = await enrichedReport
+        let insights = await insightsTask?.value ?? []
 
         dailyReport = report
         dailyReportGeneratedAt = report.generatedAt
