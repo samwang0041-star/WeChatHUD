@@ -30,25 +30,52 @@ struct ContactsSettingsView: View {
 
 // MARK: - Contacts List
 
+private enum ContactLevelFilter: String, CaseIterable {
+    case all = "全部"
+    case vip = "VIP"
+    case whitelist = "白名单"
+    case greylist = "灰名单"
+
+    var level: AttentionLevel? {
+        switch self {
+        case .all: return nil
+        case .vip: return .vip
+        case .whitelist: return .whitelist
+        case .greylist: return .greylist
+        }
+    }
+}
+
 private struct ContactsListSubView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
 
     @State private var contacts: [ContactEntry] = []
     @State private var searchText = ""
+    @State private var selectedFilter: ContactLevelFilter = .all
+    @State private var selectedContactID: String?
     @State private var editingContact: ContactEntry?
     @State private var showAddPopover = false
     @State private var addSearchText = ""
     @State private var didLoad = false
-    @State private var batchInferring = false
-    @State private var batchProgress = ""
 
     private var filtered: [ContactEntry] {
-        guard !searchText.isEmpty else { return contacts }
-        return contacts.filter {
-            $0.displayName.localizedCaseInsensitiveContains(searchText)
-            || $0.role.label.localizedCaseInsensitiveContains(searchText)
+        contacts.filter { contact in
+            let matchesLevel = selectedFilter.level.map { contact.attentionLevel == $0 } ?? true
+            let matchesSearch = searchText.isEmpty
+                || contact.displayName.localizedCaseInsensitiveContains(searchText)
+                || contact.username.localizedCaseInsensitiveContains(searchText)
+                || contact.role.label.localizedCaseInsensitiveContains(searchText)
+                || contact.roleNote.localizedCaseInsensitiveContains(searchText)
+            return matchesLevel && matchesSearch
         }
+    }
+
+    private var selectedContact: ContactEntry? {
+        if let selectedContactID, let contact = contacts.first(where: { $0.username == selectedContactID }) {
+            return contact
+        }
+        return filtered.first
     }
 
     var body: some View {
@@ -61,34 +88,47 @@ private struct ContactsListSubView: View {
                     .font(.system(size: 12))
                     .frame(maxWidth: 200)
 
+                Picker("", selection: $selectedFilter) {
+                    ForEach(ContactLevelFilter.allCases, id: \.self) { filter in
+                        Text(filter.rawValue).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+                .onChange(of: selectedFilter) {
+                    if let selectedContactID,
+                       !filtered.contains(where: { $0.username == selectedContactID }) {
+                        self.selectedContactID = filtered.first?.username
+                    }
+                }
+
                 Spacer()
 
                 statsChips
+                if let status = monitor.contactInferenceStatus {
+                    aiJobChip(status)
+                }
 
                 Button {
-                    batchInferring = true
-                    batchProgress = "准备中…"
-                    Task {
-                        let count = await monitor.inferAllRelationships(contacts: contacts) { done, total in
-                            batchProgress = "\(done)/\(total)"
-                        }
-                        batchProgress = "完成 \(count) 个"
-                        batchInferring = false
-                    }
+                    monitor.startContactInference(contacts: contacts)
                 } label: {
-                    if batchInferring {
-                        HStack(spacing: 3) {
-                            ProgressView().controlSize(.mini)
-                            Text(batchProgress).font(.system(size: 10))
-                        }
-                    } else {
-                        Image(systemName: "sparkles")
-                    }
+                    Image(systemName: "sparkles")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(batchInferring)
-                .help("批量推断关系画像")
+                .disabled(monitor.contactInferenceStatus?.isRunning == true)
+                .help("后台批量推断关系画像")
+
+                if monitor.contactInferenceStatus?.isRunning == true {
+                    Button {
+                        monitor.cancelContactInference()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("停止后台分析")
+                }
 
                 Button {
                     addSearchText = ""
@@ -103,13 +143,39 @@ private struct ContactsListSubView: View {
                 }
             }
 
-            // List
-            List {
-                contactGroup(level: .vip, title: "VIP", color: .yellow)
-                contactGroup(level: .whitelist, title: "白名单", color: .blue)
-                contactGroup(level: .greylist, title: "灰名单", color: .gray)
+            HSplitView {
+                List {
+                    if filtered.isEmpty {
+                        emptyState(icon: "person.crop.circle.badge.questionmark", text: "没有匹配联系人", hint: "换个关键词或级别筛选")
+                            .listRowSeparator(.hidden)
+                    } else {
+                        contactGroup(level: .vip, title: "VIP", color: .yellow)
+                        contactGroup(level: .whitelist, title: "白名单", color: .blue)
+                        contactGroup(level: .greylist, title: "灰名单", color: .gray)
+                    }
+                }
+                .listStyle(.inset(alternatesRowBackgrounds: true))
+                .frame(minWidth: 360, idealWidth: 430, maxWidth: 560, maxHeight: .infinity)
+
+                ContactInspectorView(
+                    contact: selectedContact,
+                    whitelistEntry: selectedContact.flatMap { store.getWhitelistEntry(username: $0.username) },
+                    profile: selectedContact.flatMap { store.getRelationshipProfile(username: $0.username) },
+                    inferenceStatus: monitor.contactInferenceStatus,
+                    onEdit: { editingContact = $0 },
+                    onInfer: { monitor.startContactInference(contacts: [$0]) },
+                    onChangeLevel: { contact, level in
+                        saveContact(contact, level: level)
+                        reload()
+                    },
+                    onDelete: { contact in
+                        try? store.deleteContactAndTracking(username: contact.username)
+                        selectedContactID = nil
+                        reload()
+                    }
+                )
+                .frame(minWidth: 280, idealWidth: 340, maxWidth: 420, maxHeight: .infinity)
             }
-            .listStyle(.inset(alternatesRowBackgrounds: true))
             .frame(maxHeight: .infinity)
         }
         .onAppear { if !didLoad { reload(); didLoad = true } }
@@ -139,6 +205,27 @@ private struct ContactsListSubView: View {
         .font(.system(size: 10, weight: .medium))
         .foregroundColor(.secondary)
         .help("\(count) \(label)")
+    }
+
+    private func aiJobChip(_ status: ContactInferenceStatus) -> some View {
+        HStack(spacing: 4) {
+            if status.isRunning {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+            }
+            Text(status.label)
+                .monospacedDigit()
+        }
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(status.isRunning ? .blue : .secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(5)
+        .help(status.isRunning ? "AI 正在后台生成关系画像，可继续操作联系人" : "上次后台分析结果")
     }
 
     // MARK: - Add contact popover
@@ -180,10 +267,15 @@ private struct ContactsListSubView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(available.prefix(50)), id: \.key) { username, name in
                             Button {
-                                try? store.upsertContact(
-                                    username: username, displayName: name,
-                                    attentionLevel: .whitelist, role: .colleague,
-                                    roleNote: "", replyWindowMinutes: ContactRole.colleague.defaultReplyWindowMinutes
+                                try? store.saveContactTracking(
+                                    username: username,
+                                    displayName: name,
+                                    isGroup: false,
+                                    category: .work,
+                                    attentionLevel: .whitelist,
+                                    role: .colleague,
+                                    roleNote: "",
+                                    replyWindowMinutes: ContactRole.colleague.defaultReplyWindowMinutes
                                 )
                                 reload()
                                 showAddPopover = false
@@ -232,7 +324,8 @@ private struct ContactsListSubView: View {
     }
 
     private func contactRow(_ contact: ContactEntry, color: Color) -> some View {
-        Button { editingContact = contact } label: {
+        let isSelected = selectedContactID == contact.username
+        return Button { selectedContactID = contact.username } label: {
             HStack(spacing: 8) {
                 Text(contact.role.icon).font(.system(size: 14))
                 VStack(alignment: .leading, spacing: 1) {
@@ -254,15 +347,23 @@ private struct ContactsListSubView: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(Color(nsColor: .tertiaryLabelColor))
             }
-            .padding(.vertical, 2).contentShape(Rectangle())
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+            .cornerRadius(6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button("编辑") {
+                editingContact = contact
+            }
+            Divider()
             Menu("变更级别") {
                 ForEach([AttentionLevel.vip, .whitelist, .greylist], id: \.self) { level in
                     if level != contact.attentionLevel {
                         Button(level.label) {
-                            try? store.updateContactLevel(username: contact.username, level: level, role: contact.role)
+                            saveContact(contact, level: level)
                             reload()
                         }
                     }
@@ -270,13 +371,235 @@ private struct ContactsListSubView: View {
             }
             Divider()
             Button("删除", role: .destructive) {
-                try? store.deleteContact(username: contact.username)
+                try? store.deleteContactAndTracking(username: contact.username)
                 reload()
             }
         }
     }
 
-    private func reload() { contacts = store.loadContacts(level: nil) }
+    private func saveContact(_ contact: ContactEntry, level: AttentionLevel) {
+        let whitelistEntry = store.getWhitelistEntry(username: contact.username)
+        try? store.saveContactTracking(
+            username: contact.username,
+            displayName: contact.displayName,
+            isGroup: whitelistEntry?.isGroup ?? contact.username.contains("@chatroom"),
+            category: whitelistEntry?.category ?? whitelistCategory(for: contact.role),
+            attentionLevel: level,
+            role: contact.role,
+            roleNote: contact.roleNote,
+            replyWindowMinutes: contact.replyWindowMinutes
+        )
+    }
+
+    private func reload() {
+        contacts = store.loadContacts(level: nil)
+        if selectedContactID == nil {
+            selectedContactID = filtered.first?.username
+        } else if let selectedContactID, !contacts.contains(where: { $0.username == selectedContactID }) {
+            self.selectedContactID = filtered.first?.username
+        }
+    }
+}
+
+private struct ContactInspectorView: View {
+    let contact: ContactEntry?
+    let whitelistEntry: WhitelistEntry?
+    let profile: RelationshipProfile?
+    let inferenceStatus: ContactInferenceStatus?
+    let onEdit: (ContactEntry) -> Void
+    let onInfer: (ContactEntry) -> Void
+    let onChangeLevel: (ContactEntry, AttentionLevel) -> Void
+    let onDelete: (ContactEntry) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let contact {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        header(contact)
+                        Divider()
+                        trackingSection(contact)
+                        Divider()
+                        aiProfileSection(contact)
+                        Divider()
+                        operationsSection(contact)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                emptyState(icon: "person.text.rectangle", text: "选择一个联系人", hint: "查看追踪状态、关系画像和回复策略")
+            }
+        }
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.35))
+    }
+
+    private func header(_ contact: ContactEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(contact.role.icon)
+                    .font(.system(size: 28))
+                    .frame(width: 36, height: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(contact.displayName)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Text(contact.username)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                levelBadge(contact.attentionLevel)
+            }
+
+            if !contact.roleNote.isEmpty {
+                Text(contact.roleNote)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private func trackingSection(_ contact: ContactEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("追踪策略", systemImage: "scope")
+            infoRow("状态", value: whitelistEntry == nil ? "不进入扫描队列" : "进入扫描队列")
+            infoRow("分类", value: whitelistEntry?.category.label ?? whitelistCategory(for: contact.role).label)
+            infoRow("回复窗口", value: contact.replyWindowMinutes > 0 ? "\(contact.replyWindowMinutes) 分钟" : "不追踪回复债务")
+            infoRow("角色", value: contact.role.label)
+            Text(trackingReason(contact))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func aiProfileSection(_ contact: ContactEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                sectionTitle("AI 关系画像", systemImage: "sparkles")
+                Spacer()
+                Button {
+                    onInfer(contact)
+                } label: {
+                    if inferenceStatus?.isRunning == true {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(inferenceStatus?.isRunning == true)
+                .help("后台重新推断这个联系人")
+            }
+
+            if let profile {
+                infoRow("关系", value: profile.relationship)
+                infoRow("层级", value: profile.hierarchy.label)
+                infoRow("口吻", value: profile.tonePreference.label)
+                if let context = profile.context, !context.isEmpty {
+                    Text(context)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    ProgressView(value: profile.confidence)
+                        .frame(width: 90)
+                    Text("\(Int(profile.confidence * 100))%")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    if profile.userEdited {
+                        Text("已人工校准")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.green)
+                    }
+                }
+            } else {
+                Text("还没有画像。点击右上角按钮后会在后台分析，不影响继续操作。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func operationsSection(_ contact: ContactEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("操作", systemImage: "slider.horizontal.3")
+            Picker("", selection: Binding(
+                get: { contact.attentionLevel },
+                set: { onChangeLevel(contact, $0) }
+            )) {
+                Text("VIP").tag(AttentionLevel.vip)
+                Text("白名单").tag(AttentionLevel.whitelist)
+                Text("灰名单").tag(AttentionLevel.greylist)
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 8) {
+                Button("编辑详情") { onEdit(contact) }
+                    .controlSize(.small)
+                Button("删除", role: .destructive) { onDelete(contact) }
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func sectionTitle(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
+    }
+
+    private func infoRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func levelBadge(_ level: AttentionLevel) -> some View {
+        Text(level.label)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(levelColor(level))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(levelColor(level).opacity(0.12))
+            .cornerRadius(5)
+    }
+
+    private func levelColor(_ level: AttentionLevel) -> Color {
+        switch level {
+        case .vip: return .yellow
+        case .whitelist: return .blue
+        case .greylist: return .gray
+        case .stranger: return .secondary
+        }
+    }
+
+    private func trackingReason(_ contact: ContactEntry) -> String {
+        switch contact.attentionLevel {
+        case .vip:
+            return "高优先级联系人，会参与未读提醒、回复债务、VIP 洞察和主动提醒。"
+        case .whitelist:
+            return "常规关注联系人，会参与未读整理、回复建议和上下文分析。"
+        case .greylist:
+            return "保留关系画像，但不进入扫描队列，适合低频或暂时不想被打扰的人。"
+        case .stranger:
+            return "未纳入托管策略。"
+        }
+    }
 }
 
 // MARK: - Block Rules
@@ -540,10 +863,16 @@ struct ContactEditSheet: View {
     }
 
     private func save() {
-        try? store.upsertContact(
-            username: contact.username, displayName: contact.displayName,
-            attentionLevel: selectedLevel, role: selectedRole,
-            roleNote: roleNote, replyWindowMinutes: replyWindow
+        let whitelistEntry = store.getWhitelistEntry(username: contact.username)
+        try? store.saveContactTracking(
+            username: contact.username,
+            displayName: contact.displayName,
+            isGroup: whitelistEntry?.isGroup ?? contact.username.contains("@chatroom"),
+            category: whitelistEntry?.category ?? whitelistCategory(for: selectedRole),
+            attentionLevel: selectedLevel,
+            role: selectedRole,
+            roleNote: roleNote,
+            replyWindowMinutes: replyWindow
         )
         if relProfile != nil {
             try? store.updateRelationshipProfileUserFields(
@@ -570,5 +899,16 @@ struct ContactEditSheet: View {
         case .greylist:  return [.acquaintance, .groupOnly, .service]
         case .stranger:  return []
         }
+    }
+}
+
+private func whitelistCategory(for role: ContactRole) -> WhitelistCategory {
+    switch role {
+    case .family, .friend:
+        return .life
+    case .acquaintance, .groupOnly, .service:
+        return .other
+    case .boss, .keyClient, .partner, .colleague, .client, .supplier:
+        return .work
     }
 }

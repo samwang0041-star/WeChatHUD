@@ -49,6 +49,7 @@ struct InboxContext {
     // 8. Media content
     let mediaType: MediaContentType?
     let mediaFilePath: String?
+    let mediaAnalysisText: String?
     let mediaContextMessages: [MessageInfo]
 
     // 9. Link content (baseType=49)

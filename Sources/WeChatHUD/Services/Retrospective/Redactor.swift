@@ -17,8 +17,6 @@ actor Redactor {
     private var displayNameByCodename: [String: String] = [:]
     private var nextIndex = 1
 
-    nonisolated init() {}
-
     /// Returns the codename for `username`, creating one if first seen.
     /// Same username → same codename for the lifetime of this Redactor.
     func codenameFor(username: String, displayName: String) -> String {

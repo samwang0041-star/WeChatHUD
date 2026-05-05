@@ -12,6 +12,7 @@ struct ChatInsightDetailView: View {
     @Binding var selectedDate: Date
 
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var insightCoordinator: InsightCoordinator
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,7 +65,7 @@ struct ChatInsightDetailView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
-            } else if monitor.insightLoading {
+            } else if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -86,24 +87,40 @@ struct ChatInsightDetailView: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "M月d日 EEEE"
         fmt.locale = Locale(identifier: "zh_CN")
-        return fmt.string(from: selectedDate)
+        let dateStr = fmt.string(from: selectedDate)
+
+        let cal = Calendar.current
+        if cal.isDateInToday(selectedDate) {
+            return "分析今天 (\(dateStr))"
+        } else if cal.isDateInYesterday(selectedDate) {
+            return "分析昨天 (\(dateStr))"
+        } else {
+            return "分析 \(dateStr)"
+        }
     }
 
     // MARK: - Loading
 
     private var loadingState: some View {
         VStack(spacing: 12) {
-            if monitor.insightLoading {
+            if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                 ProgressView()
                     .controlSize(.regular)
-                Text(monitor.insightProgress.isEmpty ? "正在分析..." : monitor.insightProgress)
+                Text("正在分析 \(dateLabel)…")
                     .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            } else if let error = insightCoordinator.chatInsightErrors[chatUsername] {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 28))
+                    .foregroundColor(.orange.opacity(0.7))
+                Text(error)
+                    .font(.system(size: 13))
                     .foregroundColor(.secondary)
             } else {
                 Image(systemName: "sparkles")
                     .font(.system(size: 28))
                     .foregroundColor(.orange.opacity(0.4))
-                Text("正在准备分析...")
+                Text("选择日期开始 AI 分析")
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
             }
@@ -326,15 +343,19 @@ struct ChatInsightDetailView: View {
 
                     // Waiting for AI
                     HStack(spacing: 8) {
-                        if monitor.insightLoading {
+            if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                             ProgressView()
                                 .controlSize(.small)
+                        } else if insightCoordinator.chatInsightErrors[chatUsername] != nil {
+                            Image(systemName: "exclamationmark.circle")
+                                .font(.system(size: 12))
+                                .foregroundColor(.orange)
                         } else {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 12))
                                 .foregroundColor(.orange)
                         }
-                        Text("AI 深度分析将在完成后显示更多洞察")
+                        Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "AI 分析完成前只显示基础统计")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
                     }

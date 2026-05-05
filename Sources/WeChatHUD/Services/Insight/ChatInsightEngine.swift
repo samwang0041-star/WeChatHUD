@@ -1,6 +1,6 @@
 import Foundation
 
-enum ChatInsightEngine {
+enum ChatStatsEngine {
 
     static func computeStats(
         messages: [MessageInfo],
@@ -322,7 +322,6 @@ enum ChatInsightEngine {
         else { boundaryScore = max(0, 100 - Int(Double(workAfterHours) / Double(max(workCount, 1)) * 100)) }
 
         // D6: Influence
-        let contactMap = Dictionary(uniqueKeysWithValues: contacts.map { ($0.username, $0) })
         let profileMap = Dictionary(uniqueKeysWithValues: contacts.compactMap { c -> (String, RelationshipProfile.Hierarchy)? in
             // Use role to infer hierarchy
             switch c.role {
@@ -426,3 +425,6 @@ enum ChatInsightEngine {
             + (hasActionForMe ? 500 : 0)
     }
 }
+
+// Backward-compatible alias for existing references across the codebase.
+typealias ChatInsightEngine = ChatStatsEngine

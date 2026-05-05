@@ -13,6 +13,7 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(config.maxRepliesPerHour, 20)
         XCTAssertFalse(config.handleGroupAt)
         XCTAssertTrue(config.vipAutoNotify)
+        XCTAssertFalse(config.autoSendEnabled)
     }
 
     func testDefaultSensitiveKeywordsContainFinancialTerms() {
@@ -93,6 +94,7 @@ final class AutopilotSafetyTests: XCTestCase {
         config.maxSendsPerSession = 100
         config.sensitiveKeywords = ["custom"]
         config.confidenceThreshold = 0.9
+        config.autoSendEnabled = true
 
         let data = try JSONEncoder().encode(config)
         let decoded = try JSONDecoder().decode(AutopilotConfig.self, from: data)
@@ -100,6 +102,7 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(decoded.maxSendsPerSession, 100)
         XCTAssertEqual(decoded.sensitiveKeywords, ["custom"])
         XCTAssertEqual(decoded.confidenceThreshold, 0.9)
+        XCTAssertTrue(decoded.autoSendEnabled)
     }
 
     // MARK: - AutopilotAction and AutopilotRisk enums
@@ -107,6 +110,7 @@ final class AutopilotSafetyTests: XCTestCase {
     func testAutopilotActionRawValues() {
         XCTAssertEqual(AutopilotAction.sent.rawValue, "sent")
         XCTAssertEqual(AutopilotAction.pending.rawValue, "pending")
+        XCTAssertEqual(AutopilotAction.queued.rawValue, "queued")
         XCTAssertEqual(AutopilotAction.skipped.rawValue, "skipped")
         XCTAssertEqual(AutopilotAction.vipNotified.rawValue, "vipNotified")
         XCTAssertEqual(AutopilotAction.failed.rawValue, "failed")
@@ -117,6 +121,63 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(AutopilotRisk.low.rawValue, "low")
         XCTAssertEqual(AutopilotRisk.medium.rawValue, "medium")
         XCTAssertEqual(AutopilotRisk.high.rawValue, "high")
+    }
+
+    func testUnknownAutopilotActionForcesPending() throws {
+        let json = """
+        {"action":"something_else","reply":"我直接答应","confidence":0.95,"risk":"low","reasoning":"bad mixed schema","pending":false}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.action, "something_else")
+        XCTAssertEqual(decision.pending, true)
+        XCTAssertEqual(decision.skip, false)
+        XCTAssertEqual(decision.readNoReply, false)
+    }
+
+    func testAutopilotActionPendingOverridesLegacyFalse() throws {
+        let json = """
+        {"action":"pending","reply":"我直接答应","confidence":0.95,"risk":"low","reasoning":"bad mixed schema","pending":false}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.pending, true)
+        XCTAssertEqual(decision.skip, false)
+        XCTAssertEqual(decision.readNoReply, false)
+    }
+
+    func testAutopilotActionSkipOverridesLegacyFalse() throws {
+        let json = """
+        {"action":"skip","reply":"我直接答应","confidence":0.95,"risk":"low","reasoning":"bad mixed schema","skip":false}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.pending, false)
+        XCTAssertEqual(decision.skip, true)
+        XCTAssertEqual(decision.readNoReply, false)
+    }
+
+    func testAutopilotActionReadNoReplyOverridesLegacyFalse() throws {
+        let json = """
+        {"action":"read_no_reply","reply":"我直接答应","confidence":0.95,"risk":"low","reasoning":"bad mixed schema","read_no_reply":false}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.pending, false)
+        XCTAssertEqual(decision.skip, false)
+        XCTAssertEqual(decision.readNoReply, true)
+    }
+
+    func testAutopilotRiskNormalizesCaseAndWhitespace() throws {
+        let json = """
+        {"action":"send","reply":"收到","confidence":0.95,"risk":" High ","reasoning":"case variant"}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.risk, "high")
+    }
+
+    func testUnknownAutopilotRiskFailsClosedHigh() throws {
+        let json = """
+        {"action":"send","reply":"收到","confidence":0.95,"risk":"safe","reasoning":"bad risk"}
+        """
+        let decision = try JSONDecoder().decode(AutoReplyGenerator.Decision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.risk, "high")
     }
 
     // MARK: - AutopilotReplyStyle

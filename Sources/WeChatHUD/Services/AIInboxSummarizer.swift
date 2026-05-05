@@ -31,6 +31,12 @@ actor AIInboxSummarizer {
     func summarize(_ context: InboxContext) async -> String? {
         guard await aiService.currentConfig().summaryEnabled else { return nil }
         let started = Date()
+        if context.mediaType == nil,
+           !MessageHelpers.isReadableAIContent(context.triggerMessageText, allowMediaPlaceholder: false) {
+            let summary = "暂无可读内容"
+            await audit(input: context.triggerMessageText, output: summary, latencyMs: 0, status: .ok, error: nil, model: nil)
+            return summary
+        }
 
         let template: String
         do {
@@ -64,7 +70,7 @@ actor AIInboxSummarizer {
             .replacingOccurrences(of: "{sender_role}", with: context.senderRole.rawValue)
             .replacingOccurrences(of: "{chat_name}", with: context.triggerMessage.chatName)
             .replacingOccurrences(of: "{chat_kind}", with: context.isGroupChat ? "群聊" : "私聊")
-            .replacingOccurrences(of: "{message_body}", with: AIService.sanitizeForAI(context.triggerMessageText))
+            .replacingOccurrences(of: "{message_body}", with: renderMessageBody(context))
             .replacingOccurrences(of: "{context_messages}", with: AIService.sanitizeForAI(contextStr))
             .replacingOccurrences(of: "{my_last_reply}", with: AIService.sanitizeForAI(context.myLastReplyText ?? "无"))
 
@@ -72,15 +78,16 @@ actor AIInboxSummarizer {
         let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
 
         if let text = result.text, !text.isEmpty {
-            // Clean: remove quotes, trim, cap at 30 chars
+            // Clean: remove quotes, trim, cap at 25 chars to match prompt.
             let cleaned = text
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\"", with: "")
                 .replacingOccurrences(of: "\u{201C}", with: "")
                 .replacingOccurrences(of: "\u{201D}", with: "")
-            let summary = String(cleaned.prefix(30))
-            await audit(input: context.triggerMessageText, output: summary, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
-            return summary
+            let summary = String(cleaned.prefix(25))
+            let finalSummary = replacementForOverGenericSummary(summary, context: context) ?? summary
+            await audit(input: context.triggerMessageText, output: finalSummary, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
+            return finalSummary
         }
 
         await audit(
@@ -116,6 +123,88 @@ actor AIInboxSummarizer {
             return CallResult(text: result.text, error: nil, model: result.model)
         } catch {
             return CallResult(text: nil, error: error.localizedDescription, model: nil)
+        }
+    }
+
+    private func renderMessageBody(_ context: InboxContext) -> String {
+        let sanitized = AIService.sanitizeForAI(context.triggerMessageText)
+        if let mediaType = context.mediaType, isMediaPlaceholder(sanitized) {
+            return renderMediaBody(mediaType, context: context)
+        }
+        if MessageHelpers.isReadableAIContent(sanitized, allowMediaPlaceholder: false) {
+            return sanitized
+        }
+        guard let mediaType = context.mediaType else { return "发来一条消息要你看" }
+        return renderMediaBody(mediaType, context: context)
+    }
+
+    private func renderMediaBody(_ mediaType: MediaContentType, context: InboxContext) -> String {
+        switch mediaType {
+        case .image:
+            if let mediaAnalysis = context.mediaAnalysisText, !mediaAnalysis.isEmpty {
+                return "发来一张图片。\n\(AIService.sanitizeForAI(mediaAnalysis))"
+            }
+            return "发来一张图片"
+        case .voice: return "发来一段语音"
+        case .video: return "发来一段视频"
+        case .file: return "发来一个文件"
+        case .link:
+            if let title = context.linkTitle, !title.isEmpty {
+                return "分享链接: \(title)"
+            }
+            return "分享了一个链接"
+        case .sticker: return "发来一个表情"
+        case .location: return "发来一个位置"
+        }
+    }
+
+    private func isMediaPlaceholder(_ text: String) -> Bool {
+        ["[图片]", "[语音]", "[视频]", "[文件]", "[表情]", "[动画表情]", "[位置]"].contains(text)
+    }
+
+    private func replacementForOverGenericSummary(_ summary: String, context: InboxContext) -> String? {
+        let normalized = summary
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "，", with: "")
+            .replacingOccurrences(of: "。", with: "")
+        let generic: Set<String> = [
+            "发来一条消息要你看",
+            "发来一条消息",
+            "发来一条信息",
+            "发来一条状态消息",
+            "发来消息"
+        ]
+        guard generic.contains(normalized) else { return nil }
+        return deterministicFallbackSummary(context)
+    }
+
+    private func deterministicFallbackSummary(_ context: InboxContext) -> String? {
+        let text = AIService.sanitizeForAI(context.triggerMessageText)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if MessageHelpers.isReadableAIContent(text, allowMediaPlaceholder: false), !isMediaPlaceholder(text) {
+            return String(text.prefix(25))
+        }
+
+        guard let mediaType = context.mediaType else { return nil }
+        switch mediaType {
+        case .image:
+            if let analysis = context.mediaAnalysisText,
+               let ocrText = analysis.split(separator: "：").last,
+               !ocrText.isEmpty,
+               !analysis.contains("不能判断图片具体内容") {
+                return String("图片文字: \(ocrText)".prefix(25))
+            }
+            return "发来一张图片"
+        case .voice: return "发来一段语音"
+        case .video: return "发来一段视频"
+        case .file: return "发来一个文件"
+        case .link:
+            if let title = context.linkTitle, !title.isEmpty {
+                return String("分享链接: \(title)".prefix(25))
+            }
+            return "分享了一个链接"
+        case .sticker: return "发来一个表情"
+        case .location: return "发来一个位置"
         }
     }
 

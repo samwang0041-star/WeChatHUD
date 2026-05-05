@@ -74,6 +74,47 @@ final class CommitmentTrackerTests: XCTestCase {
         XCTAssertEqual(audit.model, "actual-provider-model")
     }
 
+    func testAnalyzeParsesProductizedMemoryFields() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: """
+            {
+              "is_commitment": true,
+              "content": "明天把深圳演唱会身份证信息发给朋友",
+              "commit_to": "朋友",
+              "deadline_extracted": "tomorrow",
+              "deadline_label": "明天前",
+              "commitment_kind": "deliverable",
+              "source_text": "好，我明天把身份证信息发你",
+              "context_summary": "朋友问是否一起去演唱会并需要身份证买票",
+              "capture_reason": "用户明确答应明天发送购票信息",
+              "next_step": "把身份证信息发给朋友确认购票",
+              "confidence": 0.94
+            }
+            """,
+            model: "actual-provider-model"
+        )
+
+        let tracker = CommitmentTracker(store: store, aiService: makeAIService())
+        let result = await tracker.analyze(
+            yourMessage: MessageInfo(
+                id: "m2", chatUsername: "chat1", chatName: "朋友",
+                senderUsername: "me", senderName: "我",
+                text: "好，我明天把身份证信息发你",
+                baseType: 1, subType: 0, createTime: Int(Date().timeIntervalSince1970)
+            ),
+            contextMessages: [],
+            recipientName: "朋友",
+            recipientRole: .friend
+        )
+
+        XCTAssertEqual(result?.content, "明天把深圳演唱会身份证信息发给朋友")
+        XCTAssertEqual(result?.sourceText, "好，我明天把身份证信息发你")
+        XCTAssertEqual(result?.contextText, "朋友问是否一起去演唱会并需要身份证买票")
+        XCTAssertEqual(result?.nextStep, "把身份证信息发给朋友确认购票")
+        XCTAssertEqual(result?.deadlineLabel, "明天前")
+        XCTAssertEqual(result?.commitmentKind, "deliverable")
+    }
+
     private func makeAIService() -> AIService {
         var cfg = AIConfig()
         cfg.cloudProvider = AIProviderSlot(

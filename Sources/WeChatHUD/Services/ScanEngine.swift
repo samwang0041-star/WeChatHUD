@@ -35,7 +35,8 @@ enum ScanEngine {
         thresholds: UnreadThresholds,
         replyDebtConfig: ReplyDebtConfig,
         currentRecent: [HUDNotification],
-        recentLimit: Int
+        recentLimit: Int,
+        autopilotActive: Bool
     ) async -> ScanOutcome? {
         do {
             try reader.loadKeys()
@@ -234,7 +235,7 @@ enum ScanEngine {
                     )
                 } catch { continue }
 
-                let currentMaxTime = messages.first?.createTime ?? 0
+                let currentCursor = messages.first.map { ($0.createTime, $0.localId) } ?? (0, 0)
 
                 // Resolve the baseline for "what's new since last scan".
                 // If no baseline is stored (first scan for this chat —
@@ -244,12 +245,12 @@ enum ScanEngine {
                 // there are unread messages would silently swallow
                 // them: we'd seed to the newest message time and none
                 // of the backlog would pass the `> baseline` filter.
-                let baseline: Int
-                if let existing = store.getWhitelistBaseline(username: entry.id) {
+                let baseline: (lastCreateTime: Int, lastLocalId: Int)
+                if let existing = store.getWhitelistCursor(username: entry.id) {
                     baseline = existing
                 } else {
                     let unreadCount = sessionMap[entry.id]?.unreadCount ?? 0
-                    let seed: Int
+                    let seed: (lastCreateTime: Int, lastLocalId: Int)
                     if unreadCount > 0 && !messages.isEmpty {
                         // Messages are newest-first. The N unread ones
                         // sit at indices 0..<unreadCount (capped to
@@ -258,17 +259,25 @@ enum ScanEngine {
                         // `> baseline` filter picks up exactly those N,
                         // not N+1 (including the first *read* message).
                         let lastUnreadIdx = min(unreadCount, messages.count) - 1
-                        seed = max(0, messages[lastUnreadIdx].createTime - 1)
-                    } else if currentMaxTime > 0 {
-                        seed = currentMaxTime
+                        let oldestUnread = messages[lastUnreadIdx]
+                        seed = (oldestUnread.createTime, max(0, oldestUnread.localId - 1))
+                    } else if currentCursor.0 > 0 {
+                        seed = currentCursor
                     } else {
-                        seed = Int(Date().timeIntervalSince1970)
+                        seed = (Int(Date().timeIntervalSince1970), 0)
                     }
-                    try? store.setWhitelistBaseline(username: entry.id, lastCreateTime: seed)
+                    try? store.setWhitelistCursor(
+                        username: entry.id,
+                        lastCreateTime: seed.lastCreateTime,
+                        lastLocalId: seed.lastLocalId
+                    )
                     baseline = seed
                 }
 
-                let newMessages = messages.filter { $0.createTime > baseline }
+                let newMessages = messages.filter {
+                    $0.createTime > baseline.lastCreateTime
+                        || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                }
 
                 for msg in newMessages {
                     // Collect self messages for commitment tracking BEFORE skipping
@@ -352,7 +361,7 @@ enum ScanEngine {
                         } else {
                             level = contact?.attentionLevel ?? .whitelist
                         }
-                        autopilotInbound.append(AutopilotService.InboundMessage(
+                        let inbound = AutopilotService.InboundMessage(
                             msgUID: msg.id,
                             chatUsername: msg.chatUsername,
                             chatName: msg.chatName,
@@ -366,7 +375,11 @@ enum ScanEngine {
                             timestamp: msg.createTime,
                             messageType: msg.baseType,
                             appType: msg.appType
-                        ))
+                        )
+                        if autopilotActive {
+                            try? store.enqueueAutopilotInbound(inbound)
+                        }
+                        autopilotInbound.append(inbound)
                     }
 
                     // Collect VIP traces for VIPAggregator
@@ -412,10 +425,12 @@ enum ScanEngine {
                     ))
                 }
 
-                if currentMaxTime > baseline {
-                    try? store.setWhitelistBaseline(
+                if currentCursor.0 > baseline.lastCreateTime
+                    || (currentCursor.0 == baseline.lastCreateTime && currentCursor.1 > baseline.lastLocalId) {
+                    try? store.setWhitelistCursor(
                         username: entry.id,
-                        lastCreateTime: currentMaxTime
+                        lastCreateTime: currentCursor.0,
+                        lastLocalId: currentCursor.1
                     )
                 }
             }
@@ -451,19 +466,29 @@ enum ScanEngine {
                         messages = try reader.getMessages(chatUsername: session.username, limit: 20, sinceLocalId: nil)
                     } catch { continue }
 
-                    guard let baseline = store.getWhitelistBaseline(username: session.username) else {
-                        let seed = messages.first?.createTime ?? Int(Date().timeIntervalSince1970)
-                        try? store.setWhitelistBaseline(username: session.username, lastCreateTime: seed)
+                    guard let baseline = store.getAutopilotCursor(username: session.username) else {
+                        let seed = messages.first.map { ($0.createTime, $0.localId) }
+                            ?? (Int(Date().timeIntervalSince1970), 0)
+                        try? store.setAutopilotCursor(
+                            username: session.username,
+                            lastCreateTime: seed.0,
+                            lastLocalId: seed.1
+                        )
                         continue
                     }
 
-                    let newMessages = messages.filter { $0.createTime > baseline }
+                    let newMessages = messages.filter {
+                        $0.createTime > baseline.lastCreateTime
+                            || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                    }
                     for msg in newMessages {
                         if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
-                        let contact = store.getContact(username: msg.senderUsername)
-                        let level: AttentionLevel = contact?.attentionLevel ?? .greylist
-                        // Strangers (no contact record, no greylist) are skipped
-                        autopilotInbound.append(AutopilotService.InboundMessage(
+                        guard let contact = store.getContact(username: msg.senderUsername) else {
+                            continue
+                        }
+                        let level: AttentionLevel = contact.attentionLevel
+                        // Strangers (no contact record, no greylist) are skipped.
+                        let inbound = AutopilotService.InboundMessage(
                             msgUID: msg.id,
                             chatUsername: msg.chatUsername,
                             chatName: msg.chatName,
@@ -473,16 +498,26 @@ enum ScanEngine {
                             isGroup: false,
                             isAtMention: false,
                             attentionLevel: level,
-                            contactRole: contact?.role ?? .acquaintance,
+                            contactRole: contact.role,
                             timestamp: msg.createTime,
                             messageType: msg.baseType,
                             appType: msg.appType
-                        ))
+                        )
+                        if autopilotActive {
+                            try? store.enqueueAutopilotInbound(inbound)
+                        }
+                        autopilotInbound.append(inbound)
                     }
 
                     // Update baseline
-                    if let maxTime = newMessages.first?.createTime, maxTime > baseline {
-                        try? store.setWhitelistBaseline(username: session.username, lastCreateTime: maxTime)
+                    if let newest = newMessages.first,
+                       newest.createTime > baseline.lastCreateTime
+                        || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
+                        try? store.setAutopilotCursor(
+                            username: session.username,
+                            lastCreateTime: newest.createTime,
+                            lastLocalId: newest.localId
+                        )
                     }
                 }
             }
@@ -596,7 +631,7 @@ enum ScanEngine {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
                     !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
                         && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
-                        && $0.createTime > outbound.createTime
+                        && MessageHelpers.isAfter($0, outbound)
                 }.count
             } else {
                 inboundCountSinceLastOutbound = recentMsgs.filter {

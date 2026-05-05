@@ -76,7 +76,8 @@ enum ReplyDebtScorer {
             guard seed.session.isGroup && seed.isAtMention else { return nil }
         }
         guard let latestInbound = seed.latestInbound else { return nil }
-        if let latestOutbound = seed.latestOutbound, latestOutbound.createTime >= latestInbound.createTime {
+        if let latestOutbound = seed.latestOutbound,
+           MessageHelpers.isSameOrAfter(latestOutbound, latestInbound) {
             // User "replied" but — did they actually answer? If the
             // inbound was substantive (money / specific time /
             // decision ask / commitment ref) and the reply was an
@@ -103,14 +104,31 @@ enum ReplyDebtScorer {
             if gap > 0 && isAckMessage(latestInbound.text) { return nil }
         }
 
+        let text = latestInbound.text
+        let hasUrgentKeyword = urgentKeywords.contains { text.localizedCaseInsensitiveContains($0) }
+        let hasAskSignal = askSignals.contains { text.contains($0) }
+        let hasRepeatedInbound = seed.inboundCountSinceLastOutbound >= 2
+
         // Conversation naturally ended: if both sides are silent for a long time
         // after the last inbound, the conversation is done — no debt.
         let nowTs = Int(seed.now.timeIntervalSince1970)
         let silenceSinceInbound = nowTs - latestInbound.createTime
-        if let latestOutbound = seed.latestOutbound, latestOutbound.createTime < latestInbound.createTime {
+        if let latestOutbound = seed.latestOutbound,
+           MessageHelpers.isAfter(latestInbound, latestOutbound) {
             // User replied earlier, counterpart followed up, then silence.
-            // If silence > 2h, conversation is naturally concluded.
-            if silenceSinceInbound > conversationEndedSeconds { return nil }
+            // Only low-signal follow-ups are naturally concluded by silence.
+            // Real asks / VIP / unread / repeated nudges must not disappear
+            // just because the user was away for two hours.
+            let hasActionSignal = seed.isVIP
+                || seed.session.unreadCount > 0
+                || seed.isAtMention
+                || hasUrgentKeyword
+                || hasAskSignal
+                || hasRepeatedInbound
+                || ImportanceDetector.isSubstantive(latestInbound.text)
+            if silenceSinceInbound > conversationEndedSeconds && !hasActionSignal {
+                return nil
+            }
         }
 
         if let action = seed.chatAction {
@@ -118,10 +136,6 @@ enum ReplyDebtScorer {
             if action.silencedAt >= latestInbound.createTime { return nil }
         }
 
-        let text = latestInbound.text
-        let hasUrgentKeyword = urgentKeywords.contains { text.localizedCaseInsensitiveContains($0) }
-        let hasAskSignal = askSignals.contains { text.contains($0) }
-        let hasRepeatedInbound = seed.inboundCountSinceLastOutbound >= 2
         let isPrivateChat = !seed.session.isGroup
 
         if seed.session.isGroup {

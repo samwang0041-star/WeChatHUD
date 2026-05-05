@@ -4,6 +4,50 @@ import Foundation
 /// Extracted from ChatMonitor to keep the coordinator small.
 enum MessageHelpers {
 
+    /// True when a message has semantic text worth sending to an AI
+    /// analyzer. WeChat DB rows can contain empty strings, generic
+    /// parser fallbacks ("[消息]"), or UI-level failure copy
+    /// ("内容无法显示"). Those are transport/parsing signals, not
+    /// conversation content, and letting the model see them causes
+    /// hallucinated summaries like "某人多次发送空白消息".
+    static func isReadableAIContent(
+        _ text: String,
+        allowMediaPlaceholder: Bool = false
+    ) -> Bool {
+        let trimmed = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{fffc}", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let normalized = trimmed
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\u{3000}", with: "")
+        let unreadableExact: Set<String> = [
+            "null", "(null)", "nil",
+            "[消息]", "[未知消息]", "[不支持的消息]", "[unsupported]",
+            "消息", "发送消息", "发来消息", "收到消息",
+            "内容无法显示", "无法显示", "空白消息"
+        ]
+        if unreadableExact.contains(normalized) { return false }
+        if normalized.hasPrefix("<?xml") || normalized.hasPrefix("<msg") { return false }
+        if (normalized.contains("内容无法显示") || normalized.contains("无法显示")),
+           normalized.count <= 12 {
+            return false
+        }
+        if normalized.contains("空白消息") { return false }
+
+        let mediaPlaceholders: Set<String> = [
+            "[图片]", "[语音]", "[视频]", "[文件]", "[表情]",
+            "[动画表情]", "[位置]", "[通话]", "[名片]"
+        ]
+        if mediaPlaceholders.contains(trimmed) {
+            return allowMediaPlaceholder
+        }
+        return true
+    }
+
     /// Check if a message text @-mentions the current user or @everyone.
     ///
     /// WeChat renders `@mention` in the saved message body using the
@@ -132,9 +176,20 @@ enum MessageHelpers {
         return ignoredSenderMap[msg.chatUsername]?.contains(identifier) == true
     }
 
+    /// Compare WeChat messages using second-level create_time plus local_id
+    /// as a stable tie-breaker for same-second messages.
+    static func isAfter(_ lhs: MessageInfo, _ rhs: MessageInfo) -> Bool {
+        if lhs.createTime != rhs.createTime { return lhs.createTime > rhs.createTime }
+        return lhs.localId > rhs.localId
+    }
+
+    static func isSameOrAfter(_ lhs: MessageInfo, _ rhs: MessageInfo) -> Bool {
+        lhs.id == rhs.id || isAfter(lhs, rhs)
+    }
+
     /// Parse relative deadline strings like "+30m", "+2h", "+1d", "+1w"
     /// into an absolute Date. Returns nil for invalid input.
-    static func resolveDeadline(_ relative: String) -> Date? {
+    static func resolveDeadline(_ relative: String, relativeTo anchor: Date = Date()) -> Date? {
         let cleaned = relative.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard cleaned.hasPrefix("+"), cleaned.count >= 3 else { return nil }
         let numStr = String(cleaned.dropFirst().dropLast())
@@ -148,6 +203,6 @@ enum MessageHelpers {
         case "w": seconds = num * 604800
         default: return nil
         }
-        return Date().addingTimeInterval(seconds)
+        return anchor.addingTimeInterval(seconds)
     }
 }

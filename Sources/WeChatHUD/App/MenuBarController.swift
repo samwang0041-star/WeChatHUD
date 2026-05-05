@@ -80,9 +80,11 @@ final class MenuBarController: ObservableObject {
         }
         spinIndex = 0
         spinTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self, weak button] _ in
-            guard let self, let button else { return }
-            self.spinIndex = (self.spinIndex + 1) % self.spinFrames.count
-            button.image = self.spinFrames[self.spinIndex]
+            Task { @MainActor [weak self, weak button] in
+                guard let self, let button else { return }
+                self.spinIndex = (self.spinIndex + 1) % self.spinFrames.count
+                button.image = self.spinFrames[self.spinIndex]
+            }
         }
     }
 

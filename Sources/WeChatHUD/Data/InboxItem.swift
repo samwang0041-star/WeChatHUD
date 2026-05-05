@@ -31,6 +31,19 @@ struct InboxItem: Identifiable {
     var replied: Bool = false        // user already replied (pending removal)
     var snoozedUntil: Date?          // snooze expiry
     var silenced: Bool = false       // permanently muted
+
+    /// Stable enough identity for UI/AI caches. WeChat timestamps are
+    /// second-resolution, so chat + timestamp alone can mix two different
+    /// triggers that arrive in the same second.
+    var generationKey: String {
+        "\(chatUsername)_\(Int(timestamp.timeIntervalSince1970))_\(Self.fingerprint(preview))"
+    }
+
+    private static func fingerprint(_ text: String) -> UInt64 {
+        text.unicodeScalars.reduce(UInt64(5381)) { hash, scalar in
+            ((hash &* 33) &+ UInt64(scalar.value)) & 0x7FFF_FFFF_FFFF_FFFF
+        }
+    }
 }
 
 enum InboxPriority: Int, Comparable {
@@ -87,8 +100,28 @@ struct SuggestedReply: Decodable, Identifiable {
     let text: String
     let tone: String
     let recommended: Bool
+    let rationale: String?
 
     var id: String { text }
+
+    init(text: String, tone: String, recommended: Bool, rationale: String? = nil) {
+        self.text = text
+        self.tone = tone
+        self.recommended = recommended
+        self.rationale = rationale
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text, tone, recommended, rationale
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        tone = try c.decode(String.self, forKey: .tone)
+        recommended = try c.decodeIfPresent(Bool.self, forKey: .recommended) ?? false
+        rationale = try c.decodeIfPresent(String.self, forKey: .rationale)
+    }
 }
 
 extension InboxItem {

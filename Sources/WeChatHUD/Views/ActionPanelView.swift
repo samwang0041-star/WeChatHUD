@@ -37,8 +37,8 @@ struct ActionPanelView: View {
 
     @State private var analysisState: AnalysisState = .idle
     @State private var replyState: ReplyState = .idle
-    @State private var hasProfile: Bool = false
     @State private var replyRequested: Bool = false
+    @State private var generationKey: String = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -73,26 +73,9 @@ struct ActionPanelView: View {
             .padding(.vertical, 12)
             .background(Color.white.opacity(0.03))
         }
-        .onAppear {
-            hasProfile = monitor.hasRelationshipProfile(for: item.chatUsername)
-            applyPrefetch()
-
-            // If the prefetch slot exists (even partially — replies
-            // maybe arrived first and analysis is still in flight),
-            // mark the missing slots as .loading and trust the
-            // background prefetch to commit results. Only when there
-            // is NO prefetch entry at all do we fall back to firing
-            // on-demand — otherwise we'd duplicate the in-flight
-            // round-trip and defeat the whole prefetch design.
-            let ts = Int(item.timestamp.timeIntervalSince1970)
-            let hasEntry = monitor.actionPrefetch[item.chatUsername]?.timestamp == ts
-            if !hasEntry {
-                if case .idle = analysisState { runAnalysis() }
-                if case .idle = replyState, hasProfile, item.automaticReplySuggestionsAllowed { runReplySuggestions() }
-            } else {
-                if case .idle = analysisState { analysisState = .loading }
-                if case .idle = replyState, hasProfile, item.automaticReplySuggestionsAllowed { replyState = .loading }
-            }
+        .onAppear { prepareForCurrentItem(reset: generationKey != itemGenerationKey) }
+        .onChange(of: itemGenerationKey) { _, _ in
+            prepareForCurrentItem(reset: true)
         }
         // Pick up prefetch slots as they land. Progressive commits
         // — replies arrive, analysis arrives — update whichever
@@ -122,17 +105,12 @@ struct ActionPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
         case .groupResult(let result):
-            headlineCard(
-                title: item.actionPanelTitle,
-                primary: groupPrimary(result),
-                context: groupContext(result),
-                vibe: nil
-            )
+            groupHeadlineCard(result)
 
         case .privateResult(let result):
             headlineCard(
-                title: item.actionPanelTitle,
-                primary: result.intent,
+                title: privateHeadlineTitle(result),
+                primary: privatePrimary(result),
                 context: privateContext(result),
                 vibe: privateVibe(result)
             )
@@ -195,15 +173,118 @@ struct ActionPanelView: View {
         .cornerRadius(8)
     }
 
+    private func groupHeadlineCard(_ result: ChatAnalyzer.GroupAnalysis) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11))
+                    .foregroundColor(.accentColor)
+                Text(item.actionPanelTitle)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.accentColor.opacity(0.9))
+                Spacer(minLength: 0)
+                statusPill(for: result.status)
+            }
+
+            Text(groupPrimary(result))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white.opacity(0.96))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                if !cleanDisplayText(result.topics).isEmpty {
+                    compactInfoLine(icon: "number", label: "话题", text: cleanDisplayText(result.topics, limit: 34))
+                }
+                if let decisions = result.decisions, !cleanDisplayText(decisions).isEmpty {
+                    compactInfoLine(icon: "checkmark.seal", label: "决议", text: cleanDisplayText(decisions, limit: 34))
+                }
+                if let speakers = result.key_speakers, !cleanDisplayText(speakers).isEmpty {
+                    compactInfoLine(icon: "quote.bubble", label: "依据", text: cleanEvidenceText(speakers))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+        )
+        .cornerRadius(8)
+    }
+
+    private func statusPill(for status: String) -> some View {
+        let normalized = status.lowercased()
+        let text: String
+        let color: Color
+        if normalized == "waiting_for_me" {
+            text = "等你"
+            color = .orange
+        } else if normalized == "concluded" {
+            text = "已定"
+            color = .green
+        } else {
+            text = "讨论中"
+            color = .blue
+        }
+        return Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(color.opacity(0.95))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.16))
+            .cornerRadius(5)
+    }
+
+    private func compactInfoLine(icon: String, label: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(.white.opacity(0.42))
+                .frame(width: 12, height: 14)
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white.opacity(0.52))
+                .frame(width: 28, alignment: .leading)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.72))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     // MARK: - Headline content helpers
+
+    private func privateHeadlineTitle(_ r: ChatAnalyzer.PrivateAnalysis) -> String {
+        privateIsLowSignalSmalltalk(r) ? "对方在说什么" : item.actionPanelTitle
+    }
+
+    private func privatePrimary(_ r: ChatAnalyzer.PrivateAnalysis) -> String {
+        if privateIsLowSignalSmalltalk(r),
+           let summary = item.aiSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !summary.isEmpty {
+            return summary
+        }
+        if !r.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return r.intent
+        }
+        if !r.one_liner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return r.one_liner
+        }
+        return item.preview
+    }
 
     private func groupPrimary(_ r: ChatAnalyzer.GroupAnalysis) -> String {
         if item.semanticState == .groupActionRequired,
            let actions = r.my_action_items,
            !actions.isEmpty {
-            return actions
+            return cleanDisplayText(actions, limit: 42)
         }
-        return r.one_liner
+        let oneLiner = cleanDisplayText(r.one_liner, limit: 42)
+        if !oneLiner.isEmpty { return oneLiner }
+        return cleanDisplayText(r.topics, limit: 42)
     }
 
     /// Background paragraph for group chats: combines the big-picture
@@ -221,7 +302,33 @@ struct ActionPanelView: View {
         if let decisions = r.decisions, !decisions.isEmpty {
             parts.append("已有决议:\(decisions)")
         }
+        if let speakers = r.key_speakers, !speakers.isEmpty {
+            parts.append("依据:\(speakers)")
+        }
+        if r.status == "waiting_for_me" {
+            parts.append("状态:等你回应")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func cleanDisplayText(_ text: String, limit: Int = 60) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "null", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+        if normalized.count <= limit { return normalized }
+        return String(normalized.prefix(max(1, limit - 1))) + "…"
+    }
+
+    private func cleanEvidenceText(_ text: String) -> String {
+        cleanDisplayText(
+            text
+                .replacingOccurrences(of: "；", with: " · ")
+                .replacingOccurrences(of: ";", with: " · "),
+            limit: 72
+        )
     }
 
     /// Background paragraph for private chats: explicit context +
@@ -229,13 +336,27 @@ struct ActionPanelView: View {
     /// understands WHY the AI flagged it as urgent).
     private func privateContext(_ r: ChatAnalyzer.PrivateAnalysis) -> String? {
         var parts: [String] = []
-        if let ctx = r.context, !ctx.isEmpty {
+        if let ctx = r.context, !ctx.isEmpty, !privateIsLowSignalSmalltalk(r) {
             parts.append("背景:\(ctx)")
         }
         if !r.urgency_reason.isEmpty {
             parts.append(r.urgency_reason)
         }
+        if !r.mood_evidence.isEmpty,
+           let vibe = privateVibe(r),
+           !vibe.isEmpty {
+            parts.append("语气依据:\(r.mood_evidence)")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func privateIsLowSignalSmalltalk(_ r: ChatAnalyzer.PrivateAnalysis) -> Bool {
+        let urgency = r.urgency.lowercased()
+        guard urgency == "low" || urgency == "低" else { return false }
+        guard item.askType == .none else { return false }
+        let text = [r.intent, r.one_liner, r.urgency_reason, r.context ?? ""].joined(separator: " ")
+        let casualSignals = ["闲聊", "分享", "告知", "同步", "近况", "寒暄", "无请求", "无任务"]
+        return casualSignals.contains { text.contains($0) }
     }
 
     /// Compact tonal pill: combines urgency + mood into a single
@@ -282,7 +403,7 @@ struct ActionPanelView: View {
             }
             .buttonStyle(.plain)
 
-            if hasProfile && item.replySuggestionMode != .hidden {
+            if item.replySuggestionMode != .hidden {
                 Button(action: runReplySuggestions) {
                     HStack(spacing: 5) {
                         if case .loading = replyState {
@@ -326,16 +447,25 @@ struct ActionPanelView: View {
 
     private func suggestionRow(_ suggestion: SuggestedReply) -> some View {
         Button(action: {
-            WeChatLauncher.copyText(suggestion.text)
-            WeChatLauncher.openChat(named: item.chatName)
+            WeChatLauncher.openChatAndPaste(named: item.chatName, text: suggestion.text)
         }) {
             HStack(alignment: .top, spacing: 6) {
-                toneBadge(suggestion.tone)
-                Text(suggestion.text)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.85))
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        toneBadge(suggestion.tone)
+                        Text(suggestion.text)
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.88))
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let rationale = suggestion.rationale, !rationale.isEmpty {
+                        Text(rationale)
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.42))
+                            .lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right")
                     .font(.system(size: 9))
@@ -353,6 +483,36 @@ struct ActionPanelView: View {
 
     // MARK: - Actions
 
+    private var itemGenerationKey: String {
+        item.generationKey
+    }
+
+    private func prepareForCurrentItem(reset: Bool) {
+        if reset {
+            analysisState = .idle
+            replyState = .idle
+            replyRequested = false
+        }
+        generationKey = itemGenerationKey
+        applyPrefetch()
+
+        // If the prefetch slot exists (even partially — replies
+        // maybe arrived first and analysis is still in flight),
+        // mark the missing slots as .loading and trust the
+        // background prefetch to commit results. Only when there
+        // is NO prefetch entry at all do we fall back to firing
+        // on-demand — otherwise we'd duplicate the in-flight
+        // round-trip and defeat the whole prefetch design.
+        let hasEntry = monitor.actionPrefetch[item.chatUsername]?.generationKey == item.generationKey
+        if !hasEntry {
+            if case .idle = analysisState { runAnalysis() }
+            if case .idle = replyState, item.automaticReplySuggestionsAllowed { runReplySuggestions() }
+        } else {
+            if case .idle = analysisState { analysisState = .loading }
+            if case .idle = replyState, item.automaticReplySuggestionsAllowed { replyState = .loading }
+        }
+    }
+
     /// Copy whatever is present in the prefetch cache into local
     /// state. Called on appear and every time `actionPrefetch`
     /// updates (progressive commits). Leaves non-idle states alone
@@ -362,9 +522,8 @@ struct ActionPanelView: View {
     /// the user sees a failure message instead of an endless
     /// spinner.
     private func applyPrefetch() {
-        let ts = Int(item.timestamp.timeIntervalSince1970)
         guard let entry = monitor.actionPrefetch[item.chatUsername],
-              entry.timestamp == ts else { return }
+              entry.generationKey == item.generationKey else { return }
 
         let isAnalysisWaitable: Bool = {
             if case .loading = analysisState { return true }
@@ -389,7 +548,7 @@ struct ActionPanelView: View {
         if isReplyWaitable {
             if !entry.replies.isEmpty && shouldExposeReplies {
                 replyState = .results(entry.replies)
-            } else if entry.repliesAttempted && hasProfile && item.automaticReplySuggestionsAllowed {
+            } else if entry.repliesAttempted && item.automaticReplySuggestionsAllowed {
                 replyState = .error
             }
         }
@@ -407,10 +566,12 @@ struct ActionPanelView: View {
     }
 
     private func runAnalysis() {
+        let expectedKey = itemGenerationKey
         analysisState = .loading
         Task {
             if item.isGroup {
                 let (result, err) = await monitor.analyzeGroupChat(item: item)
+                guard generationKey == expectedKey else { return }
                 if let result = result {
                     analysisState = .groupResult(result)
                 } else {
@@ -418,6 +579,7 @@ struct ActionPanelView: View {
                 }
             } else {
                 let (result, err) = await monitor.analyzePrivateChat(item: item)
+                guard generationKey == expectedKey else { return }
                 if let result = result {
                     analysisState = .privateResult(result)
                 } else {
@@ -429,12 +591,15 @@ struct ActionPanelView: View {
 
     private func runReplySuggestions() {
         guard item.replySuggestionMode != .hidden else { return }
+        let expectedKey = itemGenerationKey
         replyRequested = true
         replyState = .loading
         Task {
             if let results = await monitor.loadReplySuggestions(for: item) {
+                guard generationKey == expectedKey else { return }
                 replyState = .results(results)
             } else {
+                guard generationKey == expectedKey else { return }
                 replyState = .error
             }
         }
@@ -471,6 +636,7 @@ struct ActionPanelView: View {
     private func toneBadge(_ tone: String) -> some View {
         let label: String = {
             switch tone.lowercased() {
+            case "recommended": return "推荐"
             case "friendly": return "友好"
             case "formal", "professional": return "正式"
             case "brief", "concise": return "简洁"
@@ -479,6 +645,7 @@ struct ActionPanelView: View {
         }()
         let color: Color = {
             switch label {
+            case "推荐": return .accentColor
             case "友好": return .green
             case "正式": return .blue
             case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)

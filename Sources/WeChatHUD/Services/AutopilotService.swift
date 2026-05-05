@@ -62,6 +62,9 @@ actor AutopilotService {
 
     /// True while a send is in progress — prevents concurrent UI automation.
     private var isSending = false
+    /// Last precise send failure reason. Read immediately by the caller
+    /// after a false send result to preserve UI/audit explainability.
+    private var lastSendFailureMessage: String?
 
     /// All msgUIDs of messages sent by autopilot — used for style isolation.
     private var sentMsgUIDs: Set<String> = []
@@ -124,6 +127,7 @@ actor AutopilotService {
         let totalPending: Int
         let totalSkipped: Int
         let logEntries: [AutopilotLogEntry]
+        let ackedMsgUIDs: [String]
     }
 
     /// Whether autopilot has an active session.
@@ -136,11 +140,12 @@ actor AutopilotService {
     /// Start autopilot mode. Creates a new session in the DB.
     func start() throws {
         guard sessionId == nil else { return }
-        let id = try store.startAutopilotSession()
+        let recovered = store.currentAutopilotSession()
+        let id = try recovered?.id ?? store.startAutopilotSession()
         sessionId = id
-        sessionHandled = 0
-        sessionPending = 0
-        sessionSent = 0
+        sessionHandled = recovered?.totalHandled ?? 0
+        sessionPending = recovered?.totalPending ?? 0
+        sessionSent = recovered?.totalSent ?? 0
         processedMsgUIDs.removeAll()
         processedMsgOrder.removeAll()
         vipNotifiedThisSession.removeAll()
@@ -150,10 +155,15 @@ actor AutopilotService {
         sentMsgUIDs.removeAll()
         proactiveSentCount = 0
         proactiveContactsSent.removeAll()
-        pendingSendQueue.removeAll()
-        sessionStats = SessionStats(startedAt: Date())
+        pendingSendQueue = store.loadPendingSends(sessionId: id)
+        sessionStats = SessionStats(
+            totalSent: sessionSent,
+            totalPending: sessionPending,
+            startedAt: recovered?.startedAt ?? Date()
+        )
         pausedForUserActivity = false
-        print("[WCHUD] Autopilot started — session #\(id)")
+        let recoveredText = recovered == nil ? "" : " (recovered \(pendingSendQueue.count) pending sends)"
+        print("[WCHUD] Autopilot started — session #\(id)\(recoveredText)")
 
         // Refresh memory for all whitelist contacts on session start
         // so autopilot has up-to-date context even if user was chatting manually
@@ -200,6 +210,8 @@ actor AutopilotService {
         batchTimers.removeAll()
         batchStartTimes.removeAll()
         pendingSendQueue.removeAll()
+        try? store.clearAutopilotInboundQueue()
+        try? store.clearPendingSends(sessionId: id)
         try store.endAutopilotSession(id: id)
         try store.updateAutopilotSessionCounts(
             id: id, handled: sessionHandled, pending: sessionPending, sent: sessionSent
@@ -244,7 +256,10 @@ actor AutopilotService {
         myUsername: String
     ) async -> HandleResult {
         guard let sid = sessionId else {
-            return HandleResult(totalProcessed: 0, totalSent: 0, totalPending: 0, totalSkipped: 0, logEntries: [])
+            return HandleResult(
+                totalProcessed: 0, totalSent: 0, totalPending: 0,
+                totalSkipped: 0, logEntries: [], ackedMsgUIDs: []
+            )
         }
 
         // Apply config-driven batch window
@@ -264,7 +279,7 @@ actor AutopilotService {
 
         // Phase 1: Buffer messages for batching
         var immediateEntries: [AutopilotLogEntry] = []
-        var chatsToBatch: Set<String> = []
+        var ackedMsgUIDs: [String] = []
 
         for msg in messages {
             guard !processedMsgUIDs.contains(msg.msgUID) else { continue }
@@ -279,6 +294,7 @@ actor AutopilotService {
                 )
                 do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
                 immediateEntries.append(entry)
+                ackedMsgUIDs.append(msg.msgUID)
                 continue
             }
 
@@ -290,6 +306,7 @@ actor AutopilotService {
                 )
                 do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
                 immediateEntries.append(entry)
+                ackedMsgUIDs.append(msg.msgUID)
                 continue
             }
 
@@ -302,6 +319,7 @@ actor AutopilotService {
                     )
                     do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
                     immediateEntries.append(entry)
+                    ackedMsgUIDs.append(msg.msgUID)
                     continue
                 }
                 // Force-pending for financial/sensitive types (red packet, transfer, miniprogram)
@@ -313,6 +331,7 @@ actor AutopilotService {
                     )
                     do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
                     immediateEntries.append(entry)
+                    ackedMsgUIDs.append(msg.msgUID)
                     continue
                 }
                 // Respondable media — falls through to batching below
@@ -333,7 +352,6 @@ actor AutopilotService {
                 let extended = Date().addingTimeInterval(10)
                 batchTimers[msg.chatUsername] = min(extended, maxDeadline)
             }
-            chatsToBatch.insert(msg.chatUsername)
         }
 
         // Phase 2: Process ALL batches whose window has expired (both new and old).
@@ -341,7 +359,7 @@ actor AutopilotService {
         let now = Date()
         var sent = 0, pending = 0, skipped = immediateEntries.count
 
-        let allExpired = batchTimers.filter { now >= $0.value }.map(\.key)
+        let allExpired = isPaused ? [] : batchTimers.filter { now >= $0.value }.map(\.key)
         for chatUsername in allExpired {
             guard let batch = batchBuffer.removeValue(forKey: chatUsername) else { continue }
             batchTimers.removeValue(forKey: chatUsername)
@@ -350,11 +368,12 @@ actor AutopilotService {
             let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
             do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
             batchEntries.append(entry)
+            ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
 
             switch entry.action {
             case .sent, .vipNotified: sent += 1
             case .pending: pending += 1
-            case .skipped, .groupLogged, .failed, .readNoReply, .proactive: skipped += 1
+            case .queued, .skipped, .groupLogged, .failed, .readNoReply, .proactive: skipped += 1
             }
         }
 
@@ -374,7 +393,8 @@ actor AutopilotService {
             totalSent: sent,
             totalPending: pending,
             totalSkipped: skipped,
-            logEntries: allEntries
+            logEntries: allEntries,
+            ackedMsgUIDs: ackedMsgUIDs
         )
     }
 
@@ -472,6 +492,14 @@ actor AutopilotService {
             }
 
             let busyText = config.vipBusyTemplate
+            guard config.autoSendEnabled else {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative,
+                    action: .pending,
+                    reply: busyText, confidence: 1.0, risk: .medium,
+                    reasoning: "自动发送总闸关闭，VIP忙碌通知待人工确认"
+                )
+            }
             let success = await serialSendWithRateLimit(
                 chatName: representative.chatName, chatUsername: representative.chatUsername,
                 text: busyText, config: config
@@ -511,9 +539,12 @@ actor AutopilotService {
         }
 
         // Detect media messages in the batch and build context hints
-        let mediaContexts = batch.compactMap { msg -> String? in
-            guard let mediaType = classifyMediaByType(messageType: msg.messageType, appType: msg.appType, text: msg.text) else { return nil }
-            return mediaType.promptContext
+        var mediaContexts: [String] = []
+        for msg in batch {
+            guard let mediaType = classifyMediaByType(messageType: msg.messageType, appType: msg.appType, text: msg.text) else {
+                continue
+            }
+            mediaContexts.append(mediaPromptContext(for: msg, mediaType: mediaType))
         }
         let mediaContext = mediaContexts.isEmpty ? nil : mediaContexts.joined(separator: "\n")
         let hasMedia = !mediaContexts.isEmpty
@@ -608,6 +639,13 @@ actor AutopilotService {
         let risk = AutopilotRisk(rawValue: decision.risk) ?? .medium
         // Media confidence decay: media replies are inherently less certain
         let effectiveConfidence = hasMedia ? decision.confidence * 0.7 : decision.confidence
+        let safetyHold = Self.autopilotSafetyHoldReason(
+            triggerText: combinedText,
+            replyText: decision.reply,
+            risk: risk,
+            reasonCode: decision.reasonCode,
+            sensitiveKeywords: config.sensitiveKeywords
+        )
 
         if decision.skip == true {
             return makeLogEntry(
@@ -619,6 +657,27 @@ actor AutopilotService {
 
         // Read-no-reply: open chat to trigger read receipt, but don't send anything
         if decision.readNoReply == true {
+            guard config.autoSendEnabled else {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .pending,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: "自动发送总闸关闭，已读不回需人工确认"
+                )
+            }
+            if let safetyHold {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .pending,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: "已读不回需人工确认: \(safetyHold)"
+                )
+            }
+            if effectiveConfidence < config.confidenceThreshold {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .pending,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: "已读不回信心不足(\(String(format: "%.0f%%", decision.confidence * 100)))"
+                )
+            }
             // Delay 3-10 seconds before opening (reading happens faster than typing, but not instant)
             let readDelay = Double.random(in: 3...10)
             try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
@@ -656,6 +715,14 @@ actor AutopilotService {
             )
         }
 
+        if let safetyHold {
+            return makeLogEntry(
+                sessionId: sessionId, msg: representative, action: .pending,
+                reply: replyText, confidence: decision.confidence, risk: risk,
+                reasoning: "安全门禁: \(safetyHold)"
+            )
+        }
+
         if effectiveConfidence < config.confidenceThreshold {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .pending,
@@ -664,11 +731,19 @@ actor AutopilotService {
             )
         }
 
-        if risk == .high {
+        if risk != .low {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .pending,
                 reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "高风险消息，待人工确认: \(decision.reasoning)"
+                reasoning: "非低风险消息，待人工确认: \(decision.reasoning)"
+            )
+        }
+
+        guard config.autoSendEnabled else {
+            return makeLogEntry(
+                sessionId: sessionId, msg: representative, action: .pending,
+                reply: replyText, confidence: decision.confidence, risk: risk,
+                reasoning: "自动发送总闸关闭，草稿待人工确认: \(decision.reasoning)"
             )
         }
 
@@ -746,6 +821,9 @@ actor AutopilotService {
             topic: memory?.conversationPhase
         )
         pendingSendQueue.append(pendingItem)
+        if let sid = self.sessionId {
+            try? store.upsertPendingSend(pendingItem, sessionId: sid)
+        }
 
         // Update session stats
         sessionStats.styleScoreSum += styleScore
@@ -759,7 +837,7 @@ actor AutopilotService {
 
         return makeLogEntry(
             sessionId: sessionId, msg: representative,
-            action: .pending, // queued, not sent yet
+            action: .queued,
             reply: replyText, confidence: decision.confidence, risk: risk,
             reasoning: reasoningWithScore
         )
@@ -782,31 +860,43 @@ actor AutopilotService {
         // M5 fix: block concurrent sends through actor suspension points
         guard !isSending else {
             print("[WCHUD] Autopilot: send already in progress, dropped for '\(chatName)' — will retry on next scan")
+            lastSendFailureMessage = "已有发送正在进行"
             return false
         }
         isSending = true
+        lastSendFailureMessage = nil
         defer { isSending = false }
 
         // Save clipboard
         let savedClipboard = ClipboardGuard.save()
         defer { ClipboardGuard.restore(savedClipboard) }
 
+        let verificationBaseline = latestOutgoingMessage(chatUsername: chatUsername)
+        let startedAt = Int(Date().timeIntervalSince1970)
+
         // Send with optional typing simulation (blocks until complete — 2s+ per message)
-        let uiSuccess = await WeChatLauncher.sendMessage(
+        let uiResult = await WeChatLauncher.sendMessageDetailed(
             chatName: chatName,
             text: text,
             typingDelay: typingDelay,
             sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey
         )
-        guard uiSuccess else {
-            print("[WCHUD] Autopilot: UI send failed for '\(chatName)'")
+        guard uiResult.succeeded else {
+            lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
+            print("[WCHUD] Autopilot: UI send failed for '\(chatName)' — \(lastSendFailureMessage ?? "unknown")")
             return false
         }
 
         // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
         try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for DB to flush
-        let (verified, outgoingMsgUID) = verifySend(chatUsername: chatUsername)
+        let (verified, outgoingMsgUID) = verifySend(
+            chatUsername: chatUsername,
+            expectedText: text,
+            startedAt: startedAt,
+            previousOutgoingMsgUID: verificationBaseline?.id
+        )
         if !verified {
+            lastSendFailureMessage = "发送后未在微信数据库中确认"
             print("[WCHUD] Autopilot: send verification FAILED for '\(chatName)' — message may not have been sent")
         }
         // I6 fix: track the actual outgoing message UID, not the trigger UID
@@ -843,6 +933,7 @@ actor AutopilotService {
         globalSendTimestamps = globalSendTimestamps.filter { $0 > oneHourAgo }
         if globalSendTimestamps.count >= config.maxRepliesPerHour {
             print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(globalSendTimestamps.count)/h)")
+            lastSendFailureMessage = "已达到每小时自动回复上限"
             return false
         }
 
@@ -872,28 +963,50 @@ actor AutopilotService {
 
     /// Check if a new outgoing message appeared in the chat after sending.
     /// Returns (verified, outgoingMsgUID).
-    private func verifySend(chatUsername: String) -> (Bool, String?) {
-        let myUname = reader.myUsername()
+    private func verifySend(
+        chatUsername: String,
+        expectedText: String,
+        startedAt: Int,
+        previousOutgoingMsgUID: String?
+    ) -> (Bool, String?) {
+        let expected = normalizeMessageText(expectedText)
+        guard !expected.isEmpty else { return (false, nil) }
 
-        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 3) else {
+        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 10) else {
             return (false, nil) // fail closed — can't verify, treat as failed
         }
 
-        for msg in msgs {
-            // Check if message is from self
-            let fromSelf = (!myUname.isEmpty && msg.senderUsername == myUname)
-                || (!chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty
-                    && msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername)
-
-            if fromSelf {
-                let age = Int(Date().timeIntervalSince1970) - msg.createTime
-                if age < 30 {
-                    return (true, msg.id)
-                }
-            }
+        for msg in msgs where isOutgoingMessage(msg, chatUsername: chatUsername) {
+            guard msg.id != previousOutgoingMsgUID else { continue }
+            guard msg.createTime >= startedAt - 2 else { continue }
+            guard normalizeMessageText(msg.text) == expected else { continue }
+            return (true, msg.id)
         }
 
         return (false, nil)
+    }
+
+    private func latestOutgoingMessage(chatUsername: String) -> MessageInfo? {
+        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 10) else {
+            return nil
+        }
+        return msgs.first { isOutgoingMessage($0, chatUsername: chatUsername) }
+    }
+
+    private func isOutgoingMessage(_ msg: MessageInfo, chatUsername: String) -> Bool {
+        let myUname = reader.myUsername()
+
+        return (!myUname.isEmpty && msg.senderUsername == myUname)
+            || (!chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty
+                && msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername)
+    }
+
+    nonisolated private static func normalizeMessageText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeMessageText(_ text: String) -> String {
+        Self.normalizeMessageText(text)
     }
 
     // MARK: - Post-send memory refresh
@@ -978,6 +1091,7 @@ actor AutopilotService {
     func cancelPendingSend(id: UUID) {
         guard let item = pendingSendQueue.first(where: { $0.id == id }) else { return }
         pendingSendQueue.removeAll { $0.id == id }
+        try? store.deletePendingSend(id: id)
         // Fix 2: record cancellation in audit log
         let logEntry = AutopilotLogEntry(
             id: 0, sessionId: sessionId ?? 0,
@@ -992,53 +1106,86 @@ actor AutopilotService {
         try? store.insertAutopilotLog(logEntry)
     }
 
+    enum ManualSendOutcome: Equatable {
+        case sent
+        case blocked(String)
+        case notFound
+    }
+
     /// Send a pending message immediately (skip remaining delay).
-    func sendNow(id: UUID, config: AutopilotConfig) async {
+    func sendNow(id: UUID, config: AutopilotConfig) async -> ManualSendOutcome {
         // Fix 3: don't remove from queue if paused — keep it safe
         guard !isPaused else {
             print("[WCHUD] Autopilot: sendNow blocked — user is active, message stays in queue")
-            return
+            return .blocked("用户正在活动，已保留在队列")
         }
-        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
+        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
         let item = pendingSendQueue.remove(at: idx)
-        await executeSend(item: item, config: config)
+        if let sid = sessionId {
+            try? store.upsertPendingSend(item, sessionId: sid)
+        }
+        return await executeSend(item: item, config: config)
     }
 
     /// Edit and send a pending message.
-    func editAndSend(id: UUID, newText: String, config: AutopilotConfig) async {
+    func editAndSend(id: UUID, newText: String, config: AutopilotConfig) async -> ManualSendOutcome {
         // Fix 1: sensitive keyword check on edited text
         if !config.sensitiveKeywords.isEmpty {
             let lower = newText.lowercased()
             if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
                 print("[WCHUD] Autopilot: editAndSend blocked — contains sensitive keyword '\(keyword)'")
-                return  // keep in queue, UI should show warning
+                return .blocked("命中敏感词「\(keyword)」")
             }
         }
         guard !isPaused else {
             print("[WCHUD] Autopilot: editAndSend blocked — user is active")
-            return
+            return .blocked("用户正在活动，已保留在队列")
         }
-        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return }
+        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
         var item = pendingSendQueue.remove(at: idx)
         item.replyText = newText
-        await executeSend(item: item, config: config)
+        if let sid = sessionId {
+            try? store.upsertPendingSend(item, sessionId: sid)
+        }
+        return await executeSend(item: item, config: config)
     }
 
     /// Process pending queue — send items whose timer has expired.
     /// Called from ChatMonitor's 60s safety timer.
     func processPendingQueue(config: AutopilotConfig) async {
-        guard !isPaused, sessionId != nil else { return }
+        guard config.autoSendEnabled, !isPaused, sessionId != nil else { return }
         let now = Date()
-        let expired = pendingSendQueue.filter { $0.scheduledSendTime <= now }
+        let expired = pendingSendQueue.filter {
+            $0.scheduledSendTime <= now && $0.manualOnlyReason == nil
+        }
         for item in expired {
             pendingSendQueue.removeAll { $0.id == item.id }
-            await executeSend(item: item, config: config)
+            _ = await executeSend(item: item, config: config)
         }
     }
 
     /// Execute a send from the queue.
-    private func executeSend(item: PendingSend, config: AutopilotConfig) async {
-        guard !isPaused, sessionId != nil else { return }
+    private func executeSend(item: PendingSend, config: AutopilotConfig) async -> ManualSendOutcome {
+        guard !isPaused, sessionId != nil else { return .blocked("自动驾驶暂停或会话未启动") }
+        guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
+            print("[WCHUD] Autopilot: queued send blocked — session cap reached")
+            var retained = item
+            retained.manualOnlyReason = "已达到本次会话发送上限，请人工确认"
+            pendingSendQueue.append(retained)
+            if let sid = sessionId {
+                try? store.upsertPendingSend(retained, sessionId: sid)
+            }
+            return .blocked("已达到本次会话发送上限")
+        }
+        if let staleReason = stalePendingSendReason(item) {
+            var retained = item
+            retained.manualOnlyReason = staleReason
+            pendingSendQueue.append(retained)
+            if let sid = sessionId {
+                try? store.upsertPendingSend(retained, sessionId: sid)
+            }
+            return .blocked(staleReason)
+        }
         let typingDelay = Self.estimateTypingDelay(for: item.replyText)
         let success = await serialSendWithRateLimit(
             chatName: item.chatName, chatUsername: item.chatUsername,
@@ -1046,11 +1193,79 @@ actor AutopilotService {
             peerLastMessage: item.peerLastMessage, topic: item.topic
         )
         if success {
+            try? store.deletePendingSend(id: item.id)
             sessionStats.totalSent += 1
             sessionSent += 1
             // Refresh memory after send
             await refreshMemoryAfterSend(chatUsername: item.chatUsername, chatName: item.chatName)
+            return .sent
         }
+        var retained = item
+        retained.autoSendAttempts += 1
+        let failureReason = lastSendFailureMessage ?? "发送结果无法确认"
+        retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
+        pendingSendQueue.append(retained)
+        if let sid = sessionId {
+            try? store.upsertPendingSend(retained, sessionId: sid)
+        }
+        return .blocked("\(failureReason)，已转为人工确认")
+    }
+
+    private func stalePendingSendReason(_ item: PendingSend) -> String? {
+        let createdAt = Int(item.createdAt.timeIntervalSince1970)
+        guard let messages = try? reader.getMessages(chatUsername: item.chatUsername, limit: 10) else {
+            return "无法读取最新上下文，请人工确认"
+        }
+
+        for msg in messages where msg.createTime > createdAt {
+            if isOutgoingMessage(msg, chatUsername: item.chatUsername) {
+                return "你已经在排队后手动回复过，请重新确认"
+            }
+            if !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "对方在排队后又发了新消息，请重新确认"
+            }
+        }
+
+        return nil
+    }
+
+    private func mediaPromptContext(for msg: InboundMessage, mediaType: MediaType) -> String {
+        guard mediaType == .image else { return mediaType.promptContext }
+        let imagePath = ImageResolver.resolve(
+            chatUsername: msg.chatUsername,
+            messageId: msg.msgUID,
+            messageTime: msg.timestamp,
+            dbDir: reader.dbDir
+        )
+        let result = ImageUnderstandingService.analyzeImage(at: imagePath)
+        if result.hasText {
+            return result.promptContext
+        }
+        return "\(mediaType.promptContext)\n\(result.promptContext)"
+    }
+
+    nonisolated private static func autopilotSafetyHoldReason(
+        triggerText: String,
+        replyText: String?,
+        risk: AutopilotRisk,
+        reasonCode: String?,
+        sensitiveKeywords: [String]
+    ) -> String? {
+        if risk != .low {
+            return "风险等级为 \(risk.rawValue)"
+        }
+        let dangerousReasonCodes: Set<String> = [
+            "money", "decision", "needs_user_judgment", "media", "unclear", "style_low_confidence"
+        ]
+        if let reasonCode, dangerousReasonCodes.contains(reasonCode) {
+            return "reason_code=\(reasonCode)"
+        }
+        guard !sensitiveKeywords.isEmpty else { return nil }
+        let haystack = "\(triggerText)\n\(replyText ?? "")".lowercased()
+        if let keyword = sensitiveKeywords.first(where: { haystack.contains($0.lowercased()) }) {
+            return "命中敏感词「\(keyword)」"
+        }
+        return nil
     }
 
     // MARK: - Proactive messaging
@@ -1314,7 +1529,7 @@ actor AutopilotService {
         /// Context description for the AI prompt.
         var promptContext: String {
             switch self {
-            case .image: return "对方发了一张图片。你看不到图片内容，但可以自然地回应（如'看到了'、'这个不错'、问对方图片是什么）。不要假装看到了具体内容。"
+            case .image: return "对方发了一张图片，但图片内容未识别清楚。不要假装看到了具体内容；只能轻量回应或转人工确认。"
             case .voice: return "对方发了一条语音消息。你听不到内容，可以让对方打字说或简单回应。"
             case .video: return "对方发了一个视频。你现在看不了，自然地回应（如'我一会儿看'、'视频先存着'）。"
             case .file: return "对方发了一个文件。自然回应（如'收到'、'我看看'、'一会儿打开'）。"

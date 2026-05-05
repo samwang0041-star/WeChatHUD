@@ -299,11 +299,23 @@ final class HUDStore: ObservableObject {
                 confidence      REAL NOT NULL,
                 status          TEXT NOT NULL DEFAULT 'pending',
                 prompt_version  TEXT NOT NULL,
+                source_text     TEXT NOT NULL DEFAULT '',
+                context_text    TEXT NOT NULL DEFAULT '',
+                capture_reason  TEXT NOT NULL DEFAULT '',
+                next_step       TEXT NOT NULL DEFAULT '',
+                deadline_label  TEXT NOT NULL DEFAULT '',
+                commitment_kind TEXT NOT NULL DEFAULT '',
                 created_at      INTEGER NOT NULL,
                 updated_at      INTEGER NOT NULL
             )
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status, deadline_at)")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN source_text TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN context_text TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN capture_reason TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN next_step TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN deadline_label TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE commitments ADD COLUMN commitment_kind TEXT NOT NULL DEFAULT ''")
 
         // -- discussion_items table (bidirectional work-item extraction)
         // Keyed by (chat_username, anchor_msg_uid, content) to dedupe
@@ -366,6 +378,50 @@ final class HUDStore: ObservableObject {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_session ON autopilot_log(session_id, created_at DESC)")
         try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_action ON autopilot_log(action)")
+
+        // -- autopilot_pending_sends table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS autopilot_pending_sends (
+                id                  TEXT PRIMARY KEY,
+                session_id          INTEGER NOT NULL,
+                chat_username       TEXT NOT NULL,
+                chat_name           TEXT NOT NULL,
+                sender_name         TEXT NOT NULL,
+                reply_text          TEXT NOT NULL,
+                confidence          REAL NOT NULL DEFAULT 0,
+                risk_level          TEXT NOT NULL DEFAULT 'low',
+                reasoning           TEXT NOT NULL DEFAULT '',
+                style_score         INTEGER NOT NULL DEFAULT 0,
+                scheduled_send_at   INTEGER NOT NULL,
+                created_at          INTEGER NOT NULL,
+                peer_last_message   TEXT,
+                topic               TEXT,
+                auto_send_attempts  INTEGER NOT NULL DEFAULT 0,
+                manual_only_reason  TEXT
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_pending_session ON autopilot_pending_sends(session_id, scheduled_send_at)")
+
+        // -- autopilot_inbound_queue table
+        try exec("""
+            CREATE TABLE IF NOT EXISTS autopilot_inbound_queue (
+                msg_uid         TEXT PRIMARY KEY,
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                sender_username TEXT NOT NULL,
+                sender_name     TEXT NOT NULL,
+                text            TEXT NOT NULL,
+                is_group        INTEGER NOT NULL DEFAULT 0,
+                is_at_mention   INTEGER NOT NULL DEFAULT 0,
+                attention_level TEXT NOT NULL DEFAULT 'stranger',
+                contact_role    TEXT NOT NULL DEFAULT 'acquaintance',
+                msg_timestamp   INTEGER NOT NULL,
+                message_type    INTEGER NOT NULL DEFAULT 1,
+                app_type        INTEGER NOT NULL DEFAULT 0,
+                created_at      INTEGER NOT NULL
+            )
+        """)
+        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_inbound_time ON autopilot_inbound_queue(msg_timestamp ASC, created_at ASC)")
 
         // Migrations for pending_asks new columns (four-tier system)
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_level TEXT")
@@ -624,29 +680,58 @@ final class HUDStore: ObservableObject {
     /// firing notifications) to prevent historical messages from being
     /// replayed as "new".
     func getWhitelistBaseline(username: String) -> Int? {
-        let key = "wl/\(username)"
+        getWhitelistCursor(username: username)?.lastCreateTime
+    }
+
+    func getWhitelistCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
+        getMessageCursor(sourceKey: "wl/\(username)")
+    }
+
+    func getAutopilotCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
+        getMessageCursor(sourceKey: "ap/\(username)")
+    }
+
+    private func getMessageCursor(sourceKey key: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT last_create_time FROM sync_state WHERE source_key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, "SELECT last_create_time, last_local_id FROM sync_state WHERE source_key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
         sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        let value = Int(sqlite3_column_int64(stmt, 0))
+        let time = Int(sqlite3_column_int64(stmt, 0))
+        let localId = Int(sqlite3_column_int64(stmt, 1))
         // DEFAULT 0 from the migration means "never baselined" — treat it
         // exactly the same as a missing row so migration from old state
         // forces a fresh baseline instead of replaying history.
-        return value > 0 ? value : nil
+        // Rows created before the cursor carried local_id have 0 here.
+        // Treat that as "all messages in this second were already seen"
+        // to avoid a one-time replay of historical same-second rows after
+        // upgrading.
+        let safeLocalId = localId > 0 ? localId : Int.max
+        return time > 0 ? (time, safeLocalId) : nil
     }
 
     func setWhitelistBaseline(username: String, lastCreateTime: Int) throws {
+        try setWhitelistCursor(username: username, lastCreateTime: lastCreateTime, lastLocalId: 0)
+    }
+
+    func setWhitelistCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
+        try setMessageCursor(sourceKey: "wl/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId)
+    }
+
+    func setAutopilotCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
+        try setMessageCursor(sourceKey: "ap/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId)
+    }
+
+    private func setMessageCursor(sourceKey key: String, lastCreateTime: Int, lastLocalId: Int) throws {
         let now = Int(Date().timeIntervalSince1970)
-        let key = "wl/\(username)"
         try exec("""
             INSERT INTO sync_state(source_key, last_local_id, last_check_at, last_create_time)
-            VALUES(?, 0, ?, ?)
+            VALUES(?, ?, ?, ?)
             ON CONFLICT(source_key) DO UPDATE SET
+                last_local_id    = excluded.last_local_id,
                 last_create_time = excluded.last_create_time,
                 last_check_at    = excluded.last_check_at
-        """, params: [key, "\(now)", "\(lastCreateTime)"])
+        """, params: [key, "\(lastLocalId)", "\(now)", "\(lastCreateTime)"])
     }
 
     // MARK: - Chat actions (HUD-side triage state)
@@ -881,7 +966,11 @@ final class HUDStore: ObservableObject {
                 deadline_at    = excluded.deadline_at,
                 confidence     = excluded.confidence,
                 bucket         = excluded.bucket,
-                status         = excluded.status,
+                status         = CASE
+                    WHEN pending_asks.status IN ('done', 'dismissed')
+                    THEN pending_asks.status
+                    ELSE excluded.status
+                END,
                 prompt_version = excluded.prompt_version,
                 updated_at     = excluded.updated_at,
                 sender_level   = excluded.sender_level,
@@ -1411,6 +1500,88 @@ final class HUDStore: ObservableObject {
         try exec("DELETE FROM contacts WHERE username=?", params: [username])
     }
 
+    /// Product-facing contact save used by the contacts settings UI.
+    ///
+    /// `contacts` is the rich relationship/profile table while the scan engine
+    /// still reads `whitelist`. Keep both in sync here so a level change in the
+    /// UI immediately affects monitoring. Greylist/stranger keeps the contact
+    /// profile but stops tracking; explicit deletion can use
+    /// `deleteContactAndTracking`.
+    func saveContactTracking(
+        username: String,
+        displayName: String,
+        isGroup: Bool,
+        category: WhitelistCategory,
+        attentionLevel: AttentionLevel,
+        role: ContactRole,
+        roleNote: String = "",
+        replyWindowMinutes: Int = 120
+    ) throws {
+        try upsertContact(
+            username: username,
+            displayName: displayName,
+            attentionLevel: attentionLevel,
+            role: role,
+            roleNote: roleNote,
+            replyWindowMinutes: replyWindowMinutes
+        )
+
+        switch attentionLevel {
+        case .vip, .whitelist:
+            let whitelistLevel: WhitelistAttentionLevel = attentionLevel == .vip ? .vip : .watch
+            try upsertWhitelistTracking(
+                username: username,
+                displayName: displayName,
+                isGroup: isGroup,
+                category: category,
+                attentionLevel: whitelistLevel
+            )
+        case .greylist, .stranger:
+            try untrackContact(username: username)
+        }
+    }
+
+    /// Remove a contact from both product tables and scan-side state.
+    func deleteContactAndTracking(username: String) throws {
+        try untrackContact(username: username)
+        try deleteContact(username: username)
+        try? exec("DELETE FROM relationship_profiles WHERE username=?", params: [username])
+    }
+
+    private func upsertWhitelistTracking(
+        username: String,
+        displayName: String,
+        isGroup: Bool,
+        category: WhitelistCategory,
+        attentionLevel: WhitelistAttentionLevel
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            INSERT INTO whitelist(
+                username, display_name, is_group, category, attention_level, added_at, auto_suggested
+            )
+            VALUES(?,?,?,?,?,?,0)
+            ON CONFLICT(username) DO UPDATE SET
+                display_name    = excluded.display_name,
+                is_group        = excluded.is_group,
+                category        = excluded.category,
+                attention_level = excluded.attention_level
+        """, params: [
+            username,
+            displayName,
+            isGroup ? "1" : "0",
+            category.rawValue,
+            attentionLevel.rawValue,
+            "\(now)"
+        ])
+    }
+
+    private func untrackContact(username: String) throws {
+        try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+        try? exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
+        try? exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
+    }
+
     func loadVIPUsernames() -> Set<String> {
         var result: Set<String> = []
         var stmt: OpaquePointer?
@@ -1690,23 +1861,39 @@ final class HUDStore: ObservableObject {
         commitTo: String,
         deadlineAt: Date? = nil,
         confidence: Double,
-        promptVersion: String
+        promptVersion: String,
+        sourceText: String = "",
+        contextText: String = "",
+        captureReason: String = "",
+        nextStep: String = "",
+        deadlineLabel: String = "",
+        commitmentKind: String = "",
+        createdAt: Date = Date()
     ) throws {
         let now = Int(Date().timeIntervalSince1970)
+        let created = Int(createdAt.timeIntervalSince1970)
         let deadlineStr = deadlineAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
         try exec("""
             INSERT INTO commitments(
                 msg_uid, chat_username, chat_name, content, commit_to,
                 deadline_at, confidence, status, prompt_version,
+                source_text, context_text, capture_reason, next_step,
+                deadline_label, commitment_kind,
                 created_at, updated_at
             )
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(msg_uid) DO UPDATE SET
                 content        = excluded.content,
                 commit_to      = excluded.commit_to,
                 deadline_at    = excluded.deadline_at,
                 confidence     = excluded.confidence,
                 prompt_version = excluded.prompt_version,
+                source_text    = excluded.source_text,
+                context_text   = excluded.context_text,
+                capture_reason = excluded.capture_reason,
+                next_step      = excluded.next_step,
+                deadline_label = excluded.deadline_label,
+                commitment_kind = excluded.commitment_kind,
                 updated_at     = excluded.updated_at
         """, params: [
             msgUID,
@@ -1718,7 +1905,13 @@ final class HUDStore: ObservableObject {
             String(confidence),
             CommitmentStatus.pending.rawValue,
             promptVersion,
-            "\(now)",
+            sourceText,
+            contextText,
+            captureReason,
+            nextStep,
+            deadlineLabel,
+            commitmentKind,
+            "\(created)",
             "\(now)"
         ])
     }
@@ -1730,7 +1923,8 @@ final class HUDStore: ObservableObject {
         var sql = """
             SELECT id, msg_uid, chat_username, chat_name, content, commit_to,
                    deadline_at, confidence, status, prompt_version,
-                   created_at, updated_at
+                   created_at, updated_at, source_text, context_text,
+                   capture_reason, next_step, deadline_label, commitment_kind
             FROM commitments
         """
         var params: [String] = []
@@ -1760,7 +1954,13 @@ final class HUDStore: ObservableObject {
                 status: CommitmentStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .pending,
                 promptVersion: String(cString: sqlite3_column_text(stmt, 9)),
                 createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 10))),
-                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 11)))
+                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 11))),
+                sourceText: Self.textColumn(stmt, 12),
+                contextText: Self.textColumn(stmt, 13),
+                captureReason: Self.textColumn(stmt, 14),
+                nextStep: Self.textColumn(stmt, 15),
+                deadlineLabel: Self.textColumn(stmt, 16),
+                commitmentKind: Self.textColumn(stmt, 17)
             ))
         }
         return results
@@ -1773,19 +1973,23 @@ final class HUDStore: ObservableObject {
         """, params: [status.rawValue, "\(now)", msgUID])
     }
 
-    /// Conditionally flip a commitment's status — ONLY if it is
-    /// currently `.pending`. Used by the auto-fulfillment checker so
-    /// we never clobber a status the user manually set (e.g. they
-    /// cancelled something; the scanner shouldn't re-mark it fulfilled
-    /// later just because we spotted a keyword).
+    /// Conditionally flip a commitment's status. Auto-overdue only touches
+    /// `.pending`; auto-fulfilled may also recover `.overdue` commitments
+    /// when the user completes them late. Manual `.cancelled/.fulfilled`
+    /// rows are never clobbered.
     func autoAdvanceCommitmentStatus(msgUID: String, to newStatus: CommitmentStatus) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
             UPDATE commitments SET status=?, updated_at=?
-            WHERE msg_uid=? AND status=?
+            WHERE msg_uid=? AND (
+                status=?
+                OR (?=? AND status=?)
+            )
         """, params: [
             newStatus.rawValue, "\(now)",
-            msgUID, CommitmentStatus.pending.rawValue
+            msgUID,
+            CommitmentStatus.pending.rawValue,
+            newStatus.rawValue, CommitmentStatus.fulfilled.rawValue, CommitmentStatus.overdue.rawValue
         ])
     }
 
@@ -2268,6 +2472,203 @@ final class HUDStore: ObservableObject {
         try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])
     }
 
+    func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            INSERT INTO autopilot_pending_sends(
+                id, session_id, chat_username, chat_name, sender_name, reply_text,
+                confidence, risk_level, reasoning, style_score, scheduled_send_at,
+                created_at, peer_last_message, topic, auto_send_attempts, manual_only_reason
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                session_id = excluded.session_id,
+                chat_username = excluded.chat_username,
+                chat_name = excluded.chat_name,
+                sender_name = excluded.sender_name,
+                reply_text = excluded.reply_text,
+                confidence = excluded.confidence,
+                risk_level = excluded.risk_level,
+                reasoning = excluded.reasoning,
+                style_score = excluded.style_score,
+                scheduled_send_at = excluded.scheduled_send_at,
+                peer_last_message = excluded.peer_last_message,
+                topic = excluded.topic,
+                auto_send_attempts = excluded.auto_send_attempts,
+                manual_only_reason = excluded.manual_only_reason
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw HUDStoreError.sqlError("prepare autopilot_pending_sends upsert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        let TRANSIENT = HUDStore.sqliteTransient
+        sqlite3_bind_text(stmt, 1, item.id.uuidString, -1, TRANSIENT)
+        sqlite3_bind_int64(stmt, 2, sessionId)
+        sqlite3_bind_text(stmt, 3, item.chatUsername, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 4, item.chatName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 5, item.senderName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 6, item.replyText, -1, TRANSIENT)
+        sqlite3_bind_double(stmt, 7, item.confidence)
+        sqlite3_bind_text(stmt, 8, item.risk.rawValue, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 9, item.reasoning, -1, TRANSIENT)
+        sqlite3_bind_int(stmt, 10, Int32(item.styleScore))
+        sqlite3_bind_int64(stmt, 11, Int64(item.scheduledSendTime.timeIntervalSince1970))
+        sqlite3_bind_int64(stmt, 12, Int64(item.createdAt.timeIntervalSince1970))
+        if let peerLastMessage = item.peerLastMessage {
+            sqlite3_bind_text(stmt, 13, peerLastMessage, -1, TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 13)
+        }
+        if let topic = item.topic {
+            sqlite3_bind_text(stmt, 14, topic, -1, TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 14)
+        }
+        sqlite3_bind_int(stmt, 15, Int32(item.autoSendAttempts))
+        if let manualOnlyReason = item.manualOnlyReason {
+            sqlite3_bind_text(stmt, 16, manualOnlyReason, -1, TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, 16)
+        }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw HUDStoreError.sqlError("step autopilot_pending_sends upsert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    func loadPendingSends(sessionId: Int64) -> [PendingSend] {
+        var results: [PendingSend] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, chat_username, chat_name, sender_name, reply_text,
+                   confidence, risk_level, reasoning, style_score, scheduled_send_at,
+                   created_at, peer_last_message, topic, auto_send_attempts, manual_only_reason
+            FROM autopilot_pending_sends
+            WHERE session_id=?
+            ORDER BY scheduled_send_at ASC, created_at ASC
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int64(stmt, 1, sessionId)
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let idString = HUDStore.textColumn(stmt, 0)
+            guard let id = UUID(uuidString: idString) else { continue }
+            let risk = AutopilotRisk(rawValue: HUDStore.textColumn(stmt, 6)) ?? .low
+            let peerLastMessage = sqlite3_column_type(stmt, 11) != SQLITE_NULL ? HUDStore.textColumn(stmt, 11) : nil
+            let topic = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? HUDStore.textColumn(stmt, 12) : nil
+            let manualOnlyReason = sqlite3_column_type(stmt, 14) != SQLITE_NULL ? HUDStore.textColumn(stmt, 14) : nil
+            results.append(PendingSend(
+                id: id,
+                chatUsername: HUDStore.textColumn(stmt, 1),
+                chatName: HUDStore.textColumn(stmt, 2),
+                senderName: HUDStore.textColumn(stmt, 3),
+                replyText: HUDStore.textColumn(stmt, 4),
+                confidence: sqlite3_column_double(stmt, 5),
+                risk: risk,
+                reasoning: HUDStore.textColumn(stmt, 7),
+                styleScore: Int(sqlite3_column_int(stmt, 8)),
+                scheduledSendTime: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 9))),
+                createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10))),
+                peerLastMessage: peerLastMessage,
+                topic: topic,
+                autoSendAttempts: Int(sqlite3_column_int(stmt, 13)),
+                manualOnlyReason: manualOnlyReason
+            ))
+        }
+        return results
+    }
+
+    func deletePendingSend(id: UUID) throws {
+        try exec("DELETE FROM autopilot_pending_sends WHERE id=?", params: [id.uuidString])
+    }
+
+    func clearPendingSends(sessionId: Int64) throws {
+        try exec("DELETE FROM autopilot_pending_sends WHERE session_id=?", params: [String(sessionId)])
+    }
+
+    func enqueueAutopilotInbound(_ msg: AutopilotService.InboundMessage) throws {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            INSERT OR IGNORE INTO autopilot_inbound_queue(
+                msg_uid, chat_username, chat_name, sender_username, sender_name, text,
+                is_group, is_at_mention, attention_level, contact_role, msg_timestamp,
+                message_type, app_type, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw HUDStoreError.sqlError("prepare autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        let TRANSIENT = HUDStore.sqliteTransient
+        sqlite3_bind_text(stmt, 1, msg.msgUID, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 2, msg.chatUsername, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 3, msg.chatName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 4, msg.senderUsername, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 5, msg.senderName, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 6, msg.text, -1, TRANSIENT)
+        sqlite3_bind_int(stmt, 7, msg.isGroup ? 1 : 0)
+        sqlite3_bind_int(stmt, 8, msg.isAtMention ? 1 : 0)
+        sqlite3_bind_text(stmt, 9, msg.attentionLevel.rawValue, -1, TRANSIENT)
+        sqlite3_bind_text(stmt, 10, msg.contactRole.rawValue, -1, TRANSIENT)
+        sqlite3_bind_int64(stmt, 11, Int64(msg.timestamp))
+        sqlite3_bind_int(stmt, 12, Int32(msg.messageType))
+        sqlite3_bind_int(stmt, 13, Int32(msg.appType))
+        sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw HUDStoreError.sqlError("step autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
+        }
+    }
+
+    func loadPendingAutopilotInbound(limit: Int = 200) -> [AutopilotService.InboundMessage] {
+        var results: [AutopilotService.InboundMessage] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT msg_uid, chat_username, chat_name, sender_username, sender_name, text,
+                   is_group, is_at_mention, attention_level, contact_role, msg_timestamp,
+                   message_type, app_type
+            FROM autopilot_inbound_queue
+            ORDER BY msg_timestamp ASC, created_at ASC
+            LIMIT ?
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let attention = AttentionLevel(rawValue: HUDStore.textColumn(stmt, 8)) ?? .stranger
+            let role = ContactRole(rawValue: HUDStore.textColumn(stmt, 9)) ?? .acquaintance
+            results.append(AutopilotService.InboundMessage(
+                msgUID: HUDStore.textColumn(stmt, 0),
+                chatUsername: HUDStore.textColumn(stmt, 1),
+                chatName: HUDStore.textColumn(stmt, 2),
+                senderUsername: HUDStore.textColumn(stmt, 3),
+                senderName: HUDStore.textColumn(stmt, 4),
+                text: HUDStore.textColumn(stmt, 5),
+                isGroup: sqlite3_column_int(stmt, 6) != 0,
+                isAtMention: sqlite3_column_int(stmt, 7) != 0,
+                attentionLevel: attention,
+                contactRole: role,
+                timestamp: Int(sqlite3_column_int64(stmt, 10)),
+                messageType: Int(sqlite3_column_int(stmt, 11)),
+                appType: Int(sqlite3_column_int(stmt, 12))
+            ))
+        }
+        return results
+    }
+
+    func deleteAutopilotInbound(msgUIDs: [String]) throws {
+        guard !msgUIDs.isEmpty else { return }
+        try exec("BEGIN IMMEDIATE")
+        do {
+            for uid in msgUIDs {
+                try exec("DELETE FROM autopilot_inbound_queue WHERE msg_uid=?", params: [uid])
+            }
+            try exec("COMMIT")
+        } catch {
+            try? exec("ROLLBACK")
+            throw error
+        }
+    }
+
+    func clearAutopilotInboundQueue() throws {
+        try exec("DELETE FROM autopilot_inbound_queue")
+    }
+
     func loadAutopilotSessions(limit: Int = 20) -> [AutopilotSession] {
         var results: [AutopilotSession] = []
         var stmt: OpaquePointer?
@@ -2294,6 +2695,8 @@ final class HUDStore: ObservableObject {
     }
 
     func clearAutopilotHistory() throws {
+        try exec("DELETE FROM autopilot_inbound_queue")
+        try exec("DELETE FROM autopilot_pending_sends")
         try exec("DELETE FROM autopilot_log")
         try exec("DELETE FROM autopilot_sessions")
     }
@@ -2526,6 +2929,12 @@ extension HUDStore {
     /// outlives the prepare/finalize cycle. Scoped to HUDStore namespace so
     /// it doesn't pollute module globals.
     static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    static func textColumn(_ stmt: OpaquePointer?, _ index: Int32) -> String {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL,
+              let text = sqlite3_column_text(stmt, index) else { return "" }
+        return String(cString: text)
+    }
 }
 
 enum HUDStoreError: Error {

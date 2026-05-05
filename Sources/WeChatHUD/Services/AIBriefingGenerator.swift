@@ -66,7 +66,7 @@ actor AIBriefingGenerator {
             .replacingOccurrences(of: "{sender_role}", with: context.senderRole.rawValue)
             .replacingOccurrences(of: "{chat_name}", with: context.triggerMessage.chatName)
             .replacingOccurrences(of: "{chat_kind}", with: context.isGroupChat ? "群聊" : "私聊")
-            .replacingOccurrences(of: "{message_body}", with: context.triggerMessageText)
+            .replacingOccurrences(of: "{message_body}", with: renderMessageBody(context))
             .replacingOccurrences(of: "{context_messages}", with: contextStr)
             .replacingOccurrences(of: "{my_last_reply}", with: context.myLastReplyText ?? "无")
             .replacingOccurrences(of: "{time_since_reply}", with: timeSinceReply)
@@ -141,6 +141,17 @@ actor AIBriefingGenerator {
     private func parse(_ raw: String) -> InboxBriefing? {
         guard let briefing = AIJSONExtractor.decodeFirstObject(from: raw, as: InboxBriefing.self) else { return nil }
         return briefing.replies.isEmpty ? nil : briefing
+    }
+
+    private func renderMessageBody(_ context: InboxContext) -> String {
+        let sanitized = AIService.sanitizeForAI(context.triggerMessageText)
+        if context.mediaType == .image, ["[图片]", ""].contains(sanitized) {
+            if let mediaAnalysis = context.mediaAnalysisText, !mediaAnalysis.isEmpty {
+                return "发来一张图片。\n\(AIService.sanitizeForAI(mediaAnalysis))"
+            }
+            return "发来一张图片"
+        }
+        return sanitized
     }
 
     // MARK: - Helpers

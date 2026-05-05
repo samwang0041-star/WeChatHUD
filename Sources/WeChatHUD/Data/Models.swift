@@ -104,6 +104,9 @@ struct ChatInfo: Identifiable, Hashable {
 
 struct MessageInfo: Identifiable {
     let id: String           // message UID
+    /// Local row id inside the chat's Msg table. Used only as a
+    /// tie-breaker when multiple WeChat messages share the same second.
+    let localId: Int
     let chatUsername: String
     let chatName: String
     let senderUsername: String
@@ -117,6 +120,32 @@ struct MessageInfo: Identifiable {
 
     var isAtMention: Bool { text.contains("@") }
     var relativeTime: String { Self.formatRelative(createTime) }
+
+    init(
+        id: String,
+        localId: Int = 0,
+        chatUsername: String,
+        chatName: String,
+        senderUsername: String,
+        senderName: String,
+        text: String,
+        baseType: Int,
+        subType: Int,
+        createTime: Int,
+        appType: Int = 0
+    ) {
+        self.id = id
+        self.localId = localId
+        self.chatUsername = chatUsername
+        self.chatName = chatName
+        self.senderUsername = senderUsername
+        self.senderName = senderName
+        self.text = text
+        self.baseType = baseType
+        self.subType = subType
+        self.createTime = createTime
+        self.appType = appType
+    }
 
     static func formatRelative(_ ts: Int) -> String {
         let now = Int(Date().timeIntervalSince1970)
@@ -1194,6 +1223,52 @@ struct Commitment: Identifiable {
     let promptVersion: String
     let createdAt: Date
     let updatedAt: Date
+    let sourceText: String
+    let contextText: String
+    let captureReason: String
+    let nextStep: String
+    let deadlineLabel: String
+    let commitmentKind: String
+
+    init(
+        id: Int64,
+        msgUID: String,
+        chatUsername: String,
+        chatName: String,
+        content: String,
+        commitTo: String,
+        deadlineAt: Date?,
+        confidence: Double,
+        status: CommitmentStatus,
+        promptVersion: String,
+        createdAt: Date,
+        updatedAt: Date,
+        sourceText: String = "",
+        contextText: String = "",
+        captureReason: String = "",
+        nextStep: String = "",
+        deadlineLabel: String = "",
+        commitmentKind: String = ""
+    ) {
+        self.id = id
+        self.msgUID = msgUID
+        self.chatUsername = chatUsername
+        self.chatName = chatName
+        self.content = content
+        self.commitTo = commitTo
+        self.deadlineAt = deadlineAt
+        self.confidence = confidence
+        self.status = status
+        self.promptVersion = promptVersion
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.sourceText = sourceText
+        self.contextText = contextText
+        self.captureReason = captureReason
+        self.nextStep = nextStep
+        self.deadlineLabel = deadlineLabel
+        self.commitmentKind = commitmentKind
+    }
 }
 
 // MARK: - DiscussionItem (bidirectional conversation-extracted work items)
@@ -1466,6 +1541,7 @@ struct LedgerEntry: Equatable {
 enum AutopilotAction: String, Codable {
     case sent           // auto-replied successfully
     case pending        // AI not confident enough, waiting for user review
+    case queued         // low-risk auto-send is waiting for human-like delay
     case skipped        // message doesn't need reply (sticker, system msg, etc.)
     case readNoReply    // opened chat (triggered read receipt) but no reply
     case proactive      // proactively initiated conversation
@@ -1545,7 +1621,7 @@ enum AutopilotReplyStyle: String, Codable, CaseIterable {
 
 /// A message queued for delayed sending. Visible to UI for cancel/edit/send-now.
 struct PendingSend: Identifiable {
-    let id: UUID = UUID()
+    let id: UUID
     let chatUsername: String
     let chatName: String
     let senderName: String
@@ -1555,13 +1631,53 @@ struct PendingSend: Identifiable {
     let reasoning: String
     let styleScore: Int
     let scheduledSendTime: Date
-    let createdAt: Date = Date()
+    let createdAt: Date
     /// The peer message that triggered this reply, if available. Used by
     /// the session ledger so later prompts can echo back naturally.
     var peerLastMessage: String? = nil
     /// Conversation phase snapshot at the time the reply was drafted.
     /// Used as the ledger entry's `topic`.
     var topic: String? = nil
+    /// Number of automated send attempts. A failed or unverified send
+    /// must not be retried blindly; it becomes manual-only.
+    var autoSendAttempts: Int = 0
+    /// Non-nil means timers must not auto-send this item. The user can
+    /// still inspect, edit, cancel, or explicitly send it from the UI.
+    var manualOnlyReason: String? = nil
+
+    init(
+        id: UUID = UUID(),
+        chatUsername: String,
+        chatName: String,
+        senderName: String,
+        replyText: String,
+        confidence: Double,
+        risk: AutopilotRisk,
+        reasoning: String,
+        styleScore: Int,
+        scheduledSendTime: Date,
+        createdAt: Date = Date(),
+        peerLastMessage: String? = nil,
+        topic: String? = nil,
+        autoSendAttempts: Int = 0,
+        manualOnlyReason: String? = nil
+    ) {
+        self.id = id
+        self.chatUsername = chatUsername
+        self.chatName = chatName
+        self.senderName = senderName
+        self.replyText = replyText
+        self.confidence = confidence
+        self.risk = risk
+        self.reasoning = reasoning
+        self.styleScore = styleScore
+        self.scheduledSendTime = scheduledSendTime
+        self.createdAt = createdAt
+        self.peerLastMessage = peerLastMessage
+        self.topic = topic
+        self.autoSendAttempts = autoSendAttempts
+        self.manualOnlyReason = manualOnlyReason
+    }
 
     /// Remaining seconds until scheduled send.
     var remainingSeconds: Int {
@@ -1572,6 +1688,10 @@ struct PendingSend: Identifiable {
 /// Persisted autopilot configuration.
 struct AutopilotConfig: Codable {
     var enabled: Bool = false
+    /// Master switch for unattended WeChat sends. Default false because
+    /// UI automation is inherently high-risk until target and delivery
+    /// verification both pass. Manual approval/send remains available.
+    var autoSendEnabled: Bool = false
     /// Confidence threshold for auto-sending (0.0-1.0). Below this → pending review.
     var confidenceThreshold: Double = 0.8
     /// Max auto-replies per hour (rate limit).

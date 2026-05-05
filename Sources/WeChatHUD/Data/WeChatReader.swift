@@ -18,6 +18,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     private var keys: [String: Data] = [:]           // relative path → 32-byte key
     private var contactCache: [String: String] = [:] // username → display name
+    /// Maps WeChat username / nick_name / remark to one canonical username
+    /// when the alias is unambiguous. Prevents group member nicknames and
+    /// local remarks from being treated as different people downstream.
+    private var contactIdentityIndex: ContactIdentityIndex = .empty
     /// All known aliases for the current user (wxid, nicknames from contact.db,
     /// and senderHint names learned from group messages where name2id failed).
     /// Used by isFromSelf to catch group chat messages where the sender is
@@ -289,14 +293,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
 
-        contactCache.removeAll(keepingCapacity: true)
+        var contactRecords: [ContactIdentityIndex.Record] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let username = columnText(stmt, 0)
             let nickName = columnText(stmt, 1)
             let remark = columnText(stmt, 2)
-            let display = remark.isEmpty ? (nickName.isEmpty ? username : nickName) : remark
-            contactCache[username] = display
+            contactRecords.append(ContactIdentityIndex.Record(username: username, nickName: nickName, remark: remark))
         }
+        let identityIndex = ContactIdentityIndex.build(records: contactRecords)
+        contactIdentityIndex = identityIndex
+        contactCache = identityIndex.displayNameByUsername
 
         // Rebuild self-name aliases. Merge the base set (wxid + legacy
         // short ID + contact.db display name) WITH any group-chat
@@ -312,11 +318,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             names.insert(me)
             // WeChat DB Name2Id may store the legacy short ID (without _xxxx suffix).
             // Add it so isFromSelf can match group messages using the old format.
-            if let underscoreRange = me.range(of: "_", options: .backwards),
-               me[underscoreRange.upperBound...].count == 4,
-               me[underscoreRange.upperBound...].allSatisfy({ $0.isHexDigit }) {
-                let shortId = String(me[..<underscoreRange.lowerBound])
-                if !shortId.isEmpty { names.insert(shortId) }
+            if let shortId = Self.legacyShortUsername(for: me) {
+                names.insert(shortId)
+                if let shortDisplay = contactCache[shortId], shortDisplay != shortId {
+                    names.insert(shortDisplay)
+                }
             }
             if let myDisplay = contactCache[me], myDisplay != me {
                 names.insert(myDisplay)
@@ -327,7 +333,34 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     }
 
     func displayName(for username: String) -> String {
-        lock.withLock { contactCache[username] ?? username }
+        lock.withLock {
+            if let exact = contactCache[username] {
+                return exact
+            }
+            if let shortId = Self.legacyShortUsername(for: username),
+               let shortDisplay = contactCache[shortId] {
+                return shortDisplay
+            }
+            if let display = contactIdentityIndex.displayName(for: username) {
+                return display
+            }
+            if username.contains("@chatroom") {
+                return "未命名群聊"
+            }
+            return username
+        }
+    }
+
+    func canonicalContactUsername(for usernameOrAlias: String) -> String? {
+        lock.withLock {
+            contactIdentityIndex.canonicalUsername(for: usernameOrAlias)
+        }
+    }
+
+    func normalizeContactMentions(in text: String) -> String {
+        lock.withLock {
+            contactIdentityIndex.normalizeMentions(in: text)
+        }
     }
 
     // MARK: - Self (my username)
@@ -341,6 +374,18 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // .../xwechat_files/<wxid>/db_storage
         guard parts.count >= 2 else { return "" }
         return String(parts[parts.count - 2])
+    }
+
+    static func legacyShortUsername(for username: String) -> String? {
+        guard let underscoreRange = username.range(of: "_", options: .backwards) else {
+            return nil
+        }
+        let suffix = username[underscoreRange.upperBound...]
+        guard suffix.count == 4, suffix.allSatisfy({ $0.isHexDigit }) else {
+            return nil
+        }
+        let shortId = String(username[..<underscoreRange.lowerBound])
+        return shortId.isEmpty ? nil : shortId
     }
 
     // MARK: - Sessions (unread state)
@@ -452,7 +497,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if let since = sinceLocalId {
                 sql += " WHERE local_id > \(since)"
             }
-            sql += " ORDER BY create_time DESC LIMIT \(limit)"
+            sql += " ORDER BY create_time DESC, local_id DESC LIMIT \(limit)"
 
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
@@ -496,6 +541,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 if !senderUsername.isEmpty {
                     if senderUsername == me || mySelfNames.contains(senderUsername) {
                         senderUsername = me
+                    } else if let canonical = canonicalContactUsername(for: senderUsername) {
+                        senderUsername = canonical
                     }
                 }
 
@@ -512,6 +559,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     let hint = parsed.senderHint
                     if mySelfNames.contains(hint) {
                         senderUsername = me
+                    } else if let canonical = canonicalContactUsername(for: hint) {
+                        senderUsername = canonical
                     } else if realSenderId == 0 && !hint.isEmpty {
                         mySelfNames.insert(hint)
                         print("[WCHUD] learned self alias from group: '\(hint)'")
@@ -524,6 +573,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 let uid = "\(relPath)/\(tableName)/\(localId)"
                 let msg = MessageInfo(
                     id: uid,
+                    localId: localId,
                     chatUsername: chatUsername,
                     chatName: chatName,
                     senderUsername: senderUsername,
@@ -550,7 +600,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             chatDBNegativeCache.insert(chatUsername)
         }
 
-        return results.sorted { $0.createTime > $1.createTime }
+        return results.sorted {
+            if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
+            return $0.localId > $1.localId
+        }
     }
 
     /// Bulk stats across all message tables for given chat usernames.

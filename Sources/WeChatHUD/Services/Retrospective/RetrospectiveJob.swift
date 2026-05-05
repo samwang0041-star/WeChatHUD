@@ -148,7 +148,7 @@ final class RetrospectiveJob: ObservableObject {
                 var iterator = included.makeIterator()
                 var completedCount = 0
 
-                @Sendable func enqueue(_ chat: ScopeCandidate) {
+                func enqueue(_ chat: ScopeCandidate) {
                     group.addTask {
                         let messages = await provider.messages(
                             for: chat.chatUsername, in: dateRange, limit: perChatLimit

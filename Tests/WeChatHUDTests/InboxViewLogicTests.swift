@@ -3,6 +3,53 @@ import XCTest
 
 final class InboxViewLogicTests: XCTestCase {
 
+    func testGenerationKeySeparatesSameSecondDifferentPreview() {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        var first = makeItem(chatUsername: "alice", actionRequired: true)
+        first = InboxItem(
+            id: first.id,
+            chatUsername: first.chatUsername,
+            chatName: first.chatName,
+            senderName: first.senderName,
+            preview: "明天三点方便",
+            isGroup: first.isGroup,
+            timestamp: timestamp,
+            actionRequired: first.actionRequired,
+            priority: first.priority,
+            isVIP: first.isVIP,
+            isWhitelisted: first.isWhitelisted,
+            unreadCount: first.unreadCount,
+            isAtMention: first.isAtMention,
+            askType: first.askType,
+            reasons: first.reasons,
+            suggestedReplyMinutes: first.suggestedReplyMinutes,
+            status: first.status,
+            dismissedAtMsgId: first.dismissedAtMsgId
+        )
+        let second = InboxItem(
+            id: first.id,
+            chatUsername: first.chatUsername,
+            chatName: first.chatName,
+            senderName: first.senderName,
+            preview: "要不要走这个方案",
+            isGroup: first.isGroup,
+            timestamp: timestamp,
+            actionRequired: first.actionRequired,
+            priority: first.priority,
+            isVIP: first.isVIP,
+            isWhitelisted: first.isWhitelisted,
+            unreadCount: first.unreadCount,
+            isAtMention: first.isAtMention,
+            askType: first.askType,
+            reasons: first.reasons,
+            suggestedReplyMinutes: first.suggestedReplyMinutes,
+            status: first.status,
+            dismissedAtMsgId: first.dismissedAtMsgId
+        )
+
+        XCTAssertNotEqual(first.generationKey, second.generationKey)
+    }
+
     private func makeItem(
         chatUsername: String,
         actionRequired: Bool,
@@ -95,6 +142,29 @@ final class InboxViewLogicTests: XCTestCase {
 
         XCTAssertEqual(visible.count, 5)
         XCTAssertEqual(hiddenPassiveUpdateCount(items, showAllPassive: true), 0)
+    }
+
+    func testVisiblePassiveUpdatesAreSummaryCandidates() {
+        let passive = (0..<5).map { i in
+            makeItem(chatUsername: "passive_\(i)", actionRequired: false, isGroup: true)
+        }
+
+        let candidates = InboxPresentationPolicy.summaryCandidates(passive)
+
+        XCTAssertEqual(candidates.map(\.chatUsername), ["passive_0", "passive_1", "passive_2"])
+    }
+
+    func testGroupFYIIsSummaryCandidateEvenWhenNotActionable() {
+        let fyi = makeItem(
+            chatUsername: "room@chatroom",
+            actionRequired: true,
+            priority: .p1,
+            isGroup: true,
+            isAtMention: true
+        )
+
+        XCTAssertEqual(fyi.semanticState, .groupMentionFYI)
+        XCTAssertTrue(InboxPresentationPolicy.shouldGenerateRowSummary(for: fyi))
     }
 
     func testPassiveHiddenByGlobalLimitStillUsesPassiveAggregate() {

@@ -4,6 +4,7 @@ struct AutopilotSettingsView: View {
     @EnvironmentObject private var store: HUDStore
 
     @State private var confidenceThreshold: Double = 0.8
+    @State private var autoSendEnabled: Bool = false
     @State private var maxRepliesPerHour: Int = 20
     @State private var batchWindowSeconds: Int = 10
     @State private var vipAutoNotify: Bool = true
@@ -57,6 +58,13 @@ struct AutopilotSettingsView: View {
 
     private var thresholdSection: some View {
         SettingsSection("自动发送") {
+            SettingsToggleRow(
+                "无人值守发送",
+                subtitle: autoSendEnabled ? "低风险回复会按延迟队列自动发送" : "只生成待确认草稿，不直接发微信",
+                isOn: $autoSendEnabled
+            )
+            .onChange(of: autoSendEnabled) { save() }
+            SettingsRowDivider()
             VStack(spacing: 4) {
                 HStack {
                     Text("信心阈值")
@@ -289,6 +297,7 @@ struct AutopilotSettingsView: View {
 
     private func load() {
         let cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        autoSendEnabled = cfg.autoSendEnabled
         confidenceThreshold = cfg.confidenceThreshold
         maxRepliesPerHour = cfg.maxRepliesPerHour
         batchWindowSeconds = cfg.batchWindowSeconds
@@ -308,6 +317,7 @@ struct AutopilotSettingsView: View {
         // etc. all default-construct and would blow away user values if
         // we rebuilt from scratch).
         var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        cfg.autoSendEnabled = autoSendEnabled
         cfg.confidenceThreshold = confidenceThreshold
         cfg.maxRepliesPerHour = maxRepliesPerHour
         cfg.handleGroupAt = handleGroupAt

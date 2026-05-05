@@ -11,8 +11,6 @@ actor MockAIService: AIServiceProtocol {
     var shouldThrow: Error? = nil
     var configToReturn: AIConfig = AIConfig()
 
-    nonisolated init() {}
-
     func setRoute(needle: String, response: String) {
         routes.append((needle, response))
     }

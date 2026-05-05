@@ -32,6 +32,9 @@ struct CatchupTabView: View {
                 promptView
             }
         }
+        .onChange(of: hourWindow) { _, _ in
+            catchupResult = nil
+        }
     }
 
     // MARK: - Header
@@ -115,6 +118,7 @@ struct CatchupTabView: View {
                 HStack(spacing: 12) {
                     statPill("未读", count: stats.unread, color: .blue)
                     statPill("待回", count: stats.replyDebt, color: .orange)
+                    statPill("待办", count: stats.pendingAsks, color: .pink)
                     statPill("承诺", count: stats.commitments, color: .purple)
                 }
             }
@@ -259,14 +263,16 @@ struct CatchupTabView: View {
         let unread: Int
         let replyDebt: Int
         let commitments: Int
-        var total: Int { unread + replyDebt + commitments }
+        let pendingAsks: Int
+        var total: Int { unread + replyDebt + commitments + pendingAsks }
     }
 
     private func gatherStats() -> Stats {
         Stats(
             unread: monitor.unreadItems.count,
             replyDebt: monitor.replyDebtItems.count,
-            commitments: monitor.commitments.filter { $0.status == .pending }.count
+            commitments: monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
+            pendingAsks: monitor.pendingAsks().count
         )
     }
 
@@ -331,8 +337,6 @@ struct CatchupTabView: View {
             let messages = monitor.recentMessages(chatUsername: chatUsername, limit: 30)
             guard messages.count >= 2 else { continue }
 
-            // Build MessageInfo for segmenter
-            let chatType: ChatType = chatUsername.contains("@chatroom") ? .group : .privateChat
             let chatName = monitor.recentNotifications.first { $0.chatUsername == chatUsername }?.chatName ?? chatUsername
 
             let participants = Set(messages.map(\.sender)).sorted()
@@ -396,7 +400,7 @@ struct CatchupTabView: View {
         var lowPriority: [CatchupItem] = []
 
         // 1. Reply debt items → needs action (they need a reply)
-        for item in monitor.replyDebtItems {
+        for item in monitor.replyDebtItems where item.timestamp >= cutoff {
             needsAction.append(CatchupItem(
                 id: "debt-\(item.chatUsername)",
                 chatName: item.chatName,
@@ -408,7 +412,7 @@ struct CatchupTabView: View {
         }
 
         // 2. Overdue unread → needs action
-        for item in monitor.unreadItems where item.status == .overdue {
+        for item in monitor.unreadItems where item.status == .overdue && item.timestamp >= cutoff {
             needsAction.append(CatchupItem(
                 id: "overdue-\(item.chatUsername)-\(item.senderUsername)",
                 chatName: item.chatName,
@@ -419,19 +423,37 @@ struct CatchupTabView: View {
             ))
         }
 
-        // 3. Pending commitments → needs action
-        for c in monitor.commitments where c.status == .pending {
+        // 3. Pending asks → needs action
+        for ask in monitor.pendingAsks() {
+            let anchor = ask.deadlineAt ?? ask.createdAt
+            guard anchor >= cutoff || ask.deadlineAt.map({ $0 <= Date() }) == true else { continue }
+            needsAction.append(CatchupItem(
+                id: "ask-\(ask.msgUID)",
+                chatName: ask.chatName,
+                senderName: ask.senderName,
+                summary: "待办: \(ask.summary)",
+                timestamp: anchor,
+                source: .replyDebt
+            ))
+        }
+
+        // 4. Pending/overdue commitments → needs action. Overdue items
+        // always surface even if they were created outside the selected
+        // catch-up window.
+        for c in monitor.commitments where c.status == .pending || c.status == .overdue {
+            let anchor = c.deadlineAt ?? c.updatedAt
+            guard c.status == .overdue || anchor >= cutoff else { continue }
             needsAction.append(CatchupItem(
                 id: "commit-\(c.msgUID)",
                 chatName: c.chatName,
                 senderName: "",
                 summary: "你的承诺: \(c.content)",
-                timestamp: c.createdAt,
+                timestamp: anchor,
                 source: .commitment
             ))
         }
 
-        // 4. VIP notifications within window → important
+        // 5. VIP notifications within window → important
         for notif in monitor.recentNotifications where notif.isVIP && notif.timestamp >= cutoff {
             important.append(CatchupItem(
                 id: "vip-\(notif.chatUsername)-\(notif.messageID)",
@@ -443,8 +465,8 @@ struct CatchupTabView: View {
             ))
         }
 
-        // 5. Pending unread → important (not overdue yet)
-        for item in monitor.unreadItems where item.status == .pending {
+        // 6. Pending unread → important (not overdue yet)
+        for item in monitor.unreadItems where item.status == .pending && item.timestamp >= cutoff {
             // Avoid duplicates with reply debt
             let isDuplicate = needsAction.contains { $0.chatName == item.chatName }
             if !isDuplicate {
@@ -459,7 +481,7 @@ struct CatchupTabView: View {
             }
         }
 
-        // 6. Non-VIP recent notifications within window → low priority
+        // 7. Non-VIP recent notifications within window → low priority
         for notif in monitor.recentNotifications where !notif.isVIP && notif.timestamp >= cutoff {
             let isDuplicate = (needsAction + important).contains { $0.chatName == notif.chatName }
             if !isDuplicate {

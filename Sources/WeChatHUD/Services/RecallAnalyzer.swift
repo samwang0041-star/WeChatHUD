@@ -6,15 +6,18 @@ import Foundation
 /// interpolates context, calls the configured AI model, parses the JSON result,
 /// writes analysis back to the DB, and emits an audit log entry.
 ///
-/// Follows the same patterns as `CommitmentTracker` and `VIPAggregator`.
+/// All AI calls go through `AIAnalysisPipeline` for unified retry and audit.
+/// Uses `executeRaw` because parsing requires `JSONSerialization` for flexible field access.
 actor RecallAnalyzer {
     private let store: HUDStore
     private let aiService: AIService
+    private let pipeline: AIAnalysisPipeline
     private let promptLoader: PromptLoader
 
     init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
         self.aiService = aiService
+        self.pipeline = AIAnalysisPipeline(aiService: aiService, store: store)
         self.promptLoader = promptLoader
     }
 
@@ -31,7 +34,7 @@ actor RecallAnalyzer {
     // MARK: - Public API
 
     /// Analyze a recalled message. Returns nil when AI is unavailable or parsing fails.
-    /// On success writes the analysis back to the DB and emits an audit log entry.
+    /// On success writes the analysis back to the DB.
     func analyze(recalled: RecalledMessage, context: [MessageInfo]) async -> AnalysisResult? {
         let template: String
         do { template = try promptLoader.load(version: "recall_analyzer_v1") }
@@ -62,82 +65,37 @@ actor RecallAnalyzer {
             .replacingOccurrences(of: "{chat_name}", with: escape(recalled.chatName))
             .replacingOccurrences(of: "{context}", with: contextText)
 
-        let started = Date()
-        let response = await callModel(prompt: prompt)
-        let latency = Int(Date().timeIntervalSince(started) * 1000)
-        let model: String
-        if let actualModel = response.model {
-            model = actualModel
-        } else {
-            model = await aiService.currentConfig().model
-        }
+        let result = await pipeline.executeRaw(
+            prompt: prompt,
+            configuration: .init(
+                systemPrompt: "只输出 JSON。",
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true),
+                auditRole: .recallAnalyzer,
+                promptVersion: "recall_analyzer_v1",
+                inputSummary: "[\(recalled.senderName)@\(recalled.chatName)] recalled: \(recalled.originalText.prefix(60))",
+                trackLabel: "撤回分析"
+            )
+        )
 
-        let inputSummary = "[\(recalled.senderName)@\(recalled.chatName)] recalled: \(recalled.originalText.prefix(60))"
+        guard let (text, _) = result else { return nil }
 
-        guard let body = response.text else {
-            try? store.writeAIAudit(AIAuditEntry(
-                id: 0, ts: Date(), role: .recallAnalyzer,
-                model: model, promptVersion: "recall_analyzer_v1",
-                inputText: inputSummary, outputText: "",
-                latencyMs: latency, status: .httpError, errorMessage: response.error ?? "no response"
-            ))
-            return nil
-        }
-
-        guard let result = parseResult(body) else {
-            try? store.writeAIAudit(AIAuditEntry(
-                id: 0, ts: Date(), role: .recallAnalyzer,
-                model: model, promptVersion: "recall_analyzer_v1",
-                inputText: inputSummary, outputText: body,
-                latencyMs: latency, status: .parseError, errorMessage: "JSON parse failed"
-            ))
+        guard let parsed = parseResult(text) else {
+            print("[WCHUD] RecallAnalyzer: JSON parse failed")
             return nil
         }
 
         // Write analysis back to DB
-        let notifyLevel = result.notifyLevel ?? .light
+        let notifyLevel = parsed.notifyLevel ?? .light
         try? store.updateRecallAnalysis(
             msgUID: recalled.msgUID,
-            reason: result.reason,
-            value: result.intelligenceValue,
-            detail: result.detail ?? "",
-            shouldNotify: result.shouldNotify,
+            reason: parsed.reason,
+            value: parsed.intelligenceValue,
+            detail: parsed.detail ?? "",
+            shouldNotify: parsed.shouldNotify,
             notifyLevel: notifyLevel
         )
 
-        try? store.writeAIAudit(AIAuditEntry(
-            id: 0, ts: Date(), role: .recallAnalyzer,
-            model: model, promptVersion: "recall_analyzer_v1",
-            inputText: inputSummary, outputText: body,
-            latencyMs: latency, status: .ok, errorMessage: nil
-        ))
-
-        return result
-    }
-
-    // MARK: - Model call
-
-    private struct ModelResponse {
-        let text: String?
-        let error: String?
-        let model: String?
-    }
-
-    private func callModel(prompt: String) async -> ModelResponse {
-        let trackID = "recall:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "撤回分析")
-        defer { AIActivityTracker.shared.end(trackID) }
-
-        do {
-            let result = try await aiService.completeWithMetadata(
-                system: "只输出 JSON。",
-                user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true)
-            )
-            return ModelResponse(text: result.text, error: nil, model: result.model)
-        } catch {
-            return ModelResponse(text: nil, error: error.localizedDescription, model: nil)
-        }
+        return parsed
     }
 
     // MARK: - Parsing

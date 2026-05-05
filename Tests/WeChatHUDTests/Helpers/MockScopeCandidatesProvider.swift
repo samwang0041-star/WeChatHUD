@@ -8,8 +8,6 @@ actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
     private var messagesByUsername: [String: [MessageInfo]] = [:]
     private var relationByUsername: [String: Relation] = [:]
 
-    nonisolated init() {}
-
     func setCandidates(_ items: [ScopeCandidate], for range: DateRange) {
         candidatesByRange[range] = items
     }

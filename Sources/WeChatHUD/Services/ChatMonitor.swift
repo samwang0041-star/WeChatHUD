@@ -12,6 +12,20 @@ private func ts() -> String {
     _tsFormatter.string(from: Date())
 }
 
+struct ContactInferenceStatus {
+    var total: Int
+    var completed: Int
+    var succeeded: Int
+    var isRunning: Bool
+
+    var label: String {
+        if isRunning {
+            return total > 0 ? "后台分析 \(completed)/\(total)" : "后台分析准备中"
+        }
+        return "完成 \(succeeded) 个画像"
+    }
+}
+
 /// Event-driven WeChat message monitor.
 ///
 /// Primary trigger: FSEventsWatcher feeds paths into `onFSEvent` whenever
@@ -53,9 +67,10 @@ final class ChatMonitor: ObservableObject {
     @Published var vipInsights: [String: VIPAggregator.AggregateResult] = [:]
     /// AI-suggested whitelist additions keyed by chat username.
     @Published var whitelistSuggestions: [String: AIWhitelistCategorizer.Suggestion] = [:]
-    /// Cached daily retrospective, regenerated every 30 minutes.
-    @Published var dailyReport: AIDailyRetrospector.Retrospective? = nil
+    /// Cached daily report, regenerated every 30 minutes.
+    @Published var dailyReport: DailyReport? = nil
     @Published var dailyReportGeneratedAt: Date? = nil
+    @Published var dailyReportError: String? = nil
     /// Autopilot state — exposed for UI.
     @Published var autopilotActive = false
     @Published var autopilotPaused = false
@@ -76,16 +91,8 @@ final class ChatMonitor: ObservableObject {
     var silencedItems: [InboxItem] {
         handledItems.filter { $0.status == .silenced }
     }
-    /// Chat insight analysis results keyed by chatUsername.
-    @Published var chatInsights: [String: ChatInsightResult] = [:]
-    /// Global briefing across all whitelisted chats.
-    @Published var globalBriefing: GlobalBriefing? = nil
-    /// True while insight analysis is running.
-    @Published var insightLoading: Bool = false
-    /// Insight progress: "正在分析 3/12..."
-    @Published var insightProgress: String = ""
-    /// Insight progress fraction 0-1
-    @Published var insightProgressFraction: Double = 0
+    let insightCoordinator: InsightCoordinator
+    @Published var contactInferenceStatus: ContactInferenceStatus? = nil
     /// Tracks dismissed inbox items: chatUsername → timestamp at time of dismiss.
     private var dismissedInbox: [String: Int64] = [:]
     /// Tracks snoozed inbox items: chatUsername → snooze expiry date.
@@ -97,7 +104,7 @@ final class ChatMonitor: ObservableObject {
     private let recentLimit = 10
 
     private let reader: WeChatReader
-    private let store: HUDStore
+    nonisolated(unsafe) private let store: HUDStore
     private let aiService: AIService
 
     // MARK: - Retrospective surface (Plan M6.0)
@@ -219,8 +226,8 @@ final class ChatMonitor: ObservableObject {
     /// observes and turns it into a one-shot toast. Tuple form so we
     /// can include both the chat name and the aging label.
     @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
-    private lazy var dailyRetrospector: AIDailyRetrospector = {
-        AIDailyRetrospector(store: store, aiService: aiService)
+    private lazy var dailyReportGenerator: AIDailyReportGenerator = {
+        AIDailyReportGenerator(aiService: aiService, store: store)
     }()
     private lazy var briefingGenerator: AIBriefingGenerator = {
         AIBriefingGenerator(store: store, aiService: aiService)
@@ -234,11 +241,11 @@ final class ChatMonitor: ObservableObject {
     private lazy var inboxSummarizer: AIInboxSummarizer = {
         AIInboxSummarizer(store: store, aiService: aiService)
     }()
-    private lazy var chatInsightService: AIChatInsight = {
-        AIChatInsight(store: store, aiService: aiService)
-    }()
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
+    private var summaryInFlight: Set<String> = []
+    private let inboxSummaryAnalysisType = "inbox_row_summary_v2"
+    private var contactInferenceTask: Task<Void, Never>?
 
     /// Pre-generated expand-panel data — analysis + reply suggestions
     /// fired in the background right after scan, so when the user
@@ -249,6 +256,7 @@ final class ChatMonitor: ObservableObject {
     /// rejected when a newer one arrives.
     struct PrefetchedAction {
         let timestamp: Int
+        let generationKey: String
         let groupAnalysis: ChatAnalyzer.GroupAnalysis?
         let privateAnalysis: ChatAnalyzer.PrivateAnalysis?
         let analysisError: String?
@@ -335,6 +343,7 @@ final class ChatMonitor: ObservableObject {
         )
         self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService)
         self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService)
+        self.insightCoordinator = InsightCoordinator(reader: reader, store: store, aiService: aiService)
     }
 
     deinit {
@@ -370,7 +379,7 @@ final class ChatMonitor: ObservableObject {
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
         let scanEveryNTicks = max(1, syncCfg.intervalSeconds / 10)
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 // Process pending send queue every 10s (fast enough for UI countdown accuracy)
                 let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
@@ -581,7 +590,11 @@ final class ChatMonitor: ObservableObject {
             .map { Int($0.timestamp.timeIntervalSince1970) }
             .max() ?? Int(Date().timeIntervalSince1970)
         try? store.silenceChat(chatUsername: chatUsername, silencedAt: currentMax)
+        dismissedInbox[chatUsername] = Int64(currentMax)
+        snoozedInbox.removeValue(forKey: chatUsername)
+        silencedInbox.remove(chatUsername)
         moveToSuppressed(chatUsername: chatUsername)
+        rebuildInbox()
     }
 
     /// Snooze an entire chat until an absolute unix timestamp. Items
@@ -589,7 +602,11 @@ final class ChatMonitor: ObservableObject {
     /// will repopulate them into `unreadItems`.
     func snoozeChat(_ chatUsername: String, until: Int) {
         try? store.snoozeChat(chatUsername: chatUsername, until: until)
+        snoozedInbox[chatUsername] = Date(timeIntervalSince1970: Double(until))
+        dismissedInbox.removeValue(forKey: chatUsername)
+        silencedInbox.remove(chatUsername)
         moveToSuppressed(chatUsername: chatUsername)
+        rebuildInbox()
     }
 
     /// Convenience: snooze for N minutes from now.
@@ -704,15 +721,18 @@ final class ChatMonitor: ObservableObject {
     /// by the 恢复显示 context action on rows inside the 已处理 tab.
     func clearChatAction(_ chatUsername: String) {
         try? store.clearChatAction(chatUsername: chatUsername)
+        dismissedInbox.removeValue(forKey: chatUsername)
+        snoozedInbox.removeValue(forKey: chatUsername)
+        silencedInbox.remove(chatUsername)
         let restored = suppressedItems.filter {
             $0.chatUsername == chatUsername && !$0.isIgnored
         }
-        guard !restored.isEmpty else { return }
-        suppressedItems.removeAll {
-            $0.chatUsername == chatUsername && !$0.isIgnored
-        }
-        unreadItems.append(contentsOf: restored)
-        unreadItems.sort { a, b in
+        if !restored.isEmpty {
+            suppressedItems.removeAll {
+                $0.chatUsername == chatUsername && !$0.isIgnored
+            }
+            unreadItems.append(contentsOf: restored)
+            unreadItems.sort { a, b in
             func rank(_ s: UnreadStatus) -> Int {
                 switch s {
                 case .overdue:  return 0
@@ -723,8 +743,10 @@ final class ChatMonitor: ObservableObject {
             let ra = rank(a.status), rb = rank(b.status)
             if ra != rb { return ra < rb }
             return a.timestamp > b.timestamp
+            }
+            recomputeStatsFromItems()
         }
-        recomputeStatsFromItems()
+        rebuildInbox()
         Task { @MainActor in
             await self.scan()
         }
@@ -790,6 +812,46 @@ final class ChatMonitor: ObservableObject {
         Task { @MainActor in
             await self.scan()
         }
+    }
+
+    func setInboxItemVIP(_ item: InboxItem, isVIP: Bool) {
+        updateWhitelistAttention(
+            username: item.chatUsername,
+            displayName: item.chatName,
+            isGroup: item.isGroup,
+            fallbackCategory: item.isGroup ? .work : .life,
+            attentionLevel: isVIP ? .vip : .watch
+        )
+    }
+
+    func untrackInboxItem(_ item: InboxItem) {
+        try? store.removeFromWhitelist(username: item.chatUsername)
+        dismissedInbox.removeValue(forKey: item.chatUsername)
+        snoozedInbox.removeValue(forKey: item.chatUsername)
+        silencedInbox.remove(item.chatUsername)
+        replyDebtItems.removeAll { $0.chatUsername == item.chatUsername }
+        recentNotifications.removeAll { $0.chatUsername == item.chatUsername }
+        if latestNotification?.chatUsername == item.chatUsername {
+            latestNotification = nil
+        }
+        rebuildInbox()
+        Task { @MainActor in
+            await self.scan()
+        }
+    }
+
+    func ignoreInboxItemSender(_ item: InboxItem) {
+        guard item.isGroup, !item.senderName.isEmpty else { return }
+        ignoreSender(
+            chatUsername: item.chatUsername,
+            chatName: item.chatName,
+            senderUsername: "",
+            senderName: item.senderName
+        )
+        recentNotifications.removeAll {
+            $0.chatUsername == item.chatUsername && $0.senderName == item.senderName
+        }
+        rebuildInbox()
     }
 
     private func trimGroupContextStateIfNeeded(maxEntries: Int = 32) {
@@ -914,8 +976,41 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
-        // Autopilot no longer pauses when WeChat is frontmost —
-        // as long as autopilot is on, it keeps replying.
+        activateObserver = center.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bid = app.bundleIdentifier,
+                  Self.wechatBundleIDs.contains(bid) else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.autopilotActive else { return }
+                await self.autopilotService?.onUserBecameActive()
+                if let service = self.autopilotService {
+                    self.autopilotPaused = await service.isPaused
+                    self.autopilotManuallyPaused = await service.manuallyPaused
+                }
+            }
+        }
+
+        deactivateObserver = center.addObserver(
+            forName: NSWorkspace.didDeactivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            guard let app = notif.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bid = app.bundleIdentifier,
+                  Self.wechatBundleIDs.contains(bid) else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.autopilotActive else { return }
+                await self.autopilotService?.onUserBecameInactive()
+                if let service = self.autopilotService {
+                    self.autopilotPaused = await service.isPaused
+                    self.autopilotManuallyPaused = await service.manuallyPaused
+                }
+            }
+        }
     }
 
     // MARK: - Scan
@@ -1009,6 +1104,7 @@ final class ChatMonitor: ObservableObject {
         let th = thresholds
         let currentRecent = recentNotifications
         let rLimit = recentLimit
+        let apActive = autopilotActive
         let replyDebtConfig = store.getSettingJSON("replyDebt", as: ReplyDebtConfig.self) ?? ReplyDebtConfig()
         let aiRef = aiService
 
@@ -1021,7 +1117,8 @@ final class ChatMonitor: ObservableObject {
                 thresholds: th,
                 replyDebtConfig: replyDebtConfig,
                 currentRecent: currentRecent,
-                recentLimit: rLimit
+                recentLimit: rLimit,
+                autopilotActive: apActive
             )
         }.value
 
@@ -1074,14 +1171,36 @@ final class ChatMonitor: ObservableObject {
         // Always call handleNewMessages when active (even with empty array)
         // so that buffered batches whose time window expired get flushed.
         if autopilotActive, let service = autopilotService {
-            let msgs = o.newInboundMessages
+            let durableMsgs = store.loadPendingAutopilotInbound(limit: 200)
+            var seenMsgUIDs: Set<String> = []
+            let msgs = (durableMsgs + o.newInboundMessages)
+                .sorted { lhs, rhs in
+                    if lhs.timestamp != rhs.timestamp { return lhs.timestamp < rhs.timestamp }
+                    return lhs.msgUID < rhs.msgUID
+                }
+                .filter { msg in
+                    if seenMsgUIDs.contains(msg.msgUID) { return false }
+                    seenMsgUIDs.insert(msg.msgUID)
+                    return true
+                }
             let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
             let myUname = reader.myUsername()
             Task {
                 let result = await service.handleNewMessages(msgs, config: config, myUsername: myUname)
+                if !result.ackedMsgUIDs.isEmpty {
+                    try? self.store.deleteAutopilotInbound(msgUIDs: result.ackedMsgUIDs)
+                }
+                let queue = await service.pendingSendQueue
+                let stats = await service.sessionStats
+                let manPaused = await service.manuallyPaused
+                let paused = await service.isPaused
                 await MainActor.run {
                     self.autopilotSessionSent += result.totalSent
                     self.autopilotSessionPending += result.totalPending
+                    self.autopilotPendingSendQueue = queue
+                    self.autopilotSessionStats = stats
+                    self.autopilotManuallyPaused = manPaused
+                    self.autopilotPaused = paused
                     if let session = self.store.currentAutopilotSession() {
                         self.autopilotLog = self.store.loadAutopilotLog(sessionId: session.id, limit: 50)
                     }
@@ -1229,11 +1348,14 @@ final class ChatMonitor: ObservableObject {
                         isGroup: item.chatUsername.contains("@chatroom")
                     )
                     guard let result = await classifier.classify(message: input) else { continue }
-                    guard result.isAsk else { continue }
+                    guard result.isAsk, result.confidence >= 0.5 else { continue }
 
                     let contact = storeRef.getContact(username: item.msg.senderUsername)
                     let bucket: AskBucket = result.confidence >= 0.85 ? .main : .review
-                    let deadline: Date? = result.deadlineRelative.flatMap { MessageHelpers.resolveDeadline($0) }
+                    let messageDate = Date(timeIntervalSince1970: Double(item.msg.createTime))
+                    let deadline: Date? = result.deadlineRelative.flatMap {
+                        MessageHelpers.resolveDeadline($0, relativeTo: messageDate)
+                    }
 
                     let ask = PendingAsk(
                         id: 0,
@@ -1249,7 +1371,7 @@ final class ChatMonitor: ObservableObject {
                         bucket: bucket,
                         status: .pending,
                         promptVersion: result.promptVersion,
-                        createdAt: Date(),
+                        createdAt: messageDate,
                         updatedAt: Date(),
                         senderLevel: contact?.attentionLevel,
                         senderRole: contact?.role,
@@ -1290,9 +1412,25 @@ final class ChatMonitor: ObservableObject {
                         recipientRole: role
                     ) else { continue }
 
-                    guard result.isCommitment, result.confidence >= 0.7 else { continue }
+                    guard result.isCommitment, result.confidence >= 0.72 else { continue }
 
-                    let deadline = MessageHelpers.resolveDeadline(result.deadlineExtracted)
+                    let messageDate = Date(timeIntervalSince1970: Double(item.msg.createTime))
+                    let deadline = MessageHelpers.resolveDeadline(result.deadlineExtracted, relativeTo: messageDate)
+                    let sourceText = result.sourceText.isEmpty
+                        ? item.msg.text
+                        : result.sourceText
+                    let contextText = result.contextText.isEmpty
+                        ? Self.commitmentContextSnapshot(window.messages, targetID: item.msg.id)
+                        : result.contextText
+                    let deadlineLabel = result.deadlineLabel.isEmpty
+                        ? Self.commitmentDeadlineLabel(result.deadlineExtracted, resolved: deadline)
+                        : result.deadlineLabel
+                    let nextStep = result.nextStep.isEmpty
+                        ? "回到「\(item.chatName)」确认并推进：\(result.content)"
+                        : result.nextStep
+                    let captureReason = result.captureReason.isEmpty
+                        ? "你的发言承诺了后续动作"
+                        : result.captureReason
                     try? storeRef.upsertCommitment(
                         msgUID: item.msg.id,
                         chatUsername: item.chatUsername,
@@ -1301,7 +1439,14 @@ final class ChatMonitor: ObservableObject {
                         commitTo: result.commitTo,
                         deadlineAt: deadline,
                         confidence: result.confidence,
-                        promptVersion: "commitment_v1"
+                        promptVersion: "commitment_v1",
+                        sourceText: sourceText,
+                        contextText: contextText,
+                        captureReason: captureReason,
+                        nextStep: nextStep,
+                        deadlineLabel: deadlineLabel,
+                        commitmentKind: result.commitmentKind,
+                        createdAt: messageDate
                     )
                 }
                 // Refresh published commitments after processing
@@ -1475,9 +1620,10 @@ final class ChatMonitor: ObservableObject {
         // talks about deliverables → auto-mark fulfilled. If the
         // deadline has passed with no evidence → auto-mark overdue.
         //
-        // `autoAdvanceCommitmentStatus` only flips .pending rows —
-        // user-cancelled / user-completed rows are untouched.
-        let pendingCommitments = commitments.filter { $0.status == .pending }
+        // `autoAdvanceCommitmentStatus` protects manual rows. Fulfillment
+        // also checks overdue commitments so late "已发/搞定" evidence can
+        // recover them.
+        let pendingCommitments = commitments.filter { $0.status == .pending || $0.status == .overdue }
         if !pendingCommitments.isEmpty {
             let readerForFulfillment = reader
             let storeForFulfillment = store
@@ -1537,172 +1683,20 @@ final class ChatMonitor: ObservableObject {
            dailyReport != nil {
             return
         }
-        let pending = store.loadPendingAsks(status: .pending)
-        let handled = store.loadPendingAsks(status: .done)
-        let input = AIDailyRetrospector.Input(
-            date: {
-                let f = DateFormatter()
-                f.dateFormat = "yyyy-MM-dd"
-                return f.string(from: Date())
-            }(),
-            handled: handled,
-            pending: pending,
-            messageCount: stats.unreadCount,
-            focusDurationMinutes: 0
-        )
-        dailyReport = await dailyRetrospector.retrospect(input)
+        dailyReportError = nil
+        let builder = DailyReportBuilder(store: store, replyDebtItems: replyDebtItems, stats: stats)
+        let baseReport = builder.build()
+        let enrichedReport = await dailyReportGenerator.enrich(baseReport)
+        dailyReport = enrichedReport
         dailyReportGeneratedAt = Date()
     }
 
-    /// Load chat insight analysis for all whitelisted chats.
-    /// Analyze a single chat on-demand (triggered by user clicking into a chat).
-    func analyzeOneChat(chatUsername: String) async {
-        guard chatInsights[chatUsername] == nil else { return }  // already analyzed
-        insightLoading = true
-        insightProgress = "正在分析..."
-
-        guard let entry = store.getWhitelist().first(where: { $0.id == chatUsername }) else {
-            insightLoading = false
-            return
-        }
-
-        let selfUsername = reader.myUsername()
-        let selfDisplayName = reader.displayName(for: selfUsername)
-
-        guard let result = await analyzeEntry(entry, selfUsername: selfUsername, selfDisplayName: selfDisplayName) else {
-            insightLoading = false
-            insightProgress = ""
-            return
-        }
-
-        chatInsights[chatUsername] = result
-        insightLoading = false
-        insightProgress = ""
+    func refreshInsightInBackground(force: Bool = false) {
+        insightCoordinator.refreshInBackground(force: force)
     }
 
-    /// Full insight load with progress reporting.
-    func loadInsight(force: Bool = false) async {
-        guard !insightLoading else { return }
-        if !force, let briefing = globalBriefing {
-            let age = Date().timeIntervalSince(
-                ISO8601DateFormatter().date(from: briefing.date) ?? .distantPast
-            )
-            if age < 1800 { return }
-        }
-
-        insightLoading = true
-        insightProgress = "正在准备..."
-        insightProgressFraction = 0
-
-        let whitelist = store.getWhitelist()
-        let selfUsername = reader.myUsername()
-        let selfDisplayName = reader.displayName(for: selfUsername)
-        let dateStr = ISO8601DateFormatter().string(from: Date())
-
-        // Filter to chats with today's messages
-        let todayStart = Calendar.current.startOfDay(for: Date())
-        var activeEntries: [WhitelistEntry] = []
-        for entry in whitelist {
-            guard let messages = try? reader.getMessages(chatUsername: entry.id, limit: 50) else { continue }
-            let hasToday = messages.contains { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
-            if hasToday { activeEntries.append(entry) }
-        }
-
-        let total = activeEntries.count
-        var results: [String: ChatInsightResult] = [:]
-        var statsResults: [ChatStatsData] = []
-
-        for (i, entry) in activeEntries.enumerated() {
-            insightProgress = "正在分析 \(i + 1)/\(total) \(entry.displayName)..."
-            insightProgressFraction = Double(i) / Double(max(total, 1))
-
-            if let result = await analyzeEntry(entry, selfUsername: selfUsername, selfDisplayName: selfDisplayName) {
-                results[entry.id] = result
-            }
-
-            // Also compute stats
-            if let messages = try? reader.getMessages(chatUsername: entry.id, limit: 200) {
-                let todayMessages = messages.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
-                if !todayMessages.isEmpty {
-                    let stats = ChatInsightEngine.computeStats(
-                        messages: todayMessages, selfUsername: selfUsername,
-                        selfDisplayName: selfDisplayName, selfNames: reader.mySelfNames,
-                        chatUsername: entry.id, chatName: entry.displayName,
-                        isGroup: entry.isGroup, category: entry.category
-                    )
-                    statsResults.append(stats)
-                }
-            }
-        }
-
-        insightProgress = "正在生成全局简报..."
-        insightProgressFraction = 0.95
-
-        // Global briefing
-        let totalMessages = statsResults.reduce(0) { $0 + $1.messageCount }
-        let myMessages = statsResults.reduce(0) { $0 + $1.myMessageCount }
-        let activeGroups = statsResults.filter { $0.isGroup }.count
-        let totalGroups = whitelist.filter { $0.isGroup }.count
-        let activePrivate = statsResults.filter { !$0.isGroup }.count
-        let workMsgs = statsResults.filter { $0.category == .work }.reduce(0) { $0 + $1.messageCount }
-        let workRatio = totalMessages > 0 ? Double(workMsgs) / Double(totalMessages) : 0
-
-        let globalStats = BriefingStats(
-            totalMessages: totalMessages, myMessages: myMessages,
-            activeGroups: activeGroups, totalGroups: totalGroups,
-            activePrivateChats: activePrivate, workRatio: workRatio
-        )
-
-        let insightPairs = results.compactMap { (key, value) -> (chatName: String, result: ChatInsightResult)? in
-            guard let e = whitelist.first(where: { $0.id == key }) else { return nil }
-            return (chatName: e.displayName, result: value)
-        }
-
-        let briefing = await chatInsightService.generateGlobalBriefing(
-            selfName: selfDisplayName, date: dateStr,
-            chatInsights: insightPairs, globalStats: globalStats
-        )
-
-        chatInsights = results
-        globalBriefing = briefing
-        insightLoading = false
-        insightProgress = ""
-        insightProgressFraction = 1.0
-    }
-
-    /// Analyze a single whitelist entry — shared by analyzeOneChat and loadInsight.
-    private func analyzeEntry(
-        _ entry: WhitelistEntry,
-        selfUsername: String,
-        selfDisplayName: String
-    ) async -> ChatInsightResult? {
-        let todayStart = Calendar.current.startOfDay(for: Date())
-        guard let messages = try? reader.getMessages(chatUsername: entry.id, limit: 200) else { return nil }
-        let todayMessages = messages.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
-        guard !todayMessages.isEmpty else { return nil }
-
-        let formatted = todayMessages
-            .sorted { $0.createTime < $1.createTime }
-            .map { (sender: $0.senderName, body: $0.text, time: $0.createTime) }
-
-        let recalled = recalledMessages
-            .filter { $0.chatUsername == entry.id }
-            .map { (sender: $0.senderName, content: $0.originalText) }
-
-        let memoryStr = store.loadConversationMemory(chatUsername: entry.id)?
-            .formatForPrompt() ?? ""
-
-        return await chatInsightService.analyzeChat(
-            chatUsername: entry.id,
-            chatName: entry.displayName,
-            chatType: entry.isGroup ? "group" : "private",
-            category: entry.category.rawValue,
-            selfName: selfDisplayName,
-            timeRange: "今天",
-            messages: formatted,
-            recalledMessages: recalled,
-            memory: memoryStr
-        )
+    func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
+        await insightCoordinator.analyzeOneChat(chatUsername: chatUsername, date: date)
     }
 
     /// Return active contacts not yet whitelisted — candidates for the
@@ -1794,11 +1788,69 @@ final class ChatMonitor: ObservableObject {
         guard !contacts.isEmpty else { return 0 }
         var count = 0
         for (i, contact) in contacts.enumerated() {
-            await progress(i + 1, contacts.count)
+            progress(i + 1, contacts.count)
             let result = await inferRelationship(contactUsername: contact.username, contactName: contact.displayName)
             if result != nil { count += 1 }
         }
         return count
+    }
+
+    /// Start relationship profile inference as a monitor-owned background job.
+    /// The contacts UI only observes `contactInferenceStatus`, so users can
+    /// keep editing or switch tabs while AI calls continue.
+    func startContactInference(contacts: [ContactEntry]) {
+        guard contactInferenceStatus?.isRunning != true else { return }
+        let candidates = contacts.filter { $0.attentionLevel != .stranger }
+        guard !candidates.isEmpty else {
+            contactInferenceStatus = ContactInferenceStatus(total: 0, completed: 0, succeeded: 0, isRunning: false)
+            return
+        }
+
+        contactInferenceStatus = ContactInferenceStatus(total: candidates.count, completed: 0, succeeded: 0, isRunning: true)
+        contactInferenceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var succeeded = 0
+            for (index, contact) in candidates.enumerated() {
+                if Task.isCancelled { break }
+                self.contactInferenceStatus = ContactInferenceStatus(
+                    total: candidates.count,
+                    completed: index,
+                    succeeded: succeeded,
+                    isRunning: true
+                )
+                let result = await self.inferRelationship(
+                    contactUsername: contact.username,
+                    contactName: contact.displayName
+                )
+                if result != nil { succeeded += 1 }
+                self.contactInferenceStatus = ContactInferenceStatus(
+                    total: candidates.count,
+                    completed: index + 1,
+                    succeeded: succeeded,
+                    isRunning: true
+                )
+            }
+            self.contactInferenceStatus = ContactInferenceStatus(
+                total: candidates.count,
+                completed: self.contactInferenceStatus?.completed ?? candidates.count,
+                succeeded: succeeded,
+                isRunning: false
+            )
+            self.contactInferenceTask = nil
+        }
+    }
+
+    func cancelContactInference() {
+        contactInferenceTask?.cancel()
+        contactInferenceTask = nil
+        if let status = contactInferenceStatus {
+            contactInferenceStatus = ContactInferenceStatus(
+                total: status.total,
+                completed: status.completed,
+                succeeded: status.succeeded,
+                isRunning: false
+            )
+        }
     }
 
     /// Save a reply draft for later sending.
@@ -1828,11 +1880,33 @@ final class ChatMonitor: ObservableObject {
         store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
     }
 
+    func sendAutopilotNow(id: UUID, config: AutopilotConfig) async -> AutopilotService.ManualSendOutcome {
+        guard let service = autopilotService else { return .notFound }
+        let outcome = await service.sendNow(id: id, config: config)
+        await refreshAutopilotLiveState()
+        refreshAutopilotSessionState()
+        return outcome
+    }
+
+    func editAndSendAutopilot(id: UUID, newText: String, config: AutopilotConfig) async -> AutopilotService.ManualSendOutcome {
+        guard let service = autopilotService else { return .notFound }
+        let outcome = await service.editAndSend(id: id, newText: newText, config: config)
+        await refreshAutopilotLiveState()
+        refreshAutopilotSessionState()
+        return outcome
+    }
+
+    private func refreshAutopilotLiveState() async {
+        guard let service = autopilotService else { return }
+        autopilotPendingSendQueue = await service.pendingSendQueue
+        autopilotSessionStats = await service.sessionStats
+        autopilotManuallyPaused = await service.manuallyPaused
+    }
+
     /// Compute relationship strength score (0-100) for a contact.
     func relationshipStrength(chatUsername: String) -> RelationshipStrength {
         let trend = chatTrend(chatUsername: chatUsername)
         let totalMessages = trend.reduce(0) { $0 + $1.count }
-        let activeDays = trend.filter { $0.count > 0 }.count
         let daysSinceLastActive = trend.reversed().firstIndex { $0.count > 0 } ?? 7
 
         // Score: frequency (0-50) + recency (0-50)
@@ -1896,8 +1970,12 @@ final class ChatMonitor: ObservableObject {
         // Daily report
         if let report = dailyReport {
             md += "## 日报\n\n"
-            md += "\(report.todaySummary)\n\n"
-            md += "### 明天第一件事\n\n\(report.tomorrowFirstThing.action)\n\n"
+            if let narrative = report.narrative {
+                md += "\(narrative)\n\n"
+            }
+            if let tomorrowFocus = report.tomorrowFocus {
+                md += "### 明天重点\n\n\(tomorrowFocus)\n\n"
+            }
         }
 
         // Commitments
@@ -1946,11 +2024,40 @@ final class ChatMonitor: ObservableObject {
         commitments = store.loadCommitments()
     }
 
+    private static func commitmentContextSnapshot(_ messages: [AnnotatedMessage], targetID: String) -> String {
+        let before = messages
+            .filter { !$0.isTarget && $0.id != targetID && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .suffix(3)
+        let lines = before.map { msg in
+            let text = AIService.sanitizeForAI(msg.text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(msg.senderName): \(text)"
+        }
+        return lines.joined(separator: " / ")
+    }
+
+    private static func commitmentDeadlineLabel(_ extracted: String, resolved: Date?) -> String {
+        let normalized = extracted.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty || normalized == "none" {
+            return resolved == nil ? "无明确时间" : "有时间，待确认"
+        }
+        switch normalized {
+        case "tomorrow": return "明天前"
+        case "vague_soon": return "尽快/稍后"
+        case "inherit": return "沿用上文时间"
+        default: return normalized
+        }
+    }
+
     /// Load pending asks for a specific chat. Used by Person Profile card.
     func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
         Array(store.loadPendingAsks(status: .pending)
             .filter { $0.chatUsername == chatUsername }
             .prefix(3))
+    }
+
+    func pendingAsks() -> [PendingAsk] {
+        store.loadPendingAsks(status: .pending)
     }
 
     /// Refresh the reply suggester's config from the settings DB.
@@ -2039,6 +2146,7 @@ final class ChatMonitor: ObservableObject {
     /// Unsilence a chat (remove from silenced set).
     func unsilenceInboxItem(_ item: InboxItem) {
         silencedInbox.remove(item.chatUsername)
+        try? store.clearChatAction(chatUsername: item.chatUsername)
         rebuildInbox()
     }
 
@@ -2054,13 +2162,11 @@ final class ChatMonitor: ObservableObject {
         inboxItems = result.active
         handledItems = result.handled
 
-        // Apply cached AI summaries
-        for i in inboxItems.indices {
-            let key = "\(inboxItems[i].chatUsername)_\(Int(inboxItems[i].timestamp.timeIntervalSince1970))"
-            if let cached = summaryCache[key] {
-                inboxItems[i].aiSummary = cached
-            }
-        }
+        // Apply cached AI summaries. This reads both the in-memory
+        // hot cache and the persistent analysis cache, so ordinary
+        // updates don't fall back to raw previews after app restart.
+        applyCachedInboxSummaries(to: &inboxItems)
+        applyCachedInboxSummaries(to: &handledItems)
 
         // Prune stale cache entries
         cleanSummaryCache()
@@ -2070,16 +2176,26 @@ final class ChatMonitor: ObservableObject {
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
         // Fetch style profile to make suggestions match user's writing style
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        let profile = store.getRelationshipProfile(username: item.chatUsername)
+        let pendingAsk = store.loadPendingAsks(status: .pending)
+            .first { $0.chatUsername == item.chatUsername }
+        let context = buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
 
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
             senderName: item.senderName,
             chatName: item.chatName,
             isGroup: item.isGroup,
-            askType: .none,
-            relationship: "work",
-            styleHint: buildStyleHint(style),
-            feedbackContext: buildFeedbackHint()
+            askType: pendingAsk?.askType ?? .none,
+            relationship: profile.map { "\($0.relationship) (\($0.hierarchy.rawValue)/\($0.hierarchy.label))" } ?? "unknown",
+            styleHint: buildRichStyleHint(style) ?? buildStyleHint(style),
+            feedbackContext: buildFeedbackHint(),
+            contextWindow: context.contextWindow,
+            myLastReply: context.myLastReply,
+            analysisSummary: context.analysisSummary,
+            relationshipHierarchy: profile?.hierarchy.rawValue,
+            tonePreference: profile?.tonePreference.rawValue,
+            knownConstraints: context.knownConstraints
         )
         return await replySuggester.suggest(input) ?? []
     }
@@ -2109,11 +2225,17 @@ final class ChatMonitor: ObservableObject {
     /// Generate AI summaries for inbox items that don't have cached summaries.
     /// Called after scan. Runs async, updates inboxItems progressively.
     private func generateSummaries() {
-        let items = inboxItems.filter { $0.aiSummary == nil && $0.participatesInActionQueue }
+        let items = InboxPresentationPolicy.summaryCandidates(inboxItems)
+            .filter { $0.aiSummary == nil }
         guard !items.isEmpty else { return }
 
-        // Sort by priority — P0 summaries first
-        let sorted = items.sorted { $0.priority < $1.priority }
+        // Sort by priority — P0 summaries first, then newest visible
+        // rows. Passive rows are capped by InboxPresentationPolicy so
+        // a noisy group list cannot fan out dozens of AI calls.
+        let sorted = items.sorted {
+            if $0.priority != $1.priority { return $0.priority < $1.priority }
+            return $0.timestamp > $1.timestamp
+        }
 
         let readerRef = reader
         let storeRef = store
@@ -2123,11 +2245,14 @@ final class ChatMonitor: ObservableObject {
             guard let self = self else { return }
             for item in sorted {
                 // Check cache first
-                let cacheKey = "\(item.chatUsername)_\(Int(item.timestamp.timeIntervalSince1970))"
-                if let cached = self.summaryCache[cacheKey] {
-                    self.updateItemSummary(chatUsername: item.chatUsername, timestamp: item.timestamp, summary: cached)
+                let cacheKey = item.generationKey
+                if let cached = self.loadCachedInboxSummary(for: item) {
+                    self.updateItemSummary(generationKey: item.generationKey, summary: cached)
                     continue
                 }
+                guard !self.summaryInFlight.contains(cacheKey) else { continue }
+                self.summaryInFlight.insert(cacheKey)
+                defer { self.summaryInFlight.remove(cacheKey) }
 
                 // Build InboxContext — trigger message MUST be the latest
                 // inbound (peer) message in the window. Without the
@@ -2153,7 +2278,9 @@ final class ChatMonitor: ObservableObject {
                         myDisplayName: myDisplay,
                         mySelfNames: mySelfNames
                     )
-                    return inWindow && !isSelf
+                    return inWindow
+                        && !isSelf
+                        && MessageHelpers.isReadableAIContent(msg.text, allowMediaPlaceholder: true)
                 }
                 guard let triggerMsg = filtered.first else { continue }
 
@@ -2170,12 +2297,62 @@ final class ChatMonitor: ObservableObject {
                 // Call AI
                 let summary = await summarizer.summarize(context)
                 guard let summary = summary else { continue }
+                guard self.inboxItems.contains(where: {
+                    $0.generationKey == item.generationKey
+                }) else { continue }
 
                 // Cache + update UI
-                self.summaryCache[cacheKey] = summary
-                self.updateItemSummary(chatUsername: item.chatUsername, timestamp: item.timestamp, summary: summary)
+                self.cacheAndUpdateInboxSummary(summary, for: item)
             }
         }
+    }
+
+    private func applyCachedInboxSummaries(to items: inout [InboxItem]) {
+        for i in items.indices {
+            guard items[i].aiSummary == nil,
+                  let cached = loadCachedInboxSummary(for: items[i]) else { continue }
+            items[i].aiSummary = cached
+        }
+    }
+
+    private func loadCachedInboxSummary(for item: InboxItem) -> String? {
+        let key = item.generationKey
+        if let cached = summaryCache[key], !cached.isEmpty {
+            return cached
+        }
+        guard let cached = store.loadAnalysisCache(
+            chatUsername: item.chatUsername,
+            analysisType: inboxSummaryAnalysisType,
+            inputHash: key
+        )?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cached.isEmpty else {
+            return nil
+        }
+        summaryCache[key] = cached
+        return cached
+    }
+
+    private func cacheAndUpdateInboxSummary(_ summary: String, for item: InboxItem) {
+        let cleaned = trimInboxSummary(summary)
+        guard !cleaned.isEmpty else { return }
+        let key = item.generationKey
+        summaryCache[key] = cleaned
+        try? store.writeAnalysisCache(
+            chatUsername: item.chatUsername,
+            analysisType: inboxSummaryAnalysisType,
+            inputHash: key,
+            result: cleaned,
+            ttlHours: 72
+        )
+        updateItemSummary(generationKey: key, summary: cleaned)
+    }
+
+    private func trimInboxSummary(_ value: String, limit: Int = 25) -> String {
+        let cleaned = value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(cleaned.prefix(limit))
     }
 
     /// Pre-generate ActionPanel data in the background. Fires ALL
@@ -2195,21 +2372,46 @@ final class ChatMonitor: ObservableObject {
     private func prefetchActionPanelData() {
         let items = inboxItems.filter { $0.participatesInActionQueue }
         guard !items.isEmpty else { return }
+        let latestTimestampByChat = items.reduce(into: [String: Int]()) { result, item in
+            let ts = Int(item.timestamp.timeIntervalSince1970)
+            result[item.chatUsername] = max(result[item.chatUsername] ?? ts, ts)
+        }
 
         for item in items {
             let ts = Int(item.timestamp.timeIntervalSince1970)
+            guard latestTimestampByChat[item.chatUsername] == ts else {
+                continue
+            }
             // Skip if we already have a fully-materialized entry
-            // for this exact (chat, timestamp) pair.
+            // for this exact trigger generation.
             if let existing = actionPrefetch[item.chatUsername],
-               existing.timestamp == ts,
-               (existing.groupAnalysis != nil || existing.privateAnalysis != nil),
-               (!existing.hasProfile || !existing.replies.isEmpty) {
+               existing.generationKey == item.generationKey {
+                continue
+            }
+            if let existing = actionPrefetch[item.chatUsername],
+               existing.timestamp > ts {
                 continue
             }
 
             let chatUsername = item.chatUsername
             let captured = item  // for Task capture
             let hasProfile = hasRelationshipProfile(for: chatUsername)
+
+            // Claim the slot immediately so a user click during the
+            // prefetch round-trip can render loading state instead of
+            // launching duplicate on-demand AI calls.
+            mergeActionPrefetch(
+                chatUsername: chatUsername,
+                ts: ts,
+                generationKey: captured.generationKey,
+                groupAnalysis: nil,
+                privateAnalysis: nil,
+                analysisError: nil,
+                replies: nil,
+                hasProfile: hasProfile,
+                markAnalysisAttempted: false,
+                markRepliesAttempted: false
+            )
 
             // Fire analysis and replies in parallel. Each writes
             // back to the cache on completion — partial entries
@@ -2238,10 +2440,11 @@ final class ChatMonitor: ObservableObject {
                         print("[WCHUD] prefetch: analyzePrivateChat nil for '\(captured.chatName)' err=\(err ?? "none")")
                     }
                 }
-                guard self.isItemStillCurrent(chatUsername: chatUsername, ts: ts) else { return }
+                guard self.isItemStillCurrent(generationKey: captured.generationKey) else { return }
                 self.mergeActionPrefetch(
                     chatUsername: chatUsername,
                     ts: ts,
+                    generationKey: captured.generationKey,
                     groupAnalysis: group,
                     privateAnalysis: priv,
                     analysisError: analysisError,
@@ -2252,14 +2455,15 @@ final class ChatMonitor: ObservableObject {
                 )
             }
 
-            if hasProfile && captured.automaticReplySuggestionsAllowed {
+            if captured.automaticReplySuggestionsAllowed {
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
                     let replies = (await self.loadReplySuggestions(for: captured)) ?? []
-                    guard self.isItemStillCurrent(chatUsername: chatUsername, ts: ts) else { return }
+                    guard self.isItemStillCurrent(generationKey: captured.generationKey) else { return }
                     self.mergeActionPrefetch(
                         chatUsername: chatUsername,
                         ts: ts,
+                        generationKey: captured.generationKey,
                         groupAnalysis: nil,
                         privateAnalysis: nil,
                         analysisError: nil,
@@ -2270,12 +2474,13 @@ final class ChatMonitor: ObservableObject {
                     )
                 }
             } else {
-                // No automatic reply path (missing profile or manual/
-                // hidden state). Mark attempted immediately so UI does
-                // not wait on a task that will not run.
+                // No automatic reply path for manual/hidden states.
+                // Mark attempted immediately so UI does not wait on a
+                // task that will not run.
                 mergeActionPrefetch(
                     chatUsername: chatUsername,
                     ts: ts,
+                    generationKey: captured.generationKey,
                     groupAnalysis: nil,
                     privateAnalysis: nil,
                     analysisError: nil,
@@ -2292,11 +2497,8 @@ final class ChatMonitor: ObservableObject {
     /// given (chatUsername, timestamp) pair. Used by prefetch
     /// tasks to avoid committing stale results for items that
     /// have been dismissed / replaced during the AI round-trip.
-    private func isItemStillCurrent(chatUsername: String, ts: Int) -> Bool {
-        inboxItems.contains {
-            $0.chatUsername == chatUsername &&
-            Int($0.timestamp.timeIntervalSince1970) == ts
-        }
+    private func isItemStillCurrent(generationKey: String) -> Bool {
+        inboxItems.contains { $0.generationKey == generationKey }
     }
 
     /// Merge partial prefetch results into the cache entry for a
@@ -2309,6 +2511,7 @@ final class ChatMonitor: ObservableObject {
     private func mergeActionPrefetch(
         chatUsername: String,
         ts: Int,
+        generationKey: String,
         groupAnalysis: ChatAnalyzer.GroupAnalysis?,
         privateAnalysis: ChatAnalyzer.PrivateAnalysis?,
         analysisError: String?,
@@ -2318,9 +2521,13 @@ final class ChatMonitor: ObservableObject {
         markRepliesAttempted: Bool
     ) {
         let existing = actionPrefetch[chatUsername]
-        let sameGeneration = existing?.timestamp == ts
+        if let existing, existing.timestamp > ts {
+            return
+        }
+        let sameGeneration = existing?.generationKey == generationKey
         actionPrefetch[chatUsername] = PrefetchedAction(
             timestamp: ts,
+            generationKey: generationKey,
             groupAnalysis: groupAnalysis ?? (sameGeneration ? existing?.groupAnalysis : nil),
             privateAnalysis: privateAnalysis ?? (sameGeneration ? existing?.privateAnalysis : nil),
             analysisError: analysisError ?? (sameGeneration ? existing?.analysisError : nil),
@@ -2343,17 +2550,12 @@ final class ChatMonitor: ObservableObject {
     /// migrates out of `inboxItems`. Writing the summary there too
     /// means "restore" brings back the enriched row instead of a blank
     /// one that would force a re-summarize.
-    private func updateItemSummary(chatUsername: String, timestamp: Date, summary: String) {
-        let ts = Int(timestamp.timeIntervalSince1970)
-        if let idx = inboxItems.firstIndex(where: {
-            $0.chatUsername == chatUsername && Int($0.timestamp.timeIntervalSince1970) == ts
-        }) {
+    private func updateItemSummary(generationKey: String, summary: String) {
+        if let idx = inboxItems.firstIndex(where: { $0.generationKey == generationKey }) {
             inboxItems[idx].aiSummary = summary
             return
         }
-        if let idx = handledItems.firstIndex(where: {
-            $0.chatUsername == chatUsername && Int($0.timestamp.timeIntervalSince1970) == ts
-        }) {
+        if let idx = handledItems.firstIndex(where: { $0.generationKey == generationKey }) {
             handledItems[idx].aiSummary = summary
         }
     }
@@ -2363,10 +2565,7 @@ final class ChatMonitor: ObservableObject {
     /// restoring a dismissed row would force re-summarization — we
     /// keep them cached as long as the row is still visible somewhere.
     private func cleanSummaryCache() {
-        func key(_ item: InboxItem) -> String {
-            "\(item.chatUsername)_\(Int(item.timestamp.timeIntervalSince1970))"
-        }
-        let activeKeys = Set(inboxItems.map(key)).union(handledItems.map(key))
+        let activeKeys = Set(inboxItems.map(\.generationKey)).union(handledItems.map(\.generationKey))
         summaryCache = summaryCache.filter { activeKeys.contains($0.key) }
     }
 
@@ -2403,6 +2602,15 @@ final class ChatMonitor: ObservableObject {
     // MARK: - On-demand chat analysis
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
+        let analysisType = "action_panel_group_v2"
+        if let cached: ChatAnalyzer.GroupAnalysis = loadActionAnalysisCache(
+            item: item,
+            analysisType: analysisType,
+            as: ChatAnalyzer.GroupAnalysis.self
+        ) {
+            return (cached, nil)
+        }
+
         let messages: [MessageInfo]
         do {
             messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
@@ -2413,8 +2621,21 @@ final class ChatMonitor: ObservableObject {
         let cutoff = Date().addingTimeInterval(-48 * 3600)
         let filtered = messages.filter {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
+                && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
         }
-        if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        if filtered.isEmpty {
+            let fallback = ChatAnalyzer.GroupAnalysis(
+                topics: "暂无可读内容",
+                decisions: nil,
+                my_action_items: nil,
+                key_speakers: nil,
+                status: "concluded",
+                one_liner: "暂无可读内容"
+            )
+            writeActionAnalysisCache(fallback, item: item, analysisType: analysisType)
+            cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
+            return (fallback, nil)
+        }
         let myUname = reader.myUsername()
         let (result, error) = await chatAnalyzer.analyzeGroup(
             chatUsername: item.chatUsername,
@@ -2425,10 +2646,25 @@ final class ChatMonitor: ObservableObject {
             myDisplayName: reader.displayName(for: myUname),
             mySelfNames: reader.mySelfNames
         )
+        if let result {
+            writeActionAnalysisCache(result, item: item, analysisType: analysisType)
+            if let summary = inboxRowSummary(from: result) {
+                cacheAndUpdateInboxSummary(summary, for: item)
+            }
+        }
         return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
     }
 
     func analyzePrivateChat(item: InboxItem) async -> (ChatAnalyzer.PrivateAnalysis?, String?) {
+        let analysisType = "action_panel_private_v2"
+        if let cached: ChatAnalyzer.PrivateAnalysis = loadActionAnalysisCache(
+            item: item,
+            analysisType: analysisType,
+            as: ChatAnalyzer.PrivateAnalysis.self
+        ) {
+            return (cached, nil)
+        }
+
         let messages: [MessageInfo]
         do {
             messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
@@ -2439,8 +2675,22 @@ final class ChatMonitor: ObservableObject {
         let cutoff = Date().addingTimeInterval(-48 * 3600)
         let filtered = messages.filter {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
+                && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
         }
-        if filtered.isEmpty { return (nil, "48小时内没有消息") }
+        if filtered.isEmpty {
+            let fallback = ChatAnalyzer.PrivateAnalysis(
+                intent: "暂无可读内容",
+                urgency: "normal",
+                urgency_reason: "",
+                mood: "neutral",
+                mood_evidence: "",
+                context: nil,
+                one_liner: "暂无可读内容"
+            )
+            writeActionAnalysisCache(fallback, item: item, analysisType: analysisType)
+            cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
+            return (fallback, nil)
+        }
         let myUname = reader.myUsername()
         let (result, error) = await chatAnalyzer.analyzePrivate(
             chatUsername: item.chatUsername,
@@ -2451,15 +2701,270 @@ final class ChatMonitor: ObservableObject {
             myDisplayName: reader.displayName(for: myUname),
             mySelfNames: reader.mySelfNames
         )
+        if let result {
+            writeActionAnalysisCache(result, item: item, analysisType: analysisType)
+            if let summary = inboxRowSummary(from: result) {
+                cacheAndUpdateInboxSummary(summary, for: item)
+            }
+        }
         return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
     }
 
-    func loadReplySuggestions(for item: InboxItem) async -> [SuggestedReply]? {
-        guard let profile = store.getRelationshipProfile(username: item.chatUsername) else {
+    private func inboxRowSummary(from analysis: ChatAnalyzer.GroupAnalysis) -> String? {
+        let candidates = [
+            analysis.my_action_items,
+            Optional(analysis.one_liner),
+            Optional(analysis.decisions ?? ""),
+            Optional(analysis.topics)
+        ]
+        return candidates.compactMap { candidate in
+            let cleaned = trimInboxSummary(candidate ?? "")
+            return cleaned.isEmpty ? nil : cleaned
+        }.first
+    }
+
+    private func inboxRowSummary(from analysis: ChatAnalyzer.PrivateAnalysis) -> String? {
+        let candidates = [
+            Optional(analysis.intent),
+            Optional(analysis.one_liner),
+            analysis.context
+        ]
+        return candidates.compactMap { candidate in
+            let cleaned = trimInboxSummary(candidate ?? "")
+            return cleaned.isEmpty ? nil : cleaned
+        }.first
+    }
+
+    private func loadActionAnalysisCache<T: Decodable>(
+        item: InboxItem,
+        analysisType: String,
+        as type: T.Type
+    ) -> T? {
+        guard let raw = store.loadAnalysisCache(
+            chatUsername: item.chatUsername,
+            analysisType: analysisType,
+            inputHash: item.generationKey
+        ),
+        let data = raw.data(using: .utf8) else {
             return nil
         }
-        let relationship = "\(profile.relationship) (\(profile.hierarchy.label))"
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private func writeActionAnalysisCache<T: Encodable>(
+        _ value: T,
+        item: InboxItem,
+        analysisType: String
+    ) {
+        guard let data = try? JSONEncoder().encode(value),
+              let raw = String(data: data, encoding: .utf8) else { return }
+        try? store.writeAnalysisCache(
+            chatUsername: item.chatUsername,
+            analysisType: analysisType,
+            inputHash: item.generationKey,
+            result: raw,
+            ttlHours: 72
+        )
+    }
+
+    private struct ReplySuggestionContext {
+        let contextWindow: String?
+        let myLastReply: String?
+        let analysisSummary: String?
+        let knownConstraints: String?
+    }
+
+    private func buildReplySuggestionContext(for item: InboxItem) -> ReplySuggestionContext {
+        let messagesNewest = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+        let targetSecond = Int(item.timestamp.timeIntervalSince1970)
+        let target = messagesNewest.first {
+            Int($0.createTime) == targetSecond
+                || ($0.text == item.preview && $0.senderName == item.senderName)
+        } ?? messagesNewest.first
+
+        let contextWindow: String? = {
+            guard let target else { return nil }
+            let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
+                guard let contact = store.getContact(username: username) else { return nil }
+                return (contact.attentionLevel, contact.role)
+            }
+            let chronological = messagesNewest.sorted { $0.createTime < $1.createTime }
+            let chatType: ChatType = item.isGroup ? .group : .privateChat
+            let window = ContextWindowBuilder.build(
+                target: target,
+                role: .replyGenerator,
+                allMessages: chronological,
+                chatType: chatType,
+                contactLookup: contactLookup
+            )
+            let serialized = window.serialize()
+            return serialized.isEmpty ? nil : serialized
+        }()
+
+        let myUname = reader.myUsername()
+        let myDisplay = reader.displayName(for: myUname)
+        let mySelfNames = reader.mySelfNames
+        let myLastReply = messagesNewest.first {
+            MessageHelpers.isFromSelf(
+                $0,
+                chatUsername: item.chatUsername,
+                myUsername: myUname,
+                myDisplayName: myDisplay,
+                mySelfNames: mySelfNames
+            )
+        }?.text
+
+        let analysisSummary = compactAnalysisSummary(for: item)
+
+        var constraints: [String] = []
+        if let memory = store.loadConversationMemory(chatUsername: item.chatUsername)?.formatForPrompt() {
+            constraints.append("对话记忆:\n\(memory)")
+        }
+        let asks = store.loadPendingAsks(status: .pending)
+            .filter { $0.chatUsername == item.chatUsername }
+            .prefix(3)
+            .map(\.summary)
+        if !asks.isEmpty {
+            constraints.append("待处理请求: \(asks.joined(separator: "；"))")
+        }
+        let commitments = store.loadCommitments(status: .pending)
+            .filter { $0.chatUsername == item.chatUsername }
+            .prefix(3)
+            .map(\.content)
+        if !commitments.isEmpty {
+            constraints.append("我的未兑现承诺: \(commitments.joined(separator: "；"))")
+        }
+        if item.isGroup && !item.isAtMention {
+            constraints.append("安全提示: 群聊未明确 @ 我，不要替我表态或承诺。")
+        }
+
+        return ReplySuggestionContext(
+            contextWindow: contextWindow,
+            myLastReply: myLastReply,
+            analysisSummary: analysisSummary,
+            knownConstraints: constraints.isEmpty ? nil : constraints.joined(separator: "\n")
+        )
+    }
+
+    private func buildReplySuggestionContext(for item: ReplyDebtItem, pendingAsk: PendingAsk?) -> ReplySuggestionContext {
+        let messagesNewest = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+        let targetSecond = Int(item.timestamp.timeIntervalSince1970)
+        let target = messagesNewest.first {
+            Int($0.createTime) == targetSecond
+                || ($0.text == item.preview && $0.senderName == item.senderName)
+        } ?? messagesNewest.first
+
+        let contextWindow: String? = {
+            guard let target else { return nil }
+            let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
+                guard let contact = store.getContact(username: username) else { return nil }
+                return (contact.attentionLevel, contact.role)
+            }
+            let chronological = messagesNewest.sorted { $0.createTime < $1.createTime }
+            let chatType: ChatType = item.isGroup ? .group : .privateChat
+            let window = ContextWindowBuilder.build(
+                target: target,
+                role: .replyGenerator,
+                allMessages: chronological,
+                chatType: chatType,
+                contactLookup: contactLookup
+            )
+            let serialized = window.serialize()
+            return serialized.isEmpty ? nil : serialized
+        }()
+
+        let myUname = reader.myUsername()
+        let myDisplay = reader.displayName(for: myUname)
+        let mySelfNames = reader.mySelfNames
+        let myLastReply = messagesNewest.first {
+            MessageHelpers.isFromSelf(
+                $0,
+                chatUsername: item.chatUsername,
+                myUsername: myUname,
+                myDisplayName: myDisplay,
+                mySelfNames: mySelfNames
+            )
+        }?.text ?? item.latestOutboundPreview
+
+        var constraints: [String] = []
+        constraints.append("当前待回复: \(item.preview)")
+        constraints.append("优先级: \(item.priority.rawValue)，连续未回复 \(item.inboundCountSinceLastOutbound) 条")
+        if let pendingAsk {
+            constraints.append("已识别请求: \(pendingAsk.summary)（\(pendingAsk.askType.rawValue)）")
+        }
+        if let memory = store.loadConversationMemory(chatUsername: item.chatUsername)?.formatForPrompt() {
+            constraints.append("对话记忆:\n\(memory)")
+        }
+        let commitments = store.loadCommitments(status: .pending)
+            .filter { $0.chatUsername == item.chatUsername }
+            .prefix(3)
+            .map(\.content)
+        if !commitments.isEmpty {
+            constraints.append("我的未兑现承诺: \(commitments.joined(separator: "；"))")
+        }
+        if item.isGroup && !item.isAtMention {
+            constraints.append("安全提示: 群聊未明确 @ 我，不要替我表态或承诺。")
+        }
+
+        return ReplySuggestionContext(
+            contextWindow: contextWindow,
+            myLastReply: myLastReply,
+            analysisSummary: pendingAsk.map { "对方需要: \($0.summary)" },
+            knownConstraints: constraints.joined(separator: "\n")
+        )
+    }
+
+    private func compactAnalysisSummary(for item: InboxItem) -> String? {
+        guard let entry = actionPrefetch[item.chatUsername],
+              entry.generationKey == item.generationKey else {
+            return nil
+        }
+        if let group = entry.groupAnalysis {
+            var parts: [String] = []
+            if !group.one_liner.isEmpty { parts.append("结论: \(group.one_liner)") }
+            if let action = group.my_action_items, !action.isEmpty { parts.append("需要我: \(action)") }
+            if !group.topics.isEmpty { parts.append("话题: \(group.topics)") }
+            if let decisions = group.decisions, !decisions.isEmpty { parts.append("已有决议: \(decisions)") }
+            if !group.status.isEmpty { parts.append("状态: \(group.status)") }
+            return parts.isEmpty ? nil : parts.joined(separator: "。")
+        }
+        if let privateAnalysis = entry.privateAnalysis {
+            var parts: [String] = []
+            if !privateAnalysis.intent.isEmpty { parts.append("意图: \(privateAnalysis.intent)") }
+            if let context = privateAnalysis.context, !context.isEmpty { parts.append("背景: \(context)") }
+            if !privateAnalysis.urgency.isEmpty { parts.append("紧急度: \(privateAnalysis.urgency)") }
+            if !privateAnalysis.mood.isEmpty { parts.append("语气: \(privateAnalysis.mood)") }
+            return parts.isEmpty ? nil : parts.joined(separator: "。")
+        }
+        return nil
+    }
+
+    private func buildRichStyleHint(_ style: StyleProfiler.StyleProfile) -> String? {
+        guard !style.isEmpty else { return nil }
+        var parts: [String] = [
+            "用户风格: \(style.toneDescription)",
+            "长度: 通常 \(style.lengthP25)-\(style.lengthP75) 字，中位数 \(style.lengthP50) 字",
+            "标点: \(style.punctuationStyle)",
+            "句式: \(style.sentenceStyle)",
+            "节奏: \(style.typingRhythm.description)"
+        ]
+        if !style.frequentPhrases.isEmpty {
+            parts.append("常用语: \(style.frequentPhrases.prefix(5).joined(separator: "、"))")
+        }
+        if !style.fewShotExamples.isEmpty {
+            parts.append("真实例句: \(style.fewShotExamples.prefix(3).joined(separator: " / "))")
+        }
+        return parts.joined(separator: "。")
+    }
+
+    func loadReplySuggestions(for item: InboxItem) async -> [SuggestedReply]? {
+        let profile = store.getRelationshipProfile(username: item.chatUsername)
+        let fallback = fallbackRelationshipSignal(for: item)
+        let relationship = profile.map {
+            "\($0.relationship) (\($0.hierarchy.rawValue)/\($0.hierarchy.label))"
+        } ?? fallback.relationship
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        let replyContext = buildReplySuggestionContext(for: item)
 
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
@@ -2468,13 +2973,84 @@ final class ChatMonitor: ObservableObject {
             isGroup: item.isGroup,
             askType: item.askType,
             relationship: relationship,
-            styleHint: buildStyleHint(style),
-            feedbackContext: buildFeedbackHint()
+            styleHint: buildRichStyleHint(style),
+            feedbackContext: buildFeedbackHint(),
+            contextWindow: replyContext.contextWindow,
+            myLastReply: replyContext.myLastReply,
+            analysisSummary: replyContext.analysisSummary,
+            relationshipHierarchy: profile?.hierarchy.rawValue ?? fallback.hierarchy,
+            tonePreference: profile?.tonePreference.rawValue ?? fallback.tone,
+            knownConstraints: replyContext.knownConstraints
         )
 
         guard let suggestions = await replySuggester.suggest(input) else { return nil }
-        return suggestions.map { s in
-            SuggestedReply(text: s.text, tone: s.tone, recommended: false)
+        return suggestions.enumerated().map { idx, s in
+            SuggestedReply(
+                text: s.text,
+                tone: idx == 0 ? "recommended" : s.tone,
+                recommended: idx == 0,
+                rationale: s.rationale.isEmpty ? s.intent : s.rationale
+            )
+        }
+    }
+
+    private struct FallbackRelationshipSignal {
+        let relationship: String
+        let hierarchy: String
+        let tone: String
+    }
+
+    /// RelationshipProfile should improve personalization, not decide
+    /// whether a reply suggestion exists at all. When the AI profile
+    /// has not been inferred yet, derive a conservative relationship
+    /// signal from the contact/whitelist metadata so actionable rows
+    /// still get useful replies.
+    private func fallbackRelationshipSignal(for item: InboxItem) -> FallbackRelationshipSignal {
+        if let contact = store.getContact(username: item.chatUsername) {
+            return FallbackRelationshipSignal(
+                relationship: "\(contact.role.label) (\(contact.attentionLevel.label)，未建关系画像)",
+                hierarchy: fallbackHierarchy(for: contact.role),
+                tone: fallbackTone(for: contact.role)
+            )
+        }
+
+        if let whitelist = store.getWhitelistEntry(username: item.chatUsername) {
+            let kind = whitelist.isGroup ? "白名单群聊" : "白名单联系人"
+            return FallbackRelationshipSignal(
+                relationship: "\(kind) (\(whitelist.attentionLevel.label)，未建关系画像)",
+                hierarchy: whitelist.isGroup ? "peer" : "external",
+                tone: "formal"
+            )
+        }
+
+        return FallbackRelationshipSignal(
+            relationship: item.isGroup ? "群聊联系人 (未建关系画像)" : "私聊联系人 (未建关系画像)",
+            hierarchy: item.isGroup ? "peer" : "external",
+            tone: item.isGroup ? "brief" : "formal"
+        )
+    }
+
+    private func fallbackHierarchy(for role: ContactRole) -> String {
+        switch role {
+        case .boss, .keyClient:
+            return "superior"
+        case .family, .friend, .partner:
+            return "personal"
+        case .colleague, .groupOnly:
+            return "peer"
+        case .client, .supplier, .service, .acquaintance:
+            return "external"
+        }
+    }
+
+    private func fallbackTone(for role: ContactRole) -> String {
+        switch role {
+        case .family, .friend, .partner:
+            return "casual"
+        case .service, .groupOnly:
+            return "brief"
+        case .boss, .keyClient, .colleague, .client, .supplier, .acquaintance:
+            return "formal"
         }
     }
 
@@ -2532,10 +3108,14 @@ final class ChatMonitor: ObservableObject {
         Task {
             do {
                 try await service?.start()
+                let recoveredQueue = await service?.pendingSendQueue ?? []
+                let recoveredStats = await service?.sessionStats ?? AutopilotService.SessionStats()
                 await MainActor.run {
                     self.autopilotActive = true
-                    self.autopilotSessionSent = 0
-                    self.autopilotSessionPending = 0
+                    self.autopilotSessionSent = recoveredStats.totalSent
+                    self.autopilotSessionPending = recoveredStats.totalPending
+                    self.autopilotPendingSendQueue = recoveredQueue
+                    self.autopilotSessionStats = recoveredStats
                     self.autopilotLog = []
                 }
                 print("[WCHUD] Autopilot: ON")

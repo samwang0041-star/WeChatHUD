@@ -16,6 +16,9 @@ actor AutoReplyGenerator {
 
     /// The AI's decision for a single message.
     struct Decision: Decodable {
+        /// Mutually-exclusive action from v4 prompt. Legacy boolean fields
+        /// are still decoded for compatibility with v1-v3 prompts.
+        let action: String?
         /// The reply text to send. Nil if skip/pending/readNoReply.
         let reply: String?
         /// Confidence 0.0-1.0 that this reply is appropriate.
@@ -30,10 +33,55 @@ actor AutoReplyGenerator {
         let pending: Bool?
         /// Whether to mark as read but not reply (e.g., "嗯", "好的", conversation ender).
         let readNoReply: Bool?
+        /// Machine-readable reason code from v4 prompt.
+        let reasonCode: String?
+        /// Short quote grounding the decision.
+        let evidenceQuote: String?
 
         enum CodingKeys: String, CodingKey {
-            case reply, confidence, risk, reasoning, skip, pending
+            case action, reply, confidence, risk, reasoning, skip, pending
             case readNoReply = "read_no_reply"
+            case reasonCode = "reason_code"
+            case evidenceQuote = "evidence_quote"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            action = try c.decodeIfPresent(String.self, forKey: .action)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            reply = try c.decodeIfPresent(String.self, forKey: .reply)
+            let rawConfidence = try c.decodeIfPresent(Double.self, forKey: .confidence) ?? 0
+            confidence = max(0, min(1, rawConfidence))
+            let rawRisk = (try c.decodeIfPresent(String.self, forKey: .risk) ?? "high")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            risk = ["low", "medium", "high"].contains(rawRisk) ? rawRisk : "high"
+            reasoning = try c.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
+            reasonCode = try c.decodeIfPresent(String.self, forKey: .reasonCode)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            evidenceQuote = try c.decodeIfPresent(String.self, forKey: .evidenceQuote)
+
+            let normalizedAction = action
+            let hasUnknownAction = normalizedAction != nil
+                && normalizedAction != "send"
+                && normalizedAction != "pending"
+                && normalizedAction != "read_no_reply"
+                && normalizedAction != "skip"
+            if hasUnknownAction {
+                skip = false
+                pending = true
+                readNoReply = false
+            } else if let normalizedAction {
+                skip = normalizedAction == "skip"
+                pending = normalizedAction == "pending"
+                readNoReply = normalizedAction == "read_no_reply"
+            } else {
+                skip = try c.decodeIfPresent(Bool.self, forKey: .skip) ?? false
+                pending = try c.decodeIfPresent(Bool.self, forKey: .pending) ?? false
+                readNoReply = try c.decodeIfPresent(Bool.self, forKey: .readNoReply) ?? false
+            }
         }
     }
 
@@ -86,20 +134,8 @@ actor AutoReplyGenerator {
         do {
             template = try promptLoader.load(version: "autopilot_reply_v3")
         } catch {
-            // Fallback chain: v3 → v2 → v1. Keeps autopilot functional
-            // even if the tuned prompt goes missing from the bundle.
-            print("[WCHUD] AutoReplyGenerator: v3 prompt load failed, trying v2 fallback")
-            do {
-                template = try promptLoader.load(version: "autopilot_reply_v2")
-            } catch {
-                print("[WCHUD] AutoReplyGenerator: v2 prompt load failed, trying v1 fallback")
-                do {
-                    template = try promptLoader.load(version: "autopilot_reply_v1")
-                } catch {
-                    print("[WCHUD] AutoReplyGenerator: all prompt versions failed: \(error)")
-                    return nil
-                }
-            }
+            print("[WCHUD] AutoReplyGenerator: v3 prompt load failed; failing closed: \(error)")
+            return nil
         }
 
         let fewShotText = input.fewShotExamples.isEmpty

@@ -3,6 +3,13 @@ import XCTest
 
 final class WeChatParserTests: XCTestCase {
 
+    func testLegacyShortUsernameExtractsWeChatAccountSuffix() {
+        XCTAssertEqual(WeChatReader.legacyShortUsername(for: "lilei_06a2"), "lilei")
+        XCTAssertEqual(WeChatReader.legacyShortUsername(for: "wxid_abc_ffff"), "wxid_abc")
+        XCTAssertNil(WeChatReader.legacyShortUsername(for: "lilei"))
+        XCTAssertNil(WeChatReader.legacyShortUsername(for: "lilei_long"))
+    }
+
     func testDecodeContentPlainText() {
         let data = "Hello World".data(using: .utf8)
         let result = WeChatParser.decodeContent(data, ct: 0)
