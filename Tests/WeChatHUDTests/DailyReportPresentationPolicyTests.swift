@@ -156,14 +156,47 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         )
     }
 
-    private func makeAction(content: String, urgency: ActionUrgency) -> DailyReportAction {
+    private func makeAction(content: String, urgency: ActionUrgency, deadline: Date? = nil) -> DailyReportAction {
         DailyReportAction(
             content: content,
             type: .todo,
             urgency: urgency,
+            deadline: deadline,
             sourceChatName: "Test",
             sourceChatUsername: "wxid_test",
             relatedID: UUID().uuidString
         )
+    }
+
+    func testActiveActionsBucketedByDeadline() {
+        let cal = Calendar.current
+        let now = Date()
+        let endOfToday = cal.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
+        let inThreeDays = cal.date(byAdding: .day, value: 3, to: now)!
+        let inTwentyDays = cal.date(byAdding: .day, value: 20, to: now)!
+
+        let actions = [
+            makeAction(content: "Today",     urgency: .medium, deadline: endOfToday),
+            makeAction(content: "ThisWeek",  urgency: .medium, deadline: inThreeDays),
+            makeAction(content: "Later",     urgency: .medium, deadline: inTwentyDays),
+            makeAction(content: "NoDate",    urgency: .low,    deadline: nil),
+        ]
+        let report = makeReport(actions: actions, risks: [], highlights: [])
+        let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
+
+        XCTAssertEqual(vm.activeToday.map(\.content),    ["Today"])
+        XCTAssertEqual(vm.activeThisWeek.map(\.content), ["ThisWeek"])
+        XCTAssertEqual(Set(vm.activeLater.map(\.content)), ["Later", "NoDate"])
+    }
+
+    func testActiveActionsBackwardCompatField() {
+        let cal = Calendar.current
+        let inOneDay = cal.date(byAdding: .day, value: 1, to: Date())!
+        let actions = [makeAction(content: "X", urgency: .medium, deadline: inOneDay)]
+        let report = makeReport(actions: actions, risks: [], highlights: [])
+        let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
+
+        // Existing callers reading vm.activeActions must still see the union.
+        XCTAssertEqual(vm.activeActions.count, 1)
     }
 }

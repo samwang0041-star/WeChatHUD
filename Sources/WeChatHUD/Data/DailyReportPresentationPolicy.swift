@@ -14,6 +14,9 @@ enum DailyReportPresentationPolicy {
         let progress: DailyReportProgressMetrics
         let urgentActions: [DailyReportAction]
         let activeActions: [DailyReportAction]
+        let activeToday: [DailyReportAction]
+        let activeThisWeek: [DailyReportAction]
+        let activeLater: [DailyReportAction]
         let completedActions: [DailyReportAction]
         let highlights: [DailyReportHighlight]
         let activeRisks: [DailyReportRisk]
@@ -69,6 +72,23 @@ enum DailyReportPresentationPolicy {
             guard let l = lhs.deadline, let r = rhs.deadline else { return false }
             return l < r
         }
+
+        // Partition `active` into deadline buckets.
+        let cal = Calendar.current
+        let now = Date()
+        let endOfToday = cal.date(bySettingHour: 23, minute: 59, second: 59, of: now) ?? now
+        let endOfWeek = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now)) ?? now
+
+        var bucketToday: [DailyReportAction] = []
+        var bucketWeek: [DailyReportAction] = []
+        var bucketLater: [DailyReportAction] = []
+        for a in active {
+            guard let d = a.deadline else { bucketLater.append(a); continue }
+            if d <= endOfToday { bucketToday.append(a) }
+            else if d <= endOfWeek { bucketWeek.append(a) }
+            else { bucketLater.append(a) }
+        }
+
         completed.sort { lhs, rhs in
             guard let l = lhs.completedAt, let r = rhs.completedAt else { return false }
             return l > r // newest first
@@ -109,6 +129,9 @@ enum DailyReportPresentationPolicy {
             progress: progress,
             urgentActions: urgent,
             activeActions: active,
+            activeToday: bucketToday,
+            activeThisWeek: bucketWeek,
+            activeLater: bucketLater,
             completedActions: completed,
             highlights: report.highlights,
             activeRisks: activeRisks,
