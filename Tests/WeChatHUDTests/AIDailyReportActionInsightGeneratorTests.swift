@@ -55,6 +55,41 @@ final class AIDailyReportActionInsightGeneratorTests: XCTestCase {
         XCTAssertTrue(generator.parse("").isEmpty)
     }
 
+    // MARK: - Cache
+
+    func testCacheHitSkipsAICall() async throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        // Pre-populate cache
+        let cached = DailyReportActionInsight(
+            dateKey: "2026-05-05", actionID: "todo-x",
+            reason: "cached_r", nextStep: "cached_n",
+            modelVersion: "daily_report_action_insights_v1",
+            generatedAt: Date()
+        )
+        try store.upsertActionInsight(cached)
+
+        // AIService config has no API key, so any real call would error.
+        // If the cache works, it returns without calling.
+        let gen = AIDailyReportActionInsightGenerator(
+            aiService: AIService(config: AIConfig()), store: store
+        )
+        let action = makeAction(id: "todo-x", content: "x", deadline: nil)
+        let result = await gen.generate(for: [action], dateKey: "2026-05-05")
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].reason, "cached_r")
+    }
+
+    func testEmptyActionsReturnsEmpty() async {
+        let gen = makeGenerator()
+        let result = await gen.generate(for: [], dateKey: "2026-05-05")
+        XCTAssertTrue(result.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeGenerator() -> AIDailyReportActionInsightGenerator {
@@ -75,5 +110,12 @@ final class AIDailyReportActionInsightGeneratorTests: XCTestCase {
             sourceChatUsername: "wxid_test",
             relatedID: id
         )
+    }
+
+    private func makeTempStore() throws -> (HUDStore, String) {
+        let path = NSTemporaryDirectory() + "hud_store_dr_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        return (store, path)
     }
 }
