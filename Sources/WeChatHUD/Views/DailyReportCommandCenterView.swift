@@ -16,7 +16,9 @@ struct DailyReportCommandCenterView: View {
                     dateKey: report.date.dailyReportDateKey
                 )
                 let vm = DailyReportPresentationPolicy.buildViewModel(
-                    from: report, commandStates: states
+                    from: report,
+                    commandStates: states,
+                    insights: monitor.dailyReportActionInsights
                 )
                 content(vm: vm, report: report)
             } else if monitor.dailyReportIsLoading {
@@ -37,7 +39,7 @@ struct DailyReportCommandCenterView: View {
             if !vm.urgentActions.isEmpty {
                 sectionHeader("🔴 紧急待处理", count: vm.urgentActions.count)
                 ForEach(vm.urgentActions) { action in
-                    actionCard(action, isUrgent: true)
+                    actionCard(action, isUrgent: true, insight: vm.actionInsights[action.id])
                 }
                 divider
             }
@@ -189,7 +191,7 @@ struct DailyReportCommandCenterView: View {
         .padding(.bottom, 4)
     }
 
-    private func actionCard(_ action: DailyReportAction, isUrgent: Bool) -> some View {
+    private func actionCard(_ action: DailyReportAction, isUrgent: Bool, insight: DailyReportActionInsight? = nil) -> some View {
         let isHovered = hoveredActionID == action.id
         return HStack(alignment: .top, spacing: 8) {
             Rectangle()
@@ -217,6 +219,31 @@ struct DailyReportCommandCenterView: View {
                             .foregroundColor(deadlineColor(deadline))
                     }
                     Spacer()
+                }
+
+                if let insight {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9))
+                                .foregroundColor(.cyan.opacity(0.85))
+                            Text(insight.reason)
+                                .font(.system(size: 11))
+                                .italic()
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack(alignment: .top, spacing: 4) {
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 9))
+                                .foregroundColor(.orange.opacity(0.85))
+                            Text(insight.nextStep)
+                                .font(.system(size: 11))
+                                .foregroundColor(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, 2)
                 }
             }
 
