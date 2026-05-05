@@ -23,7 +23,6 @@ class SettingsWindow: NSWindow {
         let rootView = SettingsView()
             .environmentObject(panelState)
             .environmentObject(monitor)
-            .environmentObject(monitor.insightCoordinator)
             .environmentObject(store)
             .environmentObject(reader)
 

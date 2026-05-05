@@ -44,6 +44,8 @@ final class HUDStore: ObservableObject {
         if reapedRuns > 0 || reapedUndo > 0 {
             print("[HUDStore] reaped \(reapedRuns) stale review_runs + \(reapedUndo) old undo entries")
         }
+
+        migrateDailyReportState()
     }
 
     func close() {

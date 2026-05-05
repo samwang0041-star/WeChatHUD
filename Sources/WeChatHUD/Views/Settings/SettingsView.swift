@@ -5,6 +5,7 @@ import SwiftUI
 /// header (icon + title + description) followed by the tab body.
 struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
     @State private var selectedTab: Tab = .contacts
 
     enum Tab: Hashable, CaseIterable {
@@ -189,7 +190,7 @@ struct SettingsView: View {
         // Contacts uses its own List which needs full height — no ScrollView.
         // Other tabs are form-based and need ScrollView.
         if selectedTab == .insight {
-            ChatInsightView()
+            ChatInsightView(insightCoordinator: monitor.insightCoordinator)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if selectedTab == .contacts {
             VStack(alignment: .leading, spacing: 16) {
@@ -251,4 +252,3 @@ struct SettingsView: View {
         }
     }
 }
-

@@ -204,8 +204,21 @@ final class AIDailyReportGeneratorTests: XCTestCase {
         XCTAssertEqual(enriched.narrative, "AI narrative")
         XCTAssertEqual(enriched.tomorrowFocus, "AI focus")
         XCTAssertEqual(enriched.wechatDraft, "AI draft")
+        XCTAssertEqual(enriched.status, .aiEnhanced)
+        XCTAssertNil(enriched.aiErrorMessage)
         XCTAssertEqual(enriched.metrics.unreadMessageCount, 5)
         XCTAssertEqual(enriched.highlights.count, 2)
+    }
+
+    func testDailyReportWithAIUnavailablePreservesLocalFallback() {
+        let report = makeSampleReport()
+        let degraded = report.withAIUnavailable("network failed")
+
+        XCTAssertEqual(degraded.status, .aiUnavailable)
+        XCTAssertEqual(degraded.aiErrorMessage, "network failed")
+        XCTAssertEqual(degraded.narrative, report.narrative)
+        XCTAssertEqual(degraded.tomorrowFocus, report.tomorrowFocus)
+        XCTAssertEqual(degraded.wechatDraft, report.wechatDraft)
     }
 
     // MARK: - Helpers
@@ -270,9 +283,9 @@ final class AIDailyReportGeneratorTests: XCTestCase {
                 )
             ],
             pendingAsks: [],
-            narrative: nil,
-            tomorrowFocus: nil,
-            wechatDraft: nil
+            narrative: "Local narrative",
+            tomorrowFocus: "Local focus",
+            wechatDraft: "Local draft"
         )
     }
 }
