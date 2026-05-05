@@ -742,6 +742,7 @@ struct AIConfig: Codable {
     var debtJudgeEnabled: Bool = true
     var debtJudgeShadowMode: Bool = true
     var thinkingEnabled: Bool = false
+    var dailyReportActionInsightsEnabled: Bool = true
 
     // ── Compatibility shims ──
     // All existing services read `config.baseURL` / `.model` / `.apiKey`.
