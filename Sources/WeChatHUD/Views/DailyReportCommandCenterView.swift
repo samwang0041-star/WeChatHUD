@@ -40,9 +40,25 @@ struct DailyReportCommandCenterView: View {
                 divider
             }
 
-            if !vm.activeActions.isEmpty {
-                sectionHeader("📋 待处理", count: vm.activeActions.count)
-                ForEach(vm.activeActions) { action in
+            if !vm.activeToday.isEmpty {
+                sectionHeader("📋 待处理 · 今天到期", count: vm.activeToday.count)
+                ForEach(vm.activeToday) { action in
+                    actionCard(action, isUrgent: false)
+                }
+                divider
+            }
+
+            if !vm.activeThisWeek.isEmpty {
+                sectionHeader("📋 待处理 · 本周到期", count: vm.activeThisWeek.count)
+                ForEach(vm.activeThisWeek) { action in
+                    actionCard(action, isUrgent: false)
+                }
+                divider
+            }
+
+            if !vm.activeLater.isEmpty {
+                sectionHeader("📋 待处理 · 之后 / 无期限", count: vm.activeLater.count)
+                ForEach(vm.activeLater) { action in
                     actionCard(action, isUrgent: false)
                 }
                 divider
