@@ -110,3 +110,10 @@ struct DailyReportTabView: View {
         return formatter.string(from: date)
     }
 }
+
+struct DailyReportHUDTabView: View {
+    var body: some View {
+        DailyReportTabView()
+            .preferredColorScheme(.dark)
+    }
+}
