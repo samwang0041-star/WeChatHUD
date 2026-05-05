@@ -72,6 +72,7 @@ final class ChatMonitor: ObservableObject {
     @Published var dailyReportGeneratedAt: Date? = nil
     @Published var dailyReportError: String? = nil
     @Published var dailyReportIsLoading: Bool = false
+    @Published var dailyReportActionInsights: [String: DailyReportActionInsight] = [:]
     @Published var dailyReportViewedDate: Date = Date()
     /// Autopilot state — exposed for UI.
     @Published var autopilotActive = false
@@ -230,6 +231,9 @@ final class ChatMonitor: ObservableObject {
     @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     private lazy var dailyReportGenerator: AIDailyReportGenerator = {
         AIDailyReportGenerator(aiService: aiService, store: store)
+    }()
+    private lazy var dailyReportActionInsightGenerator: AIDailyReportActionInsightGenerator = {
+        AIDailyReportActionInsightGenerator(aiService: aiService, store: store)
     }()
     private lazy var briefingGenerator: AIBriefingGenerator = {
         AIBriefingGenerator(store: store, aiService: aiService)
@@ -1691,14 +1695,32 @@ final class ChatMonitor: ObservableObject {
         }
         dailyReportError = nil
         dailyReportIsLoading = true
+
+        let dateKey = date.dailyReportDateKey
         let builder = DailyReportBuilder(store: store, replyDebtItems: replyDebtItems, stats: stats)
         let baseReport = builder.build(for: date)
         dailyReport = baseReport
         dailyReportGeneratedAt = baseReport.generatedAt
-        let enrichedReport = await dailyReportGenerator.enrich(baseReport)
-        dailyReport = enrichedReport
-        dailyReportGeneratedAt = enrichedReport.generatedAt
-        dailyReportError = enrichedReport.aiErrorMessage
+
+        // Seed insights dict from cache so cards can render annotations immediately.
+        dailyReportActionInsights = store.loadActionInsights(dateKey: dateKey)
+            .reduce(into: [:]) { $0[$1.actionID] = $1 }
+
+        let urgentActions = baseReport.actions.filter {
+            $0.urgency == .critical || $0.urgency == .high
+        }
+
+        async let enrichedReport = dailyReportGenerator.enrich(baseReport)
+        async let freshInsights = dailyReportActionInsightGenerator.generate(
+            for: urgentActions, dateKey: dateKey
+        )
+
+        let (report, insights) = await (enrichedReport, freshInsights)
+
+        dailyReport = report
+        dailyReportGeneratedAt = report.generatedAt
+        dailyReportError = report.aiErrorMessage
+        for ins in insights { dailyReportActionInsights[ins.actionID] = ins }
         dailyReportIsLoading = false
     }
 
