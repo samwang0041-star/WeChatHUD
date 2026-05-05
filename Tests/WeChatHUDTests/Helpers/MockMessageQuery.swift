@@ -4,8 +4,6 @@ import Foundation
 actor MockMessageQuery: MessageQuery {
     private var stored: [String: [SimpleMessage]] = [:]
 
-    nonisolated init() {}
-
     func setMessages(_ msgs: [SimpleMessage], for chatUsername: String) {
         stored[chatUsername] = msgs
     }

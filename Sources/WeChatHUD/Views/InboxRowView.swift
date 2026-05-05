@@ -45,41 +45,84 @@ struct InboxRowView: View {
             .onHover { hovered = $0 }
             .onTapGesture { expanded.toggle() }
             .contextMenu {
-                Button("复制消息原文") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(item.preview, forType: .string)
-                }
-                Button("在微信中打开") {
-                    WeChatLauncher.openChat(named: item.chatName)
-                }
-                Divider()
-                Button("查看对话详情") {
-                    panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
-                }
-                Divider()
-                Button("静音此对话") {
-                    onSilence?()
-                }
-                if item.isVIP {
-                    Button("降为普通关注") {
-                        // Demote VIP — requires store access, defer to monitor
-                    }
-                } else if item.isWhitelisted {
-                    Button("设为 VIP") {
-                        // Promote to VIP — requires store access
-                    }
-                }
-                if item.isGroup {
-                    Button("忽略此发送人") {
-                        // Add to ignored senders — not yet implemented
-                    }
-                }
+                contextMenuContent
             }
 
             if expanded {
                 ActionPanelView(item: item)
             }
         }
+    }
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Button(item.actionRequired ? "标为已处理" : "隐藏这条更新") {
+            onDismiss()
+        }
+        Menu("稍后提醒") {
+            Button("15 分钟后") { onSnooze?(Date().addingTimeInterval(15 * 60)) }
+            Button("1 小时后") { onSnooze?(Date().addingTimeInterval(60 * 60)) }
+            Button("明天上午") { onSnooze?(tomorrowMorning()) }
+        }
+        Button("静音此对话") {
+            onSilence?()
+        }
+
+        Divider()
+
+        Button("在微信中打开") {
+            WeChatLauncher.openChat(named: item.chatName)
+        }
+        Button("查看对话详情") {
+            panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+        }
+        Button("复制消息原文") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(item.preview, forType: .string)
+        }
+        if let summary = item.aiSummary, !summary.isEmpty {
+            Button("复制 AI 摘要") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(summary, forType: .string)
+            }
+        }
+
+        Divider()
+
+        if item.isWhitelisted {
+            if item.isVIP {
+                Button("降为普通关注") {
+                    monitor.setInboxItemVIP(item, isVIP: false)
+                }
+            } else {
+                Button("设为 VIP") {
+                    monitor.setInboxItemVIP(item, isVIP: true)
+                }
+            }
+            Button("取消关注此对话", role: .destructive) {
+                monitor.untrackInboxItem(item)
+            }
+        } else {
+            Button(item.isGroup ? "关注此群聊" : "关注此联系人") {
+                monitor.setInboxItemVIP(item, isVIP: !item.isGroup)
+            }
+        }
+
+        if item.isGroup, !item.senderName.isEmpty {
+            Divider()
+            Button("忽略 \(item.senderName) 的消息") {
+                monitor.ignoreInboxItemSender(item)
+            }
+        }
+    }
+
+    private func tomorrowMorning() -> Date {
+        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        components.day = (components.day ?? 0) + 1
+        components.hour = 9
+        components.minute = 0
+        components.second = 0
+        return Calendar.current.date(from: components) ?? Date().addingTimeInterval(24 * 3600)
     }
 
     // MARK: - First Line

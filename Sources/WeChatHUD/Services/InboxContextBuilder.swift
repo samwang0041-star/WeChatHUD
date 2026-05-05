@@ -141,14 +141,20 @@ enum InboxContextBuilder {
 
         // Image file resolution (best-effort — may return nil if not accessible)
         let mediaFilePath: String?
+        let mediaAnalysisText: String?
         if mediaType == .image {
             mediaFilePath = ImageResolver.resolve(
                 chatUsername: chatUsername,
                 messageId: triggerMessage.id,
+                messageTime: triggerMessage.createTime,
                 dbDir: reader.dbDir
             )
+            mediaAnalysisText = ImageUnderstandingService
+                .analyzeImage(at: mediaFilePath)
+                .promptContext
         } else {
             mediaFilePath = nil
+            mediaAnalysisText = nil
         }
 
         // Link content extraction (baseType=49)
@@ -212,6 +218,7 @@ enum InboxContextBuilder {
             inboundCountSinceMyLastReply: inboundSinceReply,
             mediaType: mediaType,
             mediaFilePath: mediaFilePath,
+            mediaAnalysisText: mediaAnalysisText,
             mediaContextMessages: mediaContext,
             linkTitle: linkTitle,
             linkDescription: linkDesc,

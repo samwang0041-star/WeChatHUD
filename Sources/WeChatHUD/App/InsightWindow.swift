@@ -21,6 +21,7 @@ class InsightWindow: NSWindow {
         let rootView = ChatInsightView()
             .environmentObject(panelState)
             .environmentObject(monitor)
+            .environmentObject(monitor.insightCoordinator)
             .environmentObject(store)
             .environmentObject(reader)
 

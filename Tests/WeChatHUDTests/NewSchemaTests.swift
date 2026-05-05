@@ -289,7 +289,13 @@ final class NewSchemaTests: XCTestCase {
             commitTo: "林总",
             deadlineAt: deadline,
             confidence: 0.92,
-            promptVersion: "v1"
+            promptVersion: "v1",
+            sourceText: "好的，我明天发预算单",
+            contextText: "林总要求补一版预算单",
+            captureReason: "用户承诺明天交付预算单",
+            nextStep: "整理预算单并发给林总",
+            deadlineLabel: "明天前",
+            commitmentKind: "deliverable"
         )
 
         let list = store.loadCommitments()
@@ -300,6 +306,12 @@ final class NewSchemaTests: XCTestCase {
         XCTAssertEqual(list[0].confidence, 0.92, accuracy: 0.001)
         XCTAssertEqual(list[0].status, .pending)
         XCTAssertNotNil(list[0].deadlineAt)
+        XCTAssertEqual(list[0].sourceText, "好的，我明天发预算单")
+        XCTAssertEqual(list[0].contextText, "林总要求补一版预算单")
+        XCTAssertEqual(list[0].captureReason, "用户承诺明天交付预算单")
+        XCTAssertEqual(list[0].nextStep, "整理预算单并发给林总")
+        XCTAssertEqual(list[0].deadlineLabel, "明天前")
+        XCTAssertEqual(list[0].commitmentKind, "deliverable")
     }
 
     func testCommitmentUpsertUpdatesExisting() throws {

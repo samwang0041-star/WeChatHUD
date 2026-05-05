@@ -234,4 +234,147 @@ final class ChatInsightEngineTests: XCTestCase {
         let withoutAction = ChatInsightEngine.sortingScore(stats, hasActionForMe: false)
         XCTAssertGreaterThan(withAction, withoutAction)
     }
+
+    // MARK: - AI cache fingerprint
+
+    func testInsightInputHash_changesWhenMessageContentChanges() {
+        let first = AIChatInsight.stableInsightInputHash(
+            chatUsername: "chat",
+            chatType: "group",
+            category: "work",
+            selfName: "哆啦",
+            selfAliases: ["yuriwong", "哆啦"],
+            timeRange: "今天",
+            messages: [
+                (sender: "a", body: "明天十点开会", time: 1000),
+                (sender: "b", body: "收到", time: 1001),
+            ],
+            recalledMessages: [],
+            memory: "项目 A"
+        )
+        let second = AIChatInsight.stableInsightInputHash(
+            chatUsername: "chat",
+            chatType: "group",
+            category: "work",
+            selfName: "哆啦",
+            selfAliases: ["yuriwong", "哆啦"],
+            timeRange: "今天",
+            messages: [
+                (sender: "a", body: "今晚十点开会", time: 1000),
+                (sender: "b", body: "收到", time: 1001),
+            ],
+            recalledMessages: [],
+            memory: "项目 A"
+        )
+
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testInsightInputHash_isStableForSameEvidence() {
+        let messages = [
+            (sender: "a", body: "排期定了吗", time: 1000),
+            (sender: "me", body: "我晚点给", time: 1001),
+        ]
+        let first = AIChatInsight.stableInsightInputHash(
+            chatUsername: "chat",
+            chatType: "private",
+            category: "work",
+            selfName: "哆啦",
+            selfAliases: ["yuriwong", "哆啦"],
+            timeRange: "今天",
+            messages: messages,
+            recalledMessages: [(sender: "a", content: "旧方案撤回")],
+            memory: "上周讨论过"
+        )
+        let second = AIChatInsight.stableInsightInputHash(
+            chatUsername: "chat",
+            chatType: "private",
+            category: "work",
+            selfName: "哆啦",
+            selfAliases: ["yuriwong", "哆啦"],
+            timeRange: "今天",
+            messages: messages,
+            recalledMessages: [(sender: "a", content: "旧方案撤回")],
+            memory: "上周讨论过"
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.count, 64)
+    }
+
+    func testAIChatInsightNormalizesSelfAliasesInOutput() async throws {
+        let tmp = NSTemporaryDirectory() + "test_chat_insight_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: tmp)
+        try store.open()
+        defer { store.close() }
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: """
+        {
+          "headline": "yuriwong 已配合推进排期",
+          "topics": [{
+            "name": "排期",
+            "message_count": 2,
+            "participant_count": 2,
+            "summary": "张三问 yuriwong 排期",
+            "status": "讨论中",
+            "my_involvement": "yuriwong 承诺晚点给",
+            "attitudes": {"yuriwong": "表面配合"},
+            "cross_chats": []
+          }],
+          "decisions": [],
+          "action_items": [{"what": "给排期", "who": "yuriwong", "deadline": null}],
+          "mentions_me": 1,
+          "waiting_for_me": [{"source": "张三", "what": "等 yuriwong 给排期", "waiting_hours": 0}],
+          "my_commitments": ["yuriwong 晚点给"],
+          "needs_my_attention": true,
+          "overall_mood": "正式",
+          "mood_shift": null,
+          "attitudes": [{"person": "yuriwong", "topic": "排期", "attitude": "表面配合", "evidence": "yuriwong: 我晚点给"}],
+          "tone_changes": [],
+          "signal_noise_ratio": 0.8,
+          "decision_efficiency": "正常",
+          "importance_to_me": {"level": "中", "reason": "张三在等 yuriwong"},
+          "participants": [{"name": "yuriwong", "message_count": 1, "role": "执行者", "doing": "给排期", "attitude_toward": {"排期": "表面配合"}}],
+          "relationship_signal": "平稳",
+          "symmetry": 0.5,
+          "cross_chat_topics": [],
+          "insight": "yuriwong 被点名后没有立即给排期",
+          "suggestion": "yuriwong 应回复张三"
+        }
+        """)
+
+        var cfg = AIConfig()
+        cfg.cloudProvider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://localhost:9999",
+            model: "requested-model",
+            apiKey: "sk-test"
+        )
+        cfg.activeMode = .cloud
+        cfg.summaryEnabled = true
+
+        let insight = AIChatInsight(store: store, aiService: AIService(config: cfg))
+        let result = await insight.analyzeChat(
+            chatUsername: "chat",
+            chatName: "项目群",
+            chatType: "group",
+            category: "work",
+            selfName: "哆啦",
+            selfAliases: ["yuriwong", "哆啦"],
+            timeRange: "今天",
+            messages: [
+                (sender: "张三", body: "@yuriwong 排期定了吗", time: 1000),
+                (sender: "我（哆啦）", body: "我晚点给", time: 1001),
+            ],
+            recalledMessages: [],
+            memory: ""
+        )
+
+        XCTAssertEqual(result?.actionItems.first?.who, "我")
+        XCTAssertEqual(result?.participants?.first?.name, "我")
+        XCTAssertEqual(result?.attitudes?.first?.person, "我")
+        XCTAssertTrue(result?.headline.contains("yuriwong") == false)
+        XCTAssertTrue(result?.suggestion.contains("我 应") == true)
+    }
 }

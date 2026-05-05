@@ -32,6 +32,35 @@ final class AIInboxSummarizerTests: XCTestCase {
         XCTAssertEqual(audit.model, "actual-provider-model")
     }
 
+    func testGenericSummaryFallsBackToReadableMessageText() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: "发来一条消息要你看",
+            model: "actual-provider-model"
+        )
+
+        let summarizer = AIInboxSummarizer(store: store, aiService: makeAIService())
+        let summary = await summarizer.summarize(makeContext(text: "带老婆小孩在武汉家里"))
+
+        XCTAssertEqual(summary, "带老婆小孩在武汉家里")
+        let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .summarizer).first)
+        XCTAssertEqual(audit.outputText, "带老婆小孩在武汉家里")
+    }
+
+    func testUnreadableMessageDoesNotCallModelOrEchoParserFailure() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: "大姑多次发送空白消息，内容无法显示",
+            model: "actual-provider-model"
+        )
+
+        let summarizer = AIInboxSummarizer(store: store, aiService: makeAIService())
+        let summary = await summarizer.summarize(makeContext(text: "内容无法显示"))
+
+        XCTAssertEqual(summary, "暂无可读内容")
+        XCTAssertTrue(URLRequestRecorder.capturedRequests.isEmpty)
+        let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .summarizer).first)
+        XCTAssertEqual(audit.outputText, "暂无可读内容")
+    }
+
     private func makeAIService() -> AIService {
         var cfg = AIConfig()
         cfg.cloudProvider = AIProviderSlot(
@@ -45,7 +74,7 @@ final class AIInboxSummarizerTests: XCTestCase {
         return AIService(config: cfg)
     }
 
-    private func makeContext() -> InboxContext {
+    private func makeContext(text: String = "方案明天能发我吗？") -> InboxContext {
         let now = Int(Date().timeIntervalSince1970)
         let trigger = MessageInfo(
             id: "msg-inbox",
@@ -53,7 +82,7 @@ final class AIInboxSummarizerTests: XCTestCase {
             chatName: "项目群",
             senderUsername: "wxid_peer",
             senderName: "张三",
-            text: "方案明天能发我吗？",
+            text: text,
             baseType: 1,
             subType: 0,
             createTime: now
@@ -62,7 +91,7 @@ final class AIInboxSummarizerTests: XCTestCase {
             triggerMessage: trigger,
             triggerMessageText: trigger.text,
             recentMessages: [trigger],
-            taggedTranscript: "张三: 方案明天能发我吗？",
+            taggedTranscript: "张三: \(text)",
             myLastReply: nil,
             myLastReplyText: nil,
             timeSinceMyLastReply: nil,
@@ -84,6 +113,7 @@ final class AIInboxSummarizerTests: XCTestCase {
             inboundCountSinceMyLastReply: 1,
             mediaType: nil,
             mediaFilePath: nil,
+            mediaAnalysisText: nil,
             mediaContextMessages: [],
             linkTitle: nil,
             linkDescription: nil,

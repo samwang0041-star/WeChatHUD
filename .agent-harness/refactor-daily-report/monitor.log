@@ -1,0 +1,11 @@
+[2026-05-05 15:17:59] monitor started: workspace=/Users/yuriwong/wechatcli/WeChatHUD/.agent-harness/refactor-daily-report mode=long-job stage=final interval=30s idle-timeout=600s max=21600s
+Agent Harness gate FAILED
+Workspace: /Users/yuriwong/wechatcli/WeChatHUD/.agent-harness/refactor-daily-report
+Mode: long-job
+Stage: final
+
+Missing artifacts:
+  - 30-generation-report.md
+  - 40-evaluation-report.md
+  - 45-checkpoint.md
+  - 50-final-summary.md

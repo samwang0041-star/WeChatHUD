@@ -223,6 +223,81 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(contact?.replyWindowMinutes, 480)
     }
 
+    func testSaveContactTrackingWritesWhitelistForTrackedLevels() throws {
+        try store.saveContactTracking(
+            username: "wxid_track",
+            displayName: "Track Me",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .vip,
+            role: .boss,
+            roleNote: "CEO",
+            replyWindowMinutes: 30
+        )
+
+        let whitelistEntry = store.getWhitelistEntry(username: "wxid_track")
+        XCTAssertEqual(whitelistEntry?.displayName, "Track Me")
+        XCTAssertEqual(whitelistEntry?.category, .work)
+        XCTAssertEqual(whitelistEntry?.attentionLevel, .vip)
+
+        let contact = store.getContact(username: "wxid_track")
+        XCTAssertEqual(contact?.attentionLevel, .vip)
+        XCTAssertEqual(contact?.role, .boss)
+        XCTAssertEqual(contact?.roleNote, "CEO")
+        XCTAssertEqual(contact?.replyWindowMinutes, 30)
+    }
+
+    func testSaveContactTrackingGreylistUntracksButPreservesContact() throws {
+        try store.saveContactTracking(
+            username: "wxid_grey",
+            displayName: "Grey",
+            isGroup: false,
+            category: .life,
+            attentionLevel: .whitelist,
+            role: .friend,
+            roleNote: "old friend",
+            replyWindowMinutes: 240
+        )
+        try store.setWhitelistBaseline(username: "wxid_grey", lastCreateTime: 1700000000)
+        try store.silenceChat(chatUsername: "wxid_grey", silencedAt: 1700001000)
+
+        try store.saveContactTracking(
+            username: "wxid_grey",
+            displayName: "Grey",
+            isGroup: false,
+            category: .life,
+            attentionLevel: .greylist,
+            role: .friend,
+            roleNote: "old friend",
+            replyWindowMinutes: 240
+        )
+
+        XCTAssertFalse(store.isWhitelisted("wxid_grey"))
+        XCTAssertNil(store.getWhitelistBaseline(username: "wxid_grey"))
+        XCTAssertNil(store.loadChatActions()["wxid_grey"])
+        let contact = store.getContact(username: "wxid_grey")
+        XCTAssertEqual(contact?.attentionLevel, .greylist)
+        XCTAssertEqual(contact?.roleNote, "old friend")
+    }
+
+    func testDeleteContactAndTrackingRemovesWhitelistGhost() throws {
+        try store.saveContactTracking(
+            username: "wxid_delete",
+            displayName: "Delete",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .whitelist,
+            role: .colleague,
+            replyWindowMinutes: 240
+        )
+
+        try store.deleteContactAndTracking(username: "wxid_delete")
+
+        XCTAssertFalse(store.isWhitelisted("wxid_delete"))
+        XCTAssertNil(store.getWhitelistEntry(username: "wxid_delete"))
+        XCTAssertNil(store.getContact(username: "wxid_delete"))
+    }
+
     func testIgnoredSenderRoundTrip() throws {
         try store.ignoreSender(
             chatUsername: "room@chatroom",
@@ -341,6 +416,25 @@ final class HUDStoreTests: XCTestCase {
         try store.setWhitelistBaseline(username: "wxid_upd", lastCreateTime: 100)
         try store.setWhitelistBaseline(username: "wxid_upd", lastCreateTime: 200)
         XCTAssertEqual(store.getWhitelistBaseline(username: "wxid_upd"), 200)
+    }
+
+    func testWhitelistCursorStoresSameSecondTieBreaker() throws {
+        XCTAssertNil(store.getWhitelistCursor(username: "wxid_cursor"))
+
+        try store.setWhitelistCursor(username: "wxid_cursor", lastCreateTime: 200, lastLocalId: 41)
+
+        let cursor = store.getWhitelistCursor(username: "wxid_cursor")
+        XCTAssertEqual(cursor?.lastCreateTime, 200)
+        XCTAssertEqual(cursor?.lastLocalId, 41)
+        XCTAssertEqual(store.getWhitelistBaseline(username: "wxid_cursor"), 200)
+    }
+
+    func testAutopilotCursorDoesNotPolluteWhitelistCursor() throws {
+        try store.setAutopilotCursor(username: "wxid_private", lastCreateTime: 300, lastLocalId: 9)
+
+        XCTAssertNil(store.getWhitelistCursor(username: "wxid_private"))
+        XCTAssertEqual(store.getAutopilotCursor(username: "wxid_private")?.lastCreateTime, 300)
+        XCTAssertEqual(store.getAutopilotCursor(username: "wxid_private")?.lastLocalId, 9)
     }
 
     // MARK: - Chat Actions (silence / snooze / clear)
@@ -526,6 +620,77 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(loaded[0].summary, "new summary")
         XCTAssertEqual(loaded[0].askType, .action)
         XCTAssertEqual(loaded[0].confidence, 0.95)
+    }
+
+    func testPendingAskUpsertPreservesHandledStatus() throws {
+        let ask = PendingAsk(
+            id: 0, msgUID: "msg-handled", chatUsername: "c", chatName: "C",
+            senderName: "S", rawText: "t", summary: "old",
+            askType: .action, deadlineAt: nil, confidence: 0.9,
+            bucket: .main, status: .pending, promptVersion: "v1",
+            createdAt: Date(), updatedAt: Date(),
+            senderLevel: nil, senderRole: nil, urgency: nil
+        )
+        try store.upsertPendingAsk(ask)
+        try store.updatePendingAskStatus(msgUID: "msg-handled", status: .done)
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "msg-handled", chatUsername: "c", chatName: "C",
+            senderName: "S", rawText: "t", summary: "new",
+            askType: .action, deadlineAt: nil, confidence: 0.95,
+            bucket: .main, status: .pending, promptVersion: "v2",
+            createdAt: Date(), updatedAt: Date(),
+            senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+
+        XCTAssertEqual(store.loadPendingAsks(status: .done).first?.summary, "new")
+        XCTAssertTrue(store.loadPendingAsks(status: .pending).isEmpty)
+    }
+
+    // MARK: - Commitment lifecycle
+
+    func testCommitmentCreatedAtCanUseSourceMessageTime() throws {
+        let sourceTime = Date(timeIntervalSince1970: 1_700_000_123)
+        try store.upsertCommitment(
+            msgUID: "commit-source",
+            chatUsername: "c",
+            chatName: "C",
+            content: "发资料",
+            commitTo: "S",
+            confidence: 0.9,
+            promptVersion: "commitment_v1",
+            createdAt: sourceTime
+        )
+
+        let loaded = store.loadCommitments()
+        XCTAssertEqual(loaded.first?.createdAt.timeIntervalSince1970, sourceTime.timeIntervalSince1970)
+    }
+
+    func testAutoAdvanceCanFulfillOverdueCommitmentButNotCancelled() throws {
+        try store.upsertCommitment(
+            msgUID: "commit-late",
+            chatUsername: "c",
+            chatName: "C",
+            content: "发资料",
+            commitTo: "S",
+            confidence: 0.9,
+            promptVersion: "commitment_v1"
+        )
+        try store.autoAdvanceCommitmentStatus(msgUID: "commit-late", to: .overdue)
+        try store.autoAdvanceCommitmentStatus(msgUID: "commit-late", to: .fulfilled)
+        XCTAssertEqual(store.loadCommitments().first { $0.msgUID == "commit-late" }?.status, .fulfilled)
+
+        try store.upsertCommitment(
+            msgUID: "commit-cancelled",
+            chatUsername: "c",
+            chatName: "C",
+            content: "不做了",
+            commitTo: "S",
+            confidence: 0.9,
+            promptVersion: "commitment_v1"
+        )
+        try store.updateCommitmentStatus(msgUID: "commit-cancelled", status: .cancelled)
+        try store.autoAdvanceCommitmentStatus(msgUID: "commit-cancelled", to: .fulfilled)
+        XCTAssertEqual(store.loadCommitments().first { $0.msgUID == "commit-cancelled" }?.status, .cancelled)
     }
 
     // MARK: - AI Audit
@@ -719,6 +884,81 @@ final class HUDStoreTests: XCTestCase {
         let log = store.loadAutopilotLog(sessionId: sessionId)
         XCTAssertEqual(log[0].action, .sent)
         XCTAssertNotNil(log[0].sentAt)
+    }
+
+    func testPendingSendPersistenceRoundTripAndDelete() throws {
+        let sessionId = try store.startAutopilotSession()
+        let id = UUID()
+        let scheduled = Date(timeIntervalSince1970: 1_800)
+        let created = Date(timeIntervalSince1970: 1_700)
+        let item = PendingSend(
+            id: id,
+            chatUsername: "wxid_peer",
+            chatName: "Peer",
+            senderName: "Sender",
+            replyText: "收到，我晚点看",
+            confidence: 0.91,
+            risk: .low,
+            reasoning: "低风险确认",
+            styleScore: 86,
+            scheduledSendTime: scheduled,
+            createdAt: created,
+            peerLastMessage: "帮我看下这个",
+            topic: "讨论",
+            autoSendAttempts: 1,
+            manualOnlyReason: "发送结果无法确认"
+        )
+
+        try store.upsertPendingSend(item, sessionId: sessionId)
+
+        let loaded = store.loadPendingSends(sessionId: sessionId)
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded[0].id, id)
+        XCTAssertEqual(loaded[0].chatUsername, "wxid_peer")
+        XCTAssertEqual(loaded[0].replyText, "收到，我晚点看")
+        XCTAssertEqual(loaded[0].risk, .low)
+        XCTAssertEqual(loaded[0].styleScore, 86)
+        XCTAssertEqual(Int(loaded[0].scheduledSendTime.timeIntervalSince1970), 1_800)
+        XCTAssertEqual(Int(loaded[0].createdAt.timeIntervalSince1970), 1_700)
+        XCTAssertEqual(loaded[0].peerLastMessage, "帮我看下这个")
+        XCTAssertEqual(loaded[0].topic, "讨论")
+        XCTAssertEqual(loaded[0].autoSendAttempts, 1)
+        XCTAssertEqual(loaded[0].manualOnlyReason, "发送结果无法确认")
+
+        try store.deletePendingSend(id: id)
+        XCTAssertTrue(store.loadPendingSends(sessionId: sessionId).isEmpty)
+    }
+
+    func testAutopilotInboundQueueRoundTripAndAck() throws {
+        let msg = AutopilotService.InboundMessage(
+            msgUID: "msg-inbound-1",
+            chatUsername: "wxid_peer",
+            chatName: "Peer",
+            senderUsername: "wxid_sender",
+            senderName: "Sender",
+            text: "你看看这个",
+            isGroup: false,
+            isAtMention: false,
+            attentionLevel: .whitelist,
+            contactRole: .friend,
+            timestamp: 1_900,
+            messageType: 1,
+            appType: 0
+        )
+
+        try store.enqueueAutopilotInbound(msg)
+        try store.enqueueAutopilotInbound(msg)
+
+        let loaded = store.loadPendingAutopilotInbound()
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded[0].msgUID, "msg-inbound-1")
+        XCTAssertEqual(loaded[0].chatUsername, "wxid_peer")
+        XCTAssertEqual(loaded[0].attentionLevel, .whitelist)
+        XCTAssertEqual(loaded[0].contactRole, .friend)
+        XCTAssertEqual(loaded[0].timestamp, 1_900)
+
+        try store.deleteAutopilotInbound(msgUIDs: ["msg-inbound-1"])
+        XCTAssertTrue(store.loadPendingAutopilotInbound().isEmpty)
     }
 
     func testLoadAutopilotSessions() throws {

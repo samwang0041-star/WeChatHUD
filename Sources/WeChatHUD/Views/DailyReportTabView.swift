@@ -1,70 +1,88 @@
 import SwiftUI
 import AppKit
 
-/// 日报 tab — daily retrospective summary, tomorrow's first task,
-/// commitment tracking, and a copyable WeChat daily report draft.
-///
-/// Weekly mode was removed in M10 — the new `复盘` tab (Plan M6.5)
-/// supersedes it with custom time ranges, AI deep extraction, and
-/// persistent cross-week todos. See [Plan M10] in
-/// docs/superpowers/plans/2026-04-25-retrospective-tab.md.
+/// 日报 tab — unified daily report with metrics, highlights, actions,
+/// risks, tomorrow focus, and copyable WeChat draft.
 struct DailyReportTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 0) {
-                Text("日报")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.leading, 4)
-                Spacer()
-                Button(action: {
-                    Task { await monitor.loadDailyReport(force: true) }
-                }) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
-            .padding(.bottom, 4)
-
+            header
             Divider().background(Color.white.opacity(0.07))
-
-            dailyContent
+            content
         }
         .task {
             await monitor.loadDailyReport()
         }
     }
 
-    // MARK: - Daily content
+    // MARK: - Header
 
-    private var dailyContent: some View {
-        Group {
-            if monitor.dailyReport == nil && monitor.dailyReportGeneratedAt == nil {
-                loadingState
-            } else if let report = monitor.dailyReport {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        overviewSection(report: report)
-                        divider
-                        summarySection(report: report)
-                        divider
-                        tomorrowSection(report: report)
-                        divider
-                        commitmentsSection
-                        divider
-                        wechatDraftSection(report: report)
-                    }
-                    .padding(.bottom, 8)
-                }
-            } else {
-                emptyState("日报生成失败，请稍后重试")
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("日报")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white.opacity(0.85))
+                .padding(.leading, 4)
+            Spacer()
+            Button(action: {
+                Task { await monitor.loadDailyReport(force: true) }
+            }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
             }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Content
+
+    @ViewBuilder
+    private var content: some View {
+        if monitor.dailyReport == nil && monitor.dailyReportGeneratedAt == nil {
+            loadingState
+        } else if let report = monitor.dailyReport {
+            reportContent(report: report)
+        } else {
+            emptyState("日报生成失败，请稍后重试")
+        }
+    }
+
+    private func reportContent(report: DailyReport) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                metricsSection(report: report)
+                divider
+                if let narrative = report.narrative {
+                    narrativeSection(narrative: narrative)
+                    divider
+                }
+                if !report.highlights.isEmpty {
+                    highlightsSection(highlights: report.highlights)
+                    divider
+                }
+                if !report.actions.isEmpty {
+                    actionsSection(actions: report.actions)
+                    divider
+                }
+                if !report.risks.isEmpty {
+                    risksSection(risks: report.risks)
+                    divider
+                }
+                if let tomorrowFocus = report.tomorrowFocus {
+                    tomorrowSection(focus: tomorrowFocus)
+                    divider
+                }
+                if let draft = report.wechatDraft {
+                    wechatDraftSection(draft: draft)
+                }
+            }
+            .padding(.bottom, 8)
         }
     }
 
@@ -83,27 +101,22 @@ struct DailyReportTabView: View {
         .padding(.vertical, 24)
     }
 
-    // MARK: - Overview
+    // MARK: - Metrics
 
-    private func overviewSection(report: AIDailyRetrospector.Retrospective) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func metricsSection(report: DailyReport) -> some View {
+        let m = report.metrics
+        return VStack(alignment: .leading, spacing: 6) {
             sectionLabel("今日概览")
             HStack(spacing: 6) {
-                statPill(
-                    label: "消息",
-                    value: "\(monitor.stats.unreadCount)",
-                    color: .blue
-                )
-                statPill(
-                    label: "待处理",
-                    value: "\(report.stats.asksPending)",
-                    color: report.stats.asksPending > 0 ? .orange : .white
-                )
-                statPill(
-                    label: "承诺",
-                    value: "\(pendingCommitmentsCount)",
-                    color: pendingCommitmentsCount > 0 ? .yellow : .white
-                )
+                statPill(label: "消息", value: "\(m.unreadMessageCount)", color: .blue)
+                statPill(label: "待办", value: "\(m.pendingTodoCount + m.pendingAskCount)", color: m.pendingTodoCount + m.pendingAskCount > 0 ? .orange : .white)
+                if m.overdueCommitmentCount > 0 {
+                    statPill(label: "超期", value: "\(m.overdueCommitmentCount)", color: .red)
+                }
+                statPill(label: "回复", value: "\(m.replyDebtCount)", color: m.replyDebtCount > 0 ? .cyan : .white)
+                if m.highlightCount > 0 {
+                    statPill(label: "高亮", value: "\(m.highlightCount)", color: .green)
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -111,32 +124,12 @@ struct DailyReportTabView: View {
         .padding(.bottom, 8)
     }
 
-    private var pendingCommitmentsCount: Int {
-        monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count
-    }
+    // MARK: - Narrative
 
-    private func statPill(label: String, value: String, color: Color) -> some View {
-        HStack(spacing: 3) {
-            Text(value)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(color == .white ? .white : color)
-                .monospacedDigit()
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.55))
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color == .white ? Color.white.opacity(0.07) : color.opacity(0.12))
-        .cornerRadius(5)
-    }
-
-    // MARK: - Summary
-
-    private func summarySection(report: AIDailyRetrospector.Retrospective) -> some View {
+    private func narrativeSection(narrative: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            sectionLabel("今日总结")
-            Text(report.todaySummary)
+            sectionLabel("今日回顾")
+            Text(narrative)
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)
@@ -146,17 +139,144 @@ struct DailyReportTabView: View {
         .padding(.vertical, 8)
     }
 
+    // MARK: - Highlights
+
+    private func highlightsSection(highlights: [DailyReportHighlight]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel("今日高亮", count: highlights.count)
+            ForEach(highlights.prefix(6)) { h in
+                highlightRow(h)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private func highlightRow(_ h: DailyReportHighlight) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(categoryLabel(h.category))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(categoryColor(h.category))
+                Text(h.sourceChatName)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.42))
+                Spacer()
+                if h.confidence < 0.8 {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundColor(.orange.opacity(0.7))
+                }
+            }
+            Text(h.summary)
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.82))
+                .fixedSize(horizontal: false, vertical: true)
+                .lineSpacing(2)
+            if let snippet = h.quotedSnippet {
+                Text("「\(snippet)」")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
+                    .italic()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(8)
+        .background(panelBackground)
+    }
+
+    // MARK: - Actions
+
+    private func actionsSection(actions: [DailyReportAction]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel("需要处理", count: actions.count)
+            ForEach(actions.prefix(8)) { a in
+                actionRow(a)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private func actionRow(_ a: DailyReportAction) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            urgencyBadge(a.urgency)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(a.content)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2)
+
+                HStack(spacing: 6) {
+                    Text(typeLabel(a.type))
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.4))
+                    Text(a.sourceChatName)
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.35))
+                    if let deadline = a.deadline {
+                        Text(deadlineText(deadline))
+                            .font(.system(size: 9))
+                            .foregroundColor(deadlineColor(deadline))
+                    }
+                }
+            }
+
+            Spacer(minLength: 4)
+        }
+        .padding(.vertical, 3)
+    }
+
+    // MARK: - Risks
+
+    private func risksSection(risks: [DailyReportRisk]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            sectionLabel("风险与异常", count: risks.count)
+            ForEach(risks.prefix(5)) { r in
+                riskRow(r)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+
+    private func riskRow(_ r: DailyReportRisk) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            severityDot(r.severity)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(r.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+                if let name = r.sourceChatName {
+                    Text(name)
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.4))
+                }
+            }
+
+            Spacer(minLength: 4)
+        }
+        .padding(.vertical, 3)
+    }
+
     // MARK: - Tomorrow
 
-    private func tomorrowSection(report: AIDailyRetrospector.Retrospective) -> some View {
+    private func tomorrowSection(focus: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            sectionLabel("明天第一件事")
+            sectionLabel("明天重点")
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "alarm.fill")
                     .font(.system(size: 10))
                     .foregroundColor(.orange.opacity(0.85))
                     .padding(.top, 1)
-                Text(report.tomorrowFirstThing.action)
+                Text(focus)
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)
@@ -167,51 +287,15 @@ struct DailyReportTabView: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: - Commitments
-
-    private var commitmentsSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionLabel("承诺追踪", count: monitor.commitments.count)
-            if monitor.commitments.isEmpty {
-                Text("暂无承诺记录")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.35))
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(sortedCommitments) { commitment in
-                    CommitmentRow(commitment: commitment)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-
-    private var sortedCommitments: [Commitment] {
-        monitor.commitments.sorted { a, b in
-            statusRank(a.status) < statusRank(b.status)
-        }
-    }
-
-    private func statusRank(_ status: CommitmentStatus) -> Int {
-        switch status {
-        case .overdue:   return 0
-        case .pending:   return 1
-        case .fulfilled: return 2
-        case .cancelled: return 3
-        }
-    }
-
     // MARK: - WeChat Draft
 
-    private func wechatDraftSection(report: AIDailyRetrospector.Retrospective) -> some View {
+    private func wechatDraftSection(draft: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 sectionLabel("微信日报草稿")
                 Spacer()
                 Button(action: {
-                    WeChatLauncher.copyText(report.wechatDailyReport)
+                    WeChatLauncher.copyText(draft)
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.on.doc")
@@ -229,7 +313,7 @@ struct DailyReportTabView: View {
             }
             .padding(.trailing, 14)
 
-            Text(report.wechatDailyReport)
+            Text(draft)
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
@@ -266,70 +350,81 @@ struct DailyReportTabView: View {
         }
     }
 
-    private func emptyState(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(.white.opacity(0.35))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-    }
-}
-
-// MARK: - Commitment Row
-
-private struct CommitmentRow: View {
-    let commitment: Commitment
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            statusDot
-                .padding(.top, 4)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(commitment.content)
-                    .font(.system(size: 11))
-                    .foregroundColor(contentColor)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 6) {
-                    if !commitment.commitTo.isEmpty {
-                        Text("→ \(commitment.commitTo)")
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                    if let deadline = commitment.deadlineAt {
-                        Text(deadlineText(deadline))
-                            .font(.system(size: 9))
-                            .foregroundColor(deadlineColor(deadline))
-                            .monospacedDigit()
-                    }
-                }
-            }
+    private func statPill(label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(color == .white ? .white : color)
+                .monospacedDigit()
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.55))
         }
-        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color == .white ? Color.white.opacity(0.07) : color.opacity(0.12))
+        .cornerRadius(5)
     }
 
-    private var statusDot: some View {
+    private func urgencyBadge(_ urgency: ActionUrgency) -> some View {
+        let (text, color) = urgencyStyle(urgency)
+        return Text(text)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundColor(color)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .cornerRadius(3)
+    }
+
+    private func urgencyStyle(_ urgency: ActionUrgency) -> (String, Color) {
+        switch urgency {
+        case .critical: return ("紧急", .red)
+        case .high:     return ("高", .orange)
+        case .medium:   return ("中", .yellow)
+        case .low:      return ("低", .white.opacity(0.5))
+        }
+    }
+
+    private func severityDot(_ severity: RiskSeverity) -> some View {
         Circle()
-            .fill(dotColor)
+            .fill(severityColor(severity))
             .frame(width: 6, height: 6)
+            .padding(.top, 4)
     }
 
-    private var dotColor: Color {
-        switch commitment.status {
-        case .overdue:   return .red
-        case .pending:   return .orange
-        case .fulfilled: return .green
-        case .cancelled: return .white.opacity(0.25)
+    private func severityColor(_ severity: RiskSeverity) -> Color {
+        switch severity {
+        case .high:   return .red
+        case .medium: return .orange
+        case .low:    return .yellow.opacity(0.6)
         }
     }
 
-    private var contentColor: Color {
-        switch commitment.status {
-        case .overdue:   return .red.opacity(0.9)
-        case .cancelled: return .white.opacity(0.35)
-        default:         return .white.opacity(0.82)
+    private func categoryLabel(_ category: HighlightCategory) -> String {
+        switch category {
+        case .decision:    return "决策"
+        case .progress:    return "进展"
+        case .discussion:  return "讨论"
+        case .risk:        return "风险"
+        }
+    }
+
+    private func categoryColor(_ category: HighlightCategory) -> Color {
+        switch category {
+        case .decision:   return .cyan.opacity(0.85)
+        case .progress:   return .green.opacity(0.8)
+        case .discussion: return .white.opacity(0.5)
+        case .risk:       return .orange.opacity(0.85)
+        }
+    }
+
+    private func typeLabel(_ type: DailyReportActionType) -> String {
+        switch type {
+        case .todo:        return "待办"
+        case .commitment:  return "承诺"
+        case .replyDebt:   return "回复"
+        case .ask:         return "请求"
         }
     }
 
@@ -352,4 +447,31 @@ private struct CommitmentRow: View {
         if diff < 3600    { return .orange.opacity(0.9) }
         return .white.opacity(0.4)
     }
+
+    private var panelBackground: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.white.opacity(0.045))
+    }
+
+    private func emptyState(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundColor(.white.opacity(0.35))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+    }
+}
+
+// MARK: - ForEach conformance
+
+extension DailyReportHighlight: Identifiable {
+    var id: String { "\(sourceChatUsername)-\(summary.hashValue)" }
+}
+
+extension DailyReportAction: Identifiable {
+    var id: String { "\(type.rawValue)-\(relatedID)" }
+}
+
+extension DailyReportRisk: Identifiable {
+    var id: String { "\(type.rawValue)-\(description.hashValue)" }
 }

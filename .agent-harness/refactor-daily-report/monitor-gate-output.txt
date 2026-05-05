@@ -1,0 +1,10 @@
+Agent Harness gate FAILED
+Workspace: /Users/yuriwong/wechatcli/WeChatHUD/.agent-harness/refactor-daily-report
+Mode: long-job
+Stage: final
+
+Missing artifacts:
+  - 30-generation-report.md
+  - 40-evaluation-report.md
+  - 45-checkpoint.md
+  - 50-final-summary.md

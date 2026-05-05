@@ -3,6 +3,28 @@ import XCTest
 
 final class MessageHelpersTests: XCTestCase {
 
+    func testResolveDeadlineUsesProvidedAnchor() {
+        let anchor = Date(timeIntervalSince1970: 1_700_000_000)
+        let deadline = MessageHelpers.resolveDeadline("+2h", relativeTo: anchor)
+
+        XCTAssertEqual(deadline?.timeIntervalSince1970, anchor.addingTimeInterval(7200).timeIntervalSince1970)
+    }
+
+    func testReadableAIContentRejectsParserPlaceholders() {
+        XCTAssertFalse(MessageHelpers.isReadableAIContent(""))
+        XCTAssertFalse(MessageHelpers.isReadableAIContent("[消息]"))
+        XCTAssertFalse(MessageHelpers.isReadableAIContent("发送消息"))
+        XCTAssertFalse(MessageHelpers.isReadableAIContent("内容无法显示"))
+        XCTAssertFalse(MessageHelpers.isReadableAIContent("大姑多次发送空白消息，内容无法显示"))
+        XCTAssertTrue(MessageHelpers.isReadableAIContent("收到确认"))
+        XCTAssertTrue(MessageHelpers.isReadableAIContent("文档内容无法显示了，帮看下"))
+    }
+
+    func testReadableAIContentMediaPlaceholderRequiresOptIn() {
+        XCTAssertFalse(MessageHelpers.isReadableAIContent("[图片]"))
+        XCTAssertTrue(MessageHelpers.isReadableAIContent("[图片]", allowMediaPlaceholder: true))
+    }
+
     // MARK: - isAtMe
 
     func testIsAtMeWithUsername() {

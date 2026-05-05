@@ -133,6 +133,97 @@ final class ReplyDebtScorerTests: XCTestCase {
         XCTAssertEqual(visible.first?.chatUsername, "alice")
     }
 
+    func testOldActionableAskDoesNotDisappearAfterTwoHours() {
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 1_000,
+                    latestInboundText: "麻烦确认一下合同可以签吗？",
+                    latestOutbound: 100,
+                    now: 1_000 + 8_000
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+
+        XCTAssertEqual(items.first?.chatUsername, "alice")
+        XCTAssertTrue(items.first?.reasons.contains(where: { $0.code == .askSignal }) == true)
+    }
+
+    func testOldSubstantiveTimeAskDoesNotDisappearAfterTwoHours() {
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 0,
+                    latestInbound: 1_000,
+                    latestInboundText: "明天三点方便",
+                    latestOutbound: 100,
+                    now: 1_000 + 8_000
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+
+        XCTAssertEqual(items.first?.chatUsername, "alice")
+        XCTAssertTrue(items.first?.reasons.contains(where: { $0.code == .privateChat }) == true)
+    }
+
+    func testSameSecondOutboundBeforeInboundDoesNotClearDebt() {
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 1_000,
+                    latestInboundText: "你看下这个方案？",
+                    latestOutbound: 1_000,
+                    inboundLocalId: 12,
+                    outboundLocalId: 11,
+                    now: 1_060
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+
+        XCTAssertEqual(items.first?.chatUsername, "alice")
+    }
+
+    func testSameSecondOutboundAfterInboundClearsDebt() {
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 1_000,
+                    latestInboundText: "你看下这个方案？",
+                    latestOutbound: 1_000,
+                    inboundLocalId: 11,
+                    outboundLocalId: 12,
+                    now: 1_060
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+
+        XCTAssertTrue(items.isEmpty)
+    }
+
+    func testOldLowSignalFollowupCanNaturallyEnd() {
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 0,
+                    latestInbound: 1_000,
+                    latestInboundText: "哈哈",
+                    latestOutbound: 100,
+                    now: 1_000 + 8_000
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+
+        XCTAssertTrue(items.isEmpty)
+    }
+
     private func makeSeed(
         username: String = "alice",
         chatName: String = "Alice",
@@ -141,6 +232,8 @@ final class ReplyDebtScorerTests: XCTestCase {
         latestInbound: Int,
         latestInboundText: String,
         latestOutbound: Int?,
+        inboundLocalId: Int = 0,
+        outboundLocalId: Int = 0,
         inboundCountSinceLastOutbound: Int = 1,
         isWhitelisted: Bool = true,
         isVIP: Bool = false,
@@ -160,6 +253,7 @@ final class ReplyDebtScorerTests: XCTestCase {
             isVIP: isVIP,
             latestInbound: MessageInfo(
                 id: "\(username)-in",
+                localId: inboundLocalId,
                 chatUsername: username,
                 chatName: chatName,
                 senderUsername: isGroup ? "bob" : username,
@@ -172,6 +266,7 @@ final class ReplyDebtScorerTests: XCTestCase {
             latestOutbound: latestOutbound.map {
                 MessageInfo(
                     id: "\(username)-out",
+                    localId: outboundLocalId,
                     chatUsername: username,
                     chatName: chatName,
                     senderUsername: "me",

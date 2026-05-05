@@ -18,6 +18,12 @@ actor CommitmentTracker {
         let commitTo: String
         let deadlineExtracted: String
         let confidence: Double
+        let sourceText: String
+        let contextText: String
+        let captureReason: String
+        let nextStep: String
+        let deadlineLabel: String
+        let commitmentKind: String
     }
 
     /// Outcome of a fulfillment check run against a pending commitment.
@@ -210,7 +216,7 @@ actor CommitmentTracker {
             let result = try await aiService.completeWithMetadata(
                 system: "只输出 JSON。",
                 user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 256, responseFormatJSON: true)
+                options: CompleteOptions(timeout: 30, temperature: 0.05, maxTokens: 512, responseFormatJSON: true)
             )
             return ModelResponse(text: result.text, error: nil, model: result.model)
         } catch {
@@ -232,10 +238,16 @@ actor CommitmentTracker {
             }
             return CommitmentResult(
                 isCommitment: true,
-                content: content,
+                content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                 commitTo: commitTo,
                 deadlineExtracted: json["deadline_extracted"] as? String ?? "none",
-                confidence: json["confidence"] as? Double ?? 0.0
+                confidence: json["confidence"] as? Double ?? 0.0,
+                sourceText: json["source_text"] as? String ?? "",
+                contextText: json["context_summary"] as? String ?? "",
+                captureReason: json["capture_reason"] as? String ?? "",
+                nextStep: json["next_step"] as? String ?? "",
+                deadlineLabel: json["deadline_label"] as? String ?? "",
+                commitmentKind: json["commitment_kind"] as? String ?? ""
             )
         }
         // Not a commitment — fields are irrelevant, safe to use defaults.
@@ -244,7 +256,13 @@ actor CommitmentTracker {
             content: "",
             commitTo: "",
             deadlineExtracted: "none",
-            confidence: json["confidence"] as? Double ?? 0.0
+            confidence: json["confidence"] as? Double ?? 0.0,
+            sourceText: "",
+            contextText: "",
+            captureReason: json["capture_reason"] as? String ?? "",
+            nextStep: "",
+            deadlineLabel: "",
+            commitmentKind: ""
         )
     }
 

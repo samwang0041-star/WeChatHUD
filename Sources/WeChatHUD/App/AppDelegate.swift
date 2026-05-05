@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var fsWatcher: FSEventsWatcher?
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
+    private var wechatYieldRestoreWorkItem: DispatchWorkItem?
 
     /// `@Published` fires an initial emission to every new subscriber.
     /// We ride that to position the panel on launch, but do it
@@ -64,6 +65,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let rootView = HUDRootView()
             .environmentObject(panelState)
             .environmentObject(monitor)
+            .environmentObject(monitor.insightCoordinator)
             .environmentObject(store)
             .environmentObject(reader)
 
@@ -312,7 +314,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.publisher(for: .hudWillOpenWeChat)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.panelState.collapseAndYield() }
+                MainActor.assumeIsolated { self?.temporarilyHideHUDForWeChatAutomation() }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .hudDidFinishWeChatAutomation)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.restoreHUDAfterWeChatAutomation() }
             }
             .store(in: &cancellables)
 
@@ -366,7 +375,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Keyboard shortcuts — only active when the panel is key.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
-            return MainActor.assumeIsolated { self.handleKeyDown(event) ? nil : event }
+            let handled = MainActor.assumeIsolated { self.handleKeyDown(event) }
+            return handled ? nil : event
         }
 
     }
@@ -431,6 +441,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // the measurement sink ignores any SwiftUI size reports to avoid
         // reacting to stale geometry produced during window creation.
         panelState.isReady = true
+    }
+
+    @MainActor
+    private func temporarilyHideHUDForWeChatAutomation() {
+        panelState.collapseAndYield(duration: 4)
+        panel.orderOut(nil)
+
+        wechatYieldRestoreWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.restoreHUDAfterWeChatAutomation()
+            }
+        }
+        wechatYieldRestoreWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    @MainActor
+    private func restoreHUDAfterWeChatAutomation() {
+        wechatYieldRestoreWorkItem?.cancel()
+        wechatYieldRestoreWorkItem = nil
+        guard panel != nil, !panel.isVisible else { return }
+        panel.orderFrontRegardless()
+        panel.positionAtTop()
     }
 
     private func updateMenuBarIcon() {

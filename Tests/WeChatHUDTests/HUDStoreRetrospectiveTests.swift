@@ -1,7 +1,11 @@
 import Testing
-import Foundation
+@preconcurrency import Foundation
 import SQLite3
 @testable import WeChatHUD
+
+private final class ObserverTokenBox: @unchecked Sendable {
+    var value: NSObjectProtocol?
+}
 
 @Suite("HUDStore Retrospective")
 struct HUDStoreRetrospectiveTests {
@@ -42,13 +46,12 @@ struct HUDStoreRetrospectiveTests {
         let runID = store.insertReviewRun(rangeStart: Date(), rangeEnd: Date(), chatCount: 1)!
 
         // Set up observer BEFORE the finalize call.
+        let tokenBox = ObserverTokenBox()
         let received = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            var token: NSObjectProtocol?
-            token = NotificationCenter.default.addObserver(
+            tokenBox.value = NotificationCenter.default.addObserver(
                 forName: .retrospectiveLiveUpdate, object: nil, queue: nil
             ) { note in
                 if let kind = note.userInfo?["kind"] as? String, kind == "completed" {
-                    if let token { NotificationCenter.default.removeObserver(token) }
                     continuation.resume(returning: true)
                 }
             }
@@ -58,6 +61,7 @@ struct HUDStoreRetrospectiveTests {
                 summaryRisk: nil, summaryMissed: nil, msgCount: 50, failedChats: []
             )
         }
+        if let token = tokenBox.value { NotificationCenter.default.removeObserver(token) }
         #expect(received == true)
 
         let run = store.runByID(runID)
@@ -96,7 +100,7 @@ struct HUDStoreRetrospectiveTests {
             forName: .retrospectiveLiveUpdate, object: nil, queue: nil
         ) { note in
             if let kind = note.userInfo?["kind"] as? String {
-                seenLock.lock(); seen.append(kind); seenLock.unlock()
+                seenLock.withLock { seen.append(kind) }
             }
         }
         defer { NotificationCenter.default.removeObserver(token) }
@@ -120,9 +124,7 @@ struct HUDStoreRetrospectiveTests {
         store.insertReviewTodo(t)
 
         try? await Task.sleep(nanoseconds: 100_000_000)
-        seenLock.lock()
-        let snapshot = seen
-        seenLock.unlock()
+        let snapshot = seenLock.withLock { seen }
         #expect(snapshot.contains("highlight"))
         #expect(snapshot.contains("todo"))
     }

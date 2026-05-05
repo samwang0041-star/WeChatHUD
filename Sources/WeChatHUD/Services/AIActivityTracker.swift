@@ -4,7 +4,7 @@ import Foundation
 /// UI can observe `activeTasks` to show what's currently running.
 @MainActor
 final class AIActivityTracker: ObservableObject {
-    static let shared = AIActivityTracker()
+    nonisolated static let shared = AIActivityTracker()
 
     struct TaskInfo: Identifiable {
         let id: String
@@ -21,6 +21,8 @@ final class AIActivityTracker: ObservableObject {
 
     @Published private(set) var activeTasks: [String: TaskInfo] = [:]
     @Published private(set) var recentCompleted: [TaskInfo] = []  // last N finished
+
+    nonisolated init() {}
 
     var isActive: Bool { !activeTasks.isEmpty }
 

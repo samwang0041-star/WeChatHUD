@@ -183,11 +183,9 @@ struct BriefingPanelView: View {
                 .foregroundColor(.white.opacity(0.7))
             Spacer()
             Button("在微信中打开并粘贴") {
+                guard let suggestion = copiedSuggestion else { return }
                 copiedSuggestion = nil
-                WeChatLauncher.openChat(named: item.chatName)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    WeChatLauncher.pasteClipboard()
-                }
+                WeChatLauncher.openChatAndPaste(named: item.chatName, text: suggestion.text)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.mini)

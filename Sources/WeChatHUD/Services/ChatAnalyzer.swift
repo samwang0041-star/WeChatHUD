@@ -6,11 +6,13 @@ import Foundation
 /// Two entry points:
 /// - `analyzeGroup(...)` → `(GroupAnalysis?, error)`
 /// - `analyzePrivate(...)` → `(PrivateAnalysis?, error)`
+///
+/// All AI calls go through `AIAnalysisPipeline` for unified retry, parsing, and audit.
 actor ChatAnalyzer {
 
     // MARK: - Result types
 
-    struct GroupAnalysis: Decodable {
+    struct GroupAnalysis: Codable {
         let topics: String
         let decisions: String?
         let my_action_items: String?
@@ -49,7 +51,7 @@ actor ChatAnalyzer {
         }
     }
 
-    struct PrivateAnalysis: Decodable {
+    struct PrivateAnalysis: Codable {
         let intent: String
         let urgency: String
         let urgency_reason: String
@@ -96,11 +98,13 @@ actor ChatAnalyzer {
 
     private let store: HUDStore
     private let aiService: AIService
+    private let pipeline: AIAnalysisPipeline
     private let promptLoader: PromptLoader
 
     init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
         self.aiService = aiService
+        self.pipeline = AIAnalysisPipeline(aiService: aiService, store: store)
         self.promptLoader = promptLoader
     }
 
@@ -124,8 +128,15 @@ actor ChatAnalyzer {
             return (nil, "加载群聊分析 Prompt 失败: \(error.localizedDescription)")
         }
 
+        let readableMessages = messages.filter {
+            MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
+        }
+        guard !readableMessages.isEmpty else {
+            return (Self.noReadableGroupAnalysis(), nil)
+        }
+
         let formatted = formatMessages(
-            messages,
+            readableMessages,
             chatUsername: chatUsername,
             myUsername: myUsername,
             myName: myName,
@@ -138,28 +149,28 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{my_name}", with: myName.isEmpty ? myUsername : myName)
             .replacingOccurrences(of: "{messages}", with: formatted)
 
-        print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(messages.count) messages")
-        let first = await call(userPrompt)
-        if first.text.isEmpty {
-            print("[WCHUD] ChatAnalyzer: group analysis got empty response")
-            return (nil, first.error ?? "AI 返回空内容")
+        print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(readableMessages.count)/\(messages.count) readable messages")
+
+        let result = await pipeline.execute(
+            prompt: userPrompt,
+            configuration: .init(
+                systemPrompt: "你是一个消息分析助手，严格按要求输出 JSON。",
+                options: CompleteOptions(timeout: 120, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true),
+                auditRole: .chatAnalyzer,
+                promptVersion: "group_analysis_v1",
+                inputSummary: "[\(chatName)] group analysis",
+                trackLabel: "聊天分析"
+            ),
+            decodeAs: GroupAnalysis.self
+        )
+
+        guard let (parsed, _) = result else {
+            print("[WCHUD] ChatAnalyzer: group analysis failed for \(chatName)")
+            return (nil, "AI 返回空内容或解析失败")
         }
 
-        if let result: GroupAnalysis = parseJSON(first.text) {
-            print("[WCHUD] ChatAnalyzer: group analysis success for \(chatName)")
-            return (result, nil)
-        }
-        print("[WCHUD] ChatAnalyzer: group analysis parse failed, retrying. Raw: \(first.text.prefix(200))")
-
-        // Retry with stricter instruction
-        let strict = userPrompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
-        let second = await call(strict)
-        if let result: GroupAnalysis = parseJSON(second.text) {
-            print("[WCHUD] ChatAnalyzer: group analysis retry success")
-            return (result, nil)
-        }
-        print("[WCHUD] ChatAnalyzer: group analysis retry also failed. Raw2: \(second.text.prefix(200))")
-        return (nil, second.error ?? "AI JSON 解析失败: \(String(second.text.prefix(120)))")
+        print("[WCHUD] ChatAnalyzer: group analysis success for \(chatName)")
+        return (parsed, nil)
     }
 
     /// Analyze a private chat. `messages` come newest-first from the reader.
@@ -180,8 +191,15 @@ actor ChatAnalyzer {
             return (nil, "加载私聊分析 Prompt 失败: \(error.localizedDescription)")
         }
 
+        let readableMessages = messages.filter {
+            MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
+        }
+        guard !readableMessages.isEmpty else {
+            return (Self.noReadablePrivateAnalysis(), nil)
+        }
+
         let formatted = formatMessages(
-            messages,
+            readableMessages,
             chatUsername: chatUsername,
             myUsername: myUsername,
             myName: myName,
@@ -204,25 +222,50 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{relationship}", with: relationship)
             .replacingOccurrences(of: "{messages}", with: formatted)
 
-        let first = await call(userPrompt)
-        guard !first.text.isEmpty else {
-            return (nil, first.error ?? "AI 返回空内容")
+        let result = await pipeline.execute(
+            prompt: userPrompt,
+            configuration: .init(
+                systemPrompt: "你是一个消息分析助手，严格按要求输出 JSON。",
+                options: CompleteOptions(timeout: 120, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true),
+                auditRole: .chatAnalyzer,
+                promptVersion: "private_analysis_v1",
+                inputSummary: "[\(contactName)] private analysis",
+                trackLabel: "聊天分析"
+            ),
+            decodeAs: PrivateAnalysis.self
+        )
+
+        guard let (parsed, _) = result else {
+            return (nil, "AI 返回空内容或解析失败")
         }
 
-        if let result: PrivateAnalysis = parseJSON(first.text) {
-            return (result, nil)
-        }
-
-        // Retry with stricter instruction
-        let strict = userPrompt + "\n\n严格要求：只输出符合 schema 的 JSON 对象，不要任何其它文字或代码围栏。"
-        let second = await call(strict)
-        if let result: PrivateAnalysis = parseJSON(second.text) {
-            return (result, nil)
-        }
-        return (nil, second.error ?? "AI JSON 解析失败: \(String(second.text.prefix(120)))")
+        return (parsed, nil)
     }
 
     // MARK: - Message formatting
+
+    private static func noReadableGroupAnalysis() -> GroupAnalysis {
+        GroupAnalysis(
+            topics: "暂无可读内容",
+            decisions: nil,
+            my_action_items: nil,
+            key_speakers: nil,
+            status: "concluded",
+            one_liner: "暂无可读内容"
+        )
+    }
+
+    private static func noReadablePrivateAnalysis() -> PrivateAnalysis {
+        PrivateAnalysis(
+            intent: "暂无可读内容",
+            urgency: "normal",
+            urgency_reason: "",
+            mood: "neutral",
+            mood_evidence: "",
+            context: nil,
+            one_liner: "暂无可读内容"
+        )
+    }
 
     /// Reverse newest-first messages to chronological order, then format
     /// each as "[时间] 发送者: 消息内容".
@@ -245,69 +288,6 @@ actor ChatAnalyzer {
             return "[\(time)] \(sender): \(body)"
         }.joined(separator: "\n")
     }
-
-    // MARK: - AI call
-
-    private struct CallResult {
-        let text: String
-        let error: String?
-        let model: String?
-    }
-
-    private func call(_ userPrompt: String) async -> CallResult {
-        let started = Date()
-        let trackID = "chatanalyzer:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "聊天分析")
-        defer { AIActivityTracker.shared.end(trackID) }
-
-        do {
-            let result = try await aiService.completeWithMetadata(
-                system: "你是一个消息分析助手，严格按要求输出 JSON。",
-                user: userPrompt,
-                options: CompleteOptions(timeout: 120, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true)
-            )
-            let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
-            await writeAudit(input: userPrompt, output: result.text, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
-            return CallResult(text: result.text, error: nil, model: result.model)
-        } catch {
-            let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
-            let status: AIAuditStatus = (error as? URLError)?.code == .timedOut ? .timeout : .httpError
-            print("[WCHUD] ChatAnalyzer: call failed (\(status)) latencyMs=\(latencyMs) err=\(error.localizedDescription)")
-            await writeAudit(input: userPrompt, output: "", latencyMs: latencyMs, status: status, error: error.localizedDescription, model: nil)
-            return CallResult(text: "", error: error.localizedDescription, model: nil)
-        }
-    }
-
-    private func writeAudit(input: String, output: String, latencyMs: Int, status: AIAuditStatus, error: String?, model actualModel: String?) async {
-        let model: String
-        if let actualModel {
-            model = actualModel
-        } else {
-            model = await aiService.currentConfig().model
-        }
-        let entry = AIAuditEntry(
-            id: 0,
-            ts: Date(),
-            role: .chatAnalyzer,
-            model: model,
-            promptVersion: "chat_analyzer",
-            inputText: String(input.prefix(200)),
-            outputText: String(output.prefix(400)),
-            latencyMs: latencyMs,
-            status: status,
-            errorMessage: error
-        )
-        do { try store.writeAIAudit(entry) } catch {
-            print("[WCHUD] ChatAnalyzer: audit write failed: \(error)")
-        }
-    }
-
-    // MARK: - JSON parsing
-
-    private func parseJSON<T: Decodable>(_ raw: String) -> T? {
-        AIJSONExtractor.decodeFirstObject(from: raw, as: T.self)
-    }
-
 }
 
 private struct FlexibleStringAtom: Decodable {
@@ -339,7 +319,7 @@ private extension KeyedDecodingContainer {
         }
         if let value = try? decode(String.self, forKey: key) {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            return Self.normalizedFlexibleString(trimmed)
         }
         if let values = try? decode([FlexibleStringAtom].self, forKey: key) {
             let joined = values
@@ -351,8 +331,18 @@ private extension KeyedDecodingContainer {
         }
         if let value = try? decode(FlexibleStringAtom.self, forKey: key) {
             let trimmed = value.value.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
+            return Self.normalizedFlexibleString(trimmed)
         }
         return nil
+    }
+
+    private static func normalizedFlexibleString(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let sentinel = trimmed.lowercased()
+        if ["null", "nil", "none", "n/a", "无", "没有", "暂无"].contains(sentinel) {
+            return nil
+        }
+        return trimmed
     }
 }

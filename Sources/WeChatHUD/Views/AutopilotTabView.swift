@@ -340,6 +340,13 @@ private struct PendingReviewRow: View {
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
                 Spacer()
+                Text(entry.riskLevel.rawValue.uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(riskColor(entry.riskLevel))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(riskColor(entry.riskLevel).opacity(0.15))
+                    .cornerRadius(3)
                 // Confidence badge
                 Text("\(Int(entry.confidence * 100))%")
                     .font(.system(size: 9, weight: .bold))
@@ -419,6 +426,14 @@ private struct PendingReviewRow: View {
         .background(Color.orange.opacity(0.05))
         .cornerRadius(5)
         .padding(.horizontal, 8)
+    }
+
+    private func riskColor(_ risk: AutopilotRisk) -> Color {
+        switch risk {
+        case .low: return .green
+        case .medium: return .orange
+        case .high: return .red
+        }
     }
 }
 
@@ -510,6 +525,7 @@ private struct ActivityRow: View {
     private var actionLabel: String {
         switch entry.action {
         case .sent: return "已发送"
+        case .queued: return "待发送"
         case .vipNotified: return "VIP通知"
         case .skipped: return "跳过"
         case .groupLogged: return "群记录"
@@ -525,6 +541,8 @@ private struct ActivityRow: View {
         switch entry.action {
         case .sent:
             Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundColor(.green)
+        case .queued:
+            Image(systemName: "timer").font(.system(size: 9)).foregroundColor(.cyan)
         case .vipNotified:
             Image(systemName: "star.circle.fill").font(.system(size: 9)).foregroundColor(.yellow)
         case .skipped:
@@ -557,6 +575,7 @@ struct PendingSendRow: View {
     @ObservedObject var monitor: ChatMonitor
     @State private var isEditing = false
     @State private var editText = ""
+    @State private var sendError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -565,6 +584,9 @@ struct PendingSendRow: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
                 Spacer()
+                Text(item.risk.rawValue.uppercased())
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(riskColor(item.risk))
                 // Countdown
                 Text("\(item.remainingSeconds)s")
                     .font(.system(size: 10, weight: .bold))
@@ -587,9 +609,20 @@ struct PendingSendRow: View {
                     Button("发送") {
                         Task {
                             let config = monitor.loadAutopilotConfig()
-                            await monitor.autopilotService?.editAndSend(id: item.id, newText: editText, config: config)
+                            let outcome = await monitor.editAndSendAutopilot(id: item.id, newText: editText, config: config)
+                            await MainActor.run {
+                                switch outcome {
+                                case .sent:
+                                    isEditing = false
+                                    sendError = nil
+                                case .blocked(let reason):
+                                    sendError = reason
+                                case .notFound:
+                                    isEditing = false
+                                    sendError = "队列项已不存在"
+                                }
+                            }
                         }
-                        isEditing = false
                     }
                     .font(.system(size: 9)).foregroundColor(.green)
                     .buttonStyle(.plain)
@@ -604,6 +637,35 @@ struct PendingSendRow: View {
                     .lineLimit(2)
             }
 
+            if let trigger = item.peerLastMessage, !trigger.isEmpty {
+                Text("收到: \(trigger)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.35))
+                    .lineLimit(1)
+            }
+
+            if let manualReason = item.manualOnlyReason {
+                Text("需人工确认: \(manualReason)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange.opacity(0.9))
+                    .lineLimit(2)
+            }
+
+            if let sendError {
+                Text(sendError)
+                    .font(.system(size: 9))
+                    .foregroundColor(.orange)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 8) {
+                Text("信心 \(Int(item.confidence * 100))%")
+                Text(item.reasoning)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 9))
+            .foregroundColor(.white.opacity(0.35))
+
             HStack(spacing: 8) {
                 Button("取消") {
                     Task { await monitor.autopilotService?.cancelPendingSend(id: item.id) }
@@ -614,7 +676,17 @@ struct PendingSendRow: View {
                 Button("立即发送") {
                     Task {
                         let config = monitor.loadAutopilotConfig()
-                        await monitor.autopilotService?.sendNow(id: item.id, config: config)
+                        let outcome = await monitor.sendAutopilotNow(id: item.id, config: config)
+                        await MainActor.run {
+                            switch outcome {
+                            case .sent:
+                                sendError = nil
+                            case .blocked(let reason):
+                                sendError = reason
+                            case .notFound:
+                                sendError = "队列项已不存在"
+                            }
+                        }
                     }
                 }
                 .font(.system(size: 9)).foregroundColor(.green)
@@ -632,5 +704,13 @@ struct PendingSendRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
+    }
+
+    private func riskColor(_ risk: AutopilotRisk) -> Color {
+        switch risk {
+        case .low: return .green
+        case .medium: return .orange
+        case .high: return .red
+        }
     }
 }

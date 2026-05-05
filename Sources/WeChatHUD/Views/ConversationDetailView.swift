@@ -10,6 +10,7 @@ struct ConversationDetailView: View {
 
     @State private var suggestions: [AIReplySuggester.Suggestion] = []
     @State private var isLoadingSuggestions = false
+    @State private var suggestionMessage: String?
     @State private var replyText = ""
     @State private var isSending = false
     @State private var sendResult: String?
@@ -67,9 +68,13 @@ struct ConversationDetailView: View {
                 // Save as draft
                 Button(action: {
                     guard !replyText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                    try? monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText)
-                    sendResult = "已存为草稿"
-                    replyText = ""
+                    do {
+                        try monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText)
+                        sendResult = "已存为草稿"
+                        replyText = ""
+                    } catch {
+                        sendResult = "草稿保存失败"
+                    }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
                 }) {
                     Image(systemName: "tray.and.arrow.down")
@@ -119,9 +124,9 @@ struct ConversationDetailView: View {
         isSending = true
         defer { isSending = false }
 
-        let sendKey = (await monitor.loadAutopilotConfig()).sendKey
-        let success = await WeChatLauncher.sendMessage(chatName: chatName, text: text, sendKey: sendKey)
-        if success {
+        let sendKey = monitor.loadAutopilotConfig().sendKey
+        let result = await WeChatLauncher.sendMessageDetailed(chatName: chatName, text: text, sendKey: sendKey)
+        if result.succeeded {
             sendResult = "发送成功"
             replyText = ""
             // Record as positive AI feedback if the reply came from a suggestion
@@ -144,7 +149,7 @@ struct ConversationDetailView: View {
                 )
             }
         } else {
-            sendResult = "发送失败"
+            sendResult = result.failureMessage ?? "发送失败"
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
     }
@@ -335,7 +340,7 @@ struct ConversationDetailView: View {
             HStack {
                 sectionLabel("AI 回复建议")
                 Spacer()
-                if !isLoadingSuggestions && suggestions.isEmpty {
+                if !isLoadingSuggestions && suggestions.isEmpty && hasReplyDebtContext {
                     Button(action: { Task { await loadSuggestions() } }) {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
@@ -363,7 +368,7 @@ struct ConversationDetailView: View {
                 }
                 .padding(.vertical, 6)
             } else if suggestions.isEmpty {
-                Text("点击「生成建议」获取 AI 回复建议")
+                Text(suggestionMessage ?? (hasReplyDebtContext ? "点击「生成建议」获取 AI 回复建议" : "当前没有待回复上下文"))
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.3))
                     .padding(.vertical, 4)
@@ -417,10 +422,18 @@ struct ConversationDetailView: View {
 
     private func loadSuggestions() async {
         // Find a matching reply debt item for this chat
-        guard let item = monitor.replyDebtItems.first(where: { $0.chatUsername == chatUsername }) else { return }
+        guard let item = monitor.replyDebtItems.first(where: { $0.chatUsername == chatUsername }) else {
+            suggestionMessage = "当前没有待回复上下文"
+            return
+        }
         isLoadingSuggestions = true
         defer { isLoadingSuggestions = false }
         suggestions = await monitor.loadReplySuggestions(for: item)
+        suggestionMessage = suggestions.isEmpty ? "暂时没有可用建议" : nil
+    }
+
+    private var hasReplyDebtContext: Bool {
+        monitor.replyDebtItems.contains { $0.chatUsername == chatUsername }
     }
 
     // MARK: - Shared
