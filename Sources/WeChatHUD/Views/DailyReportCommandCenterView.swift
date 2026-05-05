@@ -28,59 +28,57 @@ struct DailyReportCommandCenterView: View {
     }
 
     private func content(vm: DailyReportPresentationPolicy.CommandCenterViewModel, report: DailyReport) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                progressCard(vm.progress)
+        VStack(alignment: .leading, spacing: 0) {
+            progressCard(vm.progress)
+            divider
+
+            if !vm.urgentActions.isEmpty {
+                sectionHeader("🔴 紧急待处理", count: vm.urgentActions.count)
+                ForEach(vm.urgentActions) { action in
+                    actionCard(action, isUrgent: true)
+                }
                 divider
-
-                if !vm.urgentActions.isEmpty {
-                    sectionHeader("🔴 紧急待处理", count: vm.urgentActions.count)
-                    ForEach(vm.urgentActions) { action in
-                        actionCard(action, isUrgent: true)
-                    }
-                    divider
-                }
-
-                if !vm.activeActions.isEmpty {
-                    sectionHeader("📋 待处理", count: vm.activeActions.count)
-                    ForEach(vm.activeActions) { action in
-                        actionCard(action, isUrgent: false)
-                    }
-                    divider
-                }
-
-                if !vm.completedActions.isEmpty {
-                    completedSection(vm.completedActions)
-                    divider
-                }
-
-                if !vm.highlights.isEmpty {
-                    sectionHeader("📌 今日高亮", count: vm.highlights.count)
-                    ForEach(vm.highlights) { highlight in
-                        highlightCard(highlight)
-                    }
-                    divider
-                }
-
-                if !vm.activeRisks.isEmpty {
-                    sectionHeader("⚠️ 风险与异常", count: vm.activeRisks.count)
-                    ForEach(vm.activeRisks) { risk in
-                        riskCard(risk)
-                    }
-                    divider
-                }
-
-                if let narrative = vm.narrative, !narrative.isEmpty {
-                    insightCard(narrative: narrative, tomorrow: vm.tomorrowFocus)
-                    divider
-                }
-
-                if let draft = vm.wechatDraft, !draft.isEmpty {
-                    draftCard(draft: draft)
-                }
             }
-            .padding(.bottom, 8)
+
+            if !vm.activeActions.isEmpty {
+                sectionHeader("📋 待处理", count: vm.activeActions.count)
+                ForEach(vm.activeActions) { action in
+                    actionCard(action, isUrgent: false)
+                }
+                divider
+            }
+
+            if !vm.completedActions.isEmpty {
+                completedSection(vm.completedActions)
+                divider
+            }
+
+            if !vm.highlights.isEmpty {
+                sectionHeader("📌 今日高亮", count: vm.highlights.count)
+                ForEach(vm.highlights) { highlight in
+                    highlightCard(highlight)
+                }
+                divider
+            }
+
+            if !vm.activeRisks.isEmpty {
+                sectionHeader("⚠️ 风险与异常", count: vm.activeRisks.count)
+                ForEach(vm.activeRisks) { risk in
+                    riskCard(risk)
+                }
+                divider
+            }
+
+            if let narrative = vm.narrative, !narrative.isEmpty {
+                insightCard(narrative: narrative, tomorrow: vm.tomorrowFocus)
+                divider
+            }
+
+            if let draft = vm.wechatDraft, !draft.isEmpty {
+                draftCard(draft: draft)
+            }
         }
+        .padding(.bottom, 8)
     }
 
     private var loadingView: some View {
