@@ -271,6 +271,7 @@ struct AISettingsView: View {
     @State private var summaryEnabled = true
     @State private var suggestionsEnabled = true
     @State private var moodDetectionEnabled = true
+    @State private var dailyReportActionInsightsEnabled = true
 
     @State private var didLoad = false
     @State private var isHydrating = false
@@ -420,10 +421,13 @@ struct AISettingsView: View {
             SettingsToggleRow("回复建议", subtitle: "展开消息时提供 AI 回复建议", isOn: $suggestionsEnabled)
             SettingsRowDivider()
             SettingsToggleRow("情绪检测", subtitle: "为 VIP 联系人检测消息情绪", isOn: $moodDetectionEnabled)
+            SettingsRowDivider()
+            SettingsToggleRow("日报逐条 AI 注释", subtitle: "为紧急待处理行生成 AI 一句解释 + 下一步建议", isOn: $dailyReportActionInsightsEnabled)
         }
         .onChange(of: summaryEnabled) { _, _ in debouncedSave() }
         .onChange(of: suggestionsEnabled) { _, _ in debouncedSave() }
         .onChange(of: moodDetectionEnabled) { _, _ in debouncedSave() }
+        .onChange(of: dailyReportActionInsightsEnabled) { _, _ in debouncedSave() }
     }
 
     // MARK: - Actions
@@ -538,6 +542,7 @@ struct AISettingsView: View {
         cfg.summaryEnabled = summaryEnabled
         cfg.suggestionsEnabled = suggestionsEnabled
         cfg.moodDetectionEnabled = moodDetectionEnabled
+        cfg.dailyReportActionInsightsEnabled = dailyReportActionInsightsEnabled
         return cfg
     }
 
@@ -596,6 +601,7 @@ struct AISettingsView: View {
         summaryEnabled = cfg.summaryEnabled
         suggestionsEnabled = cfg.suggestionsEnabled
         moodDetectionEnabled = cfg.moodDetectionEnabled
+        dailyReportActionInsightsEnabled = cfg.dailyReportActionInsightsEnabled
 
         // Seed built-in presets for models
         if let cp = AIProvider.find(cloudProviderID) {
