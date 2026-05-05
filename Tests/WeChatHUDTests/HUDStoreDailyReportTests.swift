@@ -129,6 +129,83 @@ final class HUDStoreDailyReportTests: XCTestCase {
         XCTAssertEqual(recent[1].dateKey, "2026-05-04")
     }
 
+    func testActionInsightRoundTrip() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        let insight = DailyReportActionInsight(
+            dateKey: "2026-05-05",
+            actionID: "todo-42",
+            reason: "客户今天 18 点要答复",
+            nextStep: "回复确认时间并同步内部",
+            modelVersion: "daily_report_action_insights_v1",
+            generatedAt: Date()
+        )
+        try store.upsertActionInsight(insight)
+
+        let loaded = store.loadActionInsights(dateKey: "2026-05-05")
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded[0].dateKey, insight.dateKey)
+        XCTAssertEqual(loaded[0].actionID, insight.actionID)
+        XCTAssertEqual(loaded[0].reason, insight.reason)
+        XCTAssertEqual(loaded[0].nextStep, insight.nextStep)
+        XCTAssertEqual(loaded[0].modelVersion, insight.modelVersion)
+        XCTAssertEqual(Int(loaded[0].generatedAt.timeIntervalSince1970), Int(insight.generatedAt.timeIntervalSince1970))
+    }
+
+    func testActionInsightOverwrite() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        let v1 = DailyReportActionInsight(
+            dateKey: "2026-05-05", actionID: "todo-1",
+            reason: "old", nextStep: "old",
+            modelVersion: "daily_report_action_insights_v1",
+            generatedAt: Date()
+        )
+        try store.upsertActionInsight(v1)
+        let v2 = DailyReportActionInsight(
+            dateKey: "2026-05-05", actionID: "todo-1",
+            reason: "new", nextStep: "new",
+            modelVersion: "daily_report_action_insights_v1",
+            generatedAt: Date()
+        )
+        try store.upsertActionInsight(v2)
+
+        let loaded = store.loadActionInsights(dateKey: "2026-05-05")
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded[0].reason, "new")
+    }
+
+    func testActionInsightCrossDateIsolation() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        try store.upsertActionInsight(DailyReportActionInsight(
+            dateKey: "2026-05-05", actionID: "x",
+            reason: "a", nextStep: "b",
+            modelVersion: "v1", generatedAt: Date()
+        ))
+        try store.upsertActionInsight(DailyReportActionInsight(
+            dateKey: "2026-05-06", actionID: "x",
+            reason: "c", nextStep: "d",
+            modelVersion: "v1", generatedAt: Date()
+        ))
+
+        XCTAssertEqual(store.loadActionInsights(dateKey: "2026-05-05").count, 1)
+        XCTAssertEqual(store.loadActionInsights(dateKey: "2026-05-06").count, 1)
+        XCTAssertEqual(store.loadActionInsights(dateKey: "2026-05-07").count, 0)
+    }
+
     private func makeTempStore() throws -> (HUDStore, String) {
         let path = NSTemporaryDirectory() + "hud_store_dr_\(UUID().uuidString).sqlite3"
         let store = HUDStore(dbPath: path)

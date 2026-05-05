@@ -25,6 +25,19 @@ extension HUDStore {
                 created_at      INTEGER NOT NULL
             )
         """)
+
+        execIgnoringError("""
+            CREATE TABLE IF NOT EXISTS daily_report_action_insights (
+                date_key       TEXT NOT NULL,
+                action_id      TEXT NOT NULL,
+                reason         TEXT NOT NULL,
+                next_step      TEXT NOT NULL,
+                model_version  TEXT NOT NULL,
+                generated_at   INTEGER NOT NULL,
+                PRIMARY KEY(date_key, action_id)
+            )
+        """)
+        execIgnoringError("CREATE INDEX IF NOT EXISTS idx_action_insights_date ON daily_report_action_insights(date_key)")
     }
 
     func upsertDailyReportCommandState(_ state: DailyReportCommandState) throws {
@@ -146,6 +159,59 @@ extension HUDStore {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             return try? decoder.decode(DailyReportSnapshot.self, from: data)
+        })
+    }
+
+    func upsertActionInsight(_ insight: DailyReportActionInsight) throws {
+        let sql = """
+            INSERT INTO daily_report_action_insights
+                (date_key, action_id, reason, next_step, model_version, generated_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date_key, action_id) DO UPDATE SET
+                reason = excluded.reason,
+                next_step = excluded.next_step,
+                model_version = excluded.model_version,
+                generated_at = excluded.generated_at
+        """
+        let params: [String] = [
+            insight.dateKey,
+            insight.actionID,
+            insight.reason,
+            insight.nextStep,
+            insight.modelVersion,
+            String(Int(insight.generatedAt.timeIntervalSince1970))
+        ]
+        _ = executeUpdate(sql) { stmt in
+            for (i, p) in params.enumerated() {
+                sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+            }
+        }
+    }
+
+    func loadActionInsights(dateKey: String) -> [DailyReportActionInsight] {
+        queryAll("""
+            SELECT date_key, action_id, reason, next_step, model_version, generated_at
+            FROM daily_report_action_insights
+            WHERE date_key = ?
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, dateKey, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            guard let dk = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
+                  let aid = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+                  let reason = sqlite3_column_text(stmt, 2).map({ String(cString: $0) }),
+                  let nextStep = sqlite3_column_text(stmt, 3).map({ String(cString: $0) }),
+                  let mv = sqlite3_column_text(stmt, 4).map({ String(cString: $0) })
+            else { return nil }
+            let ts = sqlite3_column_int64(stmt, 5)
+            return DailyReportActionInsight(
+                dateKey: dk,
+                actionID: aid,
+                reason: reason,
+                nextStep: nextStep,
+                modelVersion: mv,
+                generatedAt: Date(timeIntervalSince1970: TimeInterval(ts))
+            )
         })
     }
 }
