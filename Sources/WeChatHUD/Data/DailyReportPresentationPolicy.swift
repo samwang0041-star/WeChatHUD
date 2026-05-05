@@ -76,7 +76,7 @@ enum DailyReportPresentationPolicy {
         // Partition `active` into deadline buckets.
         let cal = Calendar.current
         let now = Date()
-        let endOfToday = cal.date(bySettingHour: 23, minute: 59, second: 59, of: now) ?? now
+        let endOfToday = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: now) ?? now)
         let endOfWeek = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now)) ?? now
 
         var bucketToday: [DailyReportAction] = []
