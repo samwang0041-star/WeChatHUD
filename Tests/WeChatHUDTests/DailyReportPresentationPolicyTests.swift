@@ -123,6 +123,27 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         XCTAssertTrue(md.contains("Draft text"))
     }
 
+    func testActionInsightsExposedThroughViewModel() {
+        let action = makeAction(content: "Reply", urgency: .high)
+        let report = makeReport(actions: [action], risks: [], highlights: [])
+        let insight = DailyReportActionInsight(
+            dateKey: report.date.dailyReportDateKey,
+            actionID: action.id,
+            reason: "客户在等",
+            nextStep: "立刻回 OK",
+            modelVersion: "daily_report_action_insights_v1",
+            generatedAt: Date()
+        )
+
+        let vm = DailyReportPresentationPolicy.buildViewModel(
+            from: report,
+            commandStates: [],
+            insights: [insight.actionID: insight]
+        )
+
+        XCTAssertEqual(vm.actionInsights[action.id]?.reason, "客户在等")
+    }
+
     private func makeReport(
         actions: [DailyReportAction],
         risks: [DailyReportRisk],

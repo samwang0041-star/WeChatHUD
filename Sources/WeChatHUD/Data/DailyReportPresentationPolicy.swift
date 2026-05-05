@@ -24,6 +24,7 @@ enum DailyReportPresentationPolicy {
         let narrative: String?
         let tomorrowFocus: String?
         let wechatDraft: String?
+        let actionInsights: [String: DailyReportActionInsight]
         let isAIEnhanced: Bool
         let date: Date
     }
@@ -32,7 +33,8 @@ enum DailyReportPresentationPolicy {
 
     static func buildViewModel(
         from report: DailyReport,
-        commandStates: [DailyReportCommandState] = []
+        commandStates: [DailyReportCommandState] = [],
+        insights: [String: DailyReportActionInsight] = [:]
     ) -> CommandCenterViewModel {
         let stateMap = Dictionary(
             commandStates.map { ($0.itemID, $0.state) },
@@ -139,6 +141,7 @@ enum DailyReportPresentationPolicy {
             narrative: report.narrative,
             tomorrowFocus: report.tomorrowFocus,
             wechatDraft: report.wechatDraft,
+            actionInsights: insights,
             isAIEnhanced: report.status == .aiEnhanced,
             date: report.date
         )
