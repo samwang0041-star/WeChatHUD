@@ -99,3 +99,17 @@ swift test           # 跑测试 (完整输出)
 - Python CLI 源码（解密/读取逻辑参考）：`/Users/yuriwong/wechatcli/repo/wechat_cli/core/`
 - 设计 Spec：`docs/2026-04-11-wechathud-design.md`
 - 进化日志：`docs/evolution-log.md`
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in the repo's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo (one `CONTEXT.md` + `docs/adr/` at root). See `docs/agents/domain.md`.
