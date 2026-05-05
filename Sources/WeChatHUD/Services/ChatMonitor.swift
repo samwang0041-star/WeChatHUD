@@ -1748,6 +1748,10 @@ final class ChatMonitor: ObservableObject {
         case .replyDebt:
             break
         }
+
+        Task {
+            await loadDailyReport(for: dailyReportViewedDate, force: true)
+        }
     }
 
     func dismissDailyReportRisk(_ risk: DailyReportRisk) {
@@ -1759,6 +1763,10 @@ final class ChatMonitor: ObservableObject {
             dismissedAt: Date()
         )
         try? store.upsertDailyReportCommandState(state)
+
+        Task {
+            await loadDailyReport(for: dailyReportViewedDate, force: true)
+        }
     }
 
     func exportDailyReport() -> URL? {
