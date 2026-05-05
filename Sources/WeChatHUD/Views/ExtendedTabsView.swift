@@ -80,7 +80,7 @@ struct ExtendedTabsView: View {
                     case .catchup:     CatchupTabView()
                     case .commitments: CommitmentTabView()
                     case .workbench:   WorkbenchTabView()
-                    case .dailyReport: DailyReportTabView()
+                    case .dailyReport: DailyReportHUDTabView()
                     case .insight:
                         Color.clear
                             .frame(height: 0)
