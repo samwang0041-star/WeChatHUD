@@ -69,7 +69,8 @@ final class ChatMonitor: ObservableObject {
     @Published var whitelistSuggestions: [String: AIWhitelistCategorizer.Suggestion] = [:]
     /// Cached daily report, regenerated every 30 minutes.
     @Published var dailyReport: DailyReport? = nil
-    @Published var dailyReportGeneratedAt: Date? = nil
+    @Published var dailyReportGeneratedAt: Date?
+    private var dailyReportCache: [String: Date] = [:]  // dateKey -> generatedAt = nil
     @Published var dailyReportError: String? = nil
     @Published var dailyReportIsLoading: Bool = false
     @Published var dailyReportActionInsights: [String: DailyReportActionInsight] = [:]
@@ -1687,16 +1688,14 @@ final class ChatMonitor: ObservableObject {
     }
 
     func loadDailyReport(for date: Date, force: Bool = false) async {
-        if !force, let gen = dailyReportGeneratedAt,
-           Date().timeIntervalSince(gen) < 1800,
-           dailyReport != nil,
-           Calendar.current.isDate(dailyReport!.date, inSameDayAs: date) {
+        let dateKey = date.dailyReportDateKey
+        if !force, let cached = dailyReportCache[dateKey],
+           Date().timeIntervalSince(cached) < 1800 {
             return
         }
         dailyReportError = nil
         dailyReportIsLoading = true
 
-        let dateKey = date.dailyReportDateKey
         let builder = DailyReportBuilder(store: store, replyDebtItems: replyDebtItems, stats: stats)
         let baseReport = builder.build(for: date)
         dailyReport = baseReport
@@ -1721,6 +1720,7 @@ final class ChatMonitor: ObservableObject {
 
         dailyReport = report
         dailyReportGeneratedAt = report.generatedAt
+        dailyReportCache[dateKey] = report.generatedAt
         dailyReportError = report.aiErrorMessage
         for ins in insights { dailyReportActionInsights[ins.actionID] = ins }
         dailyReportIsLoading = false
