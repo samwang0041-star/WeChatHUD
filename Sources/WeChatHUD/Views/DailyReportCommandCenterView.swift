@@ -4,6 +4,8 @@ import AppKit
 struct DailyReportCommandCenterView: View {
     @EnvironmentObject var monitor: ChatMonitor
     @State private var showCompleted = false
+    @State private var showHighlights = false
+    @State private var showRisks = false
     @State private var hoveredActionID: String?
     @State private var hoveredRiskID: String?
 
@@ -70,18 +72,12 @@ struct DailyReportCommandCenterView: View {
             }
 
             if !vm.highlights.isEmpty {
-                sectionHeader("📌 今日高亮", count: vm.highlights.count)
-                ForEach(vm.highlights) { highlight in
-                    highlightCard(highlight)
-                }
+                highlightsSection(vm.highlights)
                 divider
             }
 
             if !vm.activeRisks.isEmpty {
-                sectionHeader("⚠️ 风险与异常", count: vm.activeRisks.count)
-                ForEach(vm.activeRisks) { risk in
-                    riskCard(risk)
-                }
+                risksSection(vm.activeRisks)
                 divider
             }
 
@@ -255,6 +251,66 @@ struct DailyReportCommandCenterView: View {
         .contentShape(Rectangle())
         .onHover { isActive in
             hoveredActionID = isActive ? action.id : nil
+        }
+    }
+
+    private func highlightsSection(_ highlights: [DailyReportHighlight]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { showHighlights.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: showHighlights ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text("📌 今日高亮")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text("\(highlights.count)")
+                        .font(.system(size: 9))
+                        .foregroundColor(Color.primary.opacity(0.4))
+                        .monospacedDigit()
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+
+            if showHighlights {
+                ForEach(highlights) { highlight in
+                    highlightCard(highlight)
+                }
+            }
+        }
+    }
+
+    private func risksSection(_ risks: [DailyReportRisk]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { showRisks.toggle() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: showRisks ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    Text("⚠️ 风险与异常")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text("\(risks.count)")
+                        .font(.system(size: 9))
+                        .foregroundColor(Color.primary.opacity(0.4))
+                        .monospacedDigit()
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+
+            if showRisks {
+                ForEach(risks) { risk in
+                    riskCard(risk)
+                }
+            }
         }
     }
 
