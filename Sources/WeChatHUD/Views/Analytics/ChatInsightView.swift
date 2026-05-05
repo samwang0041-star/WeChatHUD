@@ -2,10 +2,10 @@ import SwiftUI
 
 struct ChatInsightView: View {
     @EnvironmentObject var monitor: ChatMonitor
-    @EnvironmentObject var insightCoordinator: InsightCoordinator
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var reader: WeChatReader
     @EnvironmentObject var panelState: PanelState
+    @ObservedObject var insightCoordinator: InsightCoordinator
     @State private var selectedChat: String? = nil
     @State private var searchText = ""
     @State private var selectedDate = Date()
@@ -73,10 +73,10 @@ struct ChatInsightView: View {
                     category: entry.category,
                     stats: insightStore.allStats[chatId],
                     result: insightCoordinator.chatInsights[chatId],
+                    insightCoordinator: insightCoordinator,
                     selectedDate: $selectedDate
                 )
                 .environmentObject(monitor)
-                .environmentObject(insightCoordinator)
                 .id(chatId)
             } else if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
                 let stats = statsForSession(session)
@@ -87,10 +87,10 @@ struct ChatInsightView: View {
                     category: .other,
                     stats: stats,
                     result: nil,
+                    insightCoordinator: insightCoordinator,
                     selectedDate: $selectedDate
                 )
                 .environmentObject(monitor)
-                .environmentObject(insightCoordinator)
                 .id(chatId)
             } else {
                 overviewDashboard

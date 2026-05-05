@@ -71,6 +71,8 @@ final class ChatMonitor: ObservableObject {
     @Published var dailyReport: DailyReport? = nil
     @Published var dailyReportGeneratedAt: Date? = nil
     @Published var dailyReportError: String? = nil
+    @Published var dailyReportIsLoading: Bool = false
+    @Published var dailyReportViewedDate: Date = Date()
     /// Autopilot state — exposed for UI.
     @Published var autopilotActive = false
     @Published var autopilotPaused = false
@@ -104,7 +106,7 @@ final class ChatMonitor: ObservableObject {
     private let recentLimit = 10
 
     private let reader: WeChatReader
-    nonisolated(unsafe) private let store: HUDStore
+    nonisolated(unsafe) let store: HUDStore
     private let aiService: AIService
 
     // MARK: - Retrospective surface (Plan M6.0)
@@ -1676,19 +1678,84 @@ final class ChatMonitor: ObservableObject {
     /// Resolve a relative deadline string like "+30m", "+2h", "+1d" to a Date.
     // resolveDeadline extracted to MessageHelpers.swift.
 
-    /// Load or refresh daily report. Only calls AI if stale (>30 min).
     func loadDailyReport(force: Bool = false) async {
+        await loadDailyReport(for: dailyReportViewedDate, force: force)
+    }
+
+    func loadDailyReport(for date: Date, force: Bool = false) async {
         if !force, let gen = dailyReportGeneratedAt,
            Date().timeIntervalSince(gen) < 1800,
-           dailyReport != nil {
+           dailyReport != nil,
+           Calendar.current.isDate(dailyReport!.date, inSameDayAs: date) {
             return
         }
         dailyReportError = nil
+        dailyReportIsLoading = true
         let builder = DailyReportBuilder(store: store, replyDebtItems: replyDebtItems, stats: stats)
-        let baseReport = builder.build()
+        let baseReport = builder.build(for: date)
+        dailyReport = baseReport
+        dailyReportGeneratedAt = baseReport.generatedAt
         let enrichedReport = await dailyReportGenerator.enrich(baseReport)
         dailyReport = enrichedReport
-        dailyReportGeneratedAt = Date()
+        dailyReportGeneratedAt = enrichedReport.generatedAt
+        dailyReportError = enrichedReport.aiErrorMessage
+        dailyReportIsLoading = false
+    }
+
+    func markDailyReportActionDone(_ action: DailyReportAction) {
+        let dateKey = dailyReportViewedDate.dailyReportDateKey
+        let state = DailyReportCommandState(
+            dateKey: dateKey,
+            itemID: action.id,
+            state: .completed,
+            completedAt: Date()
+        )
+        try? store.upsertDailyReportCommandState(state)
+
+        switch action.type {
+        case .todo:
+            if let todoID = Int(action.relatedID) {
+                store.updateTodoStatus(todoID: todoID, status: .completed, completedAt: Date())
+            }
+        case .ask:
+            try? store.updatePendingAskStatus(msgUID: action.relatedID, status: .done)
+        case .commitment:
+            try? store.updateCommitmentStatus(msgUID: action.relatedID, status: .fulfilled)
+        case .replyDebt:
+            break
+        }
+    }
+
+    func dismissDailyReportRisk(_ risk: DailyReportRisk) {
+        let dateKey = dailyReportViewedDate.dailyReportDateKey
+        let state = DailyReportCommandState(
+            dateKey: dateKey,
+            itemID: risk.id,
+            state: .dismissed,
+            dismissedAt: Date()
+        )
+        try? store.upsertDailyReportCommandState(state)
+    }
+
+    func exportDailyReport() -> URL? {
+        guard let report = dailyReport else { return nil }
+        let states = store.loadDailyReportCommandStates(dateKey: report.date.dailyReportDateKey)
+        let vm = DailyReportPresentationPolicy.buildViewModel(from: report, commandStates: states)
+        let md = DailyReportPresentationPolicy.markdown(for: report, viewModel: vm)
+
+        let dateStr = report.date.dailyReportDateKey
+        let filename = "WeChatHUD-日报-\(dateStr).md"
+        let desktop = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop")
+        let url = desktop.appendingPathComponent(filename)
+
+        do {
+            try md.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            print("[WCHUD] exportDailyReport failed: \(error)")
+            return nil
+        }
     }
 
     func refreshInsightInBackground(force: Bool = false) {

@@ -9,10 +9,10 @@ struct ChatInsightDetailView: View {
     let category: WhitelistCategory
     let stats: ChatStatsData?
     let result: ChatInsightResult?
+    @ObservedObject var insightCoordinator: InsightCoordinator
     @Binding var selectedDate: Date
 
     @EnvironmentObject var monitor: ChatMonitor
-    @EnvironmentObject var insightCoordinator: InsightCoordinator
 
     var body: some View {
         VStack(spacing: 0) {

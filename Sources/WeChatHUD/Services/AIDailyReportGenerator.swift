@@ -42,7 +42,7 @@ actor AIDailyReportGenerator {
     // MARK: - Generation
 
     /// Enriches a `DailyReport` with AI-generated fields. If AI fails,
-    /// returns the original report unchanged.
+    /// returns the local report with an explicit degraded status.
     func enrich(_ report: DailyReport) async -> DailyReport {
         let started = Date()
 
@@ -51,7 +51,7 @@ actor AIDailyReportGenerator {
             template = try promptLoader.load(version: promptVersion)
         } catch {
             await audit(report: report, output: "", latencyMs: 0, status: .parseError, error: "prompt load failed: \(error)", model: nil)
-            return report
+            return report.withAIUnavailable("日报 AI prompt 加载失败：\(error.localizedDescription)")
         }
 
         let userPrompt = formatPrompt(template: template, report: report)
@@ -68,7 +68,7 @@ actor AIDailyReportGenerator {
 
         if first.text.isEmpty, let err = first.error {
             await audit(report: report, output: "", latencyMs: ms(since: started), status: .httpError, error: err, model: first.model)
-            return report
+            return report.withAIUnavailable("日报 AI 生成失败：\(err)")
         }
 
         let strict = userPrompt + "\n\n严格要求：上一次输出无法解析为 JSON。只输出符合 schema 的 JSON 对象，不要任何其他文字。"
@@ -83,7 +83,7 @@ actor AIDailyReportGenerator {
         }
 
         await audit(report: report, output: second.text, latencyMs: ms(since: started), status: .parseError, error: second.error ?? "JSON parse failed after retry", model: second.model)
-        return report
+        return report.withAIUnavailable("日报 AI 输出无法解析，已使用本地日报。")
     }
 
     // MARK: - Prompt formatting
@@ -214,6 +214,30 @@ extension DailyReport {
             actions: actions,
             risks: risks,
             pendingAsks: pendingAsks,
+            retrospectiveRunID: retrospectiveRunID,
+            status: .aiEnhanced,
+            statusMessage: "AI 增强：已基于本地数据生成日报。",
+            aiErrorMessage: nil,
+            narrative: narrative,
+            tomorrowFocus: tomorrowFocus,
+            wechatDraft: wechatDraft
+        )
+    }
+
+    func withAIUnavailable(_ message: String) -> DailyReport {
+        DailyReport(
+            date: date,
+            dateRange: dateRange,
+            generatedAt: generatedAt,
+            metrics: metrics,
+            highlights: highlights,
+            actions: actions,
+            risks: risks,
+            pendingAsks: pendingAsks,
+            retrospectiveRunID: retrospectiveRunID,
+            status: .aiUnavailable,
+            statusMessage: "本地生成：AI 暂不可用，已保留确定性日报。",
+            aiErrorMessage: message,
             narrative: narrative,
             tomorrowFocus: tomorrowFocus,
             wechatDraft: wechatDraft
