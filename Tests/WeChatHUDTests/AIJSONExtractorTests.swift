@@ -43,7 +43,7 @@ final class AIJSONExtractorTests: XCTestCase {
     func testDecodesArrayWithTrailingProse() {
         let raw = #"prefix [{"index":1,"value":"a]b"},{"index":2,"value":"c"}] trailing"#
 
-        let decoded = AIJSONExtractor.decodeFirstArray(from: raw, as: [Item].self)
+        let decoded = AIJSONExtractor.decodeFirstArray(from: raw, as: Item.self)
 
         XCTAssertEqual(decoded, [Item(index: 1, value: "a]b"), Item(index: 2, value: "c")])
     }
