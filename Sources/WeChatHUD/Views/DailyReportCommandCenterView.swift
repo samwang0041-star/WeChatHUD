@@ -224,31 +224,30 @@ struct DailyReportCommandCenterView: View {
                 }
             }
 
-            if isHovered {
-                HStack(spacing: 4) {
-                    Button(action: { monitor.markDailyReportActionDone(action) }) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.green)
-                            .frame(width: 22, height: 20)
-                            .background(Color.green.opacity(0.12))
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
-                    .help("标记完成")
-
-                    Button(action: { WeChatLauncher.openChat(named: action.sourceChatName) }) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .frame(width: 22, height: 20)
-                            .background(Color.primary.opacity(0.08))
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.plain)
-                    .help("在微信中打开")
+            HStack(spacing: 4) {
+                Button(action: { monitor.markDailyReportActionDone(action) }) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.green)
+                        .frame(width: 22, height: 20)
+                        .background(Color.green.opacity(0.12))
+                        .cornerRadius(4)
                 }
+                .buttonStyle(.plain)
+                .help("标记完成")
+
+                Button(action: { WeChatLauncher.openChat(named: action.sourceChatName) }) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .frame(width: 22, height: 20)
+                        .background(Color.primary.opacity(0.08))
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("在微信中打开")
             }
+            .opacity(isHovered ? 1.0 : 0.85)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
