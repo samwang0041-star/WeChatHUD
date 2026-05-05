@@ -171,7 +171,8 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
     func testActiveActionsBucketedByDeadline() {
         let cal = Calendar.current
         let now = Date()
-        let endOfToday = cal.date(bySettingHour: 23, minute: 59, second: 59, of: now)!
+        let endOfToday = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: now)!)
+        let endOfWeek = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: now))!
         let inThreeDays = cal.date(byAdding: .day, value: 3, to: now)!
         let inTwentyDays = cal.date(byAdding: .day, value: 20, to: now)!
 
@@ -180,12 +181,14 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
             makeAction(content: "ThisWeek",  urgency: .medium, deadline: inThreeDays),
             makeAction(content: "Later",     urgency: .medium, deadline: inTwentyDays),
             makeAction(content: "NoDate",    urgency: .low,    deadline: nil),
+            makeAction(content: "BoundaryWeek", urgency: .medium, deadline: endOfWeek),
+            makeAction(content: "AfterToday",   urgency: .medium, deadline: cal.date(byAdding: .second, value: 1, to: endOfToday)!),
         ]
         let report = makeReport(actions: actions, risks: [], highlights: [])
         let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
 
         XCTAssertEqual(vm.activeToday.map(\.content),    ["Today"])
-        XCTAssertEqual(vm.activeThisWeek.map(\.content), ["ThisWeek"])
+        XCTAssertEqual(vm.activeThisWeek.map(\.content), ["AfterToday", "ThisWeek", "BoundaryWeek"])
         XCTAssertEqual(Set(vm.activeLater.map(\.content)), ["Later", "NoDate"])
     }
 
