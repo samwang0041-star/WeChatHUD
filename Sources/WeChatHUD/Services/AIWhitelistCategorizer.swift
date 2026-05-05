@@ -189,7 +189,7 @@ actor AIWhitelistCategorizer {
         if let envelope = AIJSONExtractor.decodeFirstObject(from: raw, as: BatchResultEnvelope.self) {
             return envelope.items
         }
-        return AIJSONExtractor.decodeFirstArray(from: raw, as: [BatchResult].self) ?? []
+        return AIJSONExtractor.decodeFirstArray(from: raw, as: BatchResult.self) ?? []
     }
 
     // MARK: - Model call

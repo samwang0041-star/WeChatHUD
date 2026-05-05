@@ -17,10 +17,10 @@ enum AIJSONExtractor {
     static func decodeFirstArray<T: Decodable>(
         from raw: String,
         as type: T.Type = T.self
-    ) -> T? {
+    ) -> [T]? {
         for candidate in arrayCandidates(from: raw) {
             guard let data = candidate.data(using: .utf8) else { continue }
-            if let decoded = try? JSONDecoder().decode(type, from: data) {
+            if let decoded = try? JSONDecoder().decode([T].self, from: data) {
                 return decoded
             }
         }
