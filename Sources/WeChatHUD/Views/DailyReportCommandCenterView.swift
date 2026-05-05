@@ -90,7 +90,7 @@ struct DailyReportCommandCenterView: View {
                 .progressViewStyle(.circular)
             Text("正在生成日报…")
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -99,7 +99,7 @@ struct DailyReportCommandCenterView: View {
     private func emptyState(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11))
-            .foregroundColor(.white.opacity(0.35))
+            .foregroundColor(Color.primary.opacity(0.4))
             .padding(.horizontal, 14)
             .padding(.vertical, 14)
     }
@@ -109,18 +109,18 @@ struct DailyReportCommandCenterView: View {
             HStack {
                 Text("🎯 今日进度")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(.primary)
                 Spacer()
                 Text("\(progress.completedCount)/\(progress.totalCount) 完成")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.primary)
                     .monospacedDigit()
             }
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color.primary.opacity(0.12))
                         .frame(height: 6)
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(progressColor(progress.completionRatio))
@@ -138,7 +138,7 @@ struct DailyReportCommandCenterView: View {
             }
         }
         .padding(10)
-        .background(Color.white.opacity(0.04))
+        .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(6)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -159,7 +159,7 @@ struct DailyReportCommandCenterView: View {
                 .monospacedDigit()
             Text(label)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -167,10 +167,10 @@ struct DailyReportCommandCenterView: View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
             Text("\(count)")
                 .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundColor(Color.primary.opacity(0.4))
                 .monospacedDigit()
             Spacer()
         }
@@ -191,7 +191,7 @@ struct DailyReportCommandCenterView: View {
                 HStack(spacing: 6) {
                     Text(action.content)
                         .font(.system(size: 11, weight: isUrgent ? .semibold : .medium))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(.primary)
                         .lineLimit(2)
                     Spacer(minLength: 4)
                 }
@@ -200,7 +200,7 @@ struct DailyReportCommandCenterView: View {
                     urgencyChip(action.urgency)
                     Text(action.sourceChatName)
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                     if let deadline = action.deadline {
                         Text(deadlineText(deadline))
                             .font(.system(size: 9))
@@ -226,9 +226,9 @@ struct DailyReportCommandCenterView: View {
                     Button(action: { WeChatLauncher.openChat(named: action.sourceChatName) }) {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(.secondary)
                             .frame(width: 22, height: 20)
-                            .background(Color.white.opacity(0.08))
+                            .background(Color.primary.opacity(0.08))
                             .cornerRadius(4)
                     }
                     .buttonStyle(.plain)
@@ -238,7 +238,7 @@ struct DailyReportCommandCenterView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(isHovered ? Color.white.opacity(0.06) : Color.clear)
+        .background(isHovered ? Color.primary.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
         .onHover { isActive in
             hoveredActionID = isActive ? action.id : nil
@@ -251,13 +251,13 @@ struct DailyReportCommandCenterView: View {
                 HStack(spacing: 4) {
                     Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                     Text("✅ 已完成")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.secondary)
                     Text("\(actions.count)")
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
                 }
@@ -275,7 +275,7 @@ struct DailyReportCommandCenterView: View {
                             .foregroundColor(.green.opacity(0.7))
                         Text(action.content)
                             .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundColor(.secondary)
                             .strikethrough()
                         Spacer()
                     }
@@ -294,7 +294,7 @@ struct DailyReportCommandCenterView: View {
                     .foregroundColor(categoryColor(highlight.category))
                 Text(highlight.sourceChatName)
                     .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.42))
+                    .foregroundColor(.secondary)
                 Spacer()
                 if highlight.confidence < 0.8 {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -304,17 +304,17 @@ struct DailyReportCommandCenterView: View {
             }
             Text(highlight.summary)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if let snippet = highlight.quotedSnippet {
                 Text("「\(snippet)」")
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.secondary)
                     .italic()
             }
         }
         .padding(8)
-        .background(Color.white.opacity(0.045))
+        .background(Color(NSColor.controlBackgroundColor))
         .cornerRadius(5)
         .padding(.horizontal, 12)
         .padding(.vertical, 2)
@@ -331,11 +331,11 @@ struct DailyReportCommandCenterView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(risk.description)
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.86))
+                    .foregroundColor(.primary)
                 if let name = risk.sourceChatName {
                     Text(name)
                         .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                 }
             }
 
@@ -345,9 +345,9 @@ struct DailyReportCommandCenterView: View {
                 Button(action: { monitor.dismissDailyReportRisk(risk) }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.secondary)
                         .frame(width: 22, height: 20)
-                        .background(Color.white.opacity(0.08))
+                        .background(Color.primary.opacity(0.08))
                         .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
@@ -356,7 +356,7 @@ struct DailyReportCommandCenterView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
-        .background(isHovered ? Color.white.opacity(0.04) : Color.clear)
+        .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
         .contentShape(Rectangle())
         .onHover { isActive in
             hoveredRiskID = isActive ? risk.id : nil
@@ -376,7 +376,7 @@ struct DailyReportCommandCenterView: View {
             }
             Text(narrative)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.82))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
             if let tomorrow = tomorrow, !tomorrow.isEmpty {
@@ -387,7 +387,7 @@ struct DailyReportCommandCenterView: View {
                         .padding(.top, 1)
                     Text(tomorrow)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -408,7 +408,7 @@ struct DailyReportCommandCenterView: View {
             HStack {
                 Text("📋 微信日报草稿")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                 Spacer()
                 Button(action: { WeChatLauncher.copyText(draft) }) {
                     HStack(spacing: 3) {
@@ -417,21 +417,21 @@ struct DailyReportCommandCenterView: View {
                         Text("复制")
                             .font(.system(size: 10, weight: .medium))
                     }
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.primary.opacity(0.08))
                     .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
             }
             Text(draft)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
                 .padding(8)
-                .background(Color.white.opacity(0.05))
+                .background(Color(NSColor.controlBackgroundColor))
                 .cornerRadius(5)
         }
         .padding(.horizontal, 12)
@@ -441,7 +441,7 @@ struct DailyReportCommandCenterView: View {
 
     private var divider: some View {
         Divider()
-            .background(Color.white.opacity(0.06))
+            .background(Color.primary.opacity(0.08))
             .padding(.horizontal, 10)
     }
 
@@ -461,7 +461,7 @@ struct DailyReportCommandCenterView: View {
         case .critical: return ("紧急", .red)
         case .high:     return ("高", .orange)
         case .medium:   return ("中", .yellow)
-        case .low:      return ("低", .white.opacity(0.5))
+        case .low:      return ("低", .secondary)
         }
     }
 
@@ -470,7 +470,7 @@ struct DailyReportCommandCenterView: View {
         case .critical: return .red
         case .high:     return .orange
         case .medium:   return .yellow
-        case .low:      return .white.opacity(0.3)
+        case .low:      return Color.primary.opacity(0.4)
         }
     }
 
@@ -486,7 +486,7 @@ struct DailyReportCommandCenterView: View {
         switch category {
         case .decision:   return .cyan.opacity(0.85)
         case .progress:   return .green.opacity(0.8)
-        case .discussion: return .white.opacity(0.5)
+        case .discussion: return .secondary
         case .risk:       return .orange.opacity(0.85)
         }
     }
@@ -508,6 +508,6 @@ struct DailyReportCommandCenterView: View {
         let diff = date.timeIntervalSince(Date())
         if diff < 0       { return .red.opacity(0.85) }
         if diff < 3600    { return .orange.opacity(0.9) }
-        return .white.opacity(0.4)
+        return Color.primary.opacity(0.4)
     }
 }
