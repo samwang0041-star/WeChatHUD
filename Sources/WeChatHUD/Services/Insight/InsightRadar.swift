@@ -104,24 +104,6 @@ enum InsightRadar {
             ))
         }
 
-        for (idx, change) in briefing.darkSignals.toneChanges.prefix(2).enumerated() {
-            let title = "\(change.person) 的语气有变化"
-            let chatUsername = username(forDisplayName: change.person, names: chatNames)
-            guard chatUsername != nil || isConcreteRadarSource(change.person) else { continue }
-            findings.append(InsightRadarFinding(
-                id: "briefing-tone-\(idx)-\(change.person)",
-                severity: .medium,
-                kind: .tone,
-                source: change.person,
-                title: title,
-                evidence: change.change,
-                reason: change.interpretation,
-                actionLabel: chatUsername == nil ? "查看依据" : "打开对话",
-                chatUsername: chatUsername,
-                route: chatUsername.map(InsightRadarFinding.Route.openChat) ?? .expandExplanation
-            ))
-        }
-
         return findings
     }
 
@@ -162,81 +144,6 @@ enum InsightRadar {
                     route: .openChat(chatUsername)
                 ))
             }
-        }
-
-        for (idx, signal) in (result.attitudes ?? []).enumerated() where isMeaningfulAttitude(signal.attitude) {
-            findings.append(InsightRadarFinding(
-                id: "attitude-\(chatUsername)-\(idx)-\(signal.person)-\(signal.topic)",
-                severity: isHardNegative(signal.attitude) ? .high : .medium,
-                kind: .attitude,
-                source: chatName,
-                title: "\(signal.person) 对「\(signal.topic)」\(signal.attitude)",
-                evidence: signal.evidence,
-                reason: "态度信号比消息摘要更能解释后续推进阻力",
-                actionLabel: "看上下文",
-                chatUsername: chatUsername,
-                route: .openChat(chatUsername)
-            ))
-        }
-
-        if let shift = result.moodShift, !shift.trigger.trimmed.isEmpty {
-            findings.append(InsightRadarFinding(
-                id: "mood-\(chatUsername)-\(shift.time)-\(shift.trigger)",
-                severity: .medium,
-                kind: .mood,
-                source: chatName,
-                title: "情绪从\(shift.from)变为\(shift.to)",
-                evidence: shift.trigger,
-                reason: shift.time.isEmpty ? "情绪拐点可能影响回复方式" : "\(shift.time) 出现情绪拐点",
-                actionLabel: "看变化",
-                chatUsername: chatUsername,
-                route: .openChat(chatUsername)
-            ))
-        }
-
-        for (idx, change) in (result.toneChanges ?? []).enumerated() where !change.change.trimmed.isEmpty {
-            findings.append(InsightRadarFinding(
-                id: "tone-\(chatUsername)-\(idx)-\(change.person)",
-                severity: .medium,
-                kind: .tone,
-                source: chatName,
-                title: "\(change.person) 的语气变化",
-                evidence: change.change,
-                reason: change.interpretation,
-                actionLabel: "看证据",
-                chatUsername: chatUsername,
-                route: .openChat(chatUsername)
-            ))
-        }
-
-        for (idx, note) in (result.recalledNotes ?? []).enumerated() {
-            findings.append(InsightRadarFinding(
-                id: "recall-\(chatUsername)-\(idx)-\(note.person)",
-                severity: .medium,
-                kind: .recall,
-                source: chatName,
-                title: "\(note.person) 撤回过消息",
-                evidence: note.originalContent ?? note.context,
-                reason: note.interpretation,
-                actionLabel: "看上下文",
-                chatUsername: chatUsername,
-                route: .openChat(chatUsername)
-            ))
-        }
-
-        for (idx, note) in (result.ignoredNotes ?? []).enumerated() {
-            findings.append(InsightRadarFinding(
-                id: "ignored-\(chatUsername)-\(idx)-\(note.person)",
-                severity: .medium,
-                kind: .ignored,
-                source: chatName,
-                title: "\(note.person) 的话题可能被忽略",
-                evidence: note.content,
-                reason: note.interpretation,
-                actionLabel: "补一句",
-                chatUsername: chatUsername,
-                route: .openChat(chatUsername)
-            ))
         }
 
         return findings

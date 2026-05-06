@@ -133,7 +133,7 @@ struct ChatInsightDetailView: View {
     @ViewBuilder
     private var analysisContent: some View {
         let msgCount = result.map { r in r.topics.reduce(0) { $0 + $1.messageCount } } ?? stats?.messageCount ?? 0
-        let partCount = result?.participants?.count ?? stats?.participantCount ?? 1
+        let partCount = stats?.participantCount ?? 1
         let myCount = stats?.myMessageCount ?? 0
 
         ScrollView {
@@ -153,20 +153,7 @@ struct ChatInsightDetailView: View {
                         icon: "person.2",
                         color: .purple
                     )
-                    if let top = result?.participants?.first {
-                        VStack(spacing: 4) {
-                            Text(top.name)
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.orange)
-                            Text("最活跃 (\(top.messageCount)条)")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .cornerRadius(10)
-                    } else if let topSender = stats?.topSenders.first {
+                    if let topSender = stats?.topSenders.first {
                         VStack(spacing: 4) {
                             Text(topSender.name)
                                 .font(.system(size: 14, weight: .bold))
@@ -226,14 +213,6 @@ struct ChatInsightDetailView: View {
                                 Text(r.overallMood)
                                     .font(.system(size: 14, weight: .medium))
                             }
-                            if let shift = r.moodShift {
-                                Text("\(shift.from) → \(shift.to)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.orange)
-                                Text(shift.trigger)
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
-                            }
                         }
 
                         moduleCard("信息质量", icon: "chart.bar") {
@@ -275,46 +254,6 @@ struct ChatInsightDetailView: View {
                     moduleCardFull("话题讨论", icon: "text.bubble") {
                         ForEach(Array(r.topics.enumerated()), id: \.offset) { _, topic in
                             topicCard(topic)
-                        }
-                    }
-
-                    // Attitudes
-                    if let attitudes = r.attitudes, !attitudes.isEmpty {
-                        moduleCardFull("态度信号", icon: "person.crop.circle.badge.questionmark") {
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                                ForEach(Array(attitudes.enumerated()), id: \.offset) { _, att in
-                                    attitudeCard(att)
-                                }
-                            }
-                        }
-                    }
-
-                    // Participants
-                    if let participants = r.participants, !participants.isEmpty {
-                        moduleCardFull("成员参与度", icon: "person.3") {
-                            ForEach(Array(participants.enumerated()), id: \.offset) { _, p in
-                                participantRow(p, maxCount: participants.first?.messageCount ?? 1)
-                            }
-                        }
-                    }
-
-                    // Dark signals
-                    if hasDarkSignals(r) {
-                        moduleCardFull("暗信号", icon: "eye.slash") {
-                            if let tones = r.toneChanges {
-                                ForEach(Array(tones.enumerated()), id: \.offset) { _, t in
-                                    darkSignalRow(icon: "waveform", color: .orange,
-                                                title: "\(t.person): \(t.change)",
-                                                detail: t.interpretation)
-                                }
-                            }
-                            if let ignored = r.ignoredNotes {
-                                ForEach(Array(ignored.enumerated()), id: \.offset) { _, ig in
-                                    darkSignalRow(icon: "bubble.left.and.exclamationmark.bubble.right", color: .gray,
-                                                title: "\(ig.person) 的消息被忽略",
-                                                detail: ig.interpretation)
-                                }
-                            }
                         }
                     }
 
@@ -570,75 +509,6 @@ struct ChatInsightDetailView: View {
         .cornerRadius(8)
     }
 
-    private func attitudeCard(_ att: AttitudeSignal) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(att.person)
-                    .font(.system(size: 11, weight: .medium))
-                attitudeBadge(att.attitude)
-            }
-            Text(att.topic)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-            Text("\"\(att.evidence)\"")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary.opacity(0.6))
-                .italic()
-                .lineLimit(2)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.02))
-        .cornerRadius(6)
-    }
-
-    private func participantRow(_ p: ParticipantRole, maxCount: Int) -> some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(roleColor(p.role).opacity(0.15))
-                    .frame(width: 28, height: 28)
-                Text(String(p.name.prefix(1)))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(roleColor(p.role))
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(p.name)
-                        .font(.system(size: 12, weight: .medium))
-                    Text(p.role)
-                        .font(.system(size: 9))
-                        .foregroundColor(roleColor(p.role))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(roleColor(p.role).opacity(0.1))
-                        .cornerRadius(3)
-                }
-                Text(p.doing)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                GeometryReader { geo in
-                    let fraction = maxCount > 0 ? CGFloat(p.messageCount) / CGFloat(maxCount) : 0
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(roleColor(p.role).opacity(0.3))
-                        .frame(width: geo.size.width * fraction)
-                }
-                .frame(width: 60, height: 6)
-                Text("\(p.messageCount)")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundColor(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
     private func darkSignalRow(icon: String, color: Color, title: String, detail: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
@@ -673,20 +543,6 @@ struct ChatInsightDetailView: View {
             .cornerRadius(4)
     }
 
-    private func attitudeBadge(_ attitude: String) -> some View {
-        let color: Color = attitude.contains("积极") ? .green
-            : attitude.contains("反对") ? .red
-            : attitude.contains("敷衍") ? .gray
-            : .orange
-        return Text(attitude)
-            .font(.system(size: 9))
-            .foregroundColor(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.1))
-            .cornerRadius(3)
-    }
-
     private func moodIcon(_ mood: String) -> some View {
         let (icon, color): (String, Color) = {
             if mood.contains("焦虑") || mood.contains("紧张") { return ("exclamationmark.triangle", .red) }
@@ -712,18 +568,4 @@ struct ChatInsightDetailView: View {
         .frame(width: 80, height: 8)
     }
 
-    private func roleColor(_ role: String) -> Color {
-        if role.contains("推动") { return .blue }
-        if role.contains("决策") { return .purple }
-        if role.contains("执行") { return .green }
-        if role.contains("反对") { return .red }
-        return .gray
-    }
-
-    private func hasDarkSignals(_ r: ChatInsightResult) -> Bool {
-        let hasTones = !(r.toneChanges ?? []).isEmpty
-        let hasIgnored = !(r.ignoredNotes ?? []).isEmpty
-        let hasRecalls = !(r.recalledNotes ?? []).isEmpty
-        return hasTones || hasIgnored || hasRecalls
-    }
 }

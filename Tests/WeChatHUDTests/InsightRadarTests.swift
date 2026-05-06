@@ -6,9 +6,6 @@ final class InsightRadarTests: XCTestCase {
         let result = makeInsight(
             waitingForMe: [
                 WaitingItem(source: "张三", what: "等我确认排期", waitingHours: 3)
-            ],
-            attitudes: [
-                AttitudeSignal(person: "李四", topic: "方案", attitude: "表面配合", evidence: "李四: 行吧")
             ]
         )
 
@@ -21,15 +18,10 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertEqual(findings.first?.severity, .high)
         XCTAssertEqual(findings.first?.chatUsername, "project@chatroom")
         XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
-        XCTAssertTrue(findings.contains { $0.kind == .attitude && $0.evidence == "李四: 行吧" })
     }
 
     func testBuildFindingsSuppressesAggregateOnlyPressureWithoutEvidence() {
-        let result = makeInsight(
-            attitudes: [
-                AttitudeSignal(person: "李四", topic: "方案", attitude: "强烈反对", evidence: "李四: 不行")
-            ]
-        )
+        let result = makeInsight()
 
         let findings = InsightRadar.buildFindings(
             chatInsights: ["project@chatroom": result],
@@ -39,16 +31,10 @@ final class InsightRadarTests: XCTestCase {
         )
 
         XCTAssertFalse(findings.contains { $0.kind == .pressure })
-        XCTAssertEqual(findings.first?.kind, .attitude)
-        XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
     }
 
     func testBuildFindingsIgnoresNeutralAttitudes() {
-        let result = makeInsight(
-            attitudes: [
-                AttitudeSignal(person: "李四", topic: "方案", attitude: "正常", evidence: "收到")
-            ]
-        )
+        let result = makeInsight()
 
         let findings = InsightRadar.buildFindings(
             chatInsights: ["project@chatroom": result],
@@ -74,7 +60,7 @@ final class InsightRadarTests: XCTestCase {
                 workRatio: 1
             ),
             crossTopics: [],
-            darkSignals: DarkSignals(toneChanges: [], silences: [], recalls: [], ignored: [], headline: nil),
+            darkSignals: DarkSignals(headline: nil),
             overallMood: "紧张",
             blindSpots: [],
             topSuggestion: "先回项目群"
@@ -121,13 +107,10 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertTrue(findings.isEmpty)
     }
 
-    func testPlaceholderOnlyFindingsAreFilteredAndBadEvidenceIsRemoved() {
+    func testPlaceholderOnlyFindingsAreFiltered() {
         let result = makeInsight(
             waitingForMe: [
                 WaitingItem(source: "张三", what: "[消息]", waitingHours: 2)
-            ],
-            toneChanges: [
-                ToneChange(person: "李四", change: "[图片]", interpretation: "内容无法显示")
             ]
         )
 
@@ -137,10 +120,6 @@ final class InsightRadarTests: XCTestCase {
         )
 
         XCTAssertFalse(findings.contains { $0.kind == .waiting })
-        let tone = findings.first { $0.kind == .tone }
-        XCTAssertNotNil(tone)
-        XCTAssertNil(tone?.evidence)
-        XCTAssertNil(tone?.reason)
     }
 
     func testSemanticDeduplicationCollapsesBriefingAndChatActionForSameChat() {
@@ -178,7 +157,7 @@ final class InsightRadarTests: XCTestCase {
                 workRatio: 1
             ),
             crossTopics: [],
-            darkSignals: DarkSignals(toneChanges: [], silences: [], recalls: [], ignored: [], headline: nil),
+            darkSignals: DarkSignals(headline: nil),
             overallMood: "紧张",
             blindSpots: ["检查今天是否漏看客户问题"],
             topSuggestion: "先看盲区"
@@ -243,12 +222,7 @@ final class InsightRadarTests: XCTestCase {
     private func makeInsight(
         waitingForMe: [WaitingItem] = [],
         actionItems: [InsightActionItem] = [],
-        needsMyAttention: Bool = false,
-        attitudes: [AttitudeSignal]? = nil,
-        moodShift: MoodShift? = nil,
-        toneChanges: [ToneChange]? = nil,
-        recalledNotes: [RecalledNote]? = nil,
-        ignoredNotes: [IgnoredNote]? = nil
+        needsMyAttention: Bool = false
     ) -> ChatInsightResult {
         ChatInsightResult(
             headline: "项目群需要关注",
@@ -260,18 +234,9 @@ final class InsightRadarTests: XCTestCase {
             myCommitments: [],
             needsMyAttention: needsMyAttention,
             overallMood: "正常",
-            moodShift: moodShift,
-            attitudes: attitudes,
-            toneChanges: toneChanges,
-            silentMembers: [],
-            recalledNotes: recalledNotes,
-            ignoredNotes: ignoredNotes,
             signalNoiseRatio: 0.8,
             decisionEfficiency: "正常",
             importanceToMe: ImportanceLevel(level: "中", reason: "测试"),
-            participants: [],
-            relationshipSignal: nil,
-            symmetry: nil,
             crossChatTopics: [],
             insight: "测试洞察",
             suggestion: "测试建议"
@@ -294,7 +259,7 @@ final class InsightRadarTests: XCTestCase {
                 workRatio: 1
             ),
             crossTopics: [],
-            darkSignals: DarkSignals(toneChanges: [], silences: [], recalls: [], ignored: [], headline: nil),
+            darkSignals: DarkSignals(headline: nil),
             overallMood: "紧张",
             blindSpots: [],
             topSuggestion: "先回项目群"
