@@ -20,6 +20,24 @@ class SettingsWindow: NSWindow {
             return
         }
 
+        // Compute target size as 90% of the target screen.
+        let panelScreen = NSApp.windows
+            .first(where: { $0 is FloatingPanel })?.screen
+        let screen = panelScreen ?? NSScreen.main ?? NSScreen.screens.first
+        let targetFrame: NSRect
+        if let screen = screen {
+            let vf = screen.visibleFrame
+            let w: CGFloat = vf.width * 0.9
+            let h: CGFloat = vf.height * 0.9
+            let x = vf.midX - w / 2
+            let y = vf.maxY - h - 20
+            targetFrame = NSRect(x: x, y: max(y, vf.minY), width: w, height: h)
+        } else {
+            let w: CGFloat = 1080
+            let h: CGFloat = 780
+            targetFrame = NSRect(x: 0, y: 0, width: w, height: h)
+        }
+
         let rootView = SettingsView()
             .environmentObject(panelState)
             .environmentObject(monitor)
@@ -27,9 +45,11 @@ class SettingsWindow: NSWindow {
             .environmentObject(reader)
 
         let hostingView = NSHostingView(rootView: rootView)
+        hostingView.sizingOptions = []
+        hostingView.frame = targetFrame
 
         let window = SettingsWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 780),
+            contentRect: targetFrame,
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -38,18 +58,7 @@ class SettingsWindow: NSWindow {
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
 
-        // Open on the same screen as the floating panel, below it.
-        let panelScreen = NSApp.windows
-            .first(where: { $0 is FloatingPanel })?.screen
-        let screen = panelScreen ?? NSScreen.main ?? NSScreen.screens.first
-        if let screen = screen {
-            let vf = screen.visibleFrame
-            let w: CGFloat = min(1080, vf.width - 40)
-            let h: CGFloat = min(780, vf.height - 80)
-            let x = vf.midX - w / 2
-            let y = vf.maxY - h - 60
-            window.setFrame(NSRect(x: x, y: max(y, vf.minY), width: w, height: h), display: true)
-        } else {
+        if screen == nil {
             window.center()
         }
         window.makeKeyAndOrderFront(nil)
