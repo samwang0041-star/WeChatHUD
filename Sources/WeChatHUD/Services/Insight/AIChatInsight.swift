@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Uses `AIAnalysisPipeline` for all AI calls, retry, JSON parsing, and audit logging.
 actor AIChatInsight {
-    private static let analysisType = "chat_insight_v2"
+    private static let analysisType = "chat_insight_v3"
     private let store: HUDStore
     private let aiService: AIService
     private let pipeline: AIAnalysisPipeline
@@ -36,7 +36,8 @@ actor AIChatInsight {
         timeRange: String,
         messages: [(sender: String, body: String, time: Int)],
         recalledMessages: [(sender: String, content: String)],
-        memory: String
+        memory: String,
+        recentContext: String = ""
     ) async -> ChatInsightResult? {
         // Check cache first. The key must reflect the actual evidence, not just count,
         // otherwise same-size message windows can reuse stale analysis.
@@ -49,7 +50,8 @@ actor AIChatInsight {
             timeRange: timeRange,
             messages: messages,
             recalledMessages: recalledMessages,
-            memory: memory
+            memory: memory,
+            recentContext: recentContext
         )
         if let cached = store.loadAnalysisCache(
             chatUsername: chatUsername,
@@ -62,7 +64,7 @@ actor AIChatInsight {
         // Load and fill prompt template
         let template: String
         do {
-            template = try promptLoader.load(version: "chat_insight_v1")
+            template = try promptLoader.load(version: "chat_insight_v2")
         } catch {
             print("[ChatInsight] Failed to load prompt template: \(error)")
             return nil
@@ -78,15 +80,16 @@ actor AIChatInsight {
             timeRange: timeRange,
             messages: messages,
             recalledMessages: recalledMessages,
-            memory: memory
+            memory: memory,
+            recentContext: recentContext
         )
 
         let result = await pipeline.execute(
             prompt: prompt,
             configuration: .init(
-                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 1200, responseFormatJSON: true),
+                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 2500, responseFormatJSON: true),
                 auditRole: .contextAnalyzer,
-                promptVersion: "chat_insight_v1",
+                promptVersion: "chat_insight_v2",
                 inputSummary: "[\(chatUsername)] \(prompt.prefix(100))",
                 trackLabel: "对话洞察"
             ),
@@ -127,18 +130,30 @@ actor AIChatInsight {
     ) async -> GlobalBriefing? {
         let template: String
         do {
-            template = try promptLoader.load(version: "chat_insight_global_v1")
+            template = try promptLoader.load(version: "chat_insight_global_v2")
         } catch {
             print("[ChatInsight] Failed to load global prompt template: \(error)")
             return nil
         }
 
-        // Serialize chat insights to JSON
+        // Serialize chat insights to JSON — only send headline + action_items + waiting_for_me
+        struct SlimInsight: Codable {
+            let headline: String
+            let action_items: [InsightActionItem]
+            let waiting_for_me: [WaitingItem]
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let insightsJSON: String
         do {
-            let data = try encoder.encode(chatInsights.map { $0.result })
+            let slim = chatInsights.map {
+                SlimInsight(
+                    headline: $0.result.headline,
+                    action_items: $0.result.actionItems,
+                    waiting_for_me: $0.result.waitingForMe
+                )
+            }
+            let data = try encoder.encode(slim)
             insightsJSON = String(data: data, encoding: .utf8) ?? "[]"
         } catch {
             insightsJSON = "[]"
@@ -161,9 +176,9 @@ actor AIChatInsight {
         let result = await pipeline.executeRaw(
             prompt: prompt,
             configuration: .init(
-                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 1200, responseFormatJSON: true),
+                options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 2000, responseFormatJSON: true),
                 auditRole: .briefer,
-                promptVersion: "chat_insight_global_v1",
+                promptVersion: "chat_insight_global_v2",
                 inputSummary: "[global briefing] \(prompt.prefix(100))",
                 trackLabel: "全局简报",
                 enableRetry: false
@@ -186,7 +201,8 @@ actor AIChatInsight {
         timeRange: String,
         messages: [(sender: String, body: String, time: Int)],
         recalledMessages: [(sender: String, content: String)],
-        memory: String
+        memory: String,
+        recentContext: String
     ) -> String {
         let formattedMessages = messages.enumerated().map { index, message in
             "[m\(index + 1)][\(message.time)][\(message.sender)] \(message.body)"
@@ -205,6 +221,7 @@ actor AIChatInsight {
             .replacingOccurrences(of: "{messages}", with: formattedMessages)
             .replacingOccurrences(of: "{recalled_messages}", with: formattedRecalled)
             .replacingOccurrences(of: "{memory}", with: memory.isEmpty ? "无" : memory)
+            .replacingOccurrences(of: "{recent_context}", with: recentContext.isEmpty ? "无" : recentContext)
     }
 
     // MARK: - Parsing & normalization
@@ -231,17 +248,19 @@ actor AIChatInsight {
         timeRange: String,
         messages: [(sender: String, body: String, time: Int)],
         recalledMessages: [(sender: String, content: String)],
-        memory: String
+        memory: String,
+        recentContext: String
     ) -> String {
         var parts: [String] = [
-            "prompt=chat_insight_v2",
+            "prompt=chat_insight_v3",
             "chat=\(chatUsername)",
             "type=\(chatType)",
             "category=\(category)",
             "self=\(selfName)",
             "aliases=\(selfAliases.joined(separator: "|"))",
             "range=\(timeRange)",
-            "memory=\(memory)"
+            "memory=\(memory)",
+            "recentContext=\(recentContext)"
         ]
 
         for message in messages {

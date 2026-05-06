@@ -51,8 +51,24 @@ actor ChatInsightService {
                 return (sender: sender, body: reader.normalizeContactMentions(in: message.text), time: message.createTime)
             }
 
-        let memoryStr = store.loadConversationMemory(chatUsername: entry.id)?
-            .formatForPrompt() ?? ""
+        let memory = store.loadConversationMemory(chatUsername: entry.id)
+        let memoryStr = memory?.formatForPrompt() ?? ""
+        let recentContext: String
+        if let memory {
+            var parts: [String] = []
+            if !memory.keyTopics.isEmpty {
+                parts.append("过去7天话题: \(memory.keyTopics.joined(separator: "、"))")
+            }
+            if !memory.pendingItems.isEmpty {
+                parts.append("未完成事项: \(memory.pendingItems.joined(separator: "、"))")
+            }
+            if !memory.sharedContext.isEmpty {
+                parts.append("共同背景: \(memory.sharedContext.joined(separator: "、"))")
+            }
+            recentContext = parts.joined(separator: "\n")
+        } else {
+            recentContext = ""
+        }
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd"
@@ -69,7 +85,8 @@ actor ChatInsightService {
             timeRange: dateLabel,
             messages: formatted,
             recalledMessages: [],
-            memory: memoryStr
+            memory: memoryStr,
+            recentContext: recentContext
         )
     }
 
