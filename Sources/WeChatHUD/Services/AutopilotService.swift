@@ -666,49 +666,28 @@ actor AutopilotService {
         }()
         var finalReasoning = decision.reasoning
 
-        // VIP downgrades: even if AI says "send", VIP contacts only get stall replies
-        if representative.attentionLevel == .vip {
-            if finalAction == .sent {
-                finalAction = .stall
-                finalReasoning = "VIP联系人，降级为缓兵之计; \(decision.reasoning)"
-            }
-        }
-
-        // Safety downgrades (full-auto mode: never block, only degrade to stall)
-        if let safetyHold {
-            finalAction = .stall
-            finalReasoning = "安全检查降级: \(safetyHold); \(decision.reasoning)"
-        }
-        if effectiveConfidence < config.confidenceThreshold {
-            finalAction = .stall
-            finalReasoning = "信心偏低(\(String(format: "%.0f%%", decision.confidence * 100)))降级为缓兵之计; \(decision.reasoning)"
-        }
-        if risk != .low {
-            finalAction = .stall
-            finalReasoning = "风险非低(\(risk))降级为缓兵之计; \(decision.reasoning)"
-        }
-        if !config.sensitiveKeywords.isEmpty, !replyText.isEmpty {
-            let lower = replyText.lowercased()
-            if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
-                finalAction = .stall
-                finalReasoning = "敏感词「\(keyword)」降级为缓兵之计; \(decision.reasoning)"
-            }
-        }
-
-        // Session cap: skip entirely (can't degrade, already at limit)
-        if config.maxSendsPerSession > 0 && sessionSent >= config.maxSendsPerSession {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .skipped,
-                reply: replyText, confidence: decision.confidence, risk: .medium,
-                reasoning: "本次会话已发送 \(sessionSent) 条（上限 \(config.maxSendsPerSession)），跳过"
-            )
-        }
-
-        // Style check: degrade to stall if badly off-style
         let styleScore = Self.computeStyleScore(reply: replyText, style: style)
-        if styleScore < 50 {
-            finalAction = .stall
-            finalReasoning = "风格偏差(\(styleScore)/100)降级为缓兵之计; \(decision.reasoning)"
+        let downgraded = Self.applySafetyDowngrades(
+            replyText: replyText,
+            confidence: effectiveConfidence,
+            originalConfidence: decision.confidence,
+            risk: risk,
+            aiReasoning: decision.reasoning,
+            attentionLevel: representative.attentionLevel,
+            confidenceThreshold: config.confidenceThreshold,
+            sessionSent: sessionSent,
+            maxSendsPerSession: config.maxSendsPerSession,
+            sensitiveKeywords: config.sensitiveKeywords,
+            styleScore: styleScore,
+            safetyHold: safetyHold
+        )
+        // applySafetyDowngrades only overrides when safety rules trigger.
+        // When AI says "stall" the function starts from .sent, but finalAction
+        // is already .stall — the caller preserves the AI intent and lets
+        // safety rules further shape the reasoning.
+        if downgraded.action != .sent {
+            finalAction = downgraded.action
+            finalReasoning = downgraded.reasoning
         }
 
         // Stall deduplication: same contact shouldn't receive identical stall text within 10 min
@@ -1399,6 +1378,64 @@ actor AutopilotService {
         }
 
         return max(0, score)
+    }
+
+    /// Applies safety downgrades when the AI intends to send a reply.
+    /// All inputs are value types — fully testable without mocks.
+    /// Returns the final action and reasoning. Never blocks.
+    ///
+    /// - Parameters:
+    ///   - confidence: The effective confidence used for threshold checking (e.g. media-discounted).
+    ///   - originalConfidence: The raw confidence shown in reasoning text.
+    static func applySafetyDowngrades(
+        replyText: String,
+        confidence: Double,
+        originalConfidence: Double,
+        risk: AutopilotRisk,
+        aiReasoning: String,
+        attentionLevel: AttentionLevel,
+        confidenceThreshold: Double,
+        sessionSent: Int,
+        maxSendsPerSession: Int,
+        sensitiveKeywords: [String],
+        styleScore: Int,
+        safetyHold: String?
+    ) -> (action: AutopilotAction, reasoning: String) {
+        var action: AutopilotAction = .sent
+        var reasoning = aiReasoning
+
+        if attentionLevel == .vip, action == .sent {
+            action = .stall
+            reasoning = "VIP联系人，降级为缓兵之计; \(aiReasoning)"
+        }
+        if let safetyHold {
+            action = .stall
+            reasoning = "安全检查降级: \(safetyHold); \(aiReasoning)"
+        }
+        if confidence < confidenceThreshold {
+            action = .stall
+            reasoning = "信心偏低(\(String(format: "%.0f%%", originalConfidence * 100)))降级为缓兵之计; \(aiReasoning)"
+        }
+        if risk != .low {
+            action = .stall
+            reasoning = "风险非低(\(risk))降级为缓兵之计; \(aiReasoning)"
+        }
+        if !sensitiveKeywords.isEmpty, !replyText.isEmpty {
+            let lower = replyText.lowercased()
+            if let keyword = sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+                action = .stall
+                reasoning = "敏感词「\(keyword)」降级为缓兵之计; \(aiReasoning)"
+            }
+        }
+        if maxSendsPerSession > 0 && sessionSent >= maxSendsPerSession {
+            return (.skipped, "本次会话已发送 \(sessionSent) 条（上限 \(maxSendsPerSession)），跳过")
+        }
+        if styleScore < 50 {
+            action = .stall
+            reasoning = "风格偏差(\(styleScore)/100)降级为缓兵之计; \(aiReasoning)"
+        }
+
+        return (action, reasoning)
     }
 
     // MARK: - Per-contact style hint
