@@ -13,18 +13,9 @@ struct ChatInsightResult: Codable {
     let myCommitments: [String]
     let needsMyAttention: Bool
     let overallMood: String
-    let moodShift: MoodShift?
-    let attitudes: [AttitudeSignal]?
-    let toneChanges: [ToneChange]?
-    let silentMembers: [SilentMember]?
-    let recalledNotes: [RecalledNote]?
-    let ignoredNotes: [IgnoredNote]?
     let signalNoiseRatio: Double
     let decisionEfficiency: String
     let importanceToMe: ImportanceLevel
-    let participants: [ParticipantRole]?
-    let relationshipSignal: String?
-    let symmetry: Double?
     let crossChatTopics: [String]?
     let insight: String
     let suggestion: String
@@ -37,18 +28,9 @@ struct ChatInsightResult: Codable {
         case myCommitments = "my_commitments"
         case needsMyAttention = "needs_my_attention"
         case overallMood = "overall_mood"
-        case moodShift = "mood_shift"
-        case attitudes
-        case toneChanges = "tone_changes"
-        case silentMembers = "silent_members"
-        case recalledNotes = "recalled_notes"
-        case ignoredNotes = "ignored_notes"
         case signalNoiseRatio = "signal_noise_ratio"
         case decisionEfficiency = "decision_efficiency"
         case importanceToMe = "importance_to_me"
-        case participants
-        case relationshipSignal = "relationship_signal"
-        case symmetry
         case crossChatTopics = "cross_chat_topics"
         case insight, suggestion
     }
@@ -61,7 +43,6 @@ struct TopicInsight: Codable {
     let summary: String
     let status: String
     let myInvolvement: String?
-    let attitudes: [String: String]?
     let crossChats: [String]?
 
     enum CodingKeys: String, CodingKey {
@@ -70,7 +51,6 @@ struct TopicInsight: Codable {
         case participantCount = "participant_count"
         case summary, status
         case myInvolvement = "my_involvement"
-        case attitudes
         case crossChats = "cross_chats"
     }
 }
@@ -92,87 +72,9 @@ struct WaitingItem: Codable {
     }
 }
 
-struct MoodShift: Codable {
-    let from: String
-    let to: String
-    let trigger: String
-    let time: String
-}
-
-struct AttitudeSignal: Codable {
-    let person: String
-    let topic: String
-    let attitude: String
-    let evidence: String
-}
-
-struct ToneChange: Codable {
-    let person: String
-    let change: String
-    let interpretation: String
-}
-
-struct SilentMember: Codable {
-    let name: String
-    let usualDailyMessages: Int
-    let todayMessages: Int
-    let activeElsewhere: Bool
-    let interpretation: String
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case usualDailyMessages = "usual_daily_messages"
-        case todayMessages = "today_messages"
-        case activeElsewhere = "active_elsewhere"
-        case interpretation
-    }
-}
-
-struct RecalledNote: Codable {
-    let person: String
-    let originalContent: String?
-    let context: String
-    let replacement: String?
-    let interpretation: String
-
-    enum CodingKeys: String, CodingKey {
-        case person
-        case originalContent = "original_content"
-        case context, replacement, interpretation
-    }
-}
-
-struct IgnoredNote: Codable {
-    let person: String
-    let content: String
-    let usualResponseRate: String
-    let interpretation: String
-
-    enum CodingKeys: String, CodingKey {
-        case person, content
-        case usualResponseRate = "usual_response_rate"
-        case interpretation
-    }
-}
-
 struct ImportanceLevel: Codable {
     let level: String
     let reason: String
-}
-
-struct ParticipantRole: Codable {
-    let name: String
-    let messageCount: Int
-    let role: String
-    let doing: String
-    let attitudeToward: [String: String]?
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case messageCount = "message_count"
-        case role, doing
-        case attitudeToward = "attitude_toward"
-    }
 }
 
 // MARK: - Global Briefing
@@ -222,16 +124,7 @@ struct CrossTopic: Codable {
 }
 
 struct DarkSignals: Codable {
-    let toneChanges: [ToneChange]
-    let silences: [SilentMember]
-    let recalls: [RecalledNote]
-    let ignored: [IgnoredNote]
     let headline: String?
-
-    enum CodingKeys: String, CodingKey {
-        case toneChanges = "tone_changes"
-        case silences, recalls, ignored, headline
-    }
 }
 
 struct BriefingStats: Codable {

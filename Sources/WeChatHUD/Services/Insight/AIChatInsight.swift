@@ -288,7 +288,6 @@ actor AIChatInsight {
                     summary: s(topic.summary),
                     status: s(topic.status),
                     myInvolvement: so(topic.myInvolvement),
-                    attitudes: dict(topic.attitudes),
                     crossChats: topic.crossChats?.map(s)
                 )
             },
@@ -303,50 +302,9 @@ actor AIChatInsight {
             myCommitments: result.myCommitments.map(s),
             needsMyAttention: result.needsMyAttention,
             overallMood: s(result.overallMood),
-            moodShift: result.moodShift.map {
-                MoodShift(from: s($0.from), to: s($0.to), trigger: s($0.trigger), time: s($0.time))
-            },
-            attitudes: result.attitudes?.map {
-                AttitudeSignal(person: s($0.person), topic: s($0.topic), attitude: s($0.attitude), evidence: s($0.evidence))
-            },
-            toneChanges: result.toneChanges?.map {
-                ToneChange(person: s($0.person), change: s($0.change), interpretation: s($0.interpretation))
-            },
-            silentMembers: result.silentMembers?.map {
-                SilentMember(
-                    name: s($0.name),
-                    usualDailyMessages: $0.usualDailyMessages,
-                    todayMessages: $0.todayMessages,
-                    activeElsewhere: $0.activeElsewhere,
-                    interpretation: s($0.interpretation)
-                )
-            },
-            recalledNotes: result.recalledNotes?.map {
-                RecalledNote(
-                    person: s($0.person),
-                    originalContent: so($0.originalContent),
-                    context: s($0.context),
-                    replacement: so($0.replacement),
-                    interpretation: s($0.interpretation)
-                )
-            },
-            ignoredNotes: result.ignoredNotes?.map {
-                IgnoredNote(person: s($0.person), content: s($0.content), usualResponseRate: s($0.usualResponseRate), interpretation: s($0.interpretation))
-            },
             signalNoiseRatio: result.signalNoiseRatio,
             decisionEfficiency: s(result.decisionEfficiency),
             importanceToMe: ImportanceLevel(level: s(result.importanceToMe.level), reason: s(result.importanceToMe.reason)),
-            participants: result.participants?.map {
-                ParticipantRole(
-                    name: s($0.name),
-                    messageCount: $0.messageCount,
-                    role: s($0.role),
-                    doing: s($0.doing),
-                    attitudeToward: dict($0.attitudeToward)
-                )
-            },
-            relationshipSignal: so(result.relationshipSignal),
-            symmetry: result.symmetry,
             crossChatTopics: result.crossChatTopics?.map(s),
             insight: s(result.insight),
             suggestion: s(result.suggestion)

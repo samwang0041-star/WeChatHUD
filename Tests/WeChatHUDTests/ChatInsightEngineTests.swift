@@ -372,8 +372,6 @@ final class ChatInsightEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(result?.actionItems.first?.who, "我")
-        XCTAssertEqual(result?.participants?.first?.name, "我")
-        XCTAssertEqual(result?.attitudes?.first?.person, "我")
         XCTAssertTrue(result?.headline.contains("yuriwong") == false)
         XCTAssertTrue(result?.suggestion.contains("我 应") == true)
     }
