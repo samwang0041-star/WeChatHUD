@@ -36,6 +36,8 @@ actor AutopilotService {
 
     /// VIP contacts already notified this session — no duplicate "busy" messages.
     private var vipNotifiedThisSession: Set<String> = []
+    /// Recent stall texts per contact — deduplicate identical stalling replies within a window.
+    private var recentStallByContact: [String: (text: String, timestamp: Date)] = [:]
 
     /// Pending messages awaiting batch window expiry. chatUsername → [messages].
     private var batchBuffer: [String: [InboundMessage]] = [:]
@@ -149,6 +151,7 @@ actor AutopilotService {
         processedMsgUIDs.removeAll()
         processedMsgOrder.removeAll()
         vipNotifiedThisSession.removeAll()
+        recentStallByContact.removeAll()
         batchBuffer.removeAll()
         batchTimers.removeAll()
         batchStartTimes.removeAll()
@@ -706,6 +709,34 @@ actor AutopilotService {
         if styleScore < 50 {
             finalAction = .stall
             finalReasoning = "风格偏差(\(styleScore)/100)降级为缓兵之计; \(decision.reasoning)"
+        }
+
+        // Stall deduplication: same contact shouldn't receive identical stall text within 10 min
+        if finalAction == .stall {
+            let dedupWindow: TimeInterval = 600
+            let now = Date()
+            if let last = recentStallByContact[representative.chatUsername],
+               last.text == replyText,
+               now.timeIntervalSince(last.timestamp) < dedupWindow {
+                let readDelay = Double.random(in: 3...10)
+                try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
+                guard !isPaused, self.sessionId != nil else {
+                    return makeLogEntry(
+                        sessionId: sessionId, msg: representative, action: .skipped,
+                        reply: nil, confidence: decision.confidence, risk: risk,
+                        reasoning: "避免重复缓兵之计延迟期间状态变更，跳过"
+                    )
+                }
+                await MainActor.run {
+                    WeChatLauncher.openChat(named: representative.chatName)
+                }
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .readNoReply,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: "避免重复缓兵之计(\(Int(readDelay))s后): \(finalReasoning)"
+                )
+            }
+            recentStallByContact[representative.chatUsername] = (text: replyText, timestamp: now)
         }
 
         guard !replyText.isEmpty else {
