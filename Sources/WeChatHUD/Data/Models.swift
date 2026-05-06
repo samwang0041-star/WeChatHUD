@@ -1386,7 +1386,8 @@ struct ConversationMemory {
     var lastUpdated: Date
 
     /// Format memory as concise text block for prompt injection.
-    /// Capped at 400 characters to control token budget on local models.
+    /// Capped at 800 characters to give AI enough context for 7-day comparison
+    /// while staying within the 2500-token budget.
     /// Priority: phase/stance > summary > key_topics > shared_context > pending > communication > mood.
     func formatForPrompt() -> String? {
         var parts: [String] = []
@@ -1403,14 +1404,12 @@ struct ConversationMemory {
         if !moodTrend.isEmpty { parts.append("情绪: \(moodTrend)") }
         guard !parts.isEmpty else { return nil }
 
-        // Two-pass truncation: reserve first 80 chars for phase+stance (indices 0-1),
-        // remaining 320 chars for other fields.
+        // Two-pass truncation: reserve first 120 chars for phase+stance (indices 0-1),
+        // remaining 680 chars for other fields (total 800).
         var result = ""
         for (idx, part) in parts.enumerated() {
             let candidate = result.isEmpty ? part : result + "\n" + part
-            // Phase/stance fields (first 2) get 80-char budget
-            // Remaining fields share 320-char budget (total 400)
-            let limit = idx < 2 ? 80 : 400
+            let limit = idx < 2 ? 120 : 800
             if candidate.count > limit { break }
             result = candidate
         }

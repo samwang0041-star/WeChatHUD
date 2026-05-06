@@ -250,7 +250,8 @@ final class ChatInsightEngineTests: XCTestCase {
                 (sender: "b", body: "收到", time: 1001),
             ],
             recalledMessages: [],
-            memory: "项目 A"
+            memory: "项目 A",
+            recentContext: ""
         )
         let second = AIChatInsight.stableInsightInputHash(
             chatUsername: "chat",
@@ -264,7 +265,8 @@ final class ChatInsightEngineTests: XCTestCase {
                 (sender: "b", body: "收到", time: 1001),
             ],
             recalledMessages: [],
-            memory: "项目 A"
+            memory: "项目 A",
+            recentContext: ""
         )
 
         XCTAssertNotEqual(first, second)
@@ -284,7 +286,8 @@ final class ChatInsightEngineTests: XCTestCase {
             timeRange: "今天",
             messages: messages,
             recalledMessages: [(sender: "a", content: "旧方案撤回")],
-            memory: "上周讨论过"
+            memory: "上周讨论过",
+            recentContext: ""
         )
         let second = AIChatInsight.stableInsightInputHash(
             chatUsername: "chat",
@@ -295,7 +298,8 @@ final class ChatInsightEngineTests: XCTestCase {
             timeRange: "今天",
             messages: messages,
             recalledMessages: [(sender: "a", content: "旧方案撤回")],
-            memory: "上周讨论过"
+            memory: "上周讨论过",
+            recentContext: ""
         )
 
         XCTAssertEqual(first, second)
