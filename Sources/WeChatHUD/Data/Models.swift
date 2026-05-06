@@ -1540,12 +1540,13 @@ struct LedgerEntry: Equatable {
 /// Autopilot action taken for a message.
 enum AutopilotAction: String, Codable {
     case sent           // auto-replied successfully
-    case pending        // AI not confident enough, waiting for user review
+    case stall          // sent a stalling reply (not a real answer, buying time)
+    case pending        // AI not confident enough, waiting for user review (legacy — full-auto mode never produces this)
     case queued         // low-risk auto-send is waiting for human-like delay
     case skipped        // message doesn't need reply (sticker, system msg, etc.)
     case readNoReply    // opened chat (triggered read receipt) but no reply
     case proactive      // proactively initiated conversation
-    case vipNotified    // VIP contact — sent "busy" notice instead of real reply
+    case vipNotified    // VIP contact — sent "busy" notice instead of real reply (legacy)
     case failed         // attempted send but failed
     case groupLogged    // group @mention — logged only, not replied
 }
