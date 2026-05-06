@@ -525,6 +525,7 @@ private struct ActivityRow: View {
     private var actionLabel: String {
         switch entry.action {
         case .sent: return "已发送"
+        case .stall: return "缓兵之计"
         case .queued: return "待发送"
         case .vipNotified: return "VIP通知"
         case .skipped: return "跳过"
@@ -541,6 +542,8 @@ private struct ActivityRow: View {
         switch entry.action {
         case .sent:
             Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundColor(.green)
+        case .stall:
+            Image(systemName: "pause.circle.fill").font(.system(size: 9)).foregroundColor(.yellow)
         case .queued:
             Image(systemName: "timer").font(.system(size: 9)).foregroundColor(.cyan)
         case .vipNotified:

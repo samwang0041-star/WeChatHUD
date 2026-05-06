@@ -16,10 +16,13 @@ actor AutoReplyGenerator {
 
     /// The AI's decision for a single message.
     struct Decision: Decodable {
-        /// Mutually-exclusive action from v4 prompt. Legacy boolean fields
-        /// are still decoded for compatibility with v1-v3 prompts.
+        /// Mutually-exclusive action from v4 prompt: send | stall | read_no_reply | skip.
+        /// Legacy boolean fields are still decoded for compatibility with v1-v3 prompts.
         let action: String?
-        /// The reply text to send. Nil if skip/pending/readNoReply.
+        /// The reply text to send. Meaning depends on action:
+        /// - send: the actual reply
+        /// - stall: a context-aware stalling reply (buying time)
+        /// - read_no_reply/skip: nil
         let reply: String?
         /// Confidence 0.0-1.0 that this reply is appropriate.
         let confidence: Double
@@ -29,7 +32,7 @@ actor AutoReplyGenerator {
         let reasoning: String
         /// Whether to skip replying entirely (e.g., sticker, system msg).
         let skip: Bool?
-        /// Whether to hold for user review (e.g., money, decisions).
+        /// Whether to hold for user review (legacy v1-v3 field).
         let pending: Bool?
         /// Whether to mark as read but not reply (e.g., "嗯", "好的", conversation ender).
         let readNoReply: Bool?
@@ -66,6 +69,7 @@ actor AutoReplyGenerator {
             let normalizedAction = action
             let hasUnknownAction = normalizedAction != nil
                 && normalizedAction != "send"
+                && normalizedAction != "stall"
                 && normalizedAction != "pending"
                 && normalizedAction != "read_no_reply"
                 && normalizedAction != "skip"
@@ -132,9 +136,9 @@ actor AutoReplyGenerator {
 
         let template: String
         do {
-            template = try promptLoader.load(version: "autopilot_reply_v3")
+            template = try promptLoader.load(version: "autopilot_reply_v4")
         } catch {
-            print("[WCHUD] AutoReplyGenerator: v3 prompt load failed; failing closed: \(error)")
+            print("[WCHUD] AutoReplyGenerator: v4 prompt load failed; failing closed: \(error)")
             return nil
         }
 
@@ -248,7 +252,7 @@ actor AutoReplyGenerator {
             ts: Date(),
             role: .autopilot,
             model: model,
-            promptVersion: "autopilot_reply_v3",
+            promptVersion: "autopilot_reply_v4",
             inputText: "[\(input.senderName)@\(input.chatName)|\(input.contactRole.rawValue)] \(input.messageBody)",
             outputText: output,
             latencyMs: latencyMs,

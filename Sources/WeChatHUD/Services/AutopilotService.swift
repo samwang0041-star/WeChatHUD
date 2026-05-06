@@ -371,7 +371,7 @@ actor AutopilotService {
             ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
 
             switch entry.action {
-            case .sent, .vipNotified: sent += 1
+            case .sent, .stall, .vipNotified: sent += 1
             case .pending: pending += 1
             case .queued, .skipped, .groupLogged, .failed, .readNoReply, .proactive: skipped += 1
             }
@@ -478,42 +478,6 @@ actor AutopilotService {
                 sessionId: sessionId, msg: representative, action: .skipped,
                 reply: nil, confidence: 0, risk: .low,
                 reasoning: isPaused ? "已暂停，暂不处理" : "用户正在使用微信"
-            )
-        }
-
-        // --- VIP contacts: send busy notification (once per session per contact) ---
-        if representative.attentionLevel == .vip && config.vipAutoNotify {
-            if vipNotifiedThisSession.contains(representative.chatUsername) {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative, action: .skipped,
-                    reply: nil, confidence: 1.0, risk: .low,
-                    reasoning: "VIP已通知过，不重复发送"
-                )
-            }
-
-            let busyText = config.vipBusyTemplate
-            guard config.autoSendEnabled else {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative,
-                    action: .pending,
-                    reply: busyText, confidence: 1.0, risk: .medium,
-                    reasoning: "自动发送总闸关闭，VIP忙碌通知待人工确认"
-                )
-            }
-            let success = await serialSendWithRateLimit(
-                chatName: representative.chatName, chatUsername: representative.chatUsername,
-                text: busyText, config: config
-            )
-            if success {
-                vipNotifiedThisSession.insert(representative.chatUsername)
-                // Push macOS notification to the user
-                pushVIPNotification(senderName: representative.senderName, preview: representative.text)
-            }
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative,
-                action: success ? .vipNotified : .failed,
-                reply: busyText, confidence: 1.0, risk: .low,
-                reasoning: "VIP联系人，发送忙碌通知"
             )
         }
 
@@ -657,31 +621,9 @@ actor AutopilotService {
 
         // Read-no-reply: open chat to trigger read receipt, but don't send anything
         if decision.readNoReply == true {
-            guard config.autoSendEnabled else {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative, action: .pending,
-                    reply: nil, confidence: decision.confidence, risk: risk,
-                    reasoning: "自动发送总闸关闭，已读不回需人工确认"
-                )
-            }
-            if let safetyHold {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative, action: .pending,
-                    reply: nil, confidence: decision.confidence, risk: risk,
-                    reasoning: "已读不回需人工确认: \(safetyHold)"
-                )
-            }
-            if effectiveConfidence < config.confidenceThreshold {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative, action: .pending,
-                    reply: nil, confidence: decision.confidence, risk: risk,
-                    reasoning: "已读不回信心不足(\(String(format: "%.0f%%", decision.confidence * 100)))"
-                )
-            }
-            // Delay 3-10 seconds before opening (reading happens faster than typing, but not instant)
+            // Full-auto mode: read-no-reply executes directly, no human confirmation needed.
             let readDelay = Double.random(in: 3...10)
             try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
-            // Re-check pause state after delay
             guard !isPaused, self.sessionId != nil else {
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .skipped,
@@ -699,82 +641,78 @@ actor AutopilotService {
             )
         }
 
-        if decision.pending == true {
+        // AI says pending or stall → treat as stall (send a stalling reply automatically)
+        if decision.pending == true || decision.action == "stall" {
+            guard let stallText = decision.reply, !stallText.isEmpty else {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .readNoReply,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: "AI建议pending但无回复内容，转为已读不回: \(decision.reasoning)"
+                )
+            }
+            // Continue to send logic below, but force action = .stall
+        }
+
+        let replyText = decision.reply ?? ""
+
+        // Determine final action. Start from AI's intent, then apply safety downgrades.
+        var finalAction: AutopilotAction = {
+            if decision.pending == true || decision.action == "stall" { return .stall }
+            if decision.action == "send" { return .sent }
+            return .skipped
+        }()
+        var finalReasoning = decision.reasoning
+
+        // VIP downgrades: even if AI says "send", VIP contacts only get stall replies
+        if representative.attentionLevel == .vip {
+            if finalAction == .sent {
+                finalAction = .stall
+                finalReasoning = "VIP联系人，降级为缓兵之计; \(decision.reasoning)"
+            }
+        }
+
+        // Safety downgrades (full-auto mode: never block, only degrade to stall)
+        if let safetyHold {
+            finalAction = .stall
+            finalReasoning = "安全检查降级: \(safetyHold); \(decision.reasoning)"
+        }
+        if effectiveConfidence < config.confidenceThreshold {
+            finalAction = .stall
+            finalReasoning = "信心偏低(\(String(format: "%.0f%%", decision.confidence * 100)))降级为缓兵之计; \(decision.reasoning)"
+        }
+        if risk != .low {
+            finalAction = .stall
+            finalReasoning = "风险非低(\(risk))降级为缓兵之计; \(decision.reasoning)"
+        }
+        if !config.sensitiveKeywords.isEmpty, !replyText.isEmpty {
+            let lower = replyText.lowercased()
+            if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+                finalAction = .stall
+                finalReasoning = "敏感词「\(keyword)」降级为缓兵之计; \(decision.reasoning)"
+            }
+        }
+
+        // Session cap: skip entirely (can't degrade, already at limit)
+        if config.maxSendsPerSession > 0 && sessionSent >= config.maxSendsPerSession {
             return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: decision.reply, confidence: decision.confidence, risk: risk,
-                reasoning: decision.reasoning
+                sessionId: sessionId, msg: representative, action: .skipped,
+                reply: replyText, confidence: decision.confidence, risk: .medium,
+                reasoning: "本次会话已发送 \(sessionSent) 条（上限 \(config.maxSendsPerSession)），跳过"
             )
         }
 
-        guard let replyText = decision.reply, !replyText.isEmpty else {
+        // Style check: degrade to stall if badly off-style
+        let styleScore = Self.computeStyleScore(reply: replyText, style: style)
+        if styleScore < 50 {
+            finalAction = .stall
+            finalReasoning = "风格偏差(\(styleScore)/100)降级为缓兵之计; \(decision.reasoning)"
+        }
+
+        guard !replyText.isEmpty else {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .skipped,
                 reply: nil, confidence: decision.confidence, risk: risk,
                 reasoning: "AI未生成回复内容"
-            )
-        }
-
-        if let safetyHold {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "安全门禁: \(safetyHold)"
-            )
-        }
-
-        if effectiveConfidence < config.confidenceThreshold {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "信心不足(\(String(format: "%.0f%%", decision.confidence * 100)))，待人工确认"
-            )
-        }
-
-        if risk != .low {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "非低风险消息，待人工确认: \(decision.reasoning)"
-            )
-        }
-
-        guard config.autoSendEnabled else {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: risk,
-                reasoning: "自动发送总闸关闭，草稿待人工确认: \(decision.reasoning)"
-            )
-        }
-
-        // --- Safety guardrail: sensitive keyword detection ---
-        if !config.sensitiveKeywords.isEmpty {
-            let lower = replyText.lowercased()
-            if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
-                return makeLogEntry(
-                    sessionId: sessionId, msg: representative, action: .pending,
-                    reply: replyText, confidence: decision.confidence, risk: .high,
-                    reasoning: "回复包含敏感词「\(keyword)」，需人工确认"
-                )
-            }
-        }
-
-        // --- Safety guardrail: session send limit ---
-        if config.maxSendsPerSession > 0 && sessionSent >= config.maxSendsPerSession {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: .medium,
-                reasoning: "本次会话已发送 \(sessionSent) 条（上限 \(config.maxSendsPerSession)），需人工确认"
-            )
-        }
-
-        // --- Safety guardrail: style consistency check ---
-        let styleScore = Self.computeStyleScore(reply: replyText, style: style)
-        if styleScore < 50 {
-            return makeLogEntry(
-                sessionId: sessionId, msg: representative, action: .pending,
-                reply: replyText, confidence: decision.confidence, risk: .medium,
-                reasoning: "风格偏差过大(score=\(styleScore)/100)，需人工确认: \(decision.reasoning)"
             )
         }
 
@@ -831,13 +769,13 @@ actor AutopilotService {
         sessionStats.delaySum += replyDelay
         sessionStats.delayCount += 1
 
-        print("[WCHUD] Autopilot: queued reply to '\(representative.chatName)' — sends in \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat), style=\(styleScore))")
+        print("[WCHUD] Autopilot: queued reply to '\(representative.chatName)' — sends in \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat), style=\(styleScore), finalAction=\(finalAction))")
 
-        let reasoningWithScore = "\(decision.reasoning) [style:\(styleScore)/100, delay:\(Int(replyDelay))s]"
+        let reasoningWithScore = "\(finalReasoning) [style:\(styleScore)/100, delay:\(Int(replyDelay))s]"
 
         return makeLogEntry(
             sessionId: sessionId, msg: representative,
-            action: .queued,
+            action: finalAction,
             reply: replyText, confidence: decision.confidence, risk: risk,
             reasoning: reasoningWithScore
         )
@@ -1608,7 +1546,7 @@ actor AutopilotService {
             riskLevel: risk,
             action: action,
             aiReasoning: reasoning,
-            sentAt: action == .sent || action == .vipNotified ? Date() : nil,
+            sentAt: action == .sent || action == .stall || action == .vipNotified ? Date() : nil,
             createdAt: Date()
         )
     }
