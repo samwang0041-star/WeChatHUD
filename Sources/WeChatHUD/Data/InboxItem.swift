@@ -63,6 +63,28 @@ enum InboxStatus {
     case silenced
 }
 
+/// The intrinsic message classification derived from content,
+/// independent of user disposition (active/snoozed/dismissed/silenced).
+enum InboxMessageType: String, Codable, Equatable {
+    case idle = "idle"
+    case syncIssue = "sync_issue"
+    case privateInfoOnly = "private_info_only"
+    case privateActionRequired = "private_action_required"
+    case privateVIPRisk = "private_vip_risk"
+    case groupInfoOnly = "group_info_only"
+    case groupMentionFYI = "group_mention_fyi"
+    case groupActionRequired = "group_action_required"
+    case groupDecisionOnly = "group_decision_only"
+    case replyOptional = "reply_optional"
+    case commitmentDue = "commitment_due"
+    case autopilotReview = "autopilot_review"
+    case aiLoading = "ai_loading"
+    case aiFailed = "ai_failed"
+}
+
+/// Effective state combining message type + user disposition.
+/// Kept for backward compatibility; new code should prefer
+/// `messageType` + `status`/`replied`/`silenced` directly.
 enum InboxSemanticState: String, Codable, Equatable {
     case idle = "idle"
     case syncIssue = "sync_issue"
@@ -125,18 +147,17 @@ struct SuggestedReply: Decodable, Identifiable {
 }
 
 extension InboxItem {
-    var semanticState: InboxSemanticState {
-        if status != .active || replied || silenced {
-            return .handled
-        }
+    // MARK: - Message Type (content-derived, immutable)
 
+    /// The intrinsic classification of this message based solely on
+    /// content and metadata. Never affected by user disposition.
+    var messageType: InboxMessageType {
         if isGroup {
             if isAtMention {
                 return hasStoredGroupActionEvidence ? .groupActionRequired : .groupMentionFYI
             }
             return .groupInfoOnly
         }
-
         if isVIP {
             return .privateVIPRisk
         }
@@ -146,8 +167,58 @@ extension InboxItem {
         return .privateInfoOnly
     }
 
+    /// One-line reason why this item surfaces in the inbox.
+    /// Based on `messageType`, independent of user disposition.
+    var displayReason: String {
+        switch messageType {
+        case .privateActionRequired: return "等你回复"
+        case .privateVIPRisk: return "重要联系人"
+        case .groupActionRequired: return "需要你处理"
+        case .groupMentionFYI: return "@了你"
+        case .groupInfoOnly: return "群聊更新"
+        case .privateInfoOnly: return "私聊更新"
+        case .groupDecisionOnly: return "已有决议"
+        case .replyOptional: return "可以回一句"
+        case .commitmentDue: return isOverdue ? "承诺已到期" : "承诺快到期"
+        case .autopilotReview: return "托管待确认"
+        case .aiLoading: return "AI 正在整理"
+        case .aiFailed: return "分析暂不可用"
+        case .syncIssue: return "同步异常"
+        case .idle: return ""
+        }
+    }
+
+    // MARK: - Semantic State (message type + user disposition)
+
+    /// Effective state for backward compatibility. Prefer `messageType`
+    /// for pure message semantics and `status`/`replied`/`silenced` for
+    /// user disposition in new code.
+    var semanticState: InboxSemanticState {
+        if status != .active || replied || silenced {
+            return .handled
+        }
+        switch messageType {
+        case .privateInfoOnly: return .privateInfoOnly
+        case .privateActionRequired: return .privateActionRequired
+        case .privateVIPRisk: return .privateVIPRisk
+        case .groupInfoOnly: return .groupInfoOnly
+        case .groupMentionFYI: return .groupMentionFYI
+        case .groupActionRequired: return .groupActionRequired
+        case .groupDecisionOnly: return .groupDecisionOnly
+        case .replyOptional: return .replyOptional
+        case .commitmentDue: return .commitmentDue
+        case .autopilotReview: return .autopilotReview
+        case .aiLoading: return .aiLoading
+        case .aiFailed: return .aiFailed
+        case .syncIssue: return .syncIssue
+        case .idle: return .idle
+        }
+    }
+
+    // MARK: - UI Helpers
+
     var replySuggestionMode: ReplySuggestionMode {
-        switch semanticState {
+        switch messageType {
         case .privateActionRequired, .groupActionRequired:
             return .automatic
         case .privateVIPRisk:
@@ -160,7 +231,8 @@ extension InboxItem {
     }
 
     var participatesInActionQueue: Bool {
-        switch semanticState {
+        guard status == .active && !replied && !silenced else { return false }
+        switch messageType {
         case .privateActionRequired, .privateVIPRisk, .groupActionRequired:
             return true
         default:
@@ -169,7 +241,7 @@ extension InboxItem {
     }
 
     var isAggregatablePassiveUpdate: Bool {
-        switch semanticState {
+        switch messageType {
         case .privateInfoOnly, .groupInfoOnly, .groupDecisionOnly, .replyOptional:
             return true
         default:
@@ -178,11 +250,11 @@ extension InboxItem {
     }
 
     var surfacesInCompact: Bool {
-        participatesInActionQueue || (semanticState == .groupMentionFYI && (isVIP || priority != .p2))
+        participatesInActionQueue || (messageType == .groupMentionFYI && (isVIP || priority != .p2))
     }
 
     var actionPanelTitle: String {
-        switch semanticState {
+        switch messageType {
         case .privateVIPRisk:
             return isOverdue || priority == .p0 ? "需要尽快回复" : "重要联系人消息"
         case .privateActionRequired:
@@ -207,15 +279,13 @@ extension InboxItem {
             return "AI 正在整理重点"
         case .aiFailed:
             return "分析暂不可用"
-        case .handled:
-            return "已处理"
         case .idle, .syncIssue:
             return ""
         }
     }
 
     var primaryCTATitle: String {
-        switch semanticState {
+        switch messageType {
         case .privateActionRequired:
             return "打开微信回复"
         case .privateVIPRisk:
@@ -232,9 +302,9 @@ extension InboxItem {
             return "想回一句"
         case .aiFailed, .aiLoading, .privateInfoOnly:
             return "打开微信查看"
-        case .handled:
-            return "恢复"
-        case .idle, .syncIssue, .commitmentDue, .autopilotReview:
+        case .commitmentDue, .autopilotReview:
+            return "打开微信查看"
+        case .idle, .syncIssue:
             return "打开微信查看"
         }
     }
@@ -248,7 +318,7 @@ extension InboxItem {
         case .automatic:
             return "回复建议"
         case .manual:
-            return semanticState == .replyOptional ? "想回一句" : "生成回复"
+            return messageType == .replyOptional ? "想回一句" : "生成回复"
         case .hidden:
             return ""
         }

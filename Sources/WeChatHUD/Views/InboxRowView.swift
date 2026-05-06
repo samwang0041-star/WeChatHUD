@@ -128,55 +128,24 @@ struct InboxRowView: View {
     // MARK: - First Line
 
     private var firstLine: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Text(item.chatName)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(1)
 
-            if item.isVIP {
-                Text("VIP")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 1)
-                    .background(Color.orange.opacity(0.15))
-                    .cornerRadius(2)
-            }
-
-            if item.semanticState == .groupMentionFYI {
-                Text("提到你")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.blue.opacity(0.9))
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 1)
-                    .background(Color.blue.opacity(0.12))
-                    .cornerRadius(2)
-            }
+            // Single reason tag replaces the old badge pile (VIP / @mention / overdue / replied)
+            Text(item.displayReason)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(reasonTagColor)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(reasonTagColor.opacity(0.12))
+                .cornerRadius(3)
 
             if item.isVIP, let mood = item.moodEmoji, !mood.isEmpty {
                 Text(mood)
                     .font(.system(size: 11))
-            }
-
-            if item.isOverdue {
-                Text("超时")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 1)
-                    .background(Color.red.opacity(0.12))
-                    .cornerRadius(2)
-            }
-
-            if item.replied {
-                Text("已回复")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundColor(.green)
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 1)
-                    .background(Color.green.opacity(0.12))
-                    .cornerRadius(2)
             }
 
             Spacer()
@@ -187,26 +156,47 @@ struct InboxRowView: View {
         }
     }
 
+    private var reasonTagColor: Color {
+        switch item.messageType {
+        case .privateActionRequired, .groupActionRequired:
+            return item.priority == .p0 ? .red : (item.priority == .p1 ? .orange : .white)
+        case .privateVIPRisk:
+            return .orange
+        case .groupMentionFYI:
+            return .blue
+        default:
+            return .white.opacity(0.5)
+        }
+    }
+
     // MARK: - Second Line
 
     private var secondLine: some View {
-        HStack(spacing: 0) {
-            if item.isGroup, !item.senderName.isEmpty {
-                Text(item.senderName + ": ")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
-            }
-
-            if let summary = item.aiSummary, !summary.isEmpty {
-                Text(summary)
+        VStack(alignment: .leading, spacing: 2) {
+            // Primary: original message preview (always visible)
+            HStack(spacing: 0) {
+                if item.isGroup, !item.senderName.isEmpty {
+                    Text(item.senderName + ": ")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.5))
+                }
+                Text(item.preview)
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.65))
                     .lineLimit(1)
-            } else {
-                Text(item.preview)
-                    .font(.system(size: 11).italic())
-                    .foregroundColor(.white.opacity(0.45))
-                    .lineLimit(1)
+            }
+
+            // Secondary: AI summary (marked with sparkle to distinguish from original)
+            if let summary = item.aiSummary, !summary.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange.opacity(0.7))
+                    Text(summary)
+                        .font(.system(size: 10))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
             }
         }
     }

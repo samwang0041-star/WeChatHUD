@@ -5,7 +5,7 @@ enum InboxBuilder {
     /// Result of building the inbox — separates active from handled items.
     struct BuildResult {
         let active: [InboxItem]     // items shown in main list
-        let handled: [InboxItem]    // items in handled section (dismissed/snoozed/silenced)
+        let handled: [InboxItem]    // items in handled section (dismissed/silenced only — snoozed items are hidden entirely until expiry)
     }
 
     /// Merge reply-debt items and whitelist notifications into a single
@@ -65,11 +65,10 @@ enum InboxBuilder {
                 continue
             }
 
-            // Check snoozed (only if snooze hasn't expired)
+            // Check snoozed (only if snooze hasn't expired).
+            // Snoozed items are completely hidden — they do NOT appear
+            // in either the active inbox or the handled section.
             if let snoozeExpiry = snoozed[debt.chatUsername], snoozeExpiry > now {
-                item.status = .snoozed
-                item.snoozedUntil = snoozeExpiry
-                handledItems.append(item)
                 continue
             }
 
@@ -139,11 +138,9 @@ enum InboxBuilder {
                 continue
             }
 
-            // Check snoozed (only if snooze hasn't expired)
+            // Check snoozed (only if snooze hasn't expired).
+            // Snoozed items are completely hidden until expiry.
             if let snoozeExpiry = snoozed[notif.chatUsername], snoozeExpiry > now {
-                item.status = .snoozed
-                item.snoozedUntil = snoozeExpiry
-                handledItems.append(item)
                 continue
             }
 

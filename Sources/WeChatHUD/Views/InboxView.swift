@@ -2,9 +2,10 @@ import SwiftUI
 import AppKit
 
 enum InboxHeaderState: Equatable {
-    case urgent(Int)
-    case pending(Int)
-    case updates(Int)
+    case urgent(Int)        // p0 action items
+    case replyNeeded(Int)   // p1/p2 action items (privateActionRequired / groupActionRequired)
+    case mentioned(Int)     // group @mentions
+    case updates(Int)       // passive updates only
     case idle
 }
 
@@ -28,10 +29,18 @@ func hiddenPassiveUpdateCount(_ items: [InboxItem], showAllPassive: Bool = false
 
 func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
     let actionItems = items.filter { $0.participatesInActionQueue }
-    let urgentCount = actionItems.filter { $0.priority != .p2 }.count
+    let urgentCount = actionItems.filter { $0.priority == .p0 }.count
     if urgentCount > 0 { return .urgent(urgentCount) }
-    if !actionItems.isEmpty { return .pending(actionItems.count) }
-    if !items.isEmpty { return .updates(items.count) }
+
+    let replyCount = actionItems.filter { $0.priority != .p0 }.count
+    if replyCount > 0 { return .replyNeeded(replyCount) }
+
+    let mentionCount = items.filter { $0.messageType == .groupMentionFYI }.count
+    if mentionCount > 0 { return .mentioned(mentionCount) }
+
+    let passiveCount = items.filter { $0.isAggregatablePassiveUpdate }.count
+    if passiveCount > 0 { return .updates(passiveCount) }
+
     return .idle
 }
 
@@ -153,14 +162,21 @@ struct InboxView: View {
                     Circle()
                         .fill(Color.red)
                         .frame(width: 7, height: 7)
-                    Text("\(count) 条待处理")
+                    Text("\(count) 条紧急")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white.opacity(0.9))
-                case .pending(let count):
+                case .replyNeeded(let count):
                     Circle()
-                        .fill(Color.yellow)
+                        .fill(Color.orange)
                         .frame(width: 7, height: 7)
-                    Text("\(count) 条待处理")
+                    Text("\(count) 条等你回复")
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.8))
+                case .mentioned(let count):
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 6, height: 6)
+                    Text("\(count) 条 @了你")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.75))
                 case .updates(let count):
@@ -325,9 +341,8 @@ struct InboxView: View {
         let (text, color): (String, Color) = {
             switch item.status {
             case .dismissed: return ("已忽略", .white.opacity(0.25))
-            case .snoozed: return ("已贪睡", .orange.opacity(0.5))
             case .silenced: return ("已静音", .red.opacity(0.4))
-            case .active: return ("", .clear)
+            case .active, .snoozed: return ("", .clear)
             }
         }()
         return Text(text)
