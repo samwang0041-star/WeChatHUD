@@ -244,4 +244,146 @@ final class AutopilotSafetyTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - applySafetyDowngrades
+
+    private func defaultDowngradeInput(
+        replyText: String = "好的，收到了",
+        confidence: Double = 0.9,
+        originalConfidence: Double = 0.9,
+        risk: AutopilotRisk = .low,
+        aiReasoning: String = "AI reasoning",
+        attentionLevel: AttentionLevel = .whitelist,
+        confidenceThreshold: Double = 0.8,
+        sessionSent: Int = 0,
+        maxSendsPerSession: Int = 50,
+        sensitiveKeywords: [String] = [],
+        styleScore: Int = 80,
+        safetyHold: String? = nil
+    ) -> (action: AutopilotAction, reasoning: String) {
+        AutopilotService.applySafetyDowngrades(
+            replyText: replyText,
+            confidence: confidence,
+            originalConfidence: originalConfidence,
+            risk: risk,
+            aiReasoning: aiReasoning,
+            attentionLevel: attentionLevel,
+            confidenceThreshold: confidenceThreshold,
+            sessionSent: sessionSent,
+            maxSendsPerSession: maxSendsPerSession,
+            sensitiveKeywords: sensitiveKeywords,
+            styleScore: styleScore,
+            safetyHold: safetyHold
+        )
+    }
+
+    func testDowngradeAllClearReturnsSent() {
+        let result = defaultDowngradeInput()
+        XCTAssertEqual(result.action, .sent)
+        XCTAssertEqual(result.reasoning, "AI reasoning")
+    }
+
+    func testDowngradeVIPReturnsStall() {
+        let result = defaultDowngradeInput(attentionLevel: .vip)
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("VIP"))
+    }
+
+    func testDowngradeSafetyHoldReturnsStall() {
+        let result = defaultDowngradeInput(safetyHold: "包含敏感请求")
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("安全检查降级"))
+    }
+
+    func testDowngradeLowConfidenceReturnsStall() {
+        let result = defaultDowngradeInput(confidence: 0.6, originalConfidence: 0.6)
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("信心偏低"))
+        XCTAssertTrue(result.reasoning.contains("60%"))
+    }
+
+    func testDowngradeMediumRiskReturnsStall() {
+        let result = defaultDowngradeInput(risk: .medium)
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("风险非低"))
+    }
+
+    func testDowngradeHighRiskReturnsStall() {
+        let result = defaultDowngradeInput(risk: .high)
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("风险非低"))
+    }
+
+    func testDowngradeSensitiveKeywordReturnsStall() {
+        let result = defaultDowngradeInput(
+            replyText: "我把密码发给你",
+            sensitiveKeywords: ["密码", "转账"]
+        )
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("敏感词"))
+        XCTAssertTrue(result.reasoning.contains("密码"))
+    }
+
+    func testDowngradeSensitiveKeywordEmptyReplyIsSafe() {
+        let result = defaultDowngradeInput(
+            replyText: "",
+            sensitiveKeywords: ["密码"]
+        )
+        XCTAssertEqual(result.action, .sent)
+    }
+
+    func testDowngradeSensitiveKeywordNoMatchIsSafe() {
+        let result = defaultDowngradeInput(
+            replyText: "好的，收到了",
+            sensitiveKeywords: ["密码"]
+        )
+        XCTAssertEqual(result.action, .sent)
+    }
+
+    func testDowngradeSessionCapReturnsSkipped() {
+        let result = defaultDowngradeInput(sessionSent: 50, maxSendsPerSession: 50)
+        XCTAssertEqual(result.action, .skipped)
+        XCTAssertTrue(result.reasoning.contains("上限"))
+    }
+
+    func testDowngradeSessionCapZeroMeansUnlimited() {
+        let result = defaultDowngradeInput(sessionSent: 999, maxSendsPerSession: 0)
+        XCTAssertEqual(result.action, .sent)
+    }
+
+    func testDowngradeBadStyleScoreReturnsStall() {
+        let result = defaultDowngradeInput(styleScore: 30)
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("风格偏差"))
+    }
+
+    func testDowngradeStyleScoreExactly50IsSafe() {
+        let result = defaultDowngradeInput(styleScore: 50)
+        XCTAssertEqual(result.action, .sent)
+    }
+
+    /// When multiple rules trigger, the last one in order wins (matches original behavior).
+    func testDowngradeMultipleRulesLastOneWins() {
+        // VIP + safetyHold + low confidence: confidence is checked after safetyHold,
+        // so confidence wins.
+        let result = defaultDowngradeInput(
+            confidence: 0.6,
+            originalConfidence: 0.6,
+            attentionLevel: .vip,
+            safetyHold: "hold"
+        )
+        XCTAssertEqual(result.action, .stall)
+        XCTAssertTrue(result.reasoning.contains("信心偏低"))
+    }
+
+    /// Session cap is checked after sensitive keywords but before style score.
+    /// When cap is reached, it returns .skipped even if style is also bad.
+    func testDowngradeSessionCapOverridesStyleStall() {
+        let result = defaultDowngradeInput(
+            sessionSent: 50,
+            maxSendsPerSession: 50,
+            styleScore: 30
+        )
+        XCTAssertEqual(result.action, .skipped)
+    }
 }
