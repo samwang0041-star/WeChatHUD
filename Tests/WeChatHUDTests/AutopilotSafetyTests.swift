@@ -228,9 +228,9 @@ final class AutopilotSafetyTests: XCTestCase {
     /// Prompt v3 must ship with every placeholder AutoReplyGenerator
     /// substitutes. If any go missing the reply will contain literal
     /// `{session_ledger}` style braces and the model will choke.
-    func testPromptV3FileLoadsAndContainsPlaceholders() throws {
+    func testPromptV4FileLoadsAndContainsPlaceholders() throws {
         let loader = PromptLoader()
-        let template = try loader.load(version: "autopilot_reply_v3")
+        let template = try loader.load(version: "autopilot_reply_v4")
         for placeholder in [
             "{session_ledger}",
             "{conversation_memory}",
@@ -240,7 +240,7 @@ final class AutopilotSafetyTests: XCTestCase {
         ] {
             XCTAssertTrue(
                 template.contains(placeholder),
-                "autopilot_reply_v3 missing placeholder \(placeholder)"
+                "autopilot_reply_v4 missing placeholder \(placeholder)"
             )
         }
     }

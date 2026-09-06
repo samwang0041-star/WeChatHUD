@@ -18,24 +18,23 @@ final class DeepStyleTests: XCTestCase {
 
     // MARK: - Prompt v2 loads
 
-    func testPromptV2Loads() throws {
+    func testPromptV4Loads() throws {
         let loader = PromptLoader()
-        let template = try loader.load(version: "autopilot_reply_v2")
+        let template = try loader.load(version: "autopilot_reply_v4")
         XCTAssertTrue(template.contains("{punctuation_style}"))
         XCTAssertTrue(template.contains("{sentence_style}"))
-        XCTAssertTrue(template.contains("{typing_rhythm}"))
         XCTAssertTrue(template.contains("{message_pairs}"))
-        XCTAssertTrue(template.contains("{length_p25}"))
-        XCTAssertTrue(template.contains("{length_p50}"))
-        XCTAssertTrue(template.contains("{length_p75}"))
-        // v2 should have style-matching rules
-        XCTAssertTrue(template.contains("模仿标点习惯"))
+        XCTAssertTrue(template.contains("{session_ledger}"))
+        XCTAssertTrue(template.contains("{contact_role}"))
+        // v4 should have style-matching rules
+        XCTAssertTrue(template.contains("模仿这种感觉"))
     }
 
-    func testPromptV1StillExists() throws {
+    func testPromptV4SafetyDisclaimer() throws {
         let loader = PromptLoader()
-        let template = try loader.load(version: "autopilot_reply_v1")
+        let template = try loader.load(version: "autopilot_reply_v4")
         XCTAssertTrue(template.contains("{message_body}"))
+        XCTAssertTrue(template.contains("不可信数据"), "v4 must treat message content as untrusted")
     }
 
     // MARK: - MessageUrgency (additional coverage)

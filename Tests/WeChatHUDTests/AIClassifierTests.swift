@@ -43,9 +43,9 @@ final class AIClassifierTests: XCTestCase {
 
     // MARK: - Prompt loader
 
-    func testPromptLoaderLoadsClassifierV1() throws {
+    func testPromptLoaderLoadsClassifierV3() throws {
         let loader = PromptLoader()
-        let template = try loader.load(version: "classifier_v1")
+        let template = try loader.load(version: "classifier_v3")
         XCTAssertTrue(template.contains("{message_body}"), "prompt should contain message body placeholder")
         XCTAssertTrue(template.contains("{sender_name}"), "prompt should contain sender placeholder")
         XCTAssertTrue(template.contains("yes_no"), "prompt should declare ask types")
