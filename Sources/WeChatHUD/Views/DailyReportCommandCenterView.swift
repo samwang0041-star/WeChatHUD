@@ -140,6 +140,7 @@ struct DailyReportCommandCenterView: View {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(progressColor(progress.completionRatio))
                         .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(progress.completionRatio))), height: 6)
+                        .animation(.spring(response: 0.6, dampingFraction: 0.8), value: progress.completionRatio)
                 }
             }
             .frame(height: 6)
@@ -293,9 +294,11 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: { showHighlights.toggle() }) {
                 HStack(spacing: 4) {
-                    Image(systemName: showHighlights ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(showHighlights ? 90 : 0))
+                        .animation(.easeInOut(duration: 0.2), value: showHighlights)
                     Image(systemName: "star.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.yellow.opacity(0.85))
@@ -326,9 +329,11 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: { showRisks.toggle() }) {
                 HStack(spacing: 4) {
-                    Image(systemName: showRisks ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(showRisks ? 90 : 0))
+                        .animation(.easeInOut(duration: 0.2), value: showRisks)
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.orange.opacity(0.85))
@@ -359,9 +364,11 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: { showCompleted.toggle() }) {
                 HStack(spacing: 4) {
-                    Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
+                    Image(systemName: "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(showCompleted ? 90 : 0))
+                        .animation(.easeInOut(duration: 0.2), value: showCompleted)
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.green.opacity(0.8))

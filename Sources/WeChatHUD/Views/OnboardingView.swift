@@ -19,6 +19,7 @@ struct OnboardingView: View {
                         .frame(width: 6, height: 6)
                 }
             }
+            .animation(.easeInOut(duration: 0.3), value: step)
             .padding(.top, 16)
             .padding(.bottom, 12)
 

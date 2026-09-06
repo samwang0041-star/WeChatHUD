@@ -134,6 +134,7 @@ struct CompactInboxBar: View {
                 Circle()
                     .fill(status.color)
                     .frame(width: 7, height: 7)
+                    .animation(.easeInOut(duration: 0.3), value: status.color)
             }
 
             if let badge = status.badge {
