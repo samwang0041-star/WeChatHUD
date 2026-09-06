@@ -1514,20 +1514,13 @@ final class ChatMonitor: ObservableObject {
                     let oldShared = oldMemory?.sharedContext ?? []
                     let oldComm = oldMemory?.communicationNotes ?? []
 
-                    let prompt = """
-                    你是对话摘要助手。根据最近消息增量更新对话记忆。保留旧记忆中仍然相关的内容，合并新内容。
-
-                    对话: \(entry.displayName)
-                    旧摘要: \(oldSummary.isEmpty ? "（首次生成）" : oldSummary)
-                    旧共同背景: \(oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
-                    旧沟通习惯: \(oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
-
-                    最近消息:
-                    \(msgText)
-
-                    请用 JSON 格式输出（每个数组最多5项）:
-                    {"summary":"一句话摘要(50字内)","key_topics":["最近话题1","话题2"],"pending_items":["待办1"],"shared_context":["共同经历/关系背景"],"communication_notes":["沟通习惯"],"mood_trend":"情绪描述","conversation_phase":"闲聊/讨论/决策/争论/告别/无","stance":"用户当前立场(如有)"}
-                    """
+                    let memoryTemplate = (try? PromptLoader().load(version: "conversation_memory_v1")) ?? ""
+                    let prompt = memoryTemplate
+                        .replacingOccurrences(of: "{chat_name}", with: entry.displayName)
+                        .replacingOccurrences(of: "{old_summary}", with: oldSummary.isEmpty ? "（首次生成）" : oldSummary)
+                        .replacingOccurrences(of: "{old_shared}", with: oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
+                        .replacingOccurrences(of: "{old_notes}", with: oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
+                        .replacingOccurrences(of: "{recent_messages}", with: msgText)
 
                     guard let response = try? await ai.complete(
                         system: "你是对话摘要助手。只输出JSON。",
