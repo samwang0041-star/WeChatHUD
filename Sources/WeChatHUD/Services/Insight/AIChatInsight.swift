@@ -6,7 +6,10 @@ import Foundation
 ///
 /// Uses `AIAnalysisPipeline` for all AI calls, retry, JSON parsing, and audit logging.
 actor AIChatInsight {
-    private static let analysisType = "chat_insight_v3"
+    // Must match the template actually loaded below (v2). This string is
+    // the analysis-cache key + audit label — a v3 label on v2 output
+    // poisons traceability. No chat_insight_v3.txt exists.
+    private static let analysisType = "chat_insight_v2"
     private let store: HUDStore
     private let aiService: AIService
     private let pipeline: AIAnalysisPipeline
@@ -252,7 +255,7 @@ actor AIChatInsight {
         recentContext: String
     ) -> String {
         var parts: [String] = [
-            "prompt=chat_insight_v3",
+            "prompt=chat_insight_v2",
             "chat=\(chatUsername)",
             "type=\(chatType)",
             "category=\(category)",

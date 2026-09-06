@@ -18,7 +18,11 @@ actor AIClassifier {
     private let store: HUDStore
     private let aiService: AIService
     private let promptLoader: PromptLoader
-    private let promptVersion: String = "classifier_v1"
+    // v3 keeps the v1 schema + placeholders (interpolate() fills all of
+    // them), adding false-positive hardening from real WeChat traffic.
+    // v4 needs new caller-side fields — do NOT bump to v4 without
+    // extending ClassifierInput + interpolate().
+    private let promptVersion: String = "classifier_v3"
 
     init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
         self.store = store
