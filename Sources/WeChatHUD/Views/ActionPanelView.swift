@@ -62,7 +62,7 @@ struct ActionPanelView: View {
                 case .results(let replies) where !replies.isEmpty:
                     replySuggestionsView(replies)
                 case .error:
-                    errorRow(label: "回复建议生成失败")
+                    errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
                 default:
                     EmptyView()
                 }
@@ -629,6 +629,25 @@ struct ActionPanelView: View {
             .font(.system(size: 10))
             .foregroundColor(.red.opacity(0.6))
             .padding(.vertical, 2)
+    }
+
+    private func errorRowWithRetry(label: String, retry: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(.red.opacity(0.6))
+            Button(action: retry) {
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 8, weight: .semibold))
+                    Text("重试")
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Tone badge (for reply suggestions)
