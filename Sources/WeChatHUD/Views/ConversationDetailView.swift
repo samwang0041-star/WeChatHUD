@@ -276,19 +276,7 @@ struct ConversationDetailView: View {
                     .padding(.vertical, 6)
             } else {
                 ForEach(Array(messages.enumerated()), id: \.offset) { _, msg in
-                    HStack(alignment: .top, spacing: 6) {
-                        Text(msg.sender)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.6))
-                            .frame(width: 60, alignment: .trailing)
-                            .lineLimit(1)
-                        Text(msg.body)
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.82))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.vertical, 2)
+                    MessageRow(msg: msg)
                 }
             }
         }
@@ -435,6 +423,41 @@ struct ConversationDetailView: View {
 }
 
 // MARK: - Suggestion Row
+
+/// A single message row in the recent-messages section — hover to
+/// reveal copy action, long text expands on click.
+private struct MessageRow: View {
+    let msg: (sender: String, body: String)
+    @State private var expanded = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(msg.sender)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white.opacity(0.6))
+                .frame(width: 60, alignment: .trailing)
+                .lineLimit(1)
+            Text(msg.body)
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.82))
+                .lineLimit(expanded ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } }
+        .contextMenu {
+            Button("复制消息") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(msg.body, forType: .string)
+            }
+            Button("复制整行（含发送者）") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("\\(msg.sender): \\(msg.body)", forType: .string)
+            }
+        }
+    }
+}
 
 /// A single AI reply suggestion — hover-highlighted, tap to adopt into
 /// the composer, copy button with green checkmark feedback.
