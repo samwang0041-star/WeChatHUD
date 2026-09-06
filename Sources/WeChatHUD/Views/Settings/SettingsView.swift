@@ -6,7 +6,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
-    @State private var selectedTab: Tab = .contacts
+    @State private var selectedTab: Tab = SettingsView.initialTab
 
     enum Tab: Hashable, CaseIterable {
         // Settings
@@ -79,6 +79,15 @@ struct SettingsView: View {
             default: return false
             }
         }
+
+        static func from(raw: String?) -> Tab? {
+            guard let raw else { return nil }
+            return Tab.allCases.first { String(describing: $0) == raw }
+        }
+    }
+
+    private static var initialTab: Tab {
+        Tab.from(raw: UserDefaults.standard.string(forKey: "settings.lastTab")) ?? .contacts
     }
 
     var body: some View {
@@ -93,6 +102,7 @@ struct SettingsView: View {
         }
         .onAppear { applyPendingTab(panelState.pendingSettingsTab) }
         .onReceive(panelState.$pendingSettingsTab) { applyPendingTab($0) }
+        .onChange(of: selectedTab) { _, _ in persistTabSelection() }
     }
 
     /// Centralized pending-tab router so both onAppear and subsequent
@@ -181,6 +191,13 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
+    }
+
+    // MARK: - Tab persistence
+
+    private func persistTabSelection() {
+        let raw = String(describing: selectedTab)
+        UserDefaults.standard.set(raw, forKey: "settings.lastTab")
     }
 
     // MARK: - Content

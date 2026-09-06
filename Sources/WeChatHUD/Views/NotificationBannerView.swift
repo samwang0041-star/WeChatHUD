@@ -84,6 +84,20 @@ struct NotificationBannerView: View {
             }
             .buttonStyle(.plain)
             .help("静默处理")
+
+            Button(action: {
+                monitor.silenceChat(notification.chatUsername)
+                panelState.goExtended()
+            }) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.green.opacity(0.8))
+                    .frame(width: 22, height: 20)
+                    .background(Color.green.opacity(0.12))
+                    .cornerRadius(3)
+            }
+            .buttonStyle(.plain)
+            .help("标记已读，展开收件箱")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
