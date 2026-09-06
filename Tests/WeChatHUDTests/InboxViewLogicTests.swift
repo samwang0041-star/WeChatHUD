@@ -220,7 +220,9 @@ final class InboxViewLogicTests: XCTestCase {
         ]
 
         XCTAssertEqual(items[0].semanticState, .groupMentionFYI)
-        XCTAssertEqual(inboxHeaderState(items), .updates(1))
+        // 4b1dc44 header now distinguishes bare @mentions (.mentioned)
+        // from passive updates (.updates). Intent unchanged: not an action.
+        XCTAssertEqual(inboxHeaderState(items), .mentioned(1))
     }
 
     func testGroupMentionWithAskEvidenceCountsAsAction() {
@@ -236,7 +238,9 @@ final class InboxViewLogicTests: XCTestCase {
         ]
 
         XCTAssertEqual(items[0].semanticState, .groupActionRequired)
-        XCTAssertEqual(inboxHeaderState(items), .urgent(1))
+        // .urgent is p0-only since 4b1dc44; p1 action items surface as
+        // .replyNeeded. Intent unchanged: still counts as an action.
+        XCTAssertEqual(inboxHeaderState(items), .replyNeeded(1))
     }
 
     func testGroupMentionWithOnlyUrgencyStaysFYI() {
