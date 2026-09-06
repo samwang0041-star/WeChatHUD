@@ -23,6 +23,7 @@ actor AutopilotService {
     private let generator: AutoReplyGenerator
     private let styleProfiler: StyleProfiler
     private let aiService: AIService
+    private let memoryUpdater: ConversationMemoryUpdater
 
     /// Messages already processed (by msgUID), avoids double-handling.
     private var processedMsgUIDs: Set<String> = []
@@ -117,6 +118,7 @@ actor AutopilotService {
         self.aiService = aiService
         self.generator = AutoReplyGenerator(store: store, aiService: aiService)
         self.styleProfiler = StyleProfiler(reader: reader, store: store)
+        self.memoryUpdater = ConversationMemoryUpdater(reader: reader, store: store, aiService: aiService)
         self.ledgerRead = ledgerRead
         self.ledgerWrite = ledgerWrite
     }
@@ -960,70 +962,17 @@ actor AutopilotService {
     // MARK: - Post-send memory refresh
 
     /// Incrementally update conversation memory after autopilot sends a reply.
-    /// Runs within actor isolation — safe access to store and reader.
-    /// Rate-limited: skips if memory was updated < 5 min ago.
+    /// Delegates to the shared ConversationMemoryUpdater (short staleness:
+    /// 5 min, since a send should trigger a prompt refresh).
     private func refreshMemoryAfterSend(
         chatUsername: String, chatName: String
     ) async {
-        // Fix 3: single load, reused for rate-limit check and as old memory
-        let oldMemory = store.loadConversationMemory(chatUsername: chatUsername)
-
-        // Rate limit: skip if updated < 5 min ago
-        if let existing = oldMemory,
-           Date().timeIntervalSince(existing.lastUpdated) < 300 {
-            return
-        }
-
-        let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 30)) ?? []
-        guard !messages.isEmpty else { return }
-
-        let oldSummary = oldMemory?.summary ?? ""
-        let oldShared = oldMemory?.sharedContext ?? []
-        let oldComm = oldMemory?.communicationNotes ?? []
-
-        let msgText = messages.prefix(20).map {
-            "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
-        }.joined(separator: "\n")
-
-        let memoryTemplate = (try? PromptLoader().load(version: "conversation_memory_v1")) ?? ""
-        let prompt = memoryTemplate
-            .replacingOccurrences(of: "{chat_name}", with: chatName)
-            .replacingOccurrences(of: "{old_summary}", with: oldSummary.isEmpty ? "（首次生成）" : oldSummary)
-            .replacingOccurrences(of: "{old_shared}", with: oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
-            .replacingOccurrences(of: "{old_notes}", with: oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
-            .replacingOccurrences(of: "{recent_messages}", with: msgText)
-
-        let content: String
-        do {
-            content = try await aiService.complete(
-                system: "你是对话摘要助手。只输出JSON。",
-                user: prompt,
-                options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256, responseFormatJSON: true)
-            )
-        } catch {
-            return
-        }
-
-        guard let cleaned = AIJSONExtractor.firstObjectString(from: content) else { return }
-
-        guard let jsonData = cleaned.data(using: .utf8),
-              let result = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { return }
-
-        let memory = ConversationMemory(
+        await memoryUpdater.updateMemoryIfNeeded(
             chatUsername: chatUsername,
-            summary: result["summary"] as? String ?? oldSummary,
-            keyTopics: Array((result["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? []).prefix(10)),
-            pendingItems: Array((result["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? []).prefix(5)),
-            sharedContext: Array((result["shared_context"] as? [String] ?? oldShared).prefix(5)),
-            communicationNotes: Array((result["communication_notes"] as? [String] ?? oldComm).prefix(5)),
-            moodTrend: result["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "",
-            conversationPhase: result["conversation_phase"] as? String ?? oldMemory?.conversationPhase ?? "",
-            stance: result["stance"] as? String ?? oldMemory?.stance ?? "",
-            messageCount7d: messages.count,
-            lastUpdated: Date()
+            chatName: chatName,
+            stalenessSeconds: 300
         )
-        try? store.upsertConversationMemory(memory)
-        print("[WCHUD] Autopilot: memory updated for '\(chatName)'")
+        print("[WCHUD] Autopilot: memory refreshed")
     }
 
     // MARK: - Pending send queue operations

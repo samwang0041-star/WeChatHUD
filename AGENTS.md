@@ -9,8 +9,9 @@ macOS 原生吸顶浮窗客户端，配合 wechat-cli 使用。SwiftUI + AppKit�
 - 519 个测试函数、58 个测试文件（历史记录中的 350/223 均为旧数）
 - 519 个测试全部通过（1 个需 live AI 端点的用例按设计跳过；InboxViewLogicTests 2 个过期断言已按 4b1dc44 新模型修复）
 - Xcode 26.6 下 debug/release 双构建通过，release 零警告
-- ChatMonitor 回潮至 3311 行（曾重构到 1131 行 + ScanEngine/MessageHelpers）；HUDStore 2945 行、Models 1744 行，God Object 需再拆
+- ChatMonitor 3262 行（对话记忆已拆为 ConversationMemoryUpdater 与 AutopilotService 共享）；HUDStore 2945 行、Models 1744 行
 - Codex 集成：读取 codex CLI 本地 OAuth token，蹭 ChatGPT 订阅调 gpt-5.4
+- **Autopilot 方向（2026-09-06 定案）**：full-auto + 多层护栏。默认关闭（enabled=false, autoSendEnabled=false），置信度阈值 0.8，敏感词二级拦截，媒体置信度 0.7x 衰减，金融类（转账/红包/小程序）强制 pending，每会话发送上限 50 条。CONTEXT.md 的"启动后全自动"目标在此框架下实现，文档与代码已对齐。
 
 ## 架构概述
 
@@ -61,7 +62,7 @@ Sources/WeChatHUD/
 - **窗口**：NSPanel (.nonactivatingPanel, .floating)，不抢焦点
 - **白名单驱动**：只分析白名单里的对话，其余忽略
 - **三态 + 详情**：compact(36px) → extended(tabs) → notification(banner) → detail(500px)
-- **Autopilot 安全**：敏感词检测 + 会话发送上限 + 置信度阈值 + 高风险人工确认
+- **Autopilot 安全**：full-auto 方向 — 默认关闭 + 置信度阈值(0.8) + 敏感词拦截 + 媒体衰减(0.7x) + 金融类强制 pending + 会话发送上限(50)
 - **StyleProfiler**：学习用户写作风格，让 AI 回复建议匹配个人习惯
 - **Smart Digest**：离开 30 分钟后返回自动提示"你错过了什么"
 - **7 日趋势图**：VIP Profile 中的消息活跃度迷你柱状图
