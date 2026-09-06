@@ -112,7 +112,11 @@ struct VIPInsightCardView: View {
                                 .font(.system(size: 10))
                                 .foregroundColor(.white.opacity(0.6))
                             if strength.isCooling {
-                                Text("⚠️ \(strength.daysSinceLastInteraction)天未互动")
+                                HStack(spacing: 3) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 8))
+                                    Text("\(strength.daysSinceLastInteraction)天未互动")
+                                }
                                     .font(.system(size: 9))
                                     .foregroundColor(.orange)
                             }

@@ -44,9 +44,9 @@ Sources/WeChatHUD/
 │   └── ... (12 个 AI service 共计)
 └── Views/
     ├── HUDRootView.swift         — 顶层路由 (compact/extended/notification/detail)
-    ├── CompactBarView.swift      — 紧凑模式 (36px)
-    ├── ExtendedTabsView.swift    — 展开模式 (多标签页)
-    ├── CatchupTabView.swift      — 追赶模式 (三段式优先级摘要)
+    ├── CompactInboxBar.swift      — 紧凑模式 (notch 双翼 + PixelBuddy)
+    ├── InboxView.swift            — 展开模式 (统一收件箱，替代旧多标签页)
+    ├── InboxRowView.swift         — 收件箱行 (展开露出 ActionPanel)
     ├── CommitmentTabView.swift   — 承诺管理 (完成/取消操作)
     ├── ConversationDetailView.swift — 对话分析工作台
     ├── DailyReportTabView.swift  — 日报/周报 (带切换)
