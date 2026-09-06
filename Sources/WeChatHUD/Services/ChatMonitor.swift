@@ -2091,6 +2091,16 @@ final class ChatMonitor: ObservableObject {
             md += "\n"
         }
 
+        // Recalled messages (intelligence)
+        let recalls = store.loadRecalledMessages(limit: 10)
+        if !recalls.isEmpty {
+            md += "## 撤回消息 (\(recalls.count))\n\n"
+            for r in recalls {
+                md += "- \(r.senderName) 撤回了: \(r.originalText.prefix(50))\n"
+            }
+            md += "\n"
+        }
+
         // Whitelist stats
         let whitelist = store.getWhitelist()
         md += "## 白名单 (\(whitelist.count))\n\n"
