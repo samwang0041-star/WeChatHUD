@@ -37,7 +37,7 @@ struct DailyReportCommandCenterView: View {
             divider
 
             if !vm.urgentActions.isEmpty {
-                sectionHeader("🔴 紧急待处理", count: vm.urgentActions.count)
+                sectionHeader(icon: "exclamationmark.circle.fill", tint: .red, text: "紧急待处理", count: vm.urgentActions.count)
                 ForEach(vm.urgentActions) { action in
                     actionCard(action, isUrgent: true, insight: vm.actionInsights[action.id])
                 }
@@ -45,7 +45,7 @@ struct DailyReportCommandCenterView: View {
             }
 
             if !vm.activeToday.isEmpty {
-                sectionHeader("📋 待处理 · 今天到期", count: vm.activeToday.count)
+                sectionHeader(icon: "list.bullet", text: "待处理 · 今天到期", count: vm.activeToday.count)
                 ForEach(vm.activeToday) { action in
                     actionCard(action, isUrgent: false)
                 }
@@ -53,7 +53,7 @@ struct DailyReportCommandCenterView: View {
             }
 
             if !vm.activeThisWeek.isEmpty {
-                sectionHeader("📋 待处理 · 本周到期", count: vm.activeThisWeek.count)
+                sectionHeader(icon: "list.bullet", text: "待处理 · 本周到期", count: vm.activeThisWeek.count)
                 ForEach(vm.activeThisWeek) { action in
                     actionCard(action, isUrgent: false)
                 }
@@ -61,7 +61,7 @@ struct DailyReportCommandCenterView: View {
             }
 
             if !vm.activeLater.isEmpty {
-                sectionHeader("📋 待处理 · 之后 / 无期限", count: vm.activeLater.count)
+                sectionHeader(icon: "list.bullet", text: "待处理 · 之后 / 无期限", count: vm.activeLater.count)
                 ForEach(vm.activeLater) { action in
                     actionCard(action, isUrgent: false)
                 }
@@ -119,7 +119,10 @@ struct DailyReportCommandCenterView: View {
     private func progressCard(_ progress: DailyReportProgressMetrics) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("🎯 今日进度")
+                Image(systemName: "target")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.green.opacity(0.85))
+                Text("今日进度")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
@@ -175,9 +178,14 @@ struct DailyReportCommandCenterView: View {
         }
     }
 
-    private func sectionHeader(_ label: String, count: Int) -> some View {
+    private func sectionHeader(icon: String? = nil, tint: Color = .secondary, text: String, count: Int) -> some View {
         HStack(spacing: 4) {
-            Text(label)
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(tint)
+            }
+            Text(text)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.secondary)
             Text("\(count)")
@@ -288,7 +296,10 @@ struct DailyReportCommandCenterView: View {
                     Image(systemName: showHighlights ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
-                    Text("📌 今日高亮")
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.yellow.opacity(0.85))
+                    Text("今日高亮")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(highlights.count)")
@@ -318,7 +329,10 @@ struct DailyReportCommandCenterView: View {
                     Image(systemName: showRisks ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
-                    Text("⚠️ 风险与异常")
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange.opacity(0.85))
+                    Text("风险与异常")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(risks.count)")
@@ -348,7 +362,10 @@ struct DailyReportCommandCenterView: View {
                     Image(systemName: showCompleted ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9))
                         .foregroundColor(.secondary)
-                    Text("✅ 已完成")
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(.green.opacity(0.8))
+                    Text("已完成")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(actions.count)")
@@ -502,7 +519,10 @@ struct DailyReportCommandCenterView: View {
     private func draftCard(draft: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("📋 微信日报草稿")
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Text("微信日报草稿")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
                 Spacer()

@@ -161,18 +161,21 @@ struct OnboardingView: View {
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            featureRow("🔔", "实时监控", "未读消息、@提醒、VIP 动态")
-            featureRow("📊", "回复债务", "跨聊天回复优先级排序")
-            featureRow("🕐", "追赶模式", "离开后快速了解重要消息")
-            featureRow("🤝", "承诺追踪", "自动检测你的承诺并提醒")
-            featureRow("🤖", "自动托管", "AI 代回消息（可关闭）")
-            featureRow("⌨️", "快捷键", "Esc 折叠, Cmd+, 设置")
+            featureRow("tray.full.fill", .blue, "统一收件箱", "悬停展开：未读、@你的、等你回复，一处清完")
+            featureRow("calendar", .orange, "日报", "每天的待办、风险、高亮，一键复制微信草稿")
+            featureRow("checkmark.circle", .green, "承诺追踪", "自动记下你说过的话，到期前提醒")
+            featureRow("airplane.circle.fill", .purple, "自动托管", "忙时 AI 代回，默认关闭，随时接管")
+            featureRow("chart.line.uptrend.xyaxis", .cyan, "复盘", "菜单栏或收件箱右上角打开，定期回顾")
+            featureRow("keyboard", .secondary, "快捷键", "Esc 折叠面板，Cmd+, 打开设置")
         }
     }
 
-    private func featureRow(_ icon: String, _ title: String, _ desc: String) -> some View {
+    private func featureRow(_ systemIcon: String, _ tint: Color, _ title: String, _ desc: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(icon).font(.system(size: 14))
+            Image(systemName: systemIcon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 20, alignment: .center)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
