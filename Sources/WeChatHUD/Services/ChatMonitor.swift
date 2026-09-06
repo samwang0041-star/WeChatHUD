@@ -204,6 +204,9 @@ final class ChatMonitor: ObservableObject {
     private lazy var styleProfiler: StyleProfiler = {
         StyleProfiler(reader: reader, store: store)
     }()
+    private lazy var memoryUpdater: ConversationMemoryUpdater = {
+        ConversationMemoryUpdater(reader: reader, store: store, aiService: aiService)
+    }()
     private lazy var alertEngine: ProactiveAlertEngine = {
         let engine = ProactiveAlertEngine(store: store)
         // Bridge engine state → published property so SwiftUI views
@@ -1488,65 +1491,10 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
-        // 6. Conversation memory — incremental summary update for whitelist chats
-        let ai = aiService
-        let memoryReader = reader
-        Task {
-            guard await ai.isConfigured() else { return }
-            let whitelist = storeRef.getWhitelist()
-                for entry in whitelist.prefix(5) {  // limit to top 5 to control AI cost
-                    // Rate limit: skip if updated < 30 min ago
-                    if let existing = storeRef.loadConversationMemory(chatUsername: entry.id),
-                       Date().timeIntervalSince(existing.lastUpdated) < 1800 {
-                        continue
-                    }
-
-                    let messages = (try? memoryReader.getMessages(chatUsername: entry.id, limit: 30)) ?? []
-                    guard !messages.isEmpty else { continue }
-
-                    let oldMemory = storeRef.loadConversationMemory(chatUsername: entry.id)
-                    let oldSummary = oldMemory?.summary ?? ""
-
-                    let msgText = messages.prefix(20).map {
-                        "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
-                    }.joined(separator: "\n")
-
-                    let oldShared = oldMemory?.sharedContext ?? []
-                    let oldComm = oldMemory?.communicationNotes ?? []
-
-                    let memoryTemplate = (try? PromptLoader().load(version: "conversation_memory_v1")) ?? ""
-                    let prompt = memoryTemplate
-                        .replacingOccurrences(of: "{chat_name}", with: entry.displayName)
-                        .replacingOccurrences(of: "{old_summary}", with: oldSummary.isEmpty ? "（首次生成）" : oldSummary)
-                        .replacingOccurrences(of: "{old_shared}", with: oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
-                        .replacingOccurrences(of: "{old_notes}", with: oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
-                        .replacingOccurrences(of: "{recent_messages}", with: msgText)
-
-                    guard let response = try? await ai.complete(
-                        system: "你是对话摘要助手。只输出JSON。",
-                        user: prompt,
-                        options: CompleteOptions(timeout: 30, temperature: 0.2, maxTokens: 256, responseFormatJSON: true)
-                    ) else { continue }
-                    guard let jsonText = AIJSONExtractor.firstObjectString(from: response),
-                          let data = jsonText.data(using: .utf8),
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-
-                    let memory = ConversationMemory(
-                        chatUsername: entry.id,
-                        summary: json["summary"] as? String ?? oldSummary,
-                        keyTopics: Array((json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? []).prefix(10)),
-                        pendingItems: Array((json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? []).prefix(5)),
-                        sharedContext: Array((json["shared_context"] as? [String] ?? oldShared).prefix(5)),
-                        communicationNotes: Array((json["communication_notes"] as? [String] ?? oldComm).prefix(5)),
-                        moodTrend: json["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "",
-                        conversationPhase: json["conversation_phase"] as? String ?? oldMemory?.conversationPhase ?? "",
-                        stance: json["stance"] as? String ?? oldMemory?.stance ?? "",
-                        messageCount7d: messages.count,
-                        lastUpdated: Date()
-                    )
-                    try? storeRef.upsertConversationMemory(memory)
-                }
-        }
+        // 6. Conversation memory — extracted to ConversationMemoryUpdater
+        // (shared with AutopilotService, eliminates duplicate inline logic)
+        let memUpdater = memoryUpdater
+        Task { await memUpdater.updateStaleMemories() }
 
         // 7. ReplyDebt AI re-ranking removed — rule scoring + time sort is sufficient
 
