@@ -21,6 +21,10 @@ final class HUDStore: ObservableObject {
         try exec("PRAGMA synchronous=NORMAL")
         try exec("PRAGMA foreign_keys=ON")
         try exec("PRAGMA busy_timeout=5000")
+        // Cap the WAL file so long-running sessions don't accumulate
+        // unbounded -wal pages. 256 pages (~1MB) is a good balance between
+        // write throughput and disk usage.
+        try exec("PRAGMA wal_autocheckpoint=256")
         try createTables()
 
         // Seed AI configs to the settings table on first launch. After
