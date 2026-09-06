@@ -389,40 +389,9 @@ struct ConversationDetailView: View {
     }
 
     private func suggestionRow(_ suggestion: AIReplySuggester.Suggestion) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(suggestion.text)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.88))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button(action: { WeChatLauncher.copyText(suggestion.text) }) {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.4))
-                }
-                .buttonStyle(.plain)
-            }
-            HStack(spacing: 6) {
-                Text(suggestion.tone)
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.4))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(3)
-                Text(suggestion.rationale)
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.3))
-                    .lineLimit(1)
-            }
+        SuggestionRowView(suggestion: suggestion) { text in
+            replyText = text
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(Color.white.opacity(0.04))
-        .cornerRadius(4)
-        .contentShape(Rectangle())
-        .onTapGesture { replyText = suggestion.text }
     }
 
     private func loadSuggestions() async {
@@ -462,5 +431,59 @@ struct ConversationDetailView: View {
             }
             Spacer()
         }
+    }
+}
+
+// MARK: - Suggestion Row
+
+/// A single AI reply suggestion — hover-highlighted, tap to adopt into
+/// the composer, copy button with green checkmark feedback.
+private struct SuggestionRowView: View {
+    let suggestion: AIReplySuggester.Suggestion
+    let onAdopt: (String) -> Void
+    @State private var hovered = false
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(suggestion.text)
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.88))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(action: {
+                    WeChatLauncher.copyText(suggestion.text)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                }) {
+                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
+                        .font(.system(size: 9))
+                        .foregroundColor(copied ? .green : .white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+            }
+            HStack(spacing: 6) {
+                Text(suggestion.tone)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.4))
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.white.opacity(0.06))
+                    .cornerRadius(3)
+                Text(suggestion.rationale)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.3))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(hovered ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
+        .cornerRadius(4)
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .animation(.easeInOut(duration: 0.15), value: hovered)
+        .onTapGesture { onAdopt(suggestion.text) }
     }
 }
