@@ -41,8 +41,10 @@ class InsightWindow: NSWindow {
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .aqua)
-        window.backgroundColor = .windowBackgroundColor
+        // Match RetrospectiveWindow: dark theme for consistency with the
+        // floating HUD (which is always dark).
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = .black
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
