@@ -14,6 +14,7 @@ struct ConversationDetailView: View {
     @State private var replyText = ""
     @State private var isSending = false
     @State private var sendResult: String?
+    @State private var sendSucceeded = false
     @State private var showSendConfirm = false
 
     var body: some View {
@@ -71,9 +72,11 @@ struct ConversationDetailView: View {
                     do {
                         try monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText)
                         sendResult = "已存为草稿"
+                        sendSucceeded = true
                         replyText = ""
                     } catch {
                         sendResult = "草稿保存失败"
+                        sendSucceeded = false
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
                 }) {
@@ -108,7 +111,7 @@ struct ConversationDetailView: View {
             if let result = sendResult {
                 Text(result)
                     .font(.system(size: 10))
-                    .foregroundColor(result.contains("成功") ? .green : .red)
+                    .foregroundColor(sendSucceeded ? .green : .red)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(Color.black.opacity(0.6))
@@ -128,6 +131,7 @@ struct ConversationDetailView: View {
         let result = await WeChatLauncher.sendMessageDetailed(chatName: chatName, text: text, sendKey: sendKey)
         if result.succeeded {
             sendResult = "发送成功"
+            sendSucceeded = true
             replyText = ""
             // Record as positive AI feedback if the reply came from a suggestion
             if suggestions.contains(where: { $0.text == text }) {
@@ -150,6 +154,7 @@ struct ConversationDetailView: View {
             }
         } else {
             sendResult = result.failureMessage ?? "发送失败"
+            sendSucceeded = false
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
     }
