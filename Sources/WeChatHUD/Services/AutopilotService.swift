@@ -985,20 +985,13 @@ actor AutopilotService {
             "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
         }.joined(separator: "\n")
 
-        let prompt = """
-        你是对话摘要助手。根据最近消息增量更新对话记忆。保留旧记忆中仍然相关的内容，合并新内容。
-
-        对话: \(chatName)
-        旧摘要: \(oldSummary.isEmpty ? "（首次生成）" : oldSummary)
-        旧共同背景: \(oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
-        旧沟通习惯: \(oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
-
-        最近消息:
-        \(msgText)
-
-        请用 JSON 格式输出（每个数组最多5项）:
-        {"summary":"一句话摘要(50字内)","key_topics":["最近话题1","话题2"],"pending_items":["待办1"],"shared_context":["共同经历/关系背景"],"communication_notes":["沟通习惯"],"mood_trend":"情绪描述","conversation_phase":"闲聊/讨论/决策/争论/告别/无","stance":"用户当前立场(如有)"}
-        """
+        let memoryTemplate = (try? PromptLoader().load(version: "conversation_memory_v1")) ?? ""
+        let prompt = memoryTemplate
+            .replacingOccurrences(of: "{chat_name}", with: chatName)
+            .replacingOccurrences(of: "{old_summary}", with: oldSummary.isEmpty ? "（首次生成）" : oldSummary)
+            .replacingOccurrences(of: "{old_shared}", with: oldShared.isEmpty ? "（无）" : oldShared.joined(separator: "、"))
+            .replacingOccurrences(of: "{old_notes}", with: oldComm.isEmpty ? "（无）" : oldComm.joined(separator: "、"))
+            .replacingOccurrences(of: "{recent_messages}", with: msgText)
 
         let content: String
         do {
@@ -1261,22 +1254,14 @@ actor AutopilotService {
             let style = await styleProfiler.getProfile(chatUsername: entry.id, excludeMsgUIDs: sentMsgUIDs)
             let contactHint = Self.buildContactStyleHint(style: style, contactRole: role)
 
-            let prompt = """
-            你是微信用户的自动助手。需要主动给对方发一条消息。
-
-            对方：\(entry.displayName)
-            触发原因：\(reason)
-            你和对方的记忆：\(memory.formatForPrompt() ?? "（无）")
-            你和对方的聊天风格：\(contactHint.isEmpty ? "（无数据）" : contactHint)
-
-            生成一条自然的开场消息。要求：
-            1. 像真人主动找人聊天一样，不要太正式
-            2. 紧扣触发原因（如问候近况、追问之前的事）
-            3. 长度\(style.lengthP25)-\(style.lengthP75)字
-            4. 模仿用户风格
-
-            只输出消息文本，不要 JSON。
-            """
+            let proactiveTemplate = (try? PromptLoader().load(version: "autopilot_proactive_v1")) ?? ""
+            let prompt = proactiveTemplate
+                .replacingOccurrences(of: "{contact_name}", with: entry.displayName)
+                .replacingOccurrences(of: "{reason}", with: reason)
+                .replacingOccurrences(of: "{memory}", with: memory.formatForPrompt() ?? "（无）")
+                .replacingOccurrences(of: "{contact_hint}", with: contactHint.isEmpty ? "（无数据）" : contactHint)
+                .replacingOccurrences(of: "{min_len}", with: "\(style.lengthP25)")
+                .replacingOccurrences(of: "{max_len}", with: "\(style.lengthP75)")
 
             var content: String
             do {
