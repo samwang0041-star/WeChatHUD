@@ -24,9 +24,9 @@ struct DailyReportCommandCenterView: View {
             } else if monitor.dailyReportIsLoading {
                 loadingView
             } else if let error = monitor.dailyReportError {
-                emptyState("日报加载失败: \(error)")
+                emptyStateWithRetry("日报加载失败: \(error)")
             } else {
-                emptyState("暂无日报数据，点击刷新重新生成。")
+                emptyStateWithRetry("暂无日报数据")
             }
         }
     }
@@ -114,6 +114,29 @@ struct DailyReportCommandCenterView: View {
             .foregroundColor(Color.primary.opacity(0.4))
             .padding(.horizontal, 14)
             .padding(.vertical, 14)
+    }
+
+    private func emptyStateWithRetry(_ text: String) -> some View {
+        VStack(spacing: 8) {
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(Color.primary.opacity(0.4))
+            Button(action: {
+                Task { await monitor.loadDailyReport(force: true) }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("重新生成")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
     }
 
     private func progressCard(_ progress: DailyReportProgressMetrics) -> some View {
