@@ -100,8 +100,8 @@ struct AutopilotTabView: View {
 
                 // Session stats
                 HStack(spacing: 6) {
-                    miniStat("✓", value: monitor.autopilotSessionSent, color: .green)
-                    miniStat("⏳", value: monitor.autopilotSessionPending, color: .orange)
+                    miniStat(systemIcon: "checkmark", value: monitor.autopilotSessionSent, color: .green)
+                    miniStat(systemIcon: "hourglass", value: monitor.autopilotSessionPending, color: .orange)
                 }
 
                 Spacer()
@@ -127,9 +127,9 @@ struct AutopilotTabView: View {
         }
     }
 
-    private func miniStat(_ icon: String, value: Int, color: Color) -> some View {
+    private func miniStat(systemIcon: String, value: Int, color: Color) -> some View {
         HStack(spacing: 2) {
-            Text(icon).font(.system(size: 8))
+            Image(systemName: systemIcon).font(.system(size: 8, weight: .semibold))
             Text("\(value)")
                 .font(.system(size: 10, weight: .semibold))
                 .monospacedDigit()
