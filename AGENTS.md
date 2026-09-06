@@ -4,11 +4,11 @@ macOS 原生吸顶浮窗客户端，配合 wechat-cli 使用。SwiftUI + AppKit�
 
 ## 项目状态
 
-**当前阶段：Production-ready — 六轮进化完成 + Codex 集成**
+**当前阶段：Production-ready — 多轮进化 + Codex 集成（2026-09-06 实测校准）**
 
-- 350 个测试全部通过（321 基线 + 29 Codex 新增）
-- Release build 零新警告（pre-existing Swift 6 严格并发告警未处理）
-- ChatMonitor 从 1690 行重构为 1131 行 Coordinator 模式
+- 519 个测试函数、58 个测试文件（历史记录中的 350/223 均为旧数）
+- Release build 零新警告（pre-existing Swift 6 严格并发告警未处理；本机无 Xcode，仅 CommandLineTools，SwiftUI 宏编不过，待有 Xcode 的机器上跑 make test）
+- ChatMonitor 回潮至 3311 行（曾重构到 1131 行 + ScanEngine/MessageHelpers）；HUDStore 2945 行、Models 1744 行，God Object 需再拆
 - Codex 集成：读取 codex CLI 本地 OAuth token，蹭 ChatGPT 订阅调 gpt-5.4
 
 ## 架构概述
