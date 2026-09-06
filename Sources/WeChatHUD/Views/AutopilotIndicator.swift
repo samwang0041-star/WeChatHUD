@@ -52,13 +52,19 @@ struct AutopilotIndicator: View {
     private var stats: some View {
         HStack(spacing: 2) {
             if monitor.autopilotSessionSent > 0 {
-                Text("✓\(monitor.autopilotSessionSent)")
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.green.opacity(0.85))
+                Text("\(monitor.autopilotSessionSent)")
                     .font(.system(size: 9, weight: .medium))
                     .monospacedDigit()
                     .foregroundColor(.green.opacity(0.85))
             }
             if monitor.autopilotSessionPending > 0 {
-                Text("⏳\(monitor.autopilotSessionPending)")
+                Image(systemName: "hourglass")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(.orange.opacity(0.85))
+                Text("\(monitor.autopilotSessionPending)")
                     .font(.system(size: 9, weight: .medium))
                     .monospacedDigit()
                     .foregroundColor(.orange.opacity(0.85))
@@ -193,17 +199,17 @@ struct AutopilotPopoverView: View {
     private var statsBlock: some View {
         let stats = monitor.autopilotSessionStats
         return VStack(alignment: .leading, spacing: 3) {
-            statRow(icon: "✓", label: "已发", value: stats.totalSent, color: .green)
-            statRow(icon: "⏳", label: "待确认", value: monitor.autopilotSessionPending, color: .orange)
+            statRow(systemIcon: "checkmark", label: "已发", value: stats.totalSent, color: .green)
+            statRow(systemIcon: "hourglass", label: "待确认", value: monitor.autopilotSessionPending, color: .orange)
             if stats.totalSkipped > 0 {
-                statRow(icon: "⊘", label: "跳过", value: stats.totalSkipped, color: .secondary)
+                statRow(systemIcon: "slash.circle", label: "跳过", value: stats.totalSkipped, color: .secondary)
             }
         }
     }
 
-    private func statRow(icon: String, label: String, value: Int, color: Color) -> some View {
+    private func statRow(systemIcon: String, label: String, value: Int, color: Color) -> some View {
         HStack(spacing: 4) {
-            Text(icon).font(.system(size: 10))
+            Image(systemName: systemIcon).font(.system(size: 10))
             Text(label)
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)

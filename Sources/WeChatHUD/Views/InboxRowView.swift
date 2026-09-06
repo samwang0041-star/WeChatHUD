@@ -298,6 +298,7 @@ struct InboxRowView: View {
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
+                .help("稍后提醒")
                 .popover(isPresented: $showSnoozePopover, arrowEdge: .bottom) {
                     SnoozePopoverContent { date in
                         showSnoozePopover = false
@@ -316,19 +317,13 @@ struct InboxRowView: View {
                     .foregroundColor(.white.opacity(0.4))
             }
             .buttonStyle(.plain)
+            .help(item.actionRequired ? "标为已处理" : "隐藏这条更新")
         }
     }
 
     // MARK: - Helpers
-
-    private func relativeTime(_ date: Date) -> String {
-        let minutes = Int(Date().timeIntervalSince(date) / 60)
-        if minutes < 1 { return "刚刚" }
-        if minutes < 60 { return "\(minutes)分" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)小时" }
-        return "\(hours / 24)天"
-    }
+    // NOTE: timestamps use the shared relativeTime(_:) in ViewHelpers.swift
+    // ("5分前" style) so every surface formats recency the same way.
 }
 
 // MARK: - Snooze Popover Content

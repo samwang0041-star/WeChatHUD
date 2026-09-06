@@ -227,6 +227,7 @@ struct InboxView: View {
                         .foregroundColor(.white.opacity(0.55))
                 }
                 .buttonStyle(.plain)
+                .help("设置")
             }
             .padding(.trailing, 10)
         }
