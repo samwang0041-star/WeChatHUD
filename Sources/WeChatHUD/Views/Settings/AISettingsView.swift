@@ -201,7 +201,7 @@ struct ProviderCard: View {
         HStack(spacing: 4) {
             if !testResult.isEmpty {
                 Circle()
-                    .fill(testResult.contains("OK") ? Color.green : Color.red)
+                    .fill(testResult.hasPrefix("OK: ") ? Color.green : Color.red)
                     .frame(width: 6, height: 6)
                     .help(testResult)
             }
