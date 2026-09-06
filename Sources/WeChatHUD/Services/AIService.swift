@@ -80,13 +80,18 @@ actor AIService {
         try await completeWithMetadata(system: system, user: user, options: options).text
     }
 
-    func completeWithMetadata(
-        system: String,
-        user: String,
-        options: CompleteOptions
-    ) async throws -> AICompletionResult {
-        let primary = config.primarySlot
-        let fallback = config.fallbackSlot
+func completeWithMetadata(
+    system: String,
+    user: String,
+    options: CompleteOptions
+) async throws -> AICompletionResult {
+    // Global rate limiter — prevents API burst when multiple services
+    // fire concurrently (autopilot batches, prefetch, proactive alerts).
+    // Default: 4 calls/second, enough for normal usage, gentle on API.
+    await AIRateLimiter.shared.acquire()
+
+    let primary = config.primarySlot
+    let fallback = config.fallbackSlot
 
         do {
             return try await send(slot: primary, system: system, user: user, options: options)
@@ -397,6 +402,30 @@ actor AIService {
             t = t.replacingOccurrences(of: ph, with: "")
         }
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Global AI call rate limiter. Simple sliding window: at most
+/// `maxCallsPerSecond` calls may start within any 1-second window.
+/// Non-blocking (async wait) so callers don't need to handle busy-wait.
+actor AIRateLimiter {
+    static let shared = AIRateLimiter()
+    private var timestamps: [Date] = []
+    private let maxCallsPerSecond = 4
+
+    func acquire() async {
+        let now = Date()
+        // Drop timestamps older than 1s
+        timestamps = timestamps.filter { now.timeIntervalSince($0) < 1.0 }
+
+        if timestamps.count >= maxCallsPerSecond {
+            let oldest = timestamps[0]
+            let wait = 1.0 - now.timeIntervalSince(oldest)
+            if wait > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            }
+        }
+        timestamps.append(Date())
     }
 }
 
