@@ -36,6 +36,7 @@ struct InboxRowView: View {
                 if hovered {
                     hoverButtons
                         .padding(.top, 2)
+                        .transition(.opacity)
                 }
             }
             .padding(.horizontal, 14)
@@ -43,13 +44,19 @@ struct InboxRowView: View {
             .background(hovered ? Color.white.opacity(0.06) : Color.clear)
             .contentShape(Rectangle())
             .onHover { hovered = $0 }
-            .onTapGesture { expanded.toggle() }
+            .animation(.easeInOut(duration: 0.15), value: hovered)
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    expanded.toggle()
+                }
+            }
             .contextMenu {
                 contextMenuContent
             }
 
             if expanded {
                 ActionPanelView(item: item)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -265,9 +272,7 @@ struct InboxRowView: View {
     // MARK: - Priority Dot
 
     private var priorityDot: some View {
-        Circle()
-            .fill(priorityColor)
-            .frame(width: 8, height: 8)
+        PriorityPulseDot(color: priorityColor, isUrgent: item.priority == .p0)
     }
 
     private var priorityColor: Color {
@@ -324,6 +329,36 @@ struct InboxRowView: View {
     // MARK: - Helpers
     // NOTE: timestamps use the shared relativeTime(_:) in ViewHelpers.swift
     // ("5分前" style) so every surface formats recency the same way.
+}
+
+// MARK: - Priority Pulse Dot
+
+/// Priority dot with an optional expanding pulse ring for p0 items —
+/// draws the eye in peripheral vision without being obnoxious
+/// (1.4s period, low opacity).
+private struct PriorityPulseDot: View {
+    let color: Color
+    let isUrgent: Bool
+    @State private var pulseOn = false
+
+    var body: some View {
+        ZStack {
+            if isUrgent {
+                Circle()
+                    .stroke(color.opacity(pulseOn ? 0.35 : 0.0), lineWidth: 1.5)
+                    .frame(width: pulseOn ? 14 : 8, height: pulseOn ? 14 : 8)
+            }
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+        }
+        .onAppear {
+            guard isUrgent else { return }
+            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                pulseOn = true
+            }
+        }
+    }
 }
 
 // MARK: - Snooze Popover Content

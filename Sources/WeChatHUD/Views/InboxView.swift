@@ -75,17 +75,17 @@ struct InboxView: View {
                     ForEach(visibleItems) { item in
                         InboxRowView(item: item, onDismiss: {
                             undoAction = "已忽略"
-                            undoItem = item
+                            withAnimation(.easeOut(duration: 0.25)) { undoItem = item }
                             monitor.dismissInboxItem(item)
                             scheduleUndoExpiry()
                         }, onSnooze: { date in
                             undoAction = "已贪睡"
-                            undoItem = item
+                            withAnimation(.easeOut(duration: 0.25)) { undoItem = item }
                             monitor.snoozeInboxItem(item, until: date)
                             scheduleUndoExpiry()
                         }, onSilence: {
                             undoAction = "已静音"
-                            undoItem = item
+                            withAnimation(.easeOut(duration: 0.25)) { undoItem = item }
                             monitor.silenceInboxItem(item)
                             scheduleUndoExpiry()
                         })
@@ -121,6 +121,7 @@ struct InboxView: View {
                     // Undo bar
                     if let undo = undoItem {
                         undoBar(item: undo, action: undoAction)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
                     // Handled section (collapsed by default)
@@ -261,7 +262,7 @@ struct InboxView: View {
             Spacer()
             Button("撤销") {
                 monitor.restoreInboxItem(item)
-                undoItem = nil
+                withAnimation(.easeIn(duration: 0.2)) { undoItem = nil }
                 undoTimer?.invalidate()
                 undoTimer = nil
             }
@@ -287,9 +288,11 @@ struct InboxView: View {
                     Text("已处理 (\(monitor.handledItems.count))")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundColor(.white.opacity(0.25))
-                    Image(systemName: showHandled ? "chevron.up" : "chevron.down")
+                    Image(systemName: "chevron.down")
                         .font(.system(size: 8))
                         .foregroundColor(.white.opacity(0.25))
+                        .rotationEffect(.degrees(showHandled ? 180 : 0))
+                        .animation(.easeInOut(duration: 0.2), value: showHandled)
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
                         .frame(height: 1)
@@ -404,7 +407,7 @@ struct InboxView: View {
         undoTimer?.invalidate()
         undoTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { _ in
             Task { @MainActor in
-                undoItem = nil
+                withAnimation(.easeIn(duration: 0.2)) { undoItem = nil }
                 undoTimer = nil
             }
         }

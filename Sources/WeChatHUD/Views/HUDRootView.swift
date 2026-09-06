@@ -45,6 +45,7 @@ struct HUDRootView: View {
             case .notification:
                 if let notif = monitor.latestNotification {
                     NotificationBannerView(notification: notif)
+                        .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
                 }
             case .detail:
                 DetailPanelView()
