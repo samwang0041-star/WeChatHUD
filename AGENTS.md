@@ -9,7 +9,7 @@ macOS 原生吸顶浮窗客户端，配合 wechat-cli 使用。SwiftUI + AppKit�
 - 519 个测试函数、58 个测试文件（历史记录中的 350/223 均为旧数）
 - 519 个测试全部通过（1 个需 live AI 端点的用例按设计跳过；InboxViewLogicTests 2 个过期断言已按 4b1dc44 新模型修复）
 - Xcode 26.6 下 debug/release 双构建通过，release 零警告
-- ChatMonitor 3076 行（对话记忆 → ConversationMemoryUpdater，日报+导出 → ChatMonitor+DailyReport.swift，与 AutopilotService 共享记忆更新）；HUDStore 2945 行、Models 1744 行
+- ChatMonitor 2608 行（从 3311 拆出 703 行到 ConversationMemoryUpdater + ChatMonitor+DailyReport + ChatMonitor+OnDemandAnalysis）；HUDStore 2945 行、Models 1744 行
 - Codex 集成：读取 codex CLI 本地 OAuth token，蹭 ChatGPT 订阅调 gpt-5.4
 - **Autopilot 方向（2026-09-06 定案）**：full-auto + 多层护栏。默认关闭（enabled=false, autoSendEnabled=false），置信度阈值 0.8，敏感词二级拦截，媒体置信度 0.7x 衰减，金融类（转账/红包/小程序）强制 pending，每会话发送上限 50 条。CONTEXT.md 的"启动后全自动"目标在此框架下实现，文档与代码已对齐。
 
