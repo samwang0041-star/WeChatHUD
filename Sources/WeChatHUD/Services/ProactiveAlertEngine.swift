@@ -10,6 +10,11 @@ final class ProactiveAlertEngine {
     private let store: HUDStore
     private var alertHistory: [Date] = []
     private let maxAlertsPerHour = 5
+    /// Per-identifier dedup — prevents the same alert (e.g. commitment
+    /// deadline, P0 debt) from firing on every 10s scan and burning
+    /// through the hourly budget. Each identifier fires at most once
+    /// per hour.
+    private var pushedIdentifiers: Set<String> = []
 
     /// Current escalation tier for each VIP chat that has something
     /// outstanding. Keyed by chatUsername. Cleared when the chat is
@@ -191,6 +196,7 @@ final class ProactiveAlertEngine {
 
     private func pushAlert(title: String, body: String, identifier: String) {
         guard alertHistory.count < maxAlertsPerHour else { return }
+        guard !pushedIdentifiers.contains(identifier) else { return }
 
         let content = UNMutableNotificationContent()
         content.title = title
@@ -209,6 +215,12 @@ final class ProactiveAlertEngine {
             }
         }
         alertHistory.append(Date())
+        pushedIdentifiers.insert(identifier)
+
+        // Prune identifier set when history is pruned (1h TTL)
+        if pushedIdentifiers.count > 50 {
+            pushedIdentifiers.removeAll()
+        }
     }
 
     private func requestNotificationPermission() {
