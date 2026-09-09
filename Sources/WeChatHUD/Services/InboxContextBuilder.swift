@@ -50,7 +50,8 @@ enum InboxContextBuilder {
         store: HUDStore,
         myUsername: String,
         contactEntry: ContactEntry?,
-        whitelistEntry: WhitelistEntry?
+        whitelistEntry: WhitelistEntry?,
+        sourceContextMessages: [MessageInfo]? = nil
     ) -> InboxContext {
         let text = triggerMessage.text
         let windowSize = contextWindowSize(messageLength: text.count)
@@ -58,10 +59,20 @@ enum InboxContextBuilder {
         let mySelfNames = reader.mySelfNames
 
         // Fetch recent messages for context
-        let recentMessages = (try? reader.getMessages(
-            chatUsername: chatUsername,
-            limit: windowSize
-        )) ?? []
+        let recentMessages: [MessageInfo]
+        if let sourceContextMessages {
+            recentMessages = sourceContextMessages
+                .filter { $0.chatUsername == chatUsername }
+                .sorted {
+                    if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
+                    return $0.localId > $1.localId
+                }
+        } else {
+            recentMessages = (try? reader.getMessages(
+                chatUsername: chatUsername,
+                limit: windowSize
+            )) ?? []
+        }
 
         // Find my last reply
         let myLastReply = recentMessages.first {
@@ -118,7 +129,13 @@ enum InboxContextBuilder {
         let mentionedMe = MessageHelpers.isAtMe(text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
         let groupContext: [MessageInfo]?
         if isGroup && mentionedMe {
-            let allRecent = (try? reader.getMessages(chatUsername: chatUsername, limit: windowSize + 10)) ?? []
+            let allRecent = sourceContextMessages?
+                .filter { $0.chatUsername == chatUsername }
+                .sorted {
+                    if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
+                    return $0.localId > $1.localId
+                }
+                ?? ((try? reader.getMessages(chatUsername: chatUsername, limit: windowSize + 10)) ?? [])
             let mentionIdx = allRecent.firstIndex(where: { $0.id == triggerMessage.id }) ?? 0
             let start = min(mentionIdx + 1, allRecent.count)
             let end = min(start + 10, allRecent.count)

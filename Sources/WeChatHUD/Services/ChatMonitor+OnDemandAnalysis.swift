@@ -5,10 +5,39 @@ import Foundation
 /// the same class — all @Published properties stay in the main file.
 extension ChatMonitor {
 
+    static func filterGroupAnalysisMessages(
+        _ messages: [MessageInfo],
+        sourceAnchored: Bool,
+        now: Date = Date()
+    ) -> [MessageInfo] {
+        messages.filter {
+            (sourceAnchored || Date(timeIntervalSince1970: Double($0.createTime)) >= now.addingTimeInterval(-48 * 3600))
+                && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
+        }
+    }
+
     // MARK: - On-demand chat analysis
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
-        let analysisType = "action_panel_group_v2"
+        let analysisType = "action_panel_group_v3"
+        let messages: [MessageInfo]
+        let sourceAnchored: Bool
+        if let notification = item.contextNotification, notification.kind == .groupAt {
+            guard let centered = GroupContextSourceLoader.load(notification: notification, reader: reader) else {
+                return (nil, "找不到这条 @ 消息，未使用其他消息替代")
+            }
+            messages = GroupContextSourceLoader.newestFirst(centered)
+            sourceAnchored = true
+        } else {
+            do {
+                messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
+            } catch {
+                return (nil, "读取消息失败: \(error.localizedDescription)")
+            }
+            sourceAnchored = false
+        }
+        // Validate the exact source before accepting a cached analysis. A
+        // stale cache must not hide that the triggering message disappeared.
         if let cached: ChatAnalyzer.GroupAnalysis = loadActionAnalysisCache(
             item: item,
             analysisType: analysisType,
@@ -16,19 +45,8 @@ extension ChatMonitor {
         ) {
             return (cached, nil)
         }
-
-        let messages: [MessageInfo]
-        do {
-            messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
-        } catch {
-            return (nil, "读取消息失败: \(error.localizedDescription)")
-        }
         if messages.isEmpty { return (nil, "没有找到消息记录") }
-        let cutoff = Date().addingTimeInterval(-48 * 3600)
-        let filtered = messages.filter {
-            Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
-                && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
-        }
+        let filtered = Self.filterGroupAnalysisMessages(messages, sourceAnchored: sourceAnchored)
         if filtered.isEmpty {
             let fallback = ChatAnalyzer.GroupAnalysis(
                 topics: "暂无可读内容",
@@ -50,7 +68,12 @@ extension ChatMonitor {
             myUsername: myUname,
             myName: "我",
             myDisplayName: reader.displayName(for: myUname),
-            mySelfNames: reader.mySelfNames
+            mySelfNames: reader.mySelfNames,
+            triggerMessage: item.contextNotification.flatMap { notification in
+                notification.kind == .groupAt
+                    ? messages.first(where: { $0.id == notification.messageID && $0.chatUsername == notification.chatUsername })
+                    : nil
+            }
         )
         if let result {
             writeActionAnalysisCache(result, item: item, analysisType: analysisType)

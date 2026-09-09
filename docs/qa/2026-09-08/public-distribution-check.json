@@ -1,0 +1,23 @@
+{
+  "checked_at": "2026-09-08T05:27:17.174541+00:00",
+  "notarization_id": "a2c5cae0-00f1-4e74-b55c-14e1ab6d4181",
+  "notarization_status": "Accepted",
+  "team_id": "SL3HYH77EF",
+  "signature": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "ticket": {
+    "exit_code": 0,
+    "output": "Processing: <relocated>/WeChatHUD.app\nThe validate action worked!\n"
+  },
+  "gatekeeper": {
+    "exit_code": 0,
+    "output": "<relocated>/WeChatHUD.app: accepted\nsource=Notarized Developer ID\n"
+  },
+  "resources": {
+    "exit_code": 0,
+    "output": "{\n  \"bundled_prompts\" : \"ready\",\n  \"mode\" : \"bundle-check\",\n  \"native_dependency\" : \"ready\",\n  \"result\" : \"ready\"\n}\n"
+  },
+  "archive_sha256": "bdc7da7a67cd83407e0036d5d035cc30d9b5da37bb8ec385c14d2c7cd481d1cb"
+}

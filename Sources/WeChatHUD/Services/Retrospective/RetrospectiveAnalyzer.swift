@@ -208,8 +208,8 @@ actor RetrospectiveAnalyzer {
         let cfg = await aiService.currentConfig()
         await dataLedger.recordBatch([AILedgerEntry(
             id: 0, ts: Date(),
-            provider: actualProvider ?? cfg.primarySlot.providerID,
-            model: actualModel ?? cfg.primarySlot.model,
+            provider: actualProvider ?? cfg.provider.providerID,
+            model: actualModel ?? cfg.provider.model,
             purpose: .chatAnalysisFailed,
             chatCount: 1, msgCount: messages,
             byteCount: byteCount,

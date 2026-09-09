@@ -116,6 +116,132 @@ final class AIDailyReportGeneratorTests: XCTestCase {
         XCTAssertEqual(lines.count, 8, "Highlights should be capped at 8")
     }
 
+    func testHistoricalFormatPromptUsesSelectedDateAndDoesNotTreatZeroAsCurrentState() {
+        let generator = AIDailyReportGenerator(
+            aiService: AIService(config: AIConfig()),
+            store: HUDStore(dbPath: ":memory:")
+        )
+        let sourceDay = Date(timeIntervalSince1970: 1_777_852_800) // 2026-05-04 UTC
+        let generatedDay = Date(timeIntervalSince1970: 1_777_939_200) // 2026-05-05 UTC
+        let report = DailyReport(
+            date: sourceDay,
+            dateRange: (start: sourceDay, end: sourceDay),
+            generatedAt: generatedDay,
+            metrics: DailyReportMetrics(
+                unreadMessageCount: 0, pendingTodoCount: 0,
+                pendingAskCount: 0, pendingCommitmentCount: 0,
+                overdueCommitmentCount: 0, replyDebtCount: 0,
+                recalledMessageCount: 0, highlightCount: 0,
+                analyzedChatCount: 0
+            ),
+            highlights: [], actions: [], risks: [], pendingAsks: [],
+            narrative: nil, tomorrowFocus: nil, wechatDraft: nil
+        )
+
+        let template = "date: 今日\nunread: {unread_count}\nhighlights: {highlight_count}\npending: {pending_todo_count}\n{highlights}\n{actions}\n{risks}\n明天计划"
+        let prompt = generator.formatPrompt(template: template, report: report)
+
+        XCTAssertTrue(prompt.contains("所选日期：2026-05-04"))
+        XCTAssertTrue(prompt.contains("未读消息: 未知（历史报告未保存该项）"))
+        XCTAssertTrue(prompt.contains("待办事项: 未知（历史报告未保存该项）"))
+        XCTAssertTrue(prompt.contains("提取高亮: 0"), "Known source-day counts remain factual zeros")
+        XCTAssertFalse(prompt.contains("暂无待办"))
+        XCTAssertFalse(prompt.contains("暂无风险"))
+        XCTAssertFalse(prompt.contains("明天计划"))
+        XCTAssertTrue(prompt.contains("不能把 0 或空列表解释为没有"))
+    }
+
+    func testSameCalendarDayFormatPromptPreservesTodayMetrics() {
+        let generator = AIDailyReportGenerator(
+            aiService: AIService(config: AIConfig()),
+            store: HUDStore(dbPath: ":memory:")
+        )
+        let day = Date(timeIntervalSince1970: 1_777_939_200)
+        let report = DailyReport(
+            date: day, dateRange: (start: day, end: day), generatedAt: day,
+            metrics: DailyReportMetrics(
+                unreadMessageCount: 0, pendingTodoCount: 0,
+                pendingAskCount: 0, pendingCommitmentCount: 0,
+                overdueCommitmentCount: 0, replyDebtCount: 0,
+                recalledMessageCount: 0, highlightCount: 0,
+                analyzedChatCount: 0
+            ),
+            highlights: [], actions: [], risks: [], pendingAsks: [],
+            narrative: nil, tomorrowFocus: nil, wechatDraft: nil
+        )
+
+        let prompt = generator.formatPrompt(template: "今日未读: {unread_count}\n{actions}", report: report)
+
+        XCTAssertTrue(prompt.contains("今日未读: 0"))
+        XCTAssertTrue(prompt.contains("暂无待办"))
+    }
+
+    func testHistoricalTemplateRewriteDoesNotChangeQuotedSourceText() {
+        let generator = AIDailyReportGenerator(
+            aiService: AIService(config: AIConfig()),
+            store: HUDStore(dbPath: ":memory:")
+        )
+        let calendar = Calendar.current
+        let sourceDay = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_777_852_800))
+        let generatedDay = calendar.date(byAdding: .day, value: 1, to: sourceDay)!
+        let report = DailyReport(
+            date: sourceDay, dateRange: (start: sourceDay, end: generatedDay),
+            generatedAt: generatedDay,
+            metrics: DailyReportMetrics(
+                unreadMessageCount: 0, pendingTodoCount: 0,
+                pendingAskCount: 0, pendingCommitmentCount: 0,
+                overdueCommitmentCount: 0, replyDebtCount: 0,
+                recalledMessageCount: 0, highlightCount: 1,
+                analyzedChatCount: 1
+            ),
+            highlights: [DailyReportHighlight(
+                summary: "今天确认明天交付", category: .decision,
+                sourceChatName: "Team", sourceChatUsername: "team",
+                date: sourceDay, confidence: 1
+            )],
+            actions: [], risks: [], pendingAsks: [],
+            narrative: nil, tomorrowFocus: nil, wechatDraft: nil
+        )
+
+        let template = "今日回顾\n{highlights}\n明天计划"
+        let prompt = generator.formatPrompt(template: template, report: report)
+
+        XCTAssertTrue(prompt.contains("所选日期的核心回顾"))
+        XCTAssertTrue(prompt.contains("后续复核建议"))
+        XCTAssertTrue(prompt.contains("今天确认明天交付"), "Quoted source text must remain verbatim")
+    }
+
+    func testHistoricalSelectedDateUsesCurrentCalendarAtLocalMidnight() {
+        let generator = AIDailyReportGenerator(
+            aiService: AIService(config: AIConfig()),
+            store: HUDStore(dbPath: ":memory:")
+        )
+        let calendar = Calendar.current
+        let sourceDay = calendar.startOfDay(for: Date(timeIntervalSince1970: 1_777_852_800))
+        let generatedDay = calendar.date(byAdding: .day, value: 1, to: sourceDay)!
+        let report = DailyReport(
+            date: sourceDay, dateRange: (start: sourceDay, end: sourceDay),
+            generatedAt: generatedDay,
+            metrics: DailyReportMetrics(
+                unreadMessageCount: 0, pendingTodoCount: 0,
+                pendingAskCount: 0, pendingCommitmentCount: 0,
+                overdueCommitmentCount: 0, replyDebtCount: 0,
+                recalledMessageCount: 0, highlightCount: 0,
+                analyzedChatCount: 0
+            ),
+            highlights: [], actions: [], risks: [], pendingAsks: [],
+            narrative: nil, tomorrowFocus: nil, wechatDraft: nil
+        )
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale.current
+        formatter.dateFormat = "yyyy-MM-dd"
+
+        let prompt = generator.formatPrompt(template: "{highlights}", report: report)
+
+        XCTAssertTrue(prompt.contains("所选日期：\(formatter.string(from: sourceDay))"))
+    }
+
     // MARK: - JSON parsing
 
     func testParseValidJSON() {

@@ -6,10 +6,9 @@ import Foundation
 ///
 /// Uses `AIAnalysisPipeline` for all AI calls, retry, JSON parsing, and audit logging.
 actor AIChatInsight {
-    // Must match the template actually loaded below (v2). This string is
-    // the analysis-cache key + audit label — a v3 label on v2 output
-    // poisons traceability. No chat_insight_v3.txt exists.
-    private static let analysisType = "chat_insight_v2"
+    // Keep the template, audit label and cache identity in sync. Version 3
+    // preserves sparse readable messages instead of treating them as empty.
+    private static let analysisType = "chat_insight_v3"
     private let store: HUDStore
     private let aiService: AIService
     private let pipeline: AIAnalysisPipeline
@@ -67,7 +66,7 @@ actor AIChatInsight {
         // Load and fill prompt template
         let template: String
         do {
-            template = try promptLoader.load(version: "chat_insight_v2")
+            template = try promptLoader.load(version: "chat_insight_v3")
         } catch {
             print("[ChatInsight] Failed to load prompt template: \(error)")
             return nil
@@ -92,7 +91,7 @@ actor AIChatInsight {
             configuration: .init(
                 options: CompleteOptions(timeout: 60, temperature: 0.15, maxTokens: 2500, responseFormatJSON: true),
                 auditRole: .contextAnalyzer,
-                promptVersion: "chat_insight_v2",
+                promptVersion: "chat_insight_v3",
                 inputSummary: "[\(chatUsername)] \(prompt.prefix(100))",
                 trackLabel: "对话洞察"
             ),
@@ -255,7 +254,7 @@ actor AIChatInsight {
         recentContext: String
     ) -> String {
         var parts: [String] = [
-            "prompt=chat_insight_v2",
+            "prompt=chat_insight_v3",
             "chat=\(chatUsername)",
             "type=\(chatType)",
             "category=\(category)",

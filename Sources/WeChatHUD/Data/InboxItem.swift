@@ -30,6 +30,7 @@ struct InboxItem: Identifiable {
     var overdueMinutes: Int = 0      // how many minutes overdue
     var replied: Bool = false        // user already replied (pending removal)
     var snoozedUntil: Date?          // snooze expiry
+    var contextNotification: HUDNotification? = nil
     var silenced: Bool = false       // permanently muted
 
     /// Stable enough identity for UI/AI caches. WeChat timestamps are
@@ -180,7 +181,7 @@ extension InboxItem {
         case .groupDecisionOnly: return "已有决议"
         case .replyOptional: return "可以回一句"
         case .commitmentDue: return isOverdue ? "承诺已到期" : "承诺快到期"
-        case .autopilotReview: return "托管待确认"
+        case .autopilotReview: return "待确认回复"
         case .aiLoading: return "AI 正在整理"
         case .aiFailed: return "分析暂不可用"
         case .syncIssue: return "同步异常"
@@ -274,7 +275,7 @@ extension InboxItem {
         case .commitmentDue:
             return isOverdue ? "承诺已到期" : "承诺快到期"
         case .autopilotReview:
-            return "托管待确认"
+            return "待确认回复"
         case .aiLoading:
             return "AI 正在整理重点"
         case .aiFailed:
@@ -355,7 +356,8 @@ extension InboxItem {
             isAtMention: isAtMention,
             inboundCountSinceLastOutbound: 1,
             reasons: reasons,
-            suggestedReplyMinutes: suggestedReplyMinutes
+            suggestedReplyMinutes: suggestedReplyMinutes,
+            contextNotification: contextNotification
         )
     }
 }

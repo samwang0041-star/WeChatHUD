@@ -11,11 +11,15 @@ import Foundation
 final class URLRequestRecorder: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var capturedRequests: [URLRequest] = []
     nonisolated(unsafe) static var stubbedResponse: (Data, URLResponse)? = nil
+    /// Optional FIFO responses for tests that exercise multiple AI calls in
+    /// one operation. When set, each intercepted request consumes one entry.
+    nonisolated(unsafe) static var stubbedResponses: [(Data, URLResponse)] = []
     nonisolated(unsafe) static var installed = false
 
     static func install() {
         capturedRequests = []
         stubbedResponse = nil
+        stubbedResponses = []
         URLProtocol.registerClass(URLRequestRecorder.self)
         installed = true
     }
@@ -24,6 +28,7 @@ final class URLRequestRecorder: URLProtocol, @unchecked Sendable {
         URLProtocol.unregisterClass(URLRequestRecorder.self)
         capturedRequests = []
         stubbedResponse = nil
+        stubbedResponses = []
         installed = false
     }
 
@@ -54,7 +59,13 @@ final class URLRequestRecorder: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         URLRequestRecorder.capturedRequests.append(request)
-        if let (data, resp) = URLRequestRecorder.stubbedResponse {
+        let response: (Data, URLResponse)? = {
+            if !URLRequestRecorder.stubbedResponses.isEmpty {
+                return URLRequestRecorder.stubbedResponses.removeFirst()
+            }
+            return URLRequestRecorder.stubbedResponse
+        }()
+        if let (data, resp) = response {
             client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)

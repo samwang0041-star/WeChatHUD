@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: FloatingPanel!
     var panelState: PanelState!
     var monitor: ChatMonitor!
@@ -11,8 +11,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var aiService: AIService!
     var fsWatcher: FSEventsWatcher?
     private var statusItem: NSStatusItem?
+    private var updateMenuItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
     private var wechatYieldRestoreWorkItem: DispatchWorkItem?
+    private var relaunchWaitTask: Task<Void, Never>?
+    /// The onboarding window is owned here instead of being looked up by
+    /// title, so dismissal always targets exactly this window and a second
+    /// request re-fronts it instead of stacking a duplicate.
+    private var onboardingWindow: NSWindow?
 
     /// `@Published` fires an initial emission to every new subscriber.
     /// We ride that to position the panel on launch, but do it
@@ -24,25 +30,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[WCHUD] launch — pid=\(ProcessInfo.processInfo.processIdentifier)")
-        // Initialize data layer
-        store = HUDStore()
+        // Resolve the selected account before opening its business database.
+        // Device AI/sync preferences are shared; no chat data is copied between accounts.
+        let selectedRoot: String?
         do {
-            try store.open()
+            if PreviewRuntime.isEnabled {
+                store = HUDStore(dbPath: PreviewRuntime.directory + "/hud.sqlite3")
+                try store.open()
+                selectedRoot = PreviewRuntime.directory + "/no-wechat"
+            } else {
+                let bootstrap = try AccountStoreCoordinator().bootstrap()
+                store = bootstrap.store
+                selectedRoot = bootstrap.databaseRoot
+            }
         } catch {
-            print("Failed to open HUDStore: \(error)")
+            let alert = NSAlert()
+            alert.messageText = "无法打开助手数据"
+            alert.informativeText = "账号数据或设备设置未能读取。为避免混用账号，本次启动已停止；请检查本地存储后重试。"
+            alert.runModal()
+            NSApp.terminate(nil)
+            return
         }
 
-        // Cache strategy comes from persisted settings (default = persistent).
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let customDBDir: String? = (syncCfg.wechatDBPath != "auto" && !syncCfg.wechatDBPath.isEmpty)
-            ? syncCfg.wechatDBPath
-            : nil
-        reader = WeChatReader(dbDir: customDBDir, cacheStrategy: syncCfg.cacheStrategy)
+        reader = PreviewRuntime.isEnabled
+            ? WeChatReader(keysPath: PreviewRuntime.directory + "/no-keys.json", dbDir: selectedRoot, cacheStrategy: .memory)
+            : WeChatReader(keysPath: syncCfg.keysFilePath, dbDir: selectedRoot ?? "", cacheStrategy: syncCfg.cacheStrategy)
 
         // AI config comes from the settings table — seeded on first launch
         // by HUDStore.open(). Source code never carries the endpoint URL
         // or model name; loadAIConfig() is the single read point.
-        aiService = AIService(config: store.loadAIConfig())
+        aiService = AIService(config: PreviewRuntime.isEnabled ? AIConfig() : store.loadAIConfig())
 
         // Initialize services
         panelState = PanelState()
@@ -189,8 +207,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // focus from the app the user was typing in.
                 switch state {
                 case .detail:
+                    // Opening a conversation is an explicit editing action.
+                    // A nonactivating panel can expose an AX text responder
+                    // while the accessory application still lacks input focus.
                     self.panel.allowsBecomeKey = true
-                    self.panel.makeKey()
+                    NSApp.activate(ignoringOtherApps: true)
+                    self.panel.makeKeyAndOrderFront(nil)
                     // Use light appearance for settings, dark for conversation detail
                     let isSettings = self.panelState.selectedChatUsername == nil
                     self.panel.setDetailAppearance(isSettings)
@@ -248,19 +270,74 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        // First-launch onboarding
-        if store.getSetting("onboarded") == nil {
-            showOnboarding()
+        // In-place briefing card in the notification banner: keep the
+        // panel frame in step with the expanded card. @Published fires
+        // in willSet, so use the sink parameter (the new value) instead
+        // of reading panelState.briefingExpanded, which still holds the
+        // old value inside the sink.
+        panelState.$briefingExpanded
+            .dropFirst()
+            .filter { [weak self] _ in self?.panelState.isReady == true }
+            .removeDuplicates()
+            .sink { [weak self] expanded in
+                guard let self = self else { return }
+                guard self.panelState.currentState == .notification else { return }
+                let (w, h) = self.panelSize(for: .notification, briefingExpanded: expanded)
+                AnimationDebugger.logEvent("briefingExpanded -> \(expanded) target=(\(String(format: "%.1f", w))×\(String(format: "%.1f", h)))")
+                let curr = self.panel.frame
+                // Same tolerance as the measurement sink: skip only
+                // when both dimensions already match (width never
+                // changes between collapsed and expanded, so this must
+                // not require a width delta).
+                guard abs(h - curr.height) >= 2 || abs(w - curr.width) >= 2 else { return }
+                self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.briefingExpanded")
+            }
+            .store(in: &cancellables)
+
+        panelState.$snoozeMenuExpanded
+            .dropFirst()
+            .filter { [weak self] _ in self?.panelState.isReady == true }
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.resizeNotificationPanel(caller: "AppDelegate.snoozeMenuExpanded")
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.addObserver(
+            forName: .hudIslandNeedsResize, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.resizeNotificationPanel(caller: "AppDelegate.islandNeedsResize")
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .hudShowOnboarding, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showOnboarding() }
         }
 
         // Start the monitor (includes initial scan + WeChat process observer).
-        monitor.start()
+        if PreviewRuntime.isEnabled {
+            PreviewRuntime.applyAccessibilityOverrides()
+            PreviewRuntime.installCaptureBridge()
+            PreviewRuntime.seed(store: store, monitor: monitor)
+        } else {
+            startMonitoringAfterRelaunch()
+        }
 
-        // Start FSEvents-based file watcher for incremental updates.
-        startFSWatcher()
+        AppUpdateController.shared.bind(store: store)
+        if !PreviewRuntime.isEnabled {
+            AppUpdateController.shared.scheduleLaunchCheck()
+        }
 
         // Menu bar status item
         setupMenuBarItem()
+        if store.getSetting("onboarded") == nil {
+            showOnboarding()
+        } else if PreviewRuntime.isEnabled {
+            panelState.showDetail()
+        }
 
         // Forward whitelist-message previews to the banner. Any non-nil
         // publish from ChatMonitor (which, post-change, fires for every
@@ -277,20 +354,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // presentation semantics. Raw group @ is FYI unless a
                 // later action item supplies ask/action evidence.
                 let semantic = notif.presentationSemanticState
-                let shouldNotify: Bool = {
-                    switch semantic {
-                    case .privateVIPRisk:
-                        return cfg.important
-                    case .groupMentionFYI:
-                        return cfg.atMention && (notif.attentionLevel == .vip || cfg.allWhitelist)
-                    case .privateInfoOnly, .groupInfoOnly:
-                        return cfg.allWhitelist
-                    default:
-                        return false
-                    }
-                }()
-
-                guard shouldNotify else { return }
+                guard cfg.shouldPresent(semantic) else { return }
                 self.panelState.showNotification(duration: TimeInterval(cfg.durationSeconds))
             }
             .store(in: &cancellables)
@@ -303,6 +367,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await self.aiService.updateConfig(cfg)
                     await self.monitor.refreshReplySuggesterConfig()
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .hudDisplayPreferenceDidChange)
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification))
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let cfg = self.store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
+                self.panel.displayScreen = cfg.displayScreen
+                let (width, height) = self.panelSize(for: self.panelState.currentState)
+                self.panel.setFrameInstantly(height: height, width: width)
+                self.panelState.invalidateMeasuredSize()
             }
             .store(in: &cancellables)
 
@@ -341,7 +417,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self = self,
                       self.panelState.currentState == .extended,
                       self.panel.frame.contains(NSEvent.mouseLocation) else { return }
-                self.panelState.popoverOpen = true
+                self.panelState.menuTrackingOpen = true
             }
             .store(in: &cancellables)
 
@@ -350,7 +426,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 guard let self = self else { return }
                 self.panelState.updateMouseInside(self.panel.frame.contains(NSEvent.mouseLocation))
-                self.panelState.popoverOpen = false
+                self.panelState.menuTrackingOpen = false
+            }
+            .store(in: &cancellables)
+
+        panelState.$islandTextInputActive
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] active in
+                guard let self else { return }
+                if active {
+                    self.panel.allowsBecomeKey = true
+                    NSApp.activate(ignoringOtherApps: true)
+                    self.panel.makeKeyAndOrderFront(nil)
+                } else if self.panelState.currentState != .detail {
+                    self.panel.allowsBecomeKey = false
+                }
             }
             .store(in: &cancellables)
 
@@ -380,6 +470,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     }
 
+    private func configureMainMenu() {
+        let main = NSMenu()
+        let applicationItem = NSMenuItem()
+        let application = NSMenu(title: "WeChatHUD")
+        application.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(openSettings), keyEquivalent: "1"))
+        application.addItem(NSMenuItem(title: "设置…", action: #selector(openPreferences), keyEquivalent: ","))
+        application.addItem(NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: ""))
+        application.addItem(.separator())
+        let quit = NSMenuItem(title: "退出 WeChatHUD", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = NSApp
+        application.addItem(quit)
+        applicationItem.submenu = application
+        main.addItem(applicationItem)
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "编辑")
+        for (title, selector, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] {
+            edit.addItem(NSMenuItem(title: title, action: Selector(selector), keyEquivalent: key))
+        }
+        editItem.submenu = edit
+        main.addItem(editItem)
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: "窗口")
+        window.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        window.addItem(NSMenuItem(title: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        let helpItem = NSMenuItem()
+        let help = NSMenu(title: "帮助")
+        help.addItem(NSMenuItem(title: "WeChatHUD 使用指南", action: #selector(openGuide), keyEquivalent: "?"))
+        helpItem.submenu = help
+        main.addItem(helpItem)
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = window
+        NSApp.helpMenu = help
+    }
+
+    @objc private func openGuide() {
+        MainActor.assumeIsolated {
+            panelState.pendingSettingsTab = "guide"
+            panelState.showDetail()
+        }
+    }
+
+    @objc private func openPreferences() {
+        MainActor.assumeIsolated {
+            panelState.pendingSettingsTab = "system"
+            panelState.showDetail()
+        }
+    }
+
     /// Set up menu bar status item with unread badge.
     @MainActor
     private func setupMenuBarItem() {
@@ -387,14 +527,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarIcon()
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "显示/隐藏 HUD", action: #selector(toggleHUD), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "显示/隐藏浮窗", action: #selector(toggleHUD), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "使用指南…", action: #selector(openGuide), keyEquivalent: "?"))
         menu.addItem(NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "打开复盘…", action: #selector(openRetrospective), keyEquivalent: "R"))
-        menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(openSettings), keyEquivalent: ","))
+        let updateItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateMenuItem = updateItem
+        menu.addItem(updateItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
+
+        AppUpdateController.shared.$offer
+            .combineLatest(AppUpdateController.shared.$phase)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] offer, _ in
+                if let offer {
+                    self?.updateMenuItem?.title = "查看更新 \(offer.version)…"
+                } else {
+                    self?.updateMenuItem?.title = "检查更新…"
+                }
+            }
+            .store(in: &cancellables)
 
         // Update badge when inbox items OR VIP escalation tiers change.
         // Priority: VIP at T2+ takes over with a "!" prefix + aging,
@@ -491,6 +647,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { panelState.showDetail() }
     }
 
+    @objc private func checkForUpdates() {
+        MainActor.assumeIsolated {
+            panelState.pendingSettingsTab = "preferences"
+            panelState.showDetail()
+            NotificationCenter.default.post(name: .hudSwitchTab, object: "preferences")
+            if AppUpdateController.shared.offer == nil {
+                Task { await AppUpdateController.shared.check(force: true, installIfEnabled: false) }
+            }
+        }
+    }
+
     @objc private func openRetrospective() {
         MainActor.assumeIsolated {
             RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
@@ -506,25 +673,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Show first-launch onboarding in a separate window.
-    private func showOnboarding() {
+    @objc func showOnboarding() {
+        // Re-front the existing window instead of stacking duplicates.
+        if let existing = onboardingWindow {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         let onboardingView = OnboardingView {
-            // Dismiss onboarding window
-            NSApp.windows.first { $0.title == "WeChatHUD 设置向导" }?.close()
+            [weak self] in self?.closeOnboardingWindow()
         }
         .environmentObject(store)
         .environmentObject(monitor)
 
         let hostingView = NSHostingView(rootView: onboardingView)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 680),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "WeChatHUD 设置向导"
+        window.title = CompanionProductCopy.brandName
+        window.identifier = NSUserInterfaceItemIdentifier("onboarding")
         window.contentView = hostingView
+        // Keep the window object alive across close. The default
+        // released-on-close behaviour frees it while AppKit still holds
+        // references from the in-flight button event, which is what crashed
+        // in objc_autoreleasePoolPop after an AX click.
+        window.isReleasedWhenClosed = false
+        window.delegate = self
         window.center()
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        onboardingWindow = window
+    }
+
+    /// Close onboarding outside the button/AX event stack. Closing the key
+    /// window synchronously from its own click handler tears down the view
+    /// that is still mid-event; one main-queue hop lets the event finish.
+    private func closeOnboardingWindow() {
+        guard let window = onboardingWindow else { return }
+        onboardingWindow = nil
+        DispatchQueue.main.async {
+            window.close()
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === onboardingWindow else { return }
+        onboardingWindow = nil
+        panelState.showDetail()
     }
 
     /// Handle keyboard shortcuts. Returns true if the event was consumed.
@@ -533,6 +731,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         // Esc → collapse to compact
         if event.keyCode == 53 {
+            guard event.window === panel else { return false }
             panelState.collapse()
             return true
         }
@@ -540,7 +739,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard event.modifierFlags.contains(.command) else { return false }
 
         switch event.charactersIgnoringModifiers {
+        case "1":
+            panelState.pendingSettingsTab = "today"
+            panelState.showDetail()
+            return true
         case ",":
+            panelState.pendingSettingsTab = "system"
             panelState.showDetail()
             return true
         default:
@@ -555,7 +759,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// is measured as `notchWidth + 2*wingWidth` where wing width
     /// scales with content (longer AI summary = wider left wing).
     @MainActor
-    private func panelSize(for state: HUDState) -> (CGFloat, CGFloat) {
+    private func resizeNotificationPanel(caller: String) {
+        guard panelState.isReady, panelState.currentState == .notification else { return }
+        let (w, h) = panelSize(for: .notification)
+        let curr = panel.frame
+        guard abs(h - curr.height) >= 2 || abs(w - curr.width) >= 2 else { return }
+        panel.animateHeight(to: h, width: w, caller: caller)
+    }
+
+    @MainActor
+    private func panelSize(for state: HUDState, briefingExpanded: Bool? = nil) -> (CGFloat, CGFloat) {
         // Ensure we read the freshest notch geometry — the cached
         // `panel.notch` may be stale (initial placeholder or from a
         // previous screen) and using it produces a width/height
@@ -578,7 +791,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Minimal-mode preview drops out of the island: narrow
             // width (notch + some wings) with enough height for a
             // two-line preview directly below the notch.
-            return (notch.notchWidth + 220, notch.notchHeight + 72)
+            // An expanded in-place briefing card adds roughly its
+            // rendered height; the briefingExpanded sink animates the
+            // frame when the card toggles.
+            let expanded = briefingExpanded ?? panelState.briefingExpanded
+            let snoozeExtra: CGFloat = panelState.snoozeMenuExpanded ? IslandChrome.snoozeExtra : 0
+            let height = notch.notchHeight + IslandChrome.notificationBaseBelowNotch
+                + (expanded ? IslandChrome.briefingExtra : 0) + snoozeExtra
+            return (max(IslandChrome.notificationMinWidth, notch.notchWidth + 240), height)
         case .detail:
             return (PanelState.width(for: state), PanelState.height(for: state))
         }
@@ -605,7 +825,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fsWatcher = watcher
     }
 
+    /// Launch Services acknowledges the new window before the old process
+    /// exits. Keep its monitor dormant until the old instance is gone so
+    /// account queues and automatic sends never run in two instances here.
+    @MainActor
+    private func startMonitoringAfterRelaunch() {
+        guard let parentPID = relaunchParent(
+            arguments: CommandLine.arguments,
+            currentPID: Int32(ProcessInfo.processInfo.processIdentifier)
+        ), let parent = NSRunningApplication(processIdentifier: parentPID),
+           parent.bundleIdentifier == Bundle.main.bundleIdentifier else {
+            monitor.start()
+            startFSWatcher()
+            return
+        }
+        relaunchWaitTask = Task { @MainActor [weak self] in
+            for _ in 0..<100 {
+                guard !Task.isCancelled, let self else { return }
+                if parent.isTerminated {
+                    self.monitor.start()
+                    self.startFSWatcher()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            let alert = NSAlert()
+            alert.messageText = "聊天伴侣尚未完成重新打开"
+            alert.informativeText = "原来的窗口仍在运行。请回到原窗口继续使用，再试一次。"
+            alert.runModal()
+            NSApp.terminate(nil)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        relaunchWaitTask?.cancel()
         fsWatcher?.stop()
         monitor.stop()
         store.close()

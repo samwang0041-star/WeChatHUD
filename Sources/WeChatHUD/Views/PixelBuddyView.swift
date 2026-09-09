@@ -31,7 +31,7 @@ struct AIBuddyOverlay: View {
         ZStack(alignment: .topTrailing) {
             PixelBuddyView(mood: effectiveMood)
                 .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) { isHovering = hovering }
+                    withMotion(CompanionMotion.ease(0.15)) { isHovering = hovering }
                 }
 
             if isHovering {
@@ -464,6 +464,7 @@ func framesForMood(_ mood: BuddyMood) -> [Frame] {
 
 struct PixelBuddyView: View {
     let mood: BuddyMood
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Crop region — only render the interesting part of the 24x24 grid
     private static let cropTop = 8
@@ -494,8 +495,13 @@ struct PixelBuddyView: View {
                 }
             }
         }
+        .accessibilityHidden(true)
         .onChange(of: mood) {
             frameIndex = 0
+        }
+        .onChange(of: reduceMotion) {
+            frameIndex = 0
+            startTimer()
         }
         .onAppear { startTimer() }
         .onDisappear { stopTimer() }
@@ -503,6 +509,7 @@ struct PixelBuddyView: View {
 
     private func startTimer() {
         stopTimer()
+        guard !reduceMotion else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
             DispatchQueue.main.async {
                 frameIndex = (frameIndex + 1) % frames.count

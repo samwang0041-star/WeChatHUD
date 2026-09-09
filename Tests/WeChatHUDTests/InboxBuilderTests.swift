@@ -17,7 +17,8 @@ final class InboxBuilderTests: XCTestCase {
         priority: ReplyDebtPriority = .p1,
         score: Int = 6,
         unreadCount: Int = 1,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        contextNotification: HUDNotification? = nil
     ) -> ReplyDebtItem {
         ReplyDebtItem(
             id: chatUsername,
@@ -36,7 +37,8 @@ final class InboxBuilderTests: XCTestCase {
             isAtMention: isAtMention,
             inboundCountSinceLastOutbound: 1,
             reasons: [],
-            suggestedReplyMinutes: 30
+            suggestedReplyMinutes: 30,
+            contextNotification: contextNotification
         )
     }
 
@@ -44,11 +46,13 @@ final class InboxBuilderTests: XCTestCase {
         chatUsername: String = "wxid_vip",
         chatName: String = "VIP",
         senderName: String = "Boss",
+        messageID: String = "1",
         snippet: String = "FYI info",
         attentionLevel: WhitelistAttentionLevel = .vip,
         isAtMention: Bool = false,
         kind: HUDNotificationKind = .privateChat,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        rawText: String? = nil
     ) -> HUDNotification {
         HUDNotification(
             chatUsername: chatUsername,
@@ -56,8 +60,8 @@ final class InboxBuilderTests: XCTestCase {
             senderUsername: "sender_u",
             senderName: senderName,
             attentionLevel: attentionLevel,
-            messageID: "1",
-            rawText: snippet,
+            messageID: messageID,
+            rawText: rawText ?? snippet,
             snippet: snippet,
             isAtMention: isAtMention,
             timestamp: timestamp,
@@ -89,6 +93,52 @@ final class InboxBuilderTests: XCTestCase {
         let items = InboxBuilder.build(replyDebtItems: [debt], notifications: [notif], dismissed: [:])
         XCTAssertEqual(items.count, 1, "same chatUsername should dedup to 1 item")
         XCTAssertTrue(items[0].actionRequired, "debt takes precedence")
+    }
+
+    func testDebtContextIsNotReplacedByAnotherNotificationFromSameChat() {
+        let source = makeNotification(
+            chatUsername: "wxid_shared",
+            messageID: "debt-source",
+            rawText: "债务来源原文"
+        )
+        let otherMessage = makeNotification(
+            chatUsername: "wxid_shared",
+            messageID: "other-message",
+            rawText: "同会话另一条通知"
+        )
+        let debt = makeDebtItem(chatUsername: "wxid_shared", contextNotification: source)
+
+        let items = InboxBuilder.build(
+            replyDebtItems: [debt],
+            notifications: [otherMessage],
+            dismissed: [:]
+        )
+
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].contextNotification?.messageID, "debt-source")
+        XCTAssertEqual(items[0].contextNotification?.rawText, "债务来源原文")
+    }
+
+    func testNotificationContextKeepsMessageIDAndSurvivesReplyDebtRoundTrip() {
+        let original = makeNotification(
+            chatUsername: "wxid_info",
+            messageID: "notification-source",
+            snippet: "摘要",
+            rawText: "通知路径的完整原文，不应被摘要替换"
+        )
+
+        let item = InboxBuilder.build(
+            replyDebtItems: [],
+            notifications: [original],
+            dismissed: [:]
+        ).first
+
+        XCTAssertEqual(item?.contextNotification?.messageID, "notification-source")
+        XCTAssertEqual(item?.contextNotification?.rawText, "通知路径的完整原文，不应被摘要替换")
+
+        let roundTrippedDebt = item?.toReplyDebtItem()
+        XCTAssertEqual(roundTrippedDebt?.contextNotification?.messageID, "notification-source")
+        XCTAssertEqual(roundTrippedDebt?.contextNotification?.rawText, "通知路径的完整原文，不应被摘要替换")
     }
 
     func testSortOrderPriorityThenTime() {
@@ -161,5 +211,13 @@ final class InboxBuilderTests: XCTestCase {
         XCTAssertFalse(items[0].actionRequired, "bare @ notification is not action evidence")
         XCTAssertEqual(items[0].priority, .p0)
         XCTAssertEqual(items[0].semanticState, .groupMentionFYI)
+    }
+
+    func testNotificationActionItemNeverUsesAnotherChat() {
+        let notif = makeNotification(chatUsername: "wxid_boss", chatName: "老板")
+        let item = notif.actionInboxItem()
+        XCTAssertEqual(item.chatUsername, "wxid_boss")
+        XCTAssertEqual(item.chatName, "老板")
+        XCTAssertNotEqual(item.chatUsername, "wxid_other")
     }
 }

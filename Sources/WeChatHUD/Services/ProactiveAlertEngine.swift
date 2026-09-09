@@ -1,6 +1,13 @@
 import Foundation
 import UserNotifications
 
+typealias ProactiveAlertNotificationSender = (
+    _ title: String,
+    _ body: String,
+    _ identifier: String,
+    _ completion: @escaping @Sendable (Error?) -> Void
+) -> Void
+
 /// Rule-based proactive alert engine. Evaluates conditions after each scan
 /// and pushes macOS notifications for critical signals.
 ///
@@ -8,13 +15,21 @@ import UserNotifications
 @MainActor
 final class ProactiveAlertEngine {
     private let store: HUDStore
+    private let now: () -> Date
+    private let sendNotification: ProactiveAlertNotificationSender
     private var alertHistory: [Date] = []
     private let maxAlertsPerHour = 5
     /// Per-identifier dedup — prevents the same alert (e.g. commitment
     /// deadline, P0 debt) from firing on every 10s scan and burning
     /// through the hourly budget. Each identifier fires at most once
     /// per hour.
-    private var pushedIdentifiers: Set<String> = []
+    /// The timestamp is the successful delivery submission time, so an
+    /// identifier becomes eligible again after one hour.
+    private var pushedIdentifiers: [String: Date] = [:]
+    /// Notification submissions are asynchronous. Keep an identifier
+    /// reserved until its completion arrives so two scans cannot enqueue
+    /// the same identifier concurrently.
+    private var inFlightIdentifiers: Set<String> = []
 
     /// Current escalation tier for each VIP chat that has something
     /// outstanding. Keyed by chatUsername. Cleared when the chat is
@@ -45,7 +60,21 @@ final class ProactiveAlertEngine {
 
     init(store: HUDStore) {
         self.store = store
+        self.now = Date.init
+        self.sendNotification = Self.systemNotificationSender
         requestNotificationPermission()
+    }
+
+    /// Injectable initializer for deterministic rule tests. The production
+    /// initializer above keeps the existing notification-permission behavior.
+    init(
+        store: HUDStore,
+        now: @escaping () -> Date,
+        sendNotification: @escaping ProactiveAlertNotificationSender
+    ) {
+        self.store = store
+        self.now = now
+        self.sendNotification = sendNotification
     }
 
     /// Evaluate all rules against current state. Called after each scan.
@@ -55,23 +84,20 @@ final class ProactiveAlertEngine {
         commitments: [Commitment],
         recentNotifications: [HUDNotification]
     ) {
-        // Prune old alert history
-        let oneHourAgo = Date(timeIntervalSinceNow: -3600)
-        alertHistory.removeAll { $0 < oneHourAgo }
+        let evaluationNow = now()
+        pruneExpiredState(at: evaluationNow)
 
         // Rule 1: VIP message overdue — with escalation tiers.
         var newTiers: [String: VIPAlertTier] = [:]
         for item in unreadItems where item.isVIP {
-            let overdueMinutes = Int(Date().timeIntervalSince(item.timestamp) / 60)
+            let overdueMinutes = Int(evaluationNow.timeIntervalSince(item.timestamp) / 60)
             let tier = VIPAlertTier.compute(overdueMinutes: overdueMinutes)
             guard tier != .none else { continue }
             newTiers[item.chatUsername] = tier
 
             let previousTier = lastPushedTier[item.chatUsername] ?? .none
             if tier > previousTier {
-                lastPushedTier[item.chatUsername] = tier
                 pushEscalationAlert(item: item, tier: tier)
-                onTierAdvanced?(item.senderName, tier)
             }
         }
 
@@ -87,19 +113,11 @@ final class ProactiveAlertEngine {
             onTiersChanged?(newTiers)
         }
 
-        // Rule 2: Commitment deadline approaching (< 1 hour)
-        for c in commitments where c.status == .pending {
-            if let deadline = c.deadlineAt {
-                let remaining = deadline.timeIntervalSince(Date())
-                if remaining > 0 && remaining < 3600 {
-                    pushAlert(
-                        title: "承诺即将到期",
-                        body: "\(c.content) → \(c.commitTo)",
-                        identifier: "commitment-\(c.msgUID)"
-                    )
-                }
-            }
-        }
+        // Rule 2: Pending deadlines and overdue commitments. Include elapsed
+        // deadlines even before the asynchronous tracker persists .overdue.
+        // Distinct phases let the deadline alert follow a recent heads-up;
+        // the normal in-flight dedup and hourly budget still prevent flooding.
+        evaluateCommitmentDeadlines(commitments: commitments, at: evaluationNow)
 
         // Rule 3: Burst messages (3+ from same person in unread)
         var senderCounts: [String: Int] = [:]
@@ -116,12 +134,39 @@ final class ProactiveAlertEngine {
 
         // Rule 4: High-priority reply debt
         if let p0 = replyDebtItems.first, p0.priority == .p0 {
-            let minutes = Int(Date().timeIntervalSince(p0.timestamp) / 60)
+            let minutes = Int(evaluationNow.timeIntervalSince(p0.timestamp) / 60)
             if minutes > 30 {
                 pushAlert(
                     title: "紧急待回复",
                     body: "\(p0.chatName): \(p0.preview)",
                     identifier: "p0-debt-\(p0.chatUsername)"
+                )
+            }
+        }
+    }
+
+    /// Evaluate only durable commitment deadlines. This is intentionally
+    /// separate from the full scan evaluation so the safety timer can keep
+    /// reminders alive while WeChat is closed or its database is unavailable.
+    /// The caller should load commitments directly from HUDStore, rather than
+    /// using a potentially stale published UI snapshot.
+    func evaluateCommitmentDeadlines(commitments: [Commitment], at date: Date? = nil) {
+        let evaluationNow = date ?? now()
+        pruneExpiredState(at: evaluationNow)
+        for c in commitments where c.status == .pending || c.status == .overdue {
+            guard let deadline = c.deadlineAt else { continue }
+            let remaining = deadline.timeIntervalSince(evaluationNow)
+            if remaining <= 0 {
+                pushAlert(
+                    title: "承诺已到期",
+                    body: "\(c.content) → \(c.commitTo)",
+                    identifier: "commitment-overdue-\(c.msgUID)"
+                )
+            } else if remaining < 3600 {
+                pushAlert(
+                    title: "承诺即将到期",
+                    body: "\(c.content) → \(c.commitTo)",
+                    identifier: "commitment-\(c.msgUID)"
                 )
             }
         }
@@ -145,6 +190,8 @@ final class ProactiveAlertEngine {
             // and menu-bar badge are enough. A silent notification
             // still bumps the system Notification Center list which
             // we don't want at this tier.
+            lastPushedTier[item.chatUsername] = max(lastPushedTier[item.chatUsername] ?? .none, tier)
+            onTierAdvanced?(item.senderName, tier)
             return
         case .t3:
             title = "VIP 等你 2 小时了"
@@ -155,10 +202,21 @@ final class ProactiveAlertEngine {
         case .none:
             return
         }
-        pushAlert(
+        _ = pushAlert(
             title: title,
             body: body,
-            identifier: "vip-\(item.chatUsername)-\(tier.rawValue)"
+            identifier: "vip-\(item.chatUsername)-\(tier.rawValue)",
+            onSuccess: { [weak self] in
+                guard let self else { return }
+                // If the item was resolved while the OS request was in
+                // flight, leave the cleared state alone. A later re-entry
+                // can start a fresh alert cycle.
+                guard let currentTier = self.vipAlertTiers[item.chatUsername],
+                      currentTier >= tier else { return }
+                guard tier > (self.lastPushedTier[item.chatUsername] ?? .none) else { return }
+                self.lastPushedTier[item.chatUsername] = tier
+                self.onTierAdvanced?(item.senderName, tier)
+            }
         )
     }
 
@@ -194,10 +252,50 @@ final class ProactiveAlertEngine {
         )
     }
 
-    private func pushAlert(title: String, body: String, identifier: String) {
-        guard alertHistory.count < maxAlertsPerHour else { return }
-        guard !pushedIdentifiers.contains(identifier) else { return }
+    @discardableResult
+    private func pushAlert(
+        title: String,
+        body: String,
+        identifier: String,
+        onSuccess: (() -> Void)? = nil
+    ) -> Bool {
+        let submissionNow = now()
+        pruneExpiredState(at: submissionNow)
+        guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
+        guard pushedIdentifiers[identifier] == nil else { return false }
+        guard inFlightIdentifiers.insert(identifier).inserted else { return false }
 
+        sendNotification(title, body, identifier) { [weak self] error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.inFlightIdentifiers.remove(identifier) != nil else { return }
+                guard error == nil else {
+                    // Failed submissions do not consume the hourly budget or
+                    // identifier dedup window. The next evaluation can retry.
+                    if let error {
+                        print("[WCHUD] Alert push failed: \(error)")
+                    }
+                    return
+                }
+
+                let deliveredAt = self.now()
+                self.pruneExpiredState(at: deliveredAt)
+                self.alertHistory.append(deliveredAt)
+                self.pushedIdentifiers[identifier] = deliveredAt
+                onSuccess?()
+            }
+        }
+        return true
+    }
+
+    private func pruneExpiredState(at date: Date) {
+        let cutoff = date.addingTimeInterval(-3600)
+        alertHistory.removeAll { $0 <= cutoff }
+        pushedIdentifiers = pushedIdentifiers.filter { $0.value > cutoff }
+    }
+
+    private static let systemNotificationSender: ProactiveAlertNotificationSender = {
+        title, body, identifier, completion in
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -206,21 +304,9 @@ final class ProactiveAlertEngine {
         let request = UNNotificationRequest(
             identifier: identifier,
             content: content,
-            trigger: nil  // deliver immediately
+            trigger: nil
         )
-
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("[WCHUD] Alert push failed: \(error)")
-            }
-        }
-        alertHistory.append(Date())
-        pushedIdentifiers.insert(identifier)
-
-        // Prune identifier set when history is pruned (1h TTL)
-        if pushedIdentifiers.count > 50 {
-            pushedIdentifiers.removeAll()
-        }
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: completion)
     }
 
     private func requestNotificationPermission() {

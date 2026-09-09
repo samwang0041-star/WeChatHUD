@@ -44,17 +44,25 @@ extension Notification.Name {
 enum WeChatLauncher {
     enum SendFailureReason: String, Equatable {
         case weChatNotRunning
+        case previewMode
         case accessibilityDenied
         case lostForeground
         case chatMismatch
         case inputNotFound
+        case accountUnverified
+        case accountMismatch
+        case operationInProgress
 
         var userMessage: String {
             switch self {
+            case .previewMode: return "演示模式不会操作微信"
+            case .accountUnverified: return "无法核验微信当前账号，已停止自动操作。回复内容仍在助手中，请在微信核对账号后手动回复。"
+            case .accountMismatch: return "微信当前账号与助手数据账号不一致，已停止自动操作。请保留回复内容并核对账号。"
+            case .operationInProgress: return "另一条回复正在处理，当前内容仍保留。请稍后重试。"
             case .weChatNotRunning:
                 return "微信未运行"
             case .accessibilityDenied:
-                return "缺少辅助功能权限"
+                return "macOS 尚未允许当前应用操作微信。若系统开关已开启，请重新打开聊天伴侣后再试。"
             case .lostForeground:
                 return "微信窗口失去焦点，已取消发送"
             case .chatMismatch:
@@ -66,6 +74,7 @@ enum WeChatLauncher {
     }
 
     enum SendResult: Equatable {
+        /// The send keystroke was posted; callers must verify a database receipt.
         case sent
         case failed(SendFailureReason)
 
@@ -136,6 +145,7 @@ enum WeChatLauncher {
     private static let kVK_ANSI_F: CGKeyCode = 0x03
     private static let kVK_ANSI_V: CGKeyCode = 0x09
     private static let kVK_Return: CGKeyCode = 0x24
+    private static let kVK_Delete: CGKeyCode = 0x33
     private static let kVK_Escape: CGKeyCode = 0x35
 
     /// Bring WeChat forward, populate its search field with `chatName`,
@@ -143,7 +153,33 @@ enum WeChatLauncher {
     /// isn't running (we don't try to launch it; the user typically
     /// keeps it running anyway).
     static func openChat(named chatName: String) {
-        openChat(named: chatName, draftText: nil)
+        Task { @MainActor in
+            guard !PreviewRuntime.isEnabled else { return }
+            guard !textActionInFlight else { notifyUser(SendFailureReason.operationInProgress.userMessage); return }
+            textActionInFlight = true
+            defer { textActionInFlight = false }
+            guard let app = runningWeChat() else { notifyUser(SendFailureReason.weChatNotRunning.userMessage); return }
+            guard let root = (NSApp.delegate as? AppDelegate)?.reader?.dbDir, !root.isEmpty,
+                  let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else {
+                notifyUser(SendFailureReason.accountUnverified.userMessage)
+                return
+            }
+            let binding = AccountBinding(
+                processID: app.processIdentifier,
+                launchDate: launchDate,
+                bundleID: bundleID,
+                databaseRoot: WeChatAccountEvidence.canonicalRoot(root)
+            )
+            if let failure = await accountFailure(binding) { notifyUser(failure.userMessage); return }
+            let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            guard AXIsProcessTrustedWithOptions(opts) else { notifyUser(SendFailureReason.accessibilityDenied.userMessage); return }
+            let saved = ClipboardGuard.save()
+            defer {
+                ClipboardGuard.restore(saved)
+                finishClipboardRestore()
+            }
+            if let failure = await navigateToChat(app: app, chatName: chatName) { notifyUser(failure.userMessage) }
+        }
     }
 
     /// Open a chat and paste `text` into the message input as an
@@ -152,214 +188,12 @@ enum WeChatLauncher {
     /// because `openChat` itself uses the pasteboard for WeChat search
     /// and only restores the previous clipboard.
     static func openChatAndPaste(named chatName: String, text: String) {
-        openChat(named: chatName, draftText: text)
-    }
-
-    private static func openChat(named chatName: String, draftText: String?) {
-        log("openChat called: \(chatName)")
-
-        // Signal the HUD to get out of the way — we're about to raise WeChat
-        // to the foreground and don't want the panel overlapping its UI.
-        // Fire on main so Combine/UI sinks dispatch correctly regardless of
-        // the caller thread.
-        postWillOpenWeChat()
-
-        guard let app = runningWeChat() else {
-            log("WeChat not running — abort")
-            NSSound.beep()
-            notifyUser("微信未运行 — 请先打开微信")
-            postDidFinishWeChatAutomation()
-            return
-        }
-        log("WeChat found: \(app.bundleIdentifier ?? "?") pid=\(app.processIdentifier)")
-
-        // Accessibility permission check + prompt. First call surfaces
-        // the system dialog; caller retries after the user grants.
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(opts)
-        log("AXIsProcessTrusted = \(trusted)")
-        if !trusted {
-            log("Accessibility not granted — prompt surfaced, caller should retry")
-            notifyUser("需要辅助功能权限才能打开微信会话 — 已弹出系统授权请求")
-            postDidFinishWeChatAutomation()
-            return
-        }
-
-        // Stash clipboard upfront so even if activation fails we can
-        // still restore it. (We also prime the pasteboard with the
-        // target name so Cmd+V will paste correctly.)
-        let pasteboard = NSPasteboard.general
-        let saved = pasteboard.string(forType: .string)
-        pasteboard.clearContents()
-        pasteboard.setString(chatName, forType: .string)
-
-        // Activate WeChat via NSWorkspace — the only activation path
-        // that works from an LSUIElement accessory. `activate(options:)`
-        // on NSRunningApplication is silently ignored from our process.
-        activateWeChat(app: app) { activated in
-            guard activated else {
-                log("activation failed; restoring clipboard")
-                restoreClipboard(saved: saved)
-                notifyUser("打开失败：无法激活微信窗口")
-                return
-            }
-
-            waitUntilFrontmost(app: app) { isFront in
-                guard isFront else {
-                    log("WeChat never became frontmost; aborting")
-                    restoreClipboard(saved: saved)
-                    notifyUser("打开失败：微信未能切到前台")
-                    return
-                }
-                // Small settle pass so the AX tree has the freshest
-                // session list before we walk it.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    tryAXOpenOrFallback(
-                        app: app,
-                        chatName: chatName,
-                        savedClipboard: saved,
-                        draftText: draftText
-                    )
-                }
-            }
+        Task { @MainActor in
+            let result = await performTextAction(chatName: chatName, text: text, typingDelay: 0, sendKey: nil)
+            if case .failed(let reason) = result { notifyUser(reason.userMessage) }
         }
     }
 
-    /// Primary path: use the Accessibility API to walk WeChat's UI
-    /// tree. Two-step strategy (ported from BiboyQG/WeChat-MCP):
-    ///
-    /// 1. Look for a session element in the visible sidebar
-    ///    (`session_item_<name>` identifier). Click it if found.
-    /// 2. Otherwise, use AX to focus the search field, type the chat
-    ///    name via clipboard paste (search field is guaranteed focused
-    ///    via `AXUIElementPerformAction(raise)`), then walk the
-    ///    `search_list` AX element looking for an exact-match entry
-    ///    under the Contacts or Group Chats section header, and
-    ///    click it.
-    ///
-    /// Reference:
-    /// https://github.com/BiboyQG/WeChat-MCP/blob/master/src/wechat_mcp/wechat_accessibility.py
-    private static func tryAXOpenOrFallback(
-        app: NSRunningApplication,
-        chatName: String,
-        savedClipboard: String?,
-        draftText: String?
-    ) {
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-        // --- Step 0: already on this chat? ---
-        //
-        // If WeChat is already showing the target chat, clicking its
-        // session_item_ in the sidebar (which is the currently-
-        // selected row) would toggle the selection off and **close
-        // the chat view**. Detect this case by reading the current
-        // chat title from the AX tree and skip straight to focusing
-        // the message input.
-        if let currentTitle = currentChatTitle(in: axApp) {
-            log("AX: current chat title = \(currentTitle)")
-            if normalizeChatTitle(currentTitle) == normalizeChatTitle(chatName) {
-                log("AX: already on target chat; skipping open, just focusing input")
-                focusMessageInput(in: axApp, savedClipboard: savedClipboard, draftText: draftText)
-                return
-            }
-        }
-
-        // --- Step 1: direct sidebar click if visible ---
-        if let element = findSessionItem(in: axApp, chatName: chatName) {
-            log("AX: found session_item_\(chatName), clicking center")
-            if clickAXElementCenter(element) {
-                log("AX click posted")
-                focusMessageInput(in: axApp, savedClipboard: savedClipboard, draftText: draftText)
-                return
-            }
-        }
-        log("AX: not in sidebar, trying AX search field")
-
-        // --- Step 2: AX search field + results click ---
-        guard let searchField = findSearchField(in: axApp) else {
-            log("AX: search field not found, giving up")
-            restoreClipboard(saved: savedClipboard)
-            notifyUser("打开失败：微信搜索框未找到（可能微信版本已更新）")
-            return
-        }
-        log("AX: found search field; clicking to activate")
-
-        // Physical click on the search field center — more reliable
-        // than `kAXRaiseAction` alone. `AXUIElementPerformAction(raise)`
-        // sometimes gives focus without actually opening WeChat's
-        // search popover, which is what we observed between clicks
-        // #1 (popover open) and #2 (popover never appeared).
-        _ = clickAXElementCenter(searchField)
-
-        // Settle delay after the click; then paste.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            // Clear any existing value via AX as a best-effort guard
-            // against stale text in the field from a prior click.
-            _ = AXUIElementSetAttributeValue(searchField, kAXValueAttribute as CFString, "" as CFTypeRef)
-
-            log("AX: Cmd+A on search field")
-            postCmdKey(kVK_ANSI_A)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                log("AX: Cmd+V on search field")
-                postCmdKey(kVK_ANSI_V)
-
-                // Poll search_list instead of a hard-coded wait.
-                // WeChat populates the popover asynchronously and the
-                // latency varies with visual state.
-                pollForSearchListAndSelect(
-                    axApp: axApp,
-                    chatName: chatName,
-                    savedClipboard: savedClipboard,
-                    draftText: draftText,
-                    attempts: 12,
-                    interval: 0.1
-                )
-            }
-        }
-    }
-
-    private static func pollForSearchListAndSelect(
-        axApp: AXUIElement,
-        chatName: String,
-        savedClipboard: String?,
-        draftText: String?,
-        attempts: Int,
-        interval: TimeInterval
-    ) {
-        guard attempts > 0 else {
-            log("AX: search_item_\(chatName) never appeared, giving up")
-            restoreClipboard(saved: savedClipboard)
-            notifyUser("打开失败：在微信中没找到会话「\(chatName)」")
-            return
-        }
-
-        // WeChat's search_list element exists even in the "recent
-        // searches" state, so we can't stop polling just because the
-        // list has entries — we have to keep polling until our
-        // specific `search_item_<chatName>` shows up (WeChat populates
-        // results asynchronously after the text-change event).
-        if let match = findSearchItem(in: axApp, chatName: chatName) {
-            log("AX: found search_item_\(chatName) after \((12 - attempts + 1) * Int(interval * 1000))ms polling, clicking")
-            _ = clickAXElementCenter(match)
-            focusMessageInput(in: axApp, savedClipboard: savedClipboard, draftText: draftText)
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
-            pollForSearchListAndSelect(
-                axApp: axApp,
-                chatName: chatName,
-                savedClipboard: savedClipboard,
-                draftText: draftText,
-                attempts: attempts - 1,
-                interval: interval
-            )
-        }
-    }
-
-    /// Find the search-result element for a given chat name. Mirror of
-    /// `findSessionItem` but looks for the `search_item_` prefix used
-    /// inside `search_list`.
     private static func findSearchItem(in axApp: AXUIElement, chatName: String) -> AXUIElement? {
         let targetID = "search_item_\(chatName)"
         return dfsAX(axApp, maxDepth: 40) { el in
@@ -376,49 +210,6 @@ enum WeChatLauncher {
     /// Strategy: poll for an `AXTextArea` that is NOT the search field
     /// (title "Search"/"搜索"). When found, AX-focus it and also post
     /// a synthetic click at its center as a belt-and-braces measure.
-    private static func focusMessageInput(
-        in axApp: AXUIElement,
-        savedClipboard: String?,
-        draftText: String? = nil,
-        attemptsLeft: Int = 10
-    ) {
-        // Small settle so the chat view has a chance to render before
-        // we go hunting for its input field.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            if let input = findMessageInput(in: axApp) {
-                log("AX: focusing message input")
-                // Prefer AX-level focus (no cursor warp, no racy click).
-                _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                // Belt-and-braces: also click the center. Some WeChat
-                // builds ignore the AX focus write and need a real
-                // click event to transfer first-responder.
-                _ = clickAXElementCenter(input)
-                if let draftText, !draftText.isEmpty {
-                    pasteDraftText(draftText, restoreClipboardTo: savedClipboard)
-                } else {
-                    restoreClipboard(saved: savedClipboard)
-                }
-                return
-            }
-            if attemptsLeft > 0 {
-                focusMessageInput(
-                    in: axApp,
-                    savedClipboard: savedClipboard,
-                    draftText: draftText,
-                    attemptsLeft: attemptsLeft - 1
-                )
-            } else {
-                log("AX: message input not found — aborting focus step")
-                restoreClipboard(saved: savedClipboard)
-            }
-        }
-    }
-
-    /// Heuristic: WeChat's chat view has exactly one `AXTextArea`
-    /// inside it (the message input). The sidebar has another one
-    /// with title "Search"/"搜索" — we skip that. We also exclude
-    /// elements with zero size since the search field sometimes
-    /// lingers hidden in the tree.
     private static func findMessageInput(in axApp: AXUIElement) -> AXUIElement? {
         return dfsAX(axApp, maxDepth: 40) { el in
             guard let role = axString(el, kAXRoleAttribute),
@@ -731,32 +522,9 @@ enum WeChatLauncher {
         poll()
     }
 
-    private static func restoreClipboard(saved: String?) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        if let saved = saved {
-            pb.setString(saved, forType: .string)
-        }
+    private static func finishClipboardRestore() {
         log("clipboard restored")
         postDidFinishWeChatAutomation()
-    }
-
-    private static func pasteDraftText(_ text: String, restoreClipboardTo saved: String?) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
-        log("AX: pasting reply draft (\(text.count) chars)")
-
-        // Replace any existing text in the input. This mirrors the
-        // user's explicit choice of a suggestion and avoids appending
-        // to a stale half-written draft.
-        postCmdKey(kVK_ANSI_A)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            postCmdKey(kVK_ANSI_V)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                restoreClipboard(saved: saved)
-            }
-        }
     }
 
     /// Bring WeChat to the foreground from a background / accessory
@@ -865,115 +633,188 @@ enum WeChatLauncher {
         typingDelay: TimeInterval = 0,
         sendKey: WeChatSendKey = .cmdEnter
     ) async -> SendResult {
-        return await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                guard let app = runningWeChat() else {
-                    log("sendMessage: WeChat not running")
-                    continuation.resume(returning: .failed(.weChatNotRunning))
-                    return
-                }
-                let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-                guard AXIsProcessTrustedWithOptions(opts) else {
-                    log("sendMessage: Accessibility not granted")
-                    continuation.resume(returning: .failed(.accessibilityDenied))
-                    return
-                }
-
-                let axApp = AXUIElementCreateApplication(app.processIdentifier)
-
-                // Navigate to the chat first
-                let pasteboard = NSPasteboard.general
-                let saved = pasteboard.string(forType: .string)
-
-                // Open the chat
-                openChat(named: chatName)
-
-                // Wait for chat to open, then focus input
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    guard isWeChatFrontmost(app) else {
-                        log("sendMessage: WeChat lost foreground before input focus")
-                        restoreClipboard(saved: saved)
-                        continuation.resume(returning: .failed(.lostForeground))
-                        return
-                    }
-                    guard isCurrentChat(axApp: axApp, chatName: chatName) else {
-                        log("sendMessage: current chat title mismatch before input focus")
-                        restoreClipboard(saved: saved)
-                        continuation.resume(returning: .failed(.chatMismatch))
-                        return
-                    }
-                    // Find and focus message input FIRST (triggers "typing" indicator for peer)
-                    if let input = findMessageInput(in: axApp) {
-                        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                        _ = clickAXElementCenter(input)
-
-                        // Wait typingDelay BEFORE pasting — peer sees "typing" but
-                        // local user won't see text in input box during the delay.
-                        let preDelay = max(0.2, typingDelay)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + preDelay) {
-                            guard isWeChatFrontmost(app) else {
-                                log("sendMessage: WeChat lost foreground during typing delay")
-                                restoreClipboard(saved: saved)
-                                continuation.resume(returning: .failed(.lostForeground))
-                                return
-                            }
-                            guard isCurrentChat(axApp: axApp, chatName: chatName) else {
-                                log("sendMessage: target chat changed during typing delay")
-                                restoreClipboard(saved: saved)
-                                continuation.resume(returning: .failed(.chatMismatch))
-                                return
-                            }
-                            // Now paste and immediately send
-                            pasteboard.clearContents()
-                            pasteboard.setString(text, forType: .string)
-                            postCmdKey(kVK_ANSI_A)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                postCmdKey(kVK_ANSI_V)
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    guard isWeChatFrontmost(app) else {
-                                        log("sendMessage: WeChat lost foreground before submit")
-                                        restoreClipboard(saved: saved)
-                                        continuation.resume(returning: .failed(.lostForeground))
-                                        return
-                                    }
-                                    guard isCurrentChat(axApp: axApp, chatName: chatName) else {
-                                        log("sendMessage: target chat changed before submit")
-                                        restoreClipboard(saved: saved)
-                                        continuation.resume(returning: .failed(.chatMismatch))
-                                        return
-                                    }
-                                    // Submit keystroke depends on the user's
-                                    // WeChat preference: Cmd+Enter for default
-                                    // WeChat ("Enter=newline"), plain Enter if
-                                    // they flipped it to "Enter=send".
-                                    switch sendKey {
-                                    case .cmdEnter: postCmdKey(kVK_Return)
-                                    case .enter:    postKey(kVK_Return)
-                                    }
-                                    log("sendMessage: sent to \(chatName) via \(sendKey) (typingDelay=\(String(format: "%.1f", typingDelay))s)")
-                                    // Restore clipboard
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                        pasteboard.clearContents()
-                                        if let saved = saved {
-                                            pasteboard.setString(saved, forType: .string)
-                                        }
-                                    }
-                                    continuation.resume(returning: .sent)
-                                }
-                            }
-                        }
-                    } else {
-                        log("sendMessage: message input not found")
-                        restoreClipboard(saved: saved)
-                        continuation.resume(returning: .failed(.inputNotFound))
-                    }
-                }
-            }
+        switch await performTextAction(chatName: chatName, text: text, typingDelay: typingDelay, sendKey: sendKey) {
+        case .completed: return .sent
+        case .failed(let reason): return .failed(reason)
         }
     }
 
+    @MainActor private static var textActionInFlight = false
+
+    private enum TextActionOutcome {
+        case completed
+        case failed(SendFailureReason)
+    }
+
+    private struct AccountBinding {
+        let processID: Int32
+        let launchDate: Date
+        let bundleID: String
+        let databaseRoot: String
+    }
+
+    /// The only path that places reply text into WeChat. A matching chat title
+    /// cannot establish an account, so verify process database evidence before
+    /// navigation, before paste, and once more immediately before the send key.
+    @MainActor private static func performTextAction(
+        chatName: String, text: String, typingDelay: TimeInterval, sendKey: WeChatSendKey?
+    ) async -> TextActionOutcome {
+        guard !PreviewRuntime.isEnabled else { return .failed(.previewMode) }
+        guard !textActionInFlight else { return .failed(.operationInProgress) }
+        textActionInFlight = true
+        defer { textActionInFlight = false }
+        guard let app = runningWeChat() else { return .failed(.weChatNotRunning) }
+        guard let root = (NSApp.delegate as? AppDelegate)?.reader?.dbDir, !root.isEmpty,
+              let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else { return .failed(.accountUnverified) }
+        let binding = AccountBinding(processID: app.processIdentifier, launchDate: launchDate,
+                                     bundleID: bundleID, databaseRoot: WeChatAccountEvidence.canonicalRoot(root))
+        if let failure = await accountFailure(binding) { return .failed(failure) }
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        guard AXIsProcessTrustedWithOptions(opts) else { return .failed(.accessibilityDenied) }
+        let pasteboard = NSPasteboard.general
+        let saved = ClipboardGuard.save()
+        defer {
+            ClipboardGuard.restore(saved)
+            finishClipboardRestore()
+        }
+        let axApp = AXUIElementCreateApplication(binding.processID)
+        if let failure = await navigateToChat(app: app, chatName: chatName) { return .failed(failure) }
+        guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
+        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        guard let input = findMessageInput(in: axApp) else { return .failed(.inputNotFound) }
+        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        _ = clickAXElementCenter(input)
+        guard await pause(max(0.2, typingDelay)) else { return .failed(.accountUnverified) }
+        if let failure = await accountFailure(binding) { return .failed(failure) }
+        guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
+        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        postCmdKey(kVK_ANSI_A)
+        guard await pause(0.05) else { return .failed(.accountUnverified) }
+        // Check again after the asynchronous gap before any reply text is pasted.
+        if let failure = await accountFailure(binding) { return .failed(failure) }
+        guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
+        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        postCmdKey(kVK_ANSI_V)
+        // Keep the reply on the pasteboard until the queued paste event is consumed.
+        guard await pause(0.15) else {
+            retractPastedDraft(axApp: axApp)
+            return .failed(.accountUnverified)
+        }
+        guard let sendKey else { return .completed }
+        if let failure = await accountFailure(binding) {
+            retractPastedDraft(axApp: axApp)
+            return .failed(failure)
+        }
+        guard isWeChatFrontmost(app) else {
+            retractPastedDraft(axApp: axApp)
+            return .failed(.lostForeground)
+        }
+        guard isCurrentChat(axApp: axApp, chatName: chatName) else {
+            retractPastedDraft(axApp: axApp)
+            return .failed(.chatMismatch)
+        }
+        switch sendKey {
+        case .cmdEnter: postCmdKey(kVK_Return)
+        case .enter: postKey(kVK_Return)
+        }
+        log("sendMessage: account-verified submit to \(chatName)")
+        return .completed
+    }
+
+    /// Every navigation step is awaited while the shared automation lock is held.
+    /// No delayed search or clipboard callback survives this method's return.
+    @MainActor private static func navigateToChat(app: NSRunningApplication, chatName: String) async -> SendFailureReason? {
+        postWillOpenWeChat()
+        let activated = await withCheckedContinuation { continuation in
+            activateWeChat(app: app) { continuation.resume(returning: $0) }
+        }
+        guard activated else { return .lostForeground }
+        for _ in 0..<40 {
+            if isWeChatFrontmost(app) { break }
+            guard await pause(0.04) else { return .lostForeground }
+        }
+        guard isWeChatFrontmost(app), await pause(0.08) else { return .lostForeground }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        // Do not use sidebar substring matching: similarly named chats are distinct.
+        guard let search = findSearchField(in: axApp), clickAXElementCenter(search) else { return .inputNotFound }
+        guard await pause(0.12), isWeChatFrontmost(app) else { return .lostForeground }
+        _ = AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        postCmdKey(kVK_ANSI_A)
+        guard await pause(0.05), isWeChatFrontmost(app) else { return .lostForeground }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(chatName, forType: .string)
+        postCmdKey(kVK_ANSI_V)
+        // Allow search results to settle, then reject multiple exact results.
+        guard await pause(0.4) else { return .lostForeground }
+        for _ in 0..<12 {
+            guard isWeChatFrontmost(app), !Task.isCancelled else { return .lostForeground }
+            var matches: [AXUIElement] = []
+            var remaining = 5000
+            func collect(_ element: AXUIElement, depth: Int) {
+                guard depth <= 40, remaining > 0 else { return }
+                remaining -= 1
+                if axString(element, kAXIdentifierAttribute) == "search_item_\(chatName)" { matches.append(element) }
+                for child in axChildren(element) { collect(child, depth: depth + 1) }
+            }
+            collect(axApp, depth: 0)
+            guard remaining > 0, matches.count <= 1 else { return .chatMismatch }
+            if let match = matches.first {
+                guard clickAXElementCenter(match) else { return .chatMismatch }
+                for _ in 0..<12 {
+                    guard await pause(0.1), isWeChatFrontmost(app) else { return .lostForeground }
+                    if isCurrentChat(axApp: axApp, chatName: chatName), let input = findMessageInput(in: axApp) {
+                        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                        return clickAXElementCenter(input) ? nil : .inputNotFound
+                    }
+                }
+                return .chatMismatch
+            }
+            guard await pause(0.1) else { return .lostForeground }
+        }
+        return .chatMismatch
+    }
+
+    @MainActor private static func retractPastedDraft(axApp: AXUIElement) {
+        guard let input = findMessageInput(in: axApp) else { return }
+        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        postCmdKey(kVK_ANSI_A)
+        postKey(kVK_Delete)
+        log("retracted pasted draft after aborted send")
+    }
+
+    @MainActor private static func accountFailure(_ binding: AccountBinding) async -> SendFailureReason? {
+        guard sameProcess(binding),
+              let root = (NSApp.delegate as? AppDelegate)?.reader?.dbDir,
+              WeChatAccountEvidence.canonicalRoot(root) == binding.databaseRoot else { return .accountUnverified }
+        let verdict = await WeChatAccountEvidence.inspect(processID: binding.processID, expectedRoot: binding.databaseRoot)
+        guard sameProcess(binding), !Task.isCancelled,
+              let currentRoot = (NSApp.delegate as? AppDelegate)?.reader?.dbDir,
+              WeChatAccountEvidence.canonicalRoot(currentRoot) == binding.databaseRoot else { return .accountUnverified }
+        switch verdict {
+        case .verified: return nil
+        case .unverified: return .accountUnverified
+        case .mismatch: return .accountMismatch
+        }
+    }
+
+    private static func sameProcess(_ binding: AccountBinding) -> Bool {
+        guard let current = NSRunningApplication(processIdentifier: binding.processID) else { return false }
+        return current.bundleIdentifier == binding.bundleID && WeChatAccountEvidence.processMatches(
+            expectedPID: binding.processID, expectedLaunch: binding.launchDate,
+            actualPID: current.processIdentifier, actualLaunch: current.launchDate, terminated: current.isTerminated
+        )
+    }
+
+    private static func pause(_ seconds: TimeInterval) async -> Bool {
+        do { try await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000)); return true }
+        catch { return false }
+    }
+
     private static func isWeChatFrontmost(_ app: NSRunningApplication) -> Bool {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == app.bundleIdentifier
+        NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && !app.isTerminated
     }
 
     private static func isCurrentChat(axApp: AXUIElement, chatName: String) -> Bool {

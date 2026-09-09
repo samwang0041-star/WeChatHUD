@@ -20,6 +20,11 @@ struct InsightOverviewDashboard: View {
                     if insightCoordinator.insightLoading {
                         inlineLoadingBanner
                     }
+                    if overview.totalMessages == 0 {
+                        ContentUnavailableView("这里还没有可以回顾的聊天", systemImage: "bubble.left.and.text.bubble.right",
+                            description: Text("先连上微信，再选有消息的日期和对话。空着不代表你没有该回或该做的事。"))
+                            .padding(.vertical, 48)
+                    } else {
                     InsightRadarSection(
                         chatInsights: insightCoordinator.chatInsights,
                         chatNames: insightChatNameMap(),
@@ -48,6 +53,7 @@ struct InsightOverviewDashboard: View {
                     collapsibleWorkLife(overview)
                     collapsibleTopChats()
                     collapsiblePressure(overview)
+                    }
                 } else {
                     initialLoadingState
                 }
@@ -61,7 +67,7 @@ struct InsightOverviewDashboard: View {
     private var overviewHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("今日通信态势")
+                Text("今天聊了什么")
                     .font(.system(size: 20, weight: .bold))
                 Text("\(insightStore.selectedScope.rawValue) · \(insightStore.selectedWindow.rawValue) · \(insightStore.overview?.activeChats ?? 0) 个活跃对话 · \(insightStore.overview?.totalMessages ?? 0) 条消息")
                     .font(.system(size: 11))
@@ -79,12 +85,13 @@ struct InsightOverviewDashboard: View {
                         Image(systemName: insightCoordinator.insightLoading ? "stop.circle" : "arrow.clockwise")
                             .font(.system(size: 11))
                     }
-                    .disabled(insightCoordinator.insightLoading)
+                    .disabled(insightCoordinator.insightLoading || (insightStore.overview?.totalMessages ?? 0) == 0)
                     .help("重新生成今日 AI 态势")
                     Button(action: onCopyReport) {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 11))
                     }
+                    .disabled((insightStore.overview?.totalMessages ?? 0) == 0)
                     .help("复制为 Markdown 简报")
                 }
                 Picker("", selection: $insightStore.selectedWindow) {
@@ -348,7 +355,7 @@ struct InsightOverviewDashboard: View {
         let expanded = expandedModules.contains(id)
         return VStack(alignment: .leading, spacing: 0) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.18)) {
+                withMotion(CompanionMotion.ease(0.18)) {
                     if expanded { expandedModules.remove(id) }
                     else { expandedModules.insert(id) }
                 }

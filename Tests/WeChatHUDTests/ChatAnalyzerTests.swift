@@ -52,13 +52,12 @@ final class ChatAnalyzerDecodingTests: XCTestCase {
         )
 
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "requested-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
         let analyzer = ChatAnalyzer(store: store, aiService: AIService(config: cfg))
         let now = Int(Date().timeIntervalSince1970)
         let messages = [

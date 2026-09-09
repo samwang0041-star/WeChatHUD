@@ -75,6 +75,15 @@ final class ChatMonitor: ObservableObject {
     @Published var dailyReportIsLoading: Bool = false
     @Published var dailyReportActionInsights: [String: DailyReportActionInsight] = [:]
     @Published var dailyReportViewedDate: Date = Date()
+    /// Token for the most recent daily-report request. Async enrichment from
+    /// an older date must never overwrite the report selected most recently.
+    private(set) var dailyReportLoadGeneration: UUID?
+
+    func beginDailyReportLoad() -> UUID {
+        let generation = UUID()
+        dailyReportLoadGeneration = generation
+        return generation
+    }
     /// Autopilot state — exposed for UI.
     @Published var autopilotActive = false
     @Published var autopilotPaused = false
@@ -91,6 +100,10 @@ final class ChatMonitor: ObservableObject {
     @Published var inboxItems: [InboxItem] = []
     /// Published handled items for the UI (dismissed/snoozed/silenced).
     @Published var handledItems: [InboxItem] = []
+    @Published var unsavedReplyDraftEdits: [Int64: String] = [:]
+    @Published var composerDraftEdits: [String: String] = [:]
+    /// Persisted action failures stay visible until acknowledged or a retry succeeds.
+    @Published var inboxActionError: String?
     /// All currently silenced inbox items (for management UI).
     var silencedItems: [InboxItem] {
         handledItems.filter { $0.status == .silenced }
@@ -182,9 +195,16 @@ final class ChatMonitor: ObservableObject {
     private let groupContextBriefingService: GroupContextBriefingService
     private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
-    private lazy var aiClassifier: AIClassifier = {
+    lazy var aiClassifier: AIClassifier = {
         AIClassifier(store: store, aiService: aiService)
     }()
+    @Published var classificationPendingCount = 0
+    @Published var classificationProcessing = false
+    @Published var discussionPendingCount = 0
+    @Published var discussionProcessing = false
+    private var discussionWorker: Task<Void, Never>?
+    private var discussionWorkerGeneration = UUID()
+    var classificationWorker: Task<Void, Never>?
     private lazy var commitmentTracker: CommitmentTracker = {
         CommitmentTracker(store: store, aiService: aiService)
     }()
@@ -254,7 +274,7 @@ final class ChatMonitor: ObservableObject {
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
     private var summaryInFlight: Set<String> = []
-    private let inboxSummaryAnalysisType = "inbox_row_summary_v2"
+    private let inboxSummaryAnalysisType = "inbox_row_summary_v3"
     private var contactInferenceTask: Task<Void, Never>?
 
     /// Pre-generated expand-panel data — analysis + reply suggestions
@@ -391,6 +411,17 @@ final class ChatMonitor: ObservableObject {
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                // Snooze expiry is time-based, so reevaluate it even when
+                // WeChat is closed or its databases have not changed.
+                self.refreshExpiredSnoozes()
+                // Deadline reminders must keep running even when the scan is
+                // gated because WeChat is closed or its DB is unavailable.
+                // Read only active commitments from durable storage so a
+                // stale published snapshot cannot resurrect completed work.
+                let activeCommitments = self.store.loadCommitments(status: .pending)
+                    + self.store.loadCommitments(status: .overdue)
+                self.alertEngine.evaluateCommitmentDeadlines(commitments: activeCommitments)
+
                 // Process pending send queue every 10s (fast enough for UI countdown accuracy)
                 let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
                 await self.autopilotService?.processPendingQueue(config: config)
@@ -406,6 +437,8 @@ final class ChatMonitor: ObservableObject {
                     }
                 }
 
+                self.resumeDiscussionExtraction()
+
                 // Full scan every Nth tick (interval from sync settings)
                 self.safetyTickCount += 1
                 if self.safetyTickCount % scanEveryNTicks == 0 {
@@ -420,6 +453,11 @@ final class ChatMonitor: ObservableObject {
     }
 
     func stop() {
+        discussionWorkerGeneration = UUID()
+        discussionWorker?.cancel()
+        discussionWorker = nil
+        discussionProcessing = false
+        classificationWorker?.cancel()
         safetyTimer?.invalidate()
         safetyTimer = nil
         debounceWorkItem?.cancel()
@@ -431,6 +469,7 @@ final class ChatMonitor: ObservableObject {
     }
 
     func refreshNow() {
+        guard !PreviewRuntime.isEnabled else { reloadAIData(); return }
         Task { @MainActor in
             await self.scan()
         }
@@ -463,7 +502,6 @@ final class ChatMonitor: ObservableObject {
         let service = groupContextBriefingService
         let catchup = aiGroupCatchup
         let analyzer = contextAnalyzer
-        let readerRef = reader
         let storeRef = store
         let myUname = reader.myUsername()
         Task { [weak self] in
@@ -483,13 +521,12 @@ final class ChatMonitor: ObservableObject {
             }
 
             // --- Phase 2: AIGroupCatchup + ContextAnalyzer (fire-and-forget, non-blocking) ---
-            // Load recent messages for the chat once; reuse for both downstream services.
+            // Reuse the exact source-centered window loaded by phase 1. If
+            // the source was unavailable, never let phase 2 reinterpret the
+            // chat's newest messages as the trigger context.
+            guard !result.contextMessages.isEmpty else { return }
             let supportsDeepActionContext = notification.supportsDeepActionContext
-            let contextMessages = (try? readerRef.getMessages(
-                chatUsername: notification.chatUsername,
-                limit: 30,
-                sinceLocalId: nil
-            )) ?? []
+            let contextMessages = result.contextMessages
 
             // AIGroupCatchup: enrich briefing with headline / highlights.
             let catchupInput = AIGroupCatchup.Input(
@@ -631,12 +668,14 @@ final class ChatMonitor: ObservableObject {
         senderUsername: String,
         senderName: String
     ) {
-        try? store.ignoreSender(
-            chatUsername: chatUsername,
-            chatName: chatName,
-            senderUsername: senderUsername,
-            senderName: senderName
-        )
+        do {
+            try store.ignoreSender(chatUsername: chatUsername, chatName: chatName,
+                                   senderUsername: senderUsername, senderName: senderName)
+            inboxActionError = nil
+        } catch {
+            inboxActionError = "屏蔽规则未保存，消息仍保持原状。请重试。"
+            return
+        }
 
         let identifier = HUDStore.senderIdentifier(
             senderUsername: senderUsername,
@@ -699,11 +738,14 @@ final class ChatMonitor: ObservableObject {
         senderUsername: String,
         senderName: String
     ) {
-        try? store.unignoreSender(
-            chatUsername: chatUsername,
-            senderUsername: senderUsername,
-            senderName: senderName
-        )
+        do {
+            try store.unignoreSender(chatUsername: chatUsername,
+                                     senderUsername: senderUsername, senderName: senderName)
+            inboxActionError = nil
+        } catch {
+            inboxActionError = "屏蔽规则未能恢复，原规则仍保留。请重试。"
+            return
+        }
         suppressedItems.removeAll {
             $0.isIgnored
                 && $0.chatUsername == chatUsername
@@ -1084,12 +1126,10 @@ final class ChatMonitor: ObservableObject {
             return
         }
 
-        // Gate: user logged into a different WeChat account since we
-        // started. Our `dbDir` is immutable, so every subsequent read
-        // would hit stale DBs for the wrong account. Stop here and
-        // surface the condition so the UI can prompt a restart.
+        // Directory enumeration cannot prove which account is currently logged in.
+        // Stop only when the explicitly configured source is no longer available.
         if reader.hasAccountSwitched() {
-            print("[WCHUD] scan gated — WeChat account switched (was \(reader.myUsername()), now \(reader.detectCurrentAccountWxid() ?? "?"))")
+            print("[WCHUD] scan gated — configured database directory unavailable")
             stats = HUDStats(
                 unreadCount: 0,
                 atMentionCount: 0,
@@ -1136,7 +1176,14 @@ final class ChatMonitor: ObservableObject {
 
         guard let o = outcome else {
             print("[WCHUD] scan failed after \(ms)ms")
-            stats.syncStatus = .error("scan failed")
+            stats = HUDStats(
+                unreadCount: stats.unreadCount,
+                atMentionCount: stats.atMentionCount,
+                vipCount: stats.vipCount,
+                replyDebtCount: stats.replyDebtCount,
+                syncStatus: .error("scan failed"),
+                lastSyncAt: stats.lastSyncAt
+            )
             return
         }
 
@@ -1156,6 +1203,17 @@ final class ChatMonitor: ObservableObject {
         // Build unified inbox from scan results
         rebuildInbox()
         reader.purgeEphemeralCache()
+        // Rows written before the naming fallback existed still carry raw
+        // `…@chatroom` ids. Repair before reloading so the published lists
+        // already show readable names.
+        let repairedNames = repairStaleChatNames()
+        if repairedNames > 0 {
+            print("[WCHUD] repaired \(repairedNames) persisted chat name rows")
+        }
+        let repairedTargets = repairStaleCommitTargets()
+        if repairedTargets > 0 {
+            print("[WCHUD] repaired \(repairedTargets) commitment target rows")
+        }
         reloadAIData()
         runPostScanAI(o)
 
@@ -1204,8 +1262,9 @@ final class ChatMonitor: ObservableObject {
                 let stats = await service.sessionStats
                 let manPaused = await service.manuallyPaused
                 let paused = await service.isPaused
+                let sentCount = await service.sessionSent
                 await MainActor.run {
-                    self.autopilotSessionSent += result.totalSent
+                    self.autopilotSessionSent = sentCount
                     self.autopilotSessionPending += result.totalPending
                     self.autopilotPendingSendQueue = queue
                     self.autopilotSessionStats = stats
@@ -1234,7 +1293,7 @@ final class ChatMonitor: ObservableObject {
     func reloadAIData() {
         commitments = store.loadCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
-        discussionItems = store.loadDiscussionItems(limit: 200)
+        discussionItems = store.loadDiscussionItems()
     }
 
     /// Update a discussion item's status (done / dismissed / archived).
@@ -1242,7 +1301,42 @@ final class ChatMonitor: ObservableObject {
     /// so the row vanishes from the active view immediately.
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) {
         try? store.updateDiscussionItemStatus(id: id, status: status)
-        discussionItems = store.loadDiscussionItems(limit: 200)
+        discussionItems = store.loadDiscussionItems()
+    }
+
+    /// Native workspace write path: only publish after durable storage succeeds.
+    func setDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
+        try store.updateDiscussionItemStatus(id: id, status: status)
+        if let item = discussionItems.first(where: { $0.id == id }),
+           let feedback = DiscussionCorrection.feedback(for: item, status: status) {
+            try store.writeAIFeedback(feedback)
+        }
+        discussionItems = store.loadDiscussionItems()
+    }
+
+    /// Corrects an AI responsibility label and records that correction for
+    /// later prompt/evaluation work.
+    func setDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws {
+        guard let item = discussionItems.first(where: { $0.id == id }) else { return }
+        guard try store.updateDiscussionItemOwner(id: id, owner: owner) else { return }
+        if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
+            try store.writeAIFeedback(feedback)
+        }
+        discussionItems = store.loadDiscussionItems()
+    }
+
+    func setDiscussionItemCorrection(
+        id: Int64,
+        content: String,
+        owner: DiscussionItemOwner,
+        dueAt: Date?
+    ) throws {
+        guard let item = discussionItems.first(where: { $0.id == id }) else { return }
+        guard try store.updateDiscussionItemCorrection(id: id, content: content, owner: owner, dueAt: dueAt) else { return }
+        if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
+            try store.writeAIFeedback(feedback)
+        }
+        discussionItems = store.loadDiscussionItems()
     }
 
     /// Fire-and-forget AI processing for new scan data.
@@ -1345,57 +1439,18 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
-        // 3. AI classify new inbound messages (async)
-        if !outcome.newInboundForClassifier.isEmpty {
-            let classifier = aiClassifier
-            Task {
-                for item in outcome.newInboundForClassifier {
-                    let input = ClassifierInput(
-                        msgUID: item.msg.id,
-                        text: item.msg.text,
-                        senderName: item.msg.senderName,
-                        chatName: item.msg.chatName,
-                        isGroup: item.chatUsername.contains("@chatroom")
-                    )
-                    guard let result = await classifier.classify(message: input) else { continue }
-                    guard result.isAsk, result.confidence >= 0.5 else { continue }
-
-                    let contact = storeRef.getContact(username: item.msg.senderUsername)
-                    let bucket: AskBucket = result.confidence >= 0.85 ? .main : .review
-                    let messageDate = Date(timeIntervalSince1970: Double(item.msg.createTime))
-                    let deadline: Date? = result.deadlineRelative.flatMap {
-                        MessageHelpers.resolveDeadline($0, relativeTo: messageDate)
-                    }
-
-                    let ask = PendingAsk(
-                        id: 0,
-                        msgUID: item.msg.id,
-                        chatUsername: item.chatUsername,
-                        chatName: item.msg.chatName,
-                        senderName: item.msg.senderName,
-                        rawText: item.msg.text,
-                        summary: result.summary,
-                        askType: result.type,
-                        deadlineAt: deadline,
-                        confidence: result.confidence,
-                        bucket: bucket,
-                        status: .pending,
-                        promptVersion: result.promptVersion,
-                        createdAt: messageDate,
-                        updatedAt: Date(),
-                        senderLevel: contact?.attentionLevel,
-                        senderRole: contact?.role,
-                        urgency: nil
-                    )
-                    try? storeRef.upsertPendingAsk(ask)
-                }
-            }
-        }
+        // 3. Drain durable classification work, including failures from earlier scans.
+        drainClassificationQueue()
 
         // 4. Commitment tracking for self outgoing messages (async)
         if !outcome.selfOutgoingMessages.isEmpty {
             let tracker = commitmentTracker
             let readerRef = reader
+            // Resolve names off the main actor: `canonicalDisplayName` reads
+            // the reader's contact cache under its own lock.
+            let resolveName: (String) -> String? = { [weak self] username in
+                self?.canonicalDisplayName(for: username)
+            }
             Task {
                 for item in outcome.selfOutgoingMessages {
                     let contact = storeRef.getContact(username: item.chatUsername)
@@ -1425,10 +1480,15 @@ final class ChatMonitor: ObservableObject {
                     guard result.isCommitment, result.confidence >= 0.72 else { continue }
 
                     let messageDate = Date(timeIntervalSince1970: Double(item.msg.createTime))
-                    let deadline = MessageHelpers.resolveDeadline(result.deadlineExtracted, relativeTo: messageDate)
                     let sourceText = result.sourceText.isEmpty
                         ? item.msg.text
                         : result.sourceText
+                    let deadline = CommitmentDeadlineResolver.resolve(
+                        extracted: result.deadlineExtracted,
+                        label: result.deadlineLabel,
+                        sourceText: sourceText,
+                        messageDate: messageDate
+                    )
                     let contextText = result.contextText.isEmpty
                         ? Self.commitmentContextSnapshot(window.messages, targetID: item.msg.id)
                         : result.contextText
@@ -1441,12 +1501,18 @@ final class ChatMonitor: ObservableObject {
                     let captureReason = result.captureReason.isEmpty
                         ? "你的发言承诺了后续动作"
                         : result.captureReason
+                    // The model sometimes echoes the room id when it cannot tell
+                    // who the promise was made to; resolve it to the same name
+                    // the rest of the UI shows.
+                    let commitTo = ContactIdentityIndex.isRawChatIdentifier(result.commitTo)
+                        ? (resolveName(result.commitTo) ?? resolveName(item.chatUsername) ?? result.commitTo)
+                        : result.commitTo
                     try? storeRef.upsertCommitment(
                         msgUID: item.msg.id,
                         chatUsername: item.chatUsername,
                         chatName: item.chatName,
                         content: result.content,
-                        commitTo: result.commitTo,
+                        commitTo: commitTo,
                         deadlineAt: deadline,
                         confidence: result.confidence,
                         promptVersion: "commitment_v1",
@@ -1512,53 +1578,10 @@ final class ChatMonitor: ObservableObject {
             loadGroupContextBriefing(for: notif)
         }
 
-        // 9. DiscussionTracker — bidirectional item extraction.
-        //
-        // Unlike CommitmentTracker (which only looks at OUR outgoing
-        // promises), this reads both sides of the conversation and
-        // pulls out todos/decisions/info/time-place/questions — a
-        // memory layer the user asked for: "我跟别人聊了可能忘了
-        // 的事情，抽出来做备忘". The weekly report slices these by
-        // hierarchy (上级派给我 / 我派给下级).
-        //
-        // Cost control: only chats with *new* inbound or outbound
-        // messages this scan get analyzed; the tracker itself also
-        // watermarks per chat so re-scans skip unchanged windows.
-        let activeChats = Set(
-            outcome.newInboundForClassifier.map(\.chatUsername)
-        ).union(outcome.selfOutgoingMessages.map(\.chatUsername))
-        if !activeChats.isEmpty {
-            let ai = aiService
-            let tracker = discussionTracker
-            let readerRef = reader
-            let myUname = reader.myUsername()
-            let myDisplay = reader.displayName(for: myUname)
-            let selfNames = reader.mySelfNames
-            Task { @MainActor [weak self] in
-                guard await ai.isConfigured() else { return }
-                for chatUsername in activeChats.prefix(5) {
-                    let messages = (try? readerRef.getMessages(
-                        chatUsername: chatUsername, limit: 40, sinceLocalId: nil
-                    )) ?? []
-                    guard !messages.isEmpty else { continue }
-                    let chatName = readerRef.displayName(for: chatUsername)
-                    let inserted = await tracker.extract(
-                        chatUsername: chatUsername,
-                        chatName: chatName,
-                        messages: messages,
-                        myUsername: myUname,
-                        myDisplayName: myDisplay,
-                        mySelfNames: selfNames
-                    )
-                    if inserted > 0 {
-                        print("[WCHUD] DiscussionTracker: \(chatName) +\(inserted) items")
-                    }
-                }
-                // Refresh published list after batch.
-                guard let self = self else { return }
-                self.discussionItems = self.store.loadDiscussionItems(limit: 200)
-            }
-        }
+        // 9. Discussion messages were durably queued by ScanEngine before
+        // its source cursor advanced. Drain oldest batches without re-reading
+        // a newest-40 window that could skip a burst or an earlier failure.
+        resumeDiscussionExtraction()
 
         // 10. Commitment fulfillment closure.
         //
@@ -1642,16 +1665,21 @@ final class ChatMonitor: ObservableObject {
         let recentCount: Int
     }
 
-    func scanCandidates(limit: Int = 50) -> [ScanCandidate] {
+    /// Source used by the settings scan. Its async scan owns the detached
+    /// reader work; the view only receives value-type results and progress.
+    func contactRecommendationScanSource() -> ContactRecommendationScanSource {
+        ContactRecommendationScanSource(reader: reader)
+    }
+
+    /// Throwing candidate read for settings and diagnostics. The legacy
+    /// `scanCandidates` wrapper below intentionally keeps its empty fallback
+    /// for existing callers.
+    func scanCandidatesThrowing(limit: Int = 50) throws -> [ScanCandidate] {
         let whitelisted = Set(store.loadContacts(level: nil).map(\.username))
         let dismissed = store.dismissedScanUsernames()
         let excluded = whitelisted.union(dismissed)
-        guard let active = try? reader.topActiveContacts(limit: limit + excluded.count) else {
-            return []
-        }
-        return active
-            .filter { !excluded.contains($0.username) }
-            .prefix(limit)
+        return try contactRecommendationScanSource()
+            .loadCandidates(limit: limit, excluding: excluded)
             .map { ScanCandidate(
                 username: $0.username,
                 displayName: $0.displayName,
@@ -1660,11 +1688,20 @@ final class ChatMonitor: ObservableObject {
             ) }
     }
 
+    func scanCandidates(limit: Int = 50) -> [ScanCandidate] {
+        (try? scanCandidatesThrowing(limit: limit)) ?? []
+    }
+
     /// Load recent messages for a chat as (sender, body) tuples — used by
     /// WhitelistScanView to give the AI categorizer real content.
+    func recentMessagesThrowing(chatUsername: String, limit: Int = 20) throws -> [(sender: String, body: String)] {
+        try contactRecommendationScanSource()
+            .readMessages(chatUsername: chatUsername, limit: limit)
+            .map { (sender: $0.sender, body: $0.body) }
+    }
+
     func recentMessages(chatUsername: String, limit: Int = 20) -> [(sender: String, body: String)] {
-        (try? reader.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil))?
-            .map { (sender: $0.senderName, body: $0.text) } ?? []
+        (try? recentMessagesThrowing(chatUsername: chatUsername, limit: limit)) ?? []
     }
 
     /// Last message in `chatUsername` that did NOT come from the user.
@@ -1697,7 +1734,46 @@ final class ChatMonitor: ObservableObject {
 
     /// All WeChat contacts (username → displayName) from the encrypted DB.
     func wechatContacts() -> [String: String] {
-        reader.allContacts()
+        // The contacts UI may open before or long after the first scan; an
+        // empty cache must not be presented as "there are no contacts".
+        _ = try? reader.refreshContactsIfChanged()
+        let contacts = reader.allContacts()
+        print("[WCHUD] wechatContacts dbDir=\(reader.dbDir) count=\(contacts.count)")
+        return contacts
+    }
+
+    /// Fallback source when the contact index is unavailable. Real sessions
+    /// still identify active private chats; this avoids blocking setup while
+    /// preserving explicit user selection.
+    struct ActiveChatCandidate: Identifiable, Equatable {
+        let username: String
+        let displayName: String
+        let unreadCount: Int
+        let lastTimestamp: Int
+        var id: String { username }
+    }
+
+    func activePrivateChatCandidates(limit: Int = 500) -> [ActiveChatCandidate] {
+        guard !PreviewRuntime.isEnabled, !reader.dbDir.isEmpty, !reader.hasAccountSwitched() else { return [] }
+        let sessions = (try? reader.getSessions()) ?? []
+        let excluded = Set(store.loadContacts(level: nil).map(\.username))
+            .union(store.dismissedScanUsernames())
+        let noisePrefixes: Set<String> = ["gh_", "fmessage", "medianote", "newsapp", "notification_", "notifymessage",
+                                          "floatbottle", "qqmail", "brandsessionholder", "masssend", "officialaccounts", "tmessage"]
+        let noiseExact: Set<String> = ["weixin", "filehelper", "voip", "voipapp", "qqsync", "qqsafe", "facebook", "feedsapp"]
+        return sessions
+            .filter { !$0.isGroup }
+            .filter { !excluded.contains($0.username) }
+            .filter { !$0.username.contains("@openim") && !$0.username.contains("@im.chatroom") }
+            .filter { !noiseExact.contains($0.username) && !noisePrefixes.contains(where: $0.username.hasPrefix) }
+            .sorted { $0.lastTimestamp != $1.lastTimestamp ? $0.lastTimestamp > $1.lastTimestamp : $0.username < $1.username }
+            .prefix(max(0, limit))
+            .map { ActiveChatCandidate(
+                username: $0.username,
+                displayName: reader.displayName(for: $0.username),
+                unreadCount: $0.unreadCount,
+                lastTimestamp: $0.lastTimestamp
+            ) }
     }
 
     /// Run AI relationship inference for a contact, using the shared inferrer.
@@ -1787,8 +1863,12 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Save a reply draft for later sending.
-    func saveDraft(chatUsername: String, chatName: String, text: String) throws {
-        try store.saveDraft(chatUsername: chatUsername, chatName: chatName, text: text, sendAt: nil)
+    func saveDraft(chatUsername: String, chatName: String, text: String, replacingDraftID: Int64? = nil) throws {
+        if let replacingDraftID {
+            try store.updateDraft(id: replacingDraftID, chatUsername: chatUsername, text: text)
+        } else {
+            try store.saveDraft(chatUsername: chatUsername, chatName: chatName, text: text, sendAt: nil)
+        }
     }
 
     /// Record AI reply feedback (adopted/ignored) for the learning loop.
@@ -1913,6 +1993,42 @@ final class ChatMonitor: ObservableObject {
         }
     }
 
+    /// Manual retry bypasses persisted and in-memory backoff, but retains all
+    /// source messages and still rechecks the current whitelist before sending.
+    func retryDiscussionExtraction() throws {
+        try store.retryDiscussionMessages()
+        let tracker = discussionTracker
+        Task { @MainActor [weak self] in
+            await tracker.resetRetryBackoff()
+            self?.resumeDiscussionExtraction()
+        }
+    }
+
+    /// Retry durable discussion work even when WeChat has no new messages.
+    /// One worker owns a bounded run; the next timer tick handles remaining work.
+    private func resumeDiscussionExtraction() {
+        guard !PreviewRuntime.isEnabled else { return }
+        if let count = try? store.discussionQueueCount() { discussionPendingCount = count }
+        guard discussionWorker == nil, discussionPendingCount > 0,
+              !reader.dbDir.isEmpty, !reader.hasAccountSwitched() else { return }
+        let tracker = discussionTracker
+        let username = reader.myUsername()
+        guard !username.isEmpty else { return }
+        let displayName = reader.displayName(for: username)
+        let names = reader.mySelfNames
+        let generation = UUID()
+        discussionWorkerGeneration = generation
+        discussionProcessing = true
+        discussionWorker = Task { @MainActor [weak self] in
+            let inserted = await tracker.resumePending(myUsername: username, myDisplayName: displayName, mySelfNames: names)
+            guard let self, self.discussionWorkerGeneration == generation else { return }
+            self.discussionWorker = nil
+            self.discussionProcessing = false
+            if let count = try? self.store.discussionQueueCount() { self.discussionPendingCount = count }
+            if inserted > 0 { self.discussionItems = self.store.loadDiscussionItems() }
+        }
+    }
+
     /// Load pending asks for a specific chat. Used by Person Profile card.
     func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
         Array(store.loadPendingAsks(status: .pending)
@@ -1962,60 +2078,85 @@ final class ChatMonitor: ObservableObject {
         }
     }
 
-    /// Dismiss an inbox item. Persists via `chat_actions.silenced_at` so
-    /// the dismissal survives restarts; anything newer than this
-    /// timestamp reactivates normally.
-    func dismissInboxItem(_ item: InboxItem) {
+    /// Dismiss an inbox item only after its watermark is persisted. Newer
+    /// messages remain eligible to surface normally.
+    @discardableResult
+    func dismissInboxItem(_ item: InboxItem) -> Bool {
         let ts = Int(item.timestamp.timeIntervalSince1970)
-        dismissedInbox[item.chatUsername] = Int64(ts)
-        try? store.silenceChat(chatUsername: item.chatUsername, silencedAt: ts)
-        rebuildInbox()
+        do {
+            try store.silenceChat(chatUsername: item.chatUsername, silencedAt: ts)
+            dismissedInbox[item.chatUsername] = Int64(ts)
+            inboxActionError = nil
+            rebuildInbox()
+            return true
+        } catch {
+            inboxActionError = "未能保存已处理状态，消息仍保持原状态。请重试。"
+            return false
+        }
     }
 
-    /// Snooze an inbox item until a specific date. Persists via
-    /// `chat_actions.snoozed_until` — the next scan after expiry will
-    /// repopulate the chat into the active inbox automatically.
-    func snoozeInboxItem(_ item: InboxItem, until: Date) {
-        snoozedInbox[item.chatUsername] = until
+    /// Persist before changing the visible queue; a failed write must not
+    /// promise a future reminder that was never scheduled.
+    @discardableResult
+    func snoozeInboxItem(_ item: InboxItem, until: Date) -> Bool {
         let untilEpoch = Int(until.timeIntervalSince1970)
-        try? store.snoozeChat(chatUsername: item.chatUsername, until: untilEpoch)
-        rebuildInbox()
+        do {
+            try store.snoozeChat(chatUsername: item.chatUsername, until: untilEpoch)
+            snoozedInbox[item.chatUsername] = Date(timeIntervalSince1970: TimeInterval(untilEpoch))
+            silencedInbox.remove(item.chatUsername)
+            inboxActionError = nil
+            rebuildInbox()
+            return true
+        } catch {
+            inboxActionError = "未能保存稍后提醒，消息仍保持原状态。请重试。"
+            return false
+        }
     }
 
-    /// Silence a chat from the inbox. We use a far-future `silenced_at`
-    /// (10 years out) to cover "silence forever" — strictly newer
-    /// messages than that get through, but in practice nothing will
-    /// arrive from 10 years in the future. Cheaper than adding a new
-    /// dedicated column for what amounts to the same mechanism.
-    func silenceInboxItem(_ item: InboxItem) {
-        silencedInbox.insert(item.chatUsername)
-        let farFuture = Int(Date().timeIntervalSince1970) + 315_360_000 // ~10 years
-        try? store.silenceChat(chatUsername: item.chatUsername, silencedAt: farFuture)
-        rebuildInbox()
+    /// Silence a chat with the existing far-future watermark representation.
+    @discardableResult
+    func silenceInboxItem(_ item: InboxItem) -> Bool {
+        let farFuture = Int(Date().timeIntervalSince1970) + 315_360_000
+        do {
+            try store.silenceChat(chatUsername: item.chatUsername, silencedAt: farFuture)
+            silencedInbox.insert(item.chatUsername)
+            snoozedInbox.removeValue(forKey: item.chatUsername)
+            inboxActionError = nil
+            rebuildInbox()
+            return true
+        } catch {
+            inboxActionError = "未能保存静默状态，消息仍保持原状态。请重试。"
+            return false
+        }
     }
 
-    /// Restore a handled item back to the active inbox.
-    func restoreInboxItem(_ item: InboxItem) {
-        dismissedInbox.removeValue(forKey: item.chatUsername)
-        snoozedInbox.removeValue(forKey: item.chatUsername)
-        silencedInbox.remove(item.chatUsername)
-        // Drop the persisted side too — otherwise a user who silences
-        // via ExtendedTabsView (persistent) then clicks "restore" in
-        // the inbox would only clear the in-memory hint, and the
-        // chat would stay silenced in the store forever.
-        try? store.clearChatAction(chatUsername: item.chatUsername)
-        rebuildInbox()
+    /// Restore all suppression state atomically with the existing single-row
+    /// delete. Do not show an item as active if that delete fails.
+    @discardableResult
+    func restoreInboxItem(_ item: InboxItem) -> Bool {
+        do {
+            try store.clearChatAction(chatUsername: item.chatUsername)
+            dismissedInbox.removeValue(forKey: item.chatUsername)
+            snoozedInbox.removeValue(forKey: item.chatUsername)
+            silencedInbox.remove(item.chatUsername)
+            inboxActionError = nil
+            rebuildInbox()
+            return true
+        } catch {
+            inboxActionError = "未能恢复这条消息，原处理状态仍保留。请重试。"
+            return false
+        }
     }
 
-    /// Unsilence a chat (remove from silenced set).
-    func unsilenceInboxItem(_ item: InboxItem) {
-        silencedInbox.remove(item.chatUsername)
-        try? store.clearChatAction(chatUsername: item.chatUsername)
-        rebuildInbox()
+    /// The persisted operation removes the entire action row, so clear every
+    /// corresponding in-memory suppression flag as well.
+    @discardableResult
+    func unsilenceInboxItem(_ item: InboxItem) -> Bool {
+        restoreInboxItem(item)
     }
 
     /// Rebuild the inbox from current state. Used by all inbox mutation methods.
-    private func rebuildInbox() {
+    func rebuildInbox() {
         let result = InboxBuilder.build(
             replyDebtItems: replyDebtItems,
             notifications: recentNotifications,
@@ -2034,6 +2175,22 @@ final class ChatMonitor: ObservableObject {
 
         // Prune stale cache entries
         cleanSummaryCache()
+    }
+
+    /// Re-evaluate time-based snoozes independently of message scans. This
+    /// lets a snoozed item reappear when its deadline passes even if WeChat is
+    /// closed or its databases remain unchanged.
+    ///
+    /// `now` is injectable so expiry behavior can be tested without sleeping.
+    func refreshExpiredSnoozes(now: Date = Date()) {
+        let expired = snoozedInbox.compactMap { username, expiry in
+            expiry <= now ? username : nil
+        }
+        guard !expired.isEmpty else { return }
+        for username in expired {
+            snoozedInbox.removeValue(forKey: username)
+        }
+        rebuildInbox()
     }
 
     /// Generate reply suggestions for a reply debt item.
@@ -2108,8 +2265,22 @@ final class ChatMonitor: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
             for item in sorted {
-                // Check cache first
                 let cacheKey = item.generationKey
+                let sourceNotification = item.contextNotification.flatMap { notification in
+                    notification.kind == .groupAt ? notification : nil
+                }
+                // Validate a group @ source before consulting cache; an old
+                // summary must not survive after its triggering row vanished.
+                let sourceCentered: [MessageInfo]?
+                if let sourceNotification {
+                    sourceCentered = GroupContextSourceLoader.load(
+                        notification: sourceNotification, reader: readerRef
+                    )
+                    guard sourceCentered != nil else { continue }
+                } else {
+                    sourceCentered = nil
+                }
+                // Check cache after source validation.
                 if let cached = self.loadCachedInboxSummary(for: item) {
                     self.updateItemSummary(generationKey: item.generationKey, summary: cached)
                     continue
@@ -2118,21 +2289,44 @@ final class ChatMonitor: ObservableObject {
                 self.summaryInFlight.insert(cacheKey)
                 defer { self.summaryInFlight.remove(cacheKey) }
 
-                // Build InboxContext — trigger message MUST be the latest
-                // inbound (peer) message in the window. Without the
-                // self-filter, a user's own ack ("收到") that came after
-                // the real trigger would be picked as the trigger
-                // message, the AI would faithfully summarize it as
-                // "收到", and the row would end up displaying
-                // "陈总: 收到" — where 陈总 is the peer sender from the
-                // debt item but "收到" is the summary of the user's
-                // own reply. Alignment with ReplyDebtScorer's
-                // latestInbound requires the same predicate here.
-                let msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
-                let cutoff48h = Date().addingTimeInterval(-48 * 3600)
                 let myUname = readerRef.myUsername()
                 let myDisplay = readerRef.displayName(for: myUname)
                 let mySelfNames = readerRef.mySelfNames
+                // Private/debt rows retain the historical latest-inbound
+                // behavior below. Group @ rows take the exact source branch
+                // first, so later chatter cannot replace the trigger.
+                let msgs: [MessageInfo]
+                if let sourceNotification {
+                    // Group @ summaries must stay anchored to the notification
+                    // source. If it is no longer readable, do not summarize a
+                    // different message and attach it to this row.
+                    guard let centered = sourceCentered,
+                          let trigger = centered.first(where: {
+                              $0.id == sourceNotification.messageID &&
+                              $0.chatUsername == sourceNotification.chatUsername
+                          }) else {
+                        continue
+                    }
+                    msgs = centered
+                    let context = InboxContextBuilder.build(
+                        chatUsername: item.chatUsername,
+                        triggerMessage: trigger,
+                        reader: readerRef,
+                        store: storeRef,
+                        myUsername: myUname,
+                        contactEntry: storeRef.getContact(username: item.chatUsername),
+                        whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername),
+                        sourceContextMessages: centered
+                    )
+                    let summary = await summarizer.summarize(context)
+                    guard let summary,
+                          self.inboxItems.contains(where: { $0.generationKey == item.generationKey }) else { continue }
+                    self.cacheAndUpdateInboxSummary(summary, for: item)
+                    continue
+                } else {
+                    msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+                }
+                let cutoff48h = Date().addingTimeInterval(-48 * 3600)
                 let filtered = msgs.filter { msg in
                     let inWindow = Date(timeIntervalSince1970: Double(msg.createTime)) >= cutoff48h
                     let isSelf = MessageHelpers.isFromSelf(

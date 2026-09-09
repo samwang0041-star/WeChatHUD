@@ -1,0 +1,10 @@
+{
+  "mode": "synthetic-secondary-ai-check",
+  "providerID": "custom",
+  "model": "Qwen3.6-27B-6bit",
+  "generated_at": "2026-09-08T03:42:41.914398+00:00",
+  "configuration_changed": false,
+  "result": "failed",
+  "category": "http",
+  "status": 404
+}

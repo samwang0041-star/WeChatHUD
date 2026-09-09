@@ -14,6 +14,7 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertFalse(config.handleGroupAt)
         XCTAssertTrue(config.vipAutoNotify)
         XCTAssertFalse(config.autoSendEnabled)
+        XCTAssertFalse(config.enabled)
     }
 
     func testDefaultSensitiveKeywordsContainFinancialTerms() {
@@ -322,6 +323,97 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(result.action, .stall)
         XCTAssertTrue(result.reasoning.contains("敏感词"))
         XCTAssertTrue(result.reasoning.contains("密码"))
+    }
+
+    func testSensitiveReplyIsHeldForManualConfirmation() {
+        XCTAssertEqual(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "我把密码发给你",
+                sensitiveKeywords: ["密码"]
+            ),
+            "回复含敏感词「密码」，请人工确认"
+        )
+        XCTAssertEqual(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: "命中敏感词「转账」",
+                replyText: "好的",
+                sensitiveKeywords: ["转账"]
+            ),
+            "安全检查：命中敏感词「转账」"
+        )
+        XCTAssertNil(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "好的，收到了",
+                sensitiveKeywords: ["密码"]
+            )
+        )
+        XCTAssertEqual(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "好的，我下午给你方案",
+                sensitiveKeywords: ["密码"],
+                downgradedAction: .stall
+            ),
+            "安全策略要求人工确认后再发送"
+        )
+        XCTAssertNil(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "先记下，回头回你",
+                sensitiveKeywords: ["密码"],
+                downgradedAction: .sent
+            )
+        )
+    }
+
+    func testHeldPendingSendIsNotEligibleForAutomaticSend() {
+        let hold = AutopilotService.automaticSendHoldReason(
+            safetyHold: nil,
+            replyText: "我把密码发给你",
+            sensitiveKeywords: ["密码"]
+        )
+        let item = PendingSend(
+            chatUsername: "wxid_a",
+            chatName: "A",
+            senderName: "A",
+            replyText: "我把密码发给你",
+            confidence: 0.9,
+            risk: .low,
+            reasoning: "ok",
+            styleScore: 80,
+            scheduledSendTime: Date().addingTimeInterval(-1),
+            manualOnlyReason: hold
+        )
+        XCTAssertNotNil(hold)
+        XCTAssertFalse(AutopilotService.isEligibleForAutomaticSend(item, now: Date()))
+        let clear = PendingSend(
+            chatUsername: "wxid_a",
+            chatName: "A",
+            senderName: "A",
+            replyText: "好的",
+            confidence: 0.9,
+            risk: .low,
+            reasoning: "ok",
+            styleScore: 80,
+            scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        XCTAssertTrue(AutopilotService.isEligibleForAutomaticSend(clear, now: Date()))
+        XCTAssertTrue(AutopilotService.isRetryableSendBusy("已有发送正在进行"))
+        XCTAssertFalse(AutopilotService.isRetryableSendBusy("发送结果无法确认"))
+        let busy = PendingSend(
+            chatUsername: "wxid_a",
+            chatName: "A",
+            senderName: "A",
+            replyText: "好的",
+            confidence: 0.9,
+            risk: .low,
+            reasoning: "ok",
+            styleScore: 80,
+            scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        XCTAssertTrue(AutopilotService.isEligibleForAutomaticSend(busy, now: Date()))
     }
 
     func testDowngradeSensitiveKeywordEmptyReplyIsSafe() {

@@ -5,15 +5,48 @@ import Combine
 /// carries the target chat's username so `DetailPanelView` can hydrate
 /// `ConversationDetailView`; `.autopilot` routes to the full autopilot
 /// control surface (the same content formerly rendered as a tab).
+enum IslandSurface: Equatable {
+    case inbox
+    case tasks
+    case firstLaunch
+}
+
 enum DetailKind: Equatable {
     case conversation(chatUsername: String)
     case autopilot
 }
 
+/// A one-shot request to hydrate the composer with a saved reply draft.
+/// Keeping this on the routing state lets a draft opened from the workbench
+/// update an already-mounted conversation view (where `onAppear` won't fire).
+struct ReplyDraftContinuation: Equatable {
+    let id: UUID
+    let chatUsername: String
+    let text: String
+    /// The saved reply_drafts row this continuation originated from. Nil means
+    /// this was a plain composer hydration and must create a new draft.
+    let savedDraftID: Int64?
+}
+
 /// Manages the three-state lifecycle of the floating panel.
 @MainActor
 final class PanelState: ObservableObject {
-    @Published var currentState: HUDState = .compact
+    @Published var currentState: HUDState = .compact {
+        didSet {
+            guard oldValue != currentState else { return }
+            // Leaving .notification tears down the in-place briefing
+            // card: the SwiftUI view unmounts without its onChange
+            // firing, so reset both flags here — otherwise a latched
+            // popoverOpen would silently block every future banner.
+            if oldValue == .notification || oldValue == .detail || oldValue == .extended {
+                popoverOpen = false
+                briefingExpanded = false
+                snoozeMenuExpanded = false
+                autopilotPopoverOpen = false
+                islandTextInputActive = false
+            }
+        }
+    }
     @Published var isMouseInside = false
     /// What the detail panel is currently showing. `nil` means no detail
     /// target (either the panel is in compact/extended/notification, or
@@ -39,13 +72,31 @@ final class PanelState: ObservableObject {
     var onShowSettings: (() -> Void)?
     /// When set, SettingsView should navigate to this tab on open.
     @Published var pendingSettingsTab: String?
+    @Published var pendingDiscussionScope: DiscussionScope?
+    /// When opening 待办 from 聊天回顾 / 今日小结, keep the same conversation.
+    @Published var pendingDiscussionChatUsername: String?
+    /// Hover inbox vs in-island task preview (figures 19 / 20).
+    @Published var islandSurface: IslandSurface = .inbox
+    /// Figure 41: snooze receipt + undo, shown on the island after 23.
+    @Published var islandSnoozeUndo: (item: InboxItem, until: Date)?
+    /// Preview-only send receipts for figures 26 / 27.
+    @Published var previewSendReceipt: String?
+    /// Pending saved-draft hydration. This is consumed by the matching
+    /// `ConversationDetailView` after routing, including when that view is
+    /// already showing the same chat.
+    @Published private(set) var pendingReplyDraftContinuation: ReplyDraftContinuation?
 
     /// Last time the user actively interacted (mouse entered extended).
     private var lastActiveAt = Date()
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
+    private var notificationGeneration = UUID()
+    /// An unsolicited banner owns its duration until the pointer actually
+    /// enters it (or the user opens its popover). Frame growth is not an exit.
+    private var notificationWasInteractedWith = false
     private var exitDebounceTimer: Timer?
+    private var exitGeneration = UUID()
 
     /// While set in the future, `mouseEntered` won't re-expand the pill.
     /// Used after we deliberately collapse (e.g. to hand focus over to
@@ -71,6 +122,59 @@ final class PanelState: ObservableObject {
     @Published var toastMessage: String? = nil
     private var toastTimer: Timer?
 
+    /// True while an in-place context-briefing card is expanded
+    /// (notification banner or conversation detail). Drives the taller
+    /// panel frame for .notification via AppDelegate. Set through
+    /// setBriefingExpanded(_:) and reset whenever the panel leaves
+    /// .notification so a stale expansion can't pin the next banner
+    /// open.
+    @Published var briefingExpanded: Bool = false
+    /// In-island 稍后提醒 menu on the notification/briefing surface.
+    /// Grows the notification panel so all three time choices stay visible.
+    @Published var snoozeMenuExpanded: Bool = false
+    /// NSMenu tracking over the island. Separate from `popoverOpen` so
+    /// closing a context menu cannot clobber Autopilot / briefing latch.
+    @Published var menuTrackingOpen: Bool = false
+    /// Autopilot popover on the compact/extended pill. Separate from
+    /// `popoverOpen` so closing a snooze menu cannot drop this latch.
+    @Published var autopilotPopoverOpen: Bool = false
+    /// Rename sheet (or similar) needs the island to accept typing.
+    @Published var islandTextInputActive: Bool = false
+    /// In-window CompanionDialog is open; sidebar Tab must not leave the dialog.
+    @Published var modalDialogOpen: Bool = false
+
+    /// Toggle the in-place briefing card. While a banner is showing,
+    /// expansion maps onto popoverOpen so the existing semantics
+    /// (pause the auto-dismiss timer, ignore mouse-out collapse) keep
+    /// working without a second state machine. In .detail the card
+    /// lives inside a scroll view with no auto-collapse, so
+    /// popoverOpen is left alone there.
+    func setBriefingExpanded(_ expanded: Bool) {
+        briefingExpanded = expanded
+        if expanded { snoozeMenuExpanded = false }
+        switch currentState {
+        case .notification:
+            popoverOpen = expanded || snoozeMenuExpanded || autopilotPopoverOpen
+        case .compact, .extended, .detail:
+            break
+        }
+    }
+
+    func setSnoozeMenuExpanded(_ expanded: Bool) {
+        snoozeMenuExpanded = expanded
+        refreshTransientIslandHold()
+        NotificationCenter.default.post(name: .hudIslandNeedsResize, object: nil)
+    }
+
+    func setAutopilotPopoverOpen(_ expanded: Bool) {
+        autopilotPopoverOpen = expanded
+        refreshTransientIslandHold()
+    }
+
+    private func refreshTransientIslandHold() {
+        popoverOpen = snoozeMenuExpanded || briefingExpanded || autopilotPopoverOpen
+    }
+
     /// Set to `true` while any SwiftUI popover anchored inside the pill
     /// is visible. Popovers render outside the pill bounds, so the
     /// cursor leaves `isMouseInside` as soon as the user moves toward
@@ -80,6 +184,11 @@ final class PanelState: ObservableObject {
     @Published var popoverOpen: Bool = false {
         didSet {
             guard oldValue != popoverOpen else { return }
+            if popoverOpen, currentState == .notification {
+                notificationWasInteractedWith = true
+                notificationTimer?.invalidate()
+                notificationTimer = nil
+            }
             if !popoverOpen {
                 scheduleExitCollapseAfterTransientSurfaceClosed()
             }
@@ -115,7 +224,9 @@ final class PanelState: ObservableObject {
     /// Called when mouse enters the panel area.
     func mouseEntered() {
         isMouseInside = true
+        if currentState == .notification { notificationWasInteractedWith = true }
         // Cancel any pending collapse — we're back inside.
+        exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
@@ -135,7 +246,9 @@ final class PanelState: ObservableObject {
         lastActiveAt = Date()
 
         // Don't override .detail — the user is inside the full settings view.
-        if currentState != .detail && currentState != .extended {
+        // Keep the banner under the pointer. Replacing it with the inbox
+        // on entry used to remove the very controls the user was aiming at.
+        if currentState == .compact {
             currentState = .extended
         }
     }
@@ -143,7 +256,11 @@ final class PanelState: ObservableObject {
     /// Called when mouse exits the panel area. Debounces briefly so
     /// animation-induced oscillations don't flicker the state.
     func mouseExited() {
+        if currentState == .notification, isMouseInside { notificationWasInteractedWith = true }
         isMouseInside = false
+        // AppKit can report an exit while the newly expanded frame sweeps
+        // past a pointer that never entered this banner. Keep its duration.
+        if currentState == .notification, !notificationWasInteractedWith { return }
         // Don't auto-collapse the detail view — the user may be typing in a
         // text field, etc. The detail view has its own explicit close button.
         guard currentState != .detail else { return }
@@ -151,7 +268,10 @@ final class PanelState: ObservableObject {
         // bounds. Moving the cursor toward the popover UI counts as
         // "exit" here; ignore the exit while a popover is open so the
         // pill (and the popover with it) stay put.
-        guard !popoverOpen else { return }
+        guard !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
+        // Task preview and first-launch are opened surfaces; leaving the
+        // island must not tuck them away (交互规范：菜单/抽屉打开时不收起).
+        guard islandSurface == .inbox else { return }
 
         if frameAnimationInProgress {
             exitRequestedDuringFrameAnimation = true
@@ -168,7 +288,11 @@ final class PanelState: ObservableObject {
 
     func frameAnimationEnded(mouseInside: Bool) {
         frameAnimationInProgress = false
-        isMouseInside = mouseInside
+        updateMouseInside(mouseInside)
+        guard collapsesWhenMouseOutside else {
+            exitRequestedDuringFrameAnimation = false
+            return
+        }
         if !mouseInside || exitRequestedDuringFrameAnimation {
             exitRequestedDuringFrameAnimation = false
             scheduleExitCollapse()
@@ -177,16 +301,24 @@ final class PanelState: ObservableObject {
 
     func updateMouseInside(_ inside: Bool) {
         isMouseInside = inside
+        if inside, currentState == .notification {
+            notificationWasInteractedWith = true
+            notificationTimer?.invalidate()
+            notificationTimer = nil
+        }
     }
 
     private func scheduleExitCollapse() {
+        guard collapsesWhenMouseOutside else { return }
+        exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
+        let generation = exitGeneration
         exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: exitDebounce, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
+                guard let self, self.exitGeneration == generation else { return }
                 // Only collapse if the mouse actually stayed outside AND
                 // no popover re-opened during the debounce window.
-                if !self.isMouseInside && !self.popoverOpen && self.collapsesWhenMouseOutside {
+                if !self.isMouseInside && !self.popoverOpen && !self.menuTrackingOpen && !self.islandTextInputActive && self.collapsesWhenMouseOutside && self.islandSurface == .inbox {
                     self.currentState = .compact
                 }
                 self.exitDebounceTimer = nil
@@ -204,7 +336,7 @@ final class PanelState: ObservableObject {
     }
 
     private var collapsesWhenMouseOutside: Bool {
-        currentState == .extended || currentState == .notification
+        currentState == .extended || (currentState == .notification && notificationWasInteractedWith)
     }
 
     /// Open settings in a separate window (gear click).
@@ -223,6 +355,25 @@ final class PanelState: ObservableObject {
         showDetail(kind: .conversation(chatUsername: chatUsername), chatName: chatName)
     }
 
+    func requestReplyDraftContinuation(chatUsername: String, text: String, savedDraftID: Int64? = nil) {
+        pendingReplyDraftContinuation = ReplyDraftContinuation(
+            id: UUID(), chatUsername: chatUsername, text: text, savedDraftID: savedDraftID
+        )
+    }
+
+    /// Consume only a request for this chat. A request for another chat must
+    /// remain pending until that conversation view is mounted.
+    func consumeReplyDraftContinuation(for chatUsername: String) -> String? {
+        consumeReplyDraftContinuationRequest(for: chatUsername)?.text
+    }
+
+    func consumeReplyDraftContinuationRequest(for chatUsername: String) -> ReplyDraftContinuation? {
+        guard let pending = pendingReplyDraftContinuation,
+              pending.chatUsername == chatUsername else { return nil }
+        pendingReplyDraftContinuation = nil
+        return pending
+    }
+
     /// Route the detail panel to a specific `DetailKind`. The optional
     /// `chatName` is stored only for `.conversation` kinds (other kinds
     /// ignore it).
@@ -233,6 +384,7 @@ final class PanelState: ObservableObject {
         } else {
             selectedChatName = nil
         }
+        exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
@@ -251,6 +403,20 @@ final class PanelState: ObservableObject {
 
     /// Dismiss the detail view back to the compact bar.
     func collapse() {
+        exitGeneration = UUID()
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = nil
+        notificationTimer?.invalidate()
+        notificationTimer = nil
+        notificationGeneration = UUID()
+        clearDetail()
+        islandSurface = .inbox
+        popoverOpen = false
+        menuTrackingOpen = false
+        islandTextInputActive = false
+        autopilotPopoverOpen = false
+        briefingExpanded = false
+        snoozeMenuExpanded = false
         currentState = .compact
     }
 
@@ -259,6 +425,7 @@ final class PanelState: ObservableObject {
     /// open the inbox without the collapse-then-expand flicker of
     /// `collapse()` + `mouseEntered()`.
     func goExtended() {
+        exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
@@ -300,25 +467,46 @@ final class PanelState: ObservableObject {
     /// another app (WeChat) — without this, the cursor still hovering
     /// over our old frame would pop the panel right back open.
     func collapseAndYield(duration: TimeInterval = 1.5) {
+        exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
         reexpandSuppressedUntil = Date().addingTimeInterval(duration)
+        popoverOpen = false
+        menuTrackingOpen = false
+        islandTextInputActive = false
+        autopilotPopoverOpen = false
+        briefingExpanded = false
+        snoozeMenuExpanded = false
         if currentState != .compact {
             currentState = .compact
         }
     }
 
-    /// Show a notification banner. Auto-collapses after duration unless mouse enters.
+    /// Notifications may expand an idle island, but must never replace an
+    /// active inbox, detail view, or popover. Hover pauses dismissal.
     func showNotification(duration: TimeInterval = 3) {
-        notificationDuration = duration
-        guard currentState != .detail else { return }  // don't interrupt detail view
-        currentState = .notification
+        guard currentState != .detail, currentState != .extended, !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
+        islandSnoozeUndo = nil
+        toastMessage = nil
+        notificationDuration = max(0.1, duration)
+        exitGeneration = UUID()
+        exitDebounceTimer?.invalidate()
+        exitDebounceTimer = nil
         notificationTimer?.invalidate()
-        notificationTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+        notificationTimer = nil
+        notificationGeneration = UUID()
+        notificationWasInteractedWith = isMouseInside
+        currentState = .notification
+        guard !isMouseInside else { return }
+        let generation = notificationGeneration
+        notificationTimer = Timer.scheduledTimer(withTimeInterval: notificationDuration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self, !self.isMouseInside else { return }
+                guard let self, self.notificationGeneration == generation,
+                      self.currentState == .notification,
+                      !self.isMouseInside, !self.popoverOpen, !self.menuTrackingOpen, !self.islandTextInputActive else { return }
+                self.notificationTimer = nil
                 self.currentState = .compact
             }
         }
@@ -330,7 +518,7 @@ final class PanelState: ObservableObject {
             // These states are measurement-driven; the static value is
             // only a placeholder for SwiftUI previews.
             return 32
-        case .notification: return 90
+        case .notification: return 150
         case .detail: return 500
         }
     }
@@ -341,7 +529,7 @@ final class PanelState: ObservableObject {
             // These states are measurement-driven; the static value is
             // only a placeholder for SwiftUI previews.
             return 320
-        case .notification: return 420
+        case .notification: return IslandChrome.notificationMinWidth
         case .detail: return 700
         }
     }

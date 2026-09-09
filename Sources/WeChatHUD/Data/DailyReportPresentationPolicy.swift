@@ -26,6 +26,7 @@ enum DailyReportPresentationPolicy {
         let wechatDraft: String?
         let actionInsights: [String: DailyReportActionInsight]
         let isAIEnhanced: Bool
+        let isSourceUnavailable: Bool
         let date: Date
     }
 
@@ -34,7 +35,8 @@ enum DailyReportPresentationPolicy {
     static func buildViewModel(
         from report: DailyReport,
         commandStates: [DailyReportCommandState] = [],
-        insights: [String: DailyReportActionInsight] = [:]
+        insights: [String: DailyReportActionInsight] = [:],
+        sourceVerified: Bool = true
     ) -> CommandCenterViewModel {
         let stateMap = Dictionary(
             commandStates.map { ($0.itemID, $0.state) },
@@ -118,6 +120,12 @@ enum DailyReportPresentationPolicy {
             return d < Date() && stateMap[$0.id] != .completed
         }.count
         let urgentCount = urgent.count
+        let reportMarksUnverifiedSource = report.statusMessage?.contains("未验证") == true
+        let isSourceUnavailable = (!sourceVerified || reportMarksUnverifiedSource)
+            && report.actions.isEmpty
+            && report.highlights.isEmpty
+            && report.risks.isEmpty
+            && report.pendingAsks.isEmpty
 
         let progress = DailyReportProgressMetrics(
             completedCount: done,
@@ -143,6 +151,7 @@ enum DailyReportPresentationPolicy {
             wechatDraft: report.wechatDraft,
             actionInsights: insights,
             isAIEnhanced: report.status == .aiEnhanced,
+            isSourceUnavailable: isSourceUnavailable,
             date: report.date
         )
     }
@@ -211,9 +220,15 @@ enum DailyReportPresentationPolicy {
             lines.append("")
         }
 
-        // AI Insight
+        if viewModel.isSourceUnavailable {
+            lines.append("## ⚠️ 今日来源未验证")
+            lines.append("尚无成功同步记录，当前日报没有足够的今日微信来源，暂不能判断是否有待处理事项。请连接微信并完成一次成功同步后重试。")
+            lines.append("")
+        }
+
+        // AI / local insight
         if let narrative = viewModel.narrative, !narrative.isEmpty {
-            lines.append("## 💡 AI 洞察")
+            lines.append("## 💡 \(viewModel.isAIEnhanced ? "AI 洞察" : "规则整理")")
             lines.append(narrative)
             lines.append("")
         }

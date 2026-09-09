@@ -1,0 +1,23 @@
+{
+  "recorded_at": "2026-09-08T11:21:20.365940+00:00",
+  "candidate_path": "/Users/yuriwong/wechatcli/WeChatHUD/.build/WeChatHUD Candidate.app",
+  "version": "1.1.4",
+  "bundle_id": "com.wechat-cli.hud",
+  "source_composite_sha256": "f9a16b0b03b97fff4afc13bd7a268d2ccde6e7ef80c94e933e2e403f14303274",
+  "source_file_count": 203,
+  "executable_sha256": "94c0264571343e5cea3a19930a9114c7867fb39b01b0f5257dd480d250840fdb",
+  "installed": false,
+  "notarized": false,
+  "public_release_ready": false,
+  "limitations": [
+    "Initial reading-material provisioning incomplete",
+    "Installed application AX permission mismatch unresolved",
+    "Candidate GUI and actual send receipt acceptance pending",
+    "Legacy business records require explicit account confirmation"
+  ],
+  "source_diagnostic": "prior_candidate_passed; not rerun after draft-only change",
+  "source_diagnostic_evidence": "candidate-live-source-check.json",
+  "newer_worktree_changes": [
+    "Group mention source alignment and missing-source cache/UI handling under verification; not yet in Candidate"
+  ]
+}

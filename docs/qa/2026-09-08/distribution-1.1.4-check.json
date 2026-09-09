@@ -1,0 +1,19 @@
+{
+  "signature": {
+    "exit_code": 0,
+    "output": ""
+  },
+  "ticket": {
+    "exit_code": 0,
+    "output": "Processing: /var/folders/tt/qy9dnyfj6k388tnlwz6k60hc0000gn/T/wechathud-1.1.4-verify-46qswt_n/WeChatHUD.app\nThe validate action worked!\n"
+  },
+  "gatekeeper": {
+    "exit_code": 0,
+    "output": "/var/folders/tt/qy9dnyfj6k388tnlwz6k60hc0000gn/T/wechathud-1.1.4-verify-46qswt_n/WeChatHUD.app: accepted\nsource=Notarized Developer ID\n"
+  },
+  "resources": {
+    "exit_code": 0,
+    "output": "{\n  \"bundled_prompts\" : \"ready\",\n  \"mode\" : \"bundle-check\",\n  \"native_dependency\" : \"ready\",\n  \"result\" : \"ready\"\n}\n"
+  },
+  "sha256": "cd2226ab65146b05307d9a45a07cc05ece5f57b47e7b51b622af6d7792611293"
+}

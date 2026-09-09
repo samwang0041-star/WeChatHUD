@@ -49,7 +49,7 @@ actor AIService {
     }
 
     func isConfigured() -> Bool {
-        let slot = config.primarySlot
+        let slot = config.provider
         // Codex slots are valid even with empty baseURL — the URL is hardcoded
         // and auth comes from the codex CLI login state, not user-entered values.
         if slot.providerID == "openai-codex" {
@@ -59,19 +59,14 @@ actor AIService {
             && !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Send a chat completion request. In `.auto` mode, tries the primary
-    /// slot first and falls back to the other on failure.
+    /// Send a chat completion request to the configured provider.
     func complete(system: String, user: String) async throws -> String {
         try await complete(system: system, user: user, options: .default)
     }
 
     /// Unified completion entry point. All services should call this instead
     /// of building their own `/chat/completions` request. Routes to Codex when
-    /// the active slot is `openai-codex`, otherwise OpenAI-compatible.
-    ///
-    /// `.auto` mode is preserved: primary slot is tried first and the fallback
-    /// slot takes over on failure. The fallback fires even when its baseURL is
-    /// empty as long as the provider is Codex (empty URL is expected for Codex).
+    /// the configured provider is `openai-codex`, otherwise OpenAI-compatible.
     func complete(
         system: String,
         user: String,
@@ -90,18 +85,8 @@ func completeWithMetadata(
     // Default: 4 calls/second, enough for normal usage, gentle on API.
     await AIRateLimiter.shared.acquire()
 
-    let primary = config.primarySlot
-    let fallback = config.fallbackSlot
-
-        do {
-            return try await send(slot: primary, system: system, user: user, options: options)
-        } catch {
-            if let fb = fallback, !fb.baseURL.isEmpty || fb.providerID == "openai-codex" {
-                print("[WCHUD-AI] primary failed (\(error.localizedDescription)), trying fallback…")
-                return try await send(slot: fb, system: system, user: user, options: options)
-            }
-            throw error
-        }
+    let slot = config.provider
+    return try await send(slot: slot, system: system, user: user, options: options)
     }
 
     /// Test a specific slot's connection.
@@ -116,7 +101,7 @@ func completeWithMetadata(
 
     /// Test the connection to the AI provider.
     func testConnection() async throws -> String {
-        try await testSlot(config.primarySlot)
+        try await testSlot(config.provider)
     }
 
     // MARK: - Helpers

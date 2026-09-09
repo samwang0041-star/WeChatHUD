@@ -13,9 +13,11 @@ extension ChatMonitor {
     func loadDailyReport(for date: Date, force: Bool = false) async {
         let dateKey = date.dailyReportDateKey
         if !force, let cached = dailyReportCache[dateKey],
-           Date().timeIntervalSince(cached) < 1800 {
+           Date().timeIntervalSince(cached) < 1800,
+           dailyReport?.date.dailyReportDateKey == dateKey {
             return
         }
+        let generation = beginDailyReportLoad()
         dailyReportError = nil
         dailyReportIsLoading = true
 
@@ -40,6 +42,10 @@ extension ChatMonitor {
 
         let report = await enrichedReport
         let insights = await insightsTask?.value ?? []
+
+        // A newer date request may have started while AI enrichment was in
+        // flight. Keep that request's base/enriched report and loading state.
+        guard dailyReportLoadGeneration == generation else { return }
 
         dailyReport = report
         dailyReportGeneratedAt = report.generatedAt
@@ -118,7 +124,7 @@ extension ChatMonitor {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
         let dateStr = df.string(from: Date())
-        let filename = "WeChatHUD-Report-\(dateStr).md"
+        let filename = "WeChatHUD-\(dateStr).md"
         let desktop = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop")
             .appendingPathComponent(filename)

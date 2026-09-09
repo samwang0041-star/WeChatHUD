@@ -4,9 +4,14 @@ import SQLite3
 
 final class WeChatReader: ObservableObject, @unchecked Sendable {
     private let keysPath: String
+    /// Used to compare pending connection settings with this running reader.
+    /// This exposes only the file location, never the loaded access material.
+    var configuredKeysPath: String { keysPath }
     let dbDir: String
     private let cacheDir: String
     private let cacheStrategy: CacheStrategy
+    private let persistLearnedAliases: Bool
+    private let aliasDefaults: UserDefaults
     private let manifestPath: String
 
     /// Recursive lock protecting all mutable dictionary state from concurrent access.
@@ -22,6 +27,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// when the alias is unambiguous. Prevents group member nicknames and
     /// local remarks from being treated as different people downstream.
     private var contactIdentityIndex: ContactIdentityIndex = .empty
+    /// Room username → member display names. WeChat leaves ~30% of group
+    /// rooms without any name in `contact`, so the member list is the only
+    /// human-readable handle available for them.
+    private var groupMemberNamesCache: [String: [String]] = [:]
     /// All known aliases for the current user (wxid, nicknames from contact.db,
     /// and senderHint names learned from group messages where name2id failed).
     /// Used by isFromSelf to catch group chat messages where the sender is
@@ -39,14 +48,20 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// Cleared on each refreshIfChanged so new tables are discovered.
     private var chatDBNegativeCache: Set<String> = []
 
-    init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent) {
+    init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent,
+         persistLearnedAliases: Bool = true, userDefaults: UserDefaults = .standard) {
         let home = NSHomeDirectory()
         self.keysPath = keysPath ?? "\(home)/.wechat-cli/all_keys.json"
         self.dbDir = dbDir ?? Self.autoDetectDBDir() ?? ""
         self.cacheStrategy = cacheStrategy
-        self.cacheDir = Self.cacheDir(for: cacheStrategy)
+        self.persistLearnedAliases = persistLearnedAliases
+        self.aliasDefaults = userDefaults
+        let accountDirectory = Self.cacheDir(for: cacheStrategy, databaseRoot: self.dbDir)
+        self.cacheDir = cacheStrategy == .memory ? accountDirectory + "/" + UUID().uuidString : accountDirectory
         self.manifestPath = "\(self.cacheDir)/manifest.json"
-        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDir)
         if cacheStrategy == .persistent {
             loadManifest()
         }
@@ -54,18 +69,36 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // first scan after a restart already knows "我" vs "哆啦" and
         // the AI summarizer doesn't mis-attribute the user's own
         // messages on day one.
-        if let saved = UserDefaults.standard.stringArray(forKey: Self.learnedAliasesKey) {
+        if let saved = aliasDefaults.stringArray(forKey: learnedAliasesKey) {
             self.mySelfNames = Set(saved)
         }
     }
 
-    private static let learnedAliasesKey = "wchud.learnedSelfAliases"
+    deinit {
+        if cacheStrategy == .memory { try? FileManager.default.removeItem(atPath: cacheDir) }
+    }
+
+    private var learnedAliasesKey: String {
+        "wchud.learnedSelfAliases." + Self.accountCacheIdentity(dbDir)
+    }
+
+    static func accountCacheIdentity(_ databaseRoot: String) -> String {
+        let canonical = URL(fileURLWithPath: databaseRoot).standardizedFileURL.resolvingSymlinksInPath().path
+        return SHA256.hash(data: Data(canonical.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func cacheDir(for strategy: CacheStrategy, databaseRoot: String) -> String {
+        cacheDir(for: strategy) + "/" + accountCacheIdentity(databaseRoot)
+    }
 
     /// Persist the current `mySelfNames` set to UserDefaults so it
     /// survives relaunches. Called after `getMessages` learns a new
     /// alias from a realSenderId==0 + hint pair.
-    private func persistSelfAliases() {
-        UserDefaults.standard.set(Array(mySelfNames), forKey: Self.learnedAliasesKey)
+    func learnSelfAlias(_ alias: String) {
+        guard !alias.isEmpty else { return }
+        mySelfNames.insert(alias)
+        guard persistLearnedAliases else { return }
+        aliasDefaults.set(Array(mySelfNames), forKey: learnedAliasesKey)
     }
 
     static func cacheDir(for strategy: CacheStrategy) -> String {
@@ -80,25 +113,33 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     // MARK: - Auto-detect
 
-    static func autoDetectDBDir() -> String? {
-        let home = NSHomeDirectory()
-        let base = "\(home)/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
-        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: base) else { return nil }
-        for item in contents {
-            let dbStorage = "\(base)/\(item)/db_storage"
-            if FileManager.default.fileExists(atPath: dbStorage) {
-                return dbStorage
-            }
-        }
-        return nil
+    /// Directory presence identifies candidates, not the account active in WeChat.
+    static func databaseCandidates(baseDirectory: String? = nil) -> [String] {
+        let base = baseDirectory ?? NSHomeDirectory() + "/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files"
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: base) else { return [] }
+        return contents.compactMap { item in
+            let path = "\(base)/\(item)/db_storage"
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue ? path : nil
+        }.sorted()
     }
 
-    /// Returns the wxid currently active in WeChat (the subdirectory
-    /// under `xwechat_files` whose `db_storage` exists), based on a
-    /// live filesystem probe — NOT the immutable `dbDir` captured at
-    /// init. When it differs from `myUsername()`, the user has logged
-    /// into a different account without restarting WeChatHUD and every
-    /// subsequent read is stale. Callers should prompt a restart.
+    static func autoDetectDBDir() -> String? {
+        let candidates = databaseCandidates()
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
+    /// Validate only the container shape and readability; callers never
+    /// receive or persist key material from this check.
+    static func validateKeyFile(at path: String) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any] else { return false }
+        return !dictionary.isEmpty
+    }
+
+    /// Only a unique directory candidate can be reported. This is not proof
+    /// of the account currently logged into the running WeChat process.
     func detectCurrentAccountWxid() -> String? {
         guard let live = Self.autoDetectDBDir() else { return nil }
         let parts = live.split(separator: "/")
@@ -106,13 +147,23 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         return String(parts[parts.count - 2])
     }
 
-    /// True when the auto-detected active WeChat account wxid differs
-    /// from the one our `dbDir` was opened with. Cheap enough to call
-    /// per scan; no DB I/O.
+    /// A vanished configured root is actionable. Historical account directories
+    /// cannot establish a live account switch, so do not guess from their order.
     func hasAccountSwitched() -> Bool {
-        let current = detectCurrentAccountWxid() ?? ""
-        let mine = myUsername()
-        return !current.isEmpty && !mine.isEmpty && current != mine
+        guard !dbDir.isEmpty else { return false }
+        return !FileManager.default.fileExists(atPath: dbDir)
+    }
+
+    enum AccessMaterialState {
+        case missing, unreadable, available
+    }
+
+    /// Availability only; successful database reads establish whether keys match.
+    var accessMaterialState: AccessMaterialState {
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: keysPath, isDirectory: &isDirectory) else { return .missing }
+        return !isDirectory.boolValue && fm.isReadableFile(atPath: keysPath) ? .available : .unreadable
     }
 
     // MARK: - Key Loading
@@ -124,8 +175,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if !force, let cur = curMtime, let last = keysMtime, cur == last {
                 return  // unchanged, nothing to do
             }
-            // Keys file changed — new DBs may have appeared with new tables.
+            // Changed key material invalidates both discovery and decrypted snapshots.
             chatDBNegativeCache.removeAll()
+            chatDBCache.removeAll()
             guard let data = fm.contents(atPath: keysPath) else {
                 throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
             }
@@ -133,6 +185,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 throw ReaderError.keyLoadFailed("Invalid JSON in \(keysPath)")
             }
 
+            if keysMtime != nil {
+                decryptedCache.removeAll()
+                mainMtimes.removeAll()
+                walMtimes.removeAll()
+                contactsMtime = nil
+            }
             keys.removeAll(keepingCapacity: true)
             for (path, value) in json {
                 guard !path.hasPrefix("_") else { continue }
@@ -197,6 +255,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
             }
 
+            // A previously absent chat table may have been created in this update.
+            if normalized.hasPrefix("message/") {
+                chatDBNegativeCache.removeAll()
+                chatDBCache.removeAll()
+            }
             mainMtimes[normalized] = mainMtime
             walMtimes[normalized] = walMtime
             if cacheStrategy == .persistent { saveManifest() }
@@ -227,11 +290,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             let hash = md5Hex(normalized)
             let decPath = "\(cacheDir)/\(hash).db"
 
-            try WeChatDecryptor.decryptDB(inputPath: encPath, outputPath: decPath, key: key)
+            let staging = decPath + ".decrypt-" + UUID().uuidString
+            defer { try? FileManager.default.removeItem(atPath: staging) }
+            try WeChatDecryptor.decryptDB(inputPath: encPath, outputPath: staging, key: key)
 
             let walPath = encPath + "-wal"
             if FileManager.default.fileExists(atPath: walPath) {
-                try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
+                try WeChatDecryptor.applyWAL(dbPath: staging, walPath: walPath, key: key)
+            }
+            guard rename(staging, decPath) == 0 else {
+                throw ReaderError.sqlError("Cannot publish decrypted snapshot")
             }
 
             decryptedCache[normalized] = decPath
@@ -239,26 +307,53 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func findKey(for path: String) -> Data? {
-        if let k = keys[path] { return k }
-        let withSlash = path.replacingOccurrences(of: "\\", with: "/")
-        if let k = keys[withSlash] { return k }
-        let filename = (path as NSString).lastPathComponent
-        for (kp, kv) in keys {
-            if (kp as NSString).lastPathComponent == filename { return kv }
+    func findKey(for path: String) -> Data? {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/")
+        let filename = (normalized as NSString).lastPathComponent
+        let candidates = keys.filter { keyPath, _ in
+            let kp = keyPath.replacingOccurrences(of: "\\", with: "/")
+            return kp == path || kp == normalized || (kp as NSString).lastPathComponent == filename
         }
-        return nil
+        if candidates.isEmpty { return nil }
+
+        let db = URL(fileURLWithPath: dbDir).standardizedFileURL.path
+        let scoped = candidates.filter { keyPath, _ in
+            let kp = keyPath.replacingOccurrences(of: "\\", with: "/")
+            guard kp.hasPrefix("/") else { return false }
+            let absolute = URL(fileURLWithPath: kp).standardizedFileURL.path
+            return Self.keyPath(absolute, isUnderDatabaseRoot: db)
+        }
+        if !scoped.isEmpty {
+            let unique = Set(scoped.map(\.value))
+            return unique.count == 1 ? unique.first : nil
+        }
+        let hasAbsolute = candidates.contains { keyPath, _ in
+            keyPath.replacingOccurrences(of: "\\", with: "/").hasPrefix("/")
+        }
+        // A shared key file that already names another account must not
+        // fall back to a relative `message/message_0.db` entry.
+        if hasAbsolute { return nil }
+        let unique = Set(candidates.map(\.value))
+        return unique.count == 1 ? unique.first : nil
+    }
+
+    static func keyPath(_ keyPath: String, isUnderDatabaseRoot db: String) -> Bool {
+        guard !db.isEmpty else { return false }
+        return keyPath == db || keyPath.hasPrefix(db + "/")
     }
 
     // MARK: - Contacts
 
     /// Reload contacts only if contact.db mtime changed since last load.
     @discardableResult
-    func refreshContactsIfChanged() throws -> Bool {
+    func refreshContactsIfChanged(strict: Bool = false) throws -> Bool {
         try lock.withLock {
             let rel = "contact/contact.db"
             let encPath = "\(dbDir)/\(rel)"
-            guard FileManager.default.fileExists(atPath: encPath) else { return false }
+            guard FileManager.default.fileExists(atPath: encPath) else {
+                if strict { throw ReaderError.dbNotFound(encPath) }
+                return false
+            }
             let cur = (try? FileManager.default.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
             if let cur = cur, let last = contactsMtime, cur == last, !contactCache.isEmpty {
                 return false
@@ -272,7 +367,6 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     func loadContacts() throws {
         let decPath = try getDecryptedDB(relativePath: "contact/contact.db")
-        print("[WCHUD] loadContacts opening \(decPath)")
         var db: OpaquePointer?
         // immutable=1 tells SQLite to treat the file as a read-only snapshot
         // and skip WAL/SHM aux-file machinery — prevents SQLITE_CANTOPEN on
@@ -294,15 +388,21 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         defer { sqlite3_finalize(stmt) }
 
         var contactRecords: [ContactIdentityIndex.Record] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var contactStep = sqlite3_step(stmt)
+        while contactStep == SQLITE_ROW {
             let username = columnText(stmt, 0)
             let nickName = columnText(stmt, 1)
             let remark = columnText(stmt, 2)
             contactRecords.append(ContactIdentityIndex.Record(username: username, nickName: nickName, remark: remark))
+            contactStep = sqlite3_step(stmt)
+        }
+        guard contactStep == SQLITE_DONE else {
+            throw ReaderError.sqlError("Cannot finish reading contacts")
         }
         let identityIndex = ContactIdentityIndex.build(records: contactRecords)
         contactIdentityIndex = identityIndex
         contactCache = identityIndex.displayNameByUsername
+        loadGroupMemberNames(db: db, knownNames: identityIndex.displayNameByUsername)
 
         // Rebuild self-name aliases. Merge the base set (wxid + legacy
         // short ID + contact.db display name) WITH any group-chat
@@ -328,7 +428,59 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 names.insert(myDisplay)
             }
             mySelfNames = names
-            print("[WCHUD] mySelfNames: \(mySelfNames)")
+        }
+    }
+
+    /// Recover a member list for groups WeChat never named. `contact` has no
+    /// row value for them (only `chat_room`/`chatroom_member` membership), so
+    /// without this the UI would have to show a raw `…@chatroom` id.
+    ///
+    /// Runs while `contact.db` is already open in `loadContacts()`.
+    private func loadGroupMemberNames(db: OpaquePointer?, knownNames: [String: String]) {
+        var result: [String: [String]] = [:]
+        var stmt: OpaquePointer?
+        let sql = """
+            SELECT r.username, n.username, c.nick_name, c.remark
+            FROM chat_room r
+            JOIN chatroom_member m ON m.room_id = r.id
+            JOIN name2id n ON n.rowid = m.member_id
+            LEFT JOIN contact c ON c.username = n.username
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+
+        let me = myUsername()
+        let myShortId = Self.legacyShortUsername(for: me)
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let room = columnText(stmt, 0)
+            guard room.contains("@chatroom") else { continue }
+            // Only nameless groups need the fallback; named groups keep
+            // whatever WeChat itself shows.
+            if let known = knownNames[room], known != ContactIdentityIndex.unnamedGroupPlaceholder { continue }
+
+            let memberUsername = columnText(stmt, 1)
+            // The user's own nickname says nothing about which group this is.
+            if !me.isEmpty, memberUsername == me || memberUsername == myShortId { continue }
+
+            let candidates = [columnText(stmt, 3), columnText(stmt, 2), knownNames[memberUsername] ?? ""]
+            guard let name = candidates
+                .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+                .first(where: { !$0.isEmpty && !$0.hasPrefix("wxid_") }) else { continue }
+
+            var names = result[room] ?? []
+            if !names.contains(name), names.count < 8 { names.append(name) }
+            result[room] = names
+        }
+        groupMemberNamesCache = result
+
+        // `contactCache` holds the placeholder for these rooms, and
+        // `displayName(for:)` returns the first cache hit — so promote the
+        // member-derived label into the cache, otherwise the placeholder
+        // would keep winning.
+        for (room, members) in result {
+            guard let label = ContactIdentityIndex.memberDerivedGroupLabel(memberNames: members) else { continue }
+            contactCache[room] = label
         }
     }
 
@@ -345,9 +497,30 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 return display
             }
             if username.contains("@chatroom") {
-                return "未命名群聊"
+                // WeChat has no name for this room. Fall back to who is in it
+                // rather than the raw id, which means nothing to the user.
+                if let members = groupMemberNamesCache[username],
+                   let label = ContactIdentityIndex.memberDerivedGroupLabel(memberNames: members) {
+                    return label
+                }
+                return ContactIdentityIndex.unnamedGroupPlaceholder
             }
             return username
+        }
+    }
+
+    /// Member display names recovered for an unnamed group, if any.
+    func groupMemberNames(for username: String) -> [String] {
+        lock.withLock { groupMemberNamesCache[username] ?? [] }
+    }
+
+    /// True when WeChat itself has no name for this chat — `contact.db`
+    /// carries the row but with an empty `nick_name`/`remark`. Whatever the
+    /// UI shows for such a chat is a placeholder or a member-derived guess.
+    func hasWeChatName(for username: String) -> Bool {
+        lock.withLock {
+            guard let name = contactIdentityIndex.weChatNameByUsername[username] else { return false }
+            return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -452,17 +625,36 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         var stmt: OpaquePointer?
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw ReaderError.sqlError("Cannot locate message table")
+        }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, tableName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
 
-        return sqlite3_step(stmt) == SQLITE_ROW ? tableName : nil
+        let result = sqlite3_step(stmt)
+        guard result == SQLITE_ROW || result == SQLITE_DONE else {
+            throw ReaderError.sqlError("Message table lookup interrupted")
+        }
+        return result == SQLITE_ROW ? tableName : nil
     }
 
     // MARK: - Message Queries
 
     func getMessages(chatUsername: String, limit: Int = 50, sinceLocalId: Int? = nil) throws -> [MessageInfo] {
+        try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId,
+                        afterCursor: nil)
+    }
+
+    func getMessages(chatUsername: String, limit: Int = 50, sinceLocalId: Int? = nil,
+                     afterCursor: (lastCreateTime: Int, lastLocalId: Int)?,
+                     oldestFirst: Bool = false,
+                     startTime: Int? = nil, endTime: Int? = nil,
+                     beforeCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil) throws -> [MessageInfo] {
+        lock.lock()
+        defer { lock.unlock() }
         var results: [MessageInfo] = []
+        var foundTable = false
+        let usedCachedMapping = chatDBCache[chatUsername] != nil
 
         // Negative cache: we already scanned all DBs and this chat has no table.
         if chatDBNegativeCache.contains(chatUsername) {
@@ -482,11 +674,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             guard let tableName = try findMsgTable(chatUsername: chatUsername, dbPath: decPath) else {
                 continue
             }
+            foundTable = true
             // Remember this mapping for future calls.
             chatDBCache[chatUsername] = relPath
 
             var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            guard Self.openReadonly(path: decPath, db: &db) else {
+                throw ReaderError.sqlError("Cannot open message database")
+            }
             defer { sqlite3_close(db) }
 
             var sql = """
@@ -494,20 +689,23 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                        message_content, WCDB_CT_message_content
                 FROM [\(tableName)]
             """
-            if let since = sinceLocalId {
-                sql += " WHERE local_id > \(since)"
-            }
-            sql += " ORDER BY create_time DESC, local_id DESC LIMIT \(limit)"
+            sql += Self.messageQuerySuffix(limit: limit, sinceLocalId: sinceLocalId,
+                                           afterCursor: afterCursor, oldestFirst: oldestFirst,
+                                           startTime: startTime, endTime: endTime,
+                                           beforeCursor: beforeCursor)
 
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw ReaderError.sqlError("Cannot query messages: \(String(cString: sqlite3_errmsg(db)))")
+            }
             defer { sqlite3_finalize(stmt) }
 
             let name2id = loadName2Id(db: db)
             let isGroup = chatUsername.contains("@chatroom")
             let chatName = displayName(for: chatUsername)
 
-            while sqlite3_step(stmt) == SQLITE_ROW {
+            var stepResult = sqlite3_step(stmt)
+            while stepResult == SQLITE_ROW {
                 let localId = Int(sqlite3_column_int64(stmt, 0))
                 let localType = Int(sqlite3_column_int64(stmt, 1))
                 let createTime = Int(sqlite3_column_int64(stmt, 2))
@@ -562,9 +760,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     } else if let canonical = canonicalContactUsername(for: hint) {
                         senderUsername = canonical
                     } else if realSenderId == 0 && !hint.isEmpty {
-                        mySelfNames.insert(hint)
-                        print("[WCHUD] learned self alias from group: '\(hint)'")
-                        persistSelfAliases()
+                        learnSelfAlias(hint)
                         senderUsername = me
                     }
                 }
@@ -585,25 +781,57 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     appType: parsed.appType
                 )
                 results.append(msg)
+                stepResult = sqlite3_step(stmt)
+            }
+            guard stepResult == SQLITE_DONE else {
+                throw ReaderError.sqlError("Message query interrupted: \(String(cString: sqlite3_errmsg(db)))")
             }
             break  // Msg_<hash> table lives in exactly one DB — no need to check others.
         }
 
         // Cache miss: cached DB no longer has this table. Retry with full scan.
-        if results.isEmpty && dbsToSearch.count == 1 {
+        if !foundTable && usedCachedMapping {
             chatDBCache.removeValue(forKey: chatUsername)
-            return try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId)
+            return try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId,
+                                   afterCursor: afterCursor, oldestFirst: oldestFirst,
+                                           startTime: startTime, endTime: endTime,
+                                           beforeCursor: beforeCursor)
         }
 
         // Full scan found nothing — remember so we skip next time.
-        if results.isEmpty && dbsToSearch.count > 1 {
+        if !foundTable {
             chatDBNegativeCache.insert(chatUsername)
         }
 
-        return results.sorted {
-            if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
-            return $0.localId > $1.localId
+        // SQLite has already applied the requested composite ordering.
+        return results
+    }
+
+    /// A bounded oldest-first page ensures a scan advances only over messages it read.
+    /// The local ID tie-breaker preserves messages sharing the same second.
+    static func messageQuerySuffix(
+        limit: Int, sinceLocalId: Int? = nil,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil,
+        oldestFirst: Bool = false,
+        startTime: Int? = nil, endTime: Int? = nil,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil
+    ) -> String {
+        var predicates: [String] = []
+        if let sinceLocalId { predicates.append("local_id > \(sinceLocalId)") }
+        if let cursor = afterCursor {
+            predicates.append("(create_time > \(cursor.lastCreateTime) OR (create_time = \(cursor.lastCreateTime) AND local_id > \(cursor.lastLocalId)))")
         }
+        // The upper composite bound includes the anchor and excludes later rows
+        // in its second before LIMIT is applied.
+        if let cursor = beforeCursor {
+            predicates.append("(create_time < \(cursor.lastCreateTime) OR (create_time = \(cursor.lastCreateTime) AND local_id <= \(cursor.lastLocalId)))")
+        }
+        // Date filters belong in SQL before LIMIT, so historical days remain reachable.
+        if let startTime { predicates.append("create_time >= \(startTime)") }
+        if let endTime { predicates.append("create_time < \(endTime)") }
+        let direction = oldestFirst ? "ASC" : "DESC"
+        let condition = predicates.isEmpty ? "" : " WHERE " + predicates.joined(separator: " AND ")
+        return condition + " ORDER BY create_time \(direction), local_id \(direction) LIMIT \(max(1, limit))"
     }
 
     /// Bulk stats across all message tables for given chat usernames.
@@ -790,7 +1018,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// Cost: one `sqlite_sequence` scan per DB (pass 1, ~ms) + one
     /// per-table COUNT for the filtered subset (pass 2, typically well
     /// under 1 s total because the baseline threshold prunes heavily).
-    func topActiveContacts(limit: Int = 20) throws -> [ActiveContact] {
+    func topActiveContacts(limit: Int = 20, strict: Bool = false) throws -> [ActiveContact] {
+        lock.lock()
+        defer { lock.unlock() }
         let contacts = contactCache
         guard !contacts.isEmpty else { return [] }
 
@@ -837,32 +1067,59 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         var totalCounts: [String: Int] = [:]
 
         let msgDBs = findMessageDBs()
+        if strict && msgDBs.isEmpty {
+            throw ReaderError.dbNotFound("\(dbDir)/message")
+        }
         for relPath in msgDBs {
-            _ = try? refreshIfChanged(relPath: relPath)
+            do {
+                _ = try refreshIfChanged(relPath: relPath)
+            } catch {
+                if strict { throw error }
+                continue
+            }
             let decPath: String
             do { decPath = try getDecryptedDB(relativePath: relPath) }
-            catch { continue }
+            catch {
+                if strict { throw error }
+                continue
+            }
 
             var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            guard Self.openReadonly(path: decPath, db: &db) else {
+                if strict { throw ReaderError.sqlError("Cannot open message database") }
+                continue
+            }
             defer { sqlite3_close(db) }
 
             var stmt: OpaquePointer?
             let sql = "SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'Msg_%'"
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                if strict { throw ReaderError.sqlError("Cannot query sqlite_sequence: \(String(cString: sqlite3_errmsg(db)))") }
+                continue
+            }
             defer { sqlite3_finalize(stmt) }
 
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                guard let namePtr = sqlite3_column_text(stmt, 0) else { continue }
+            var stepResult = sqlite3_step(stmt)
+            while stepResult == SQLITE_ROW {
+                guard let namePtr = sqlite3_column_text(stmt, 0) else {
+                    stepResult = sqlite3_step(stmt)
+                    continue
+                }
                 let table = String(cString: namePtr)
-                guard table.hasPrefix("Msg_") else { continue }
-                let hash = String(table.dropFirst(4))
-                guard let username = hashToUsername[hash] else { continue }
-                let seq = Int(sqlite3_column_int64(stmt, 1))
-                totalCounts[username, default: 0] += seq
-                tablesByUsername[username, default: []].append(
-                    TableRef(relPath: relPath, tableName: table)
-                )
+                if table.hasPrefix("Msg_") {
+                    let hash = String(table.dropFirst(4))
+                    if let username = hashToUsername[hash] {
+                        let seq = Int(sqlite3_column_int64(stmt, 1))
+                        totalCounts[username, default: 0] += seq
+                        tablesByUsername[username, default: []].append(
+                            TableRef(relPath: relPath, tableName: table)
+                        )
+                    }
+                }
+                stepResult = sqlite3_step(stmt)
+            }
+            if strict && stepResult != SQLITE_DONE {
+                throw ReaderError.sqlError("Message table scan interrupted: \(String(cString: sqlite3_errmsg(db)))")
             }
         }
 
@@ -889,18 +1146,31 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         for (relPath, work) in workByDB {
             let decPath: String
             do { decPath = try getDecryptedDB(relativePath: relPath) }
-            catch { continue }
+            catch {
+                if strict { throw error }
+                continue
+            }
 
             var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            guard Self.openReadonly(path: decPath, db: &db) else {
+                if strict { throw ReaderError.sqlError("Cannot open message database") }
+                continue
+            }
             defer { sqlite3_close(db) }
 
             for (username, table) in work {
                 var stmt: OpaquePointer?
                 let sql = "SELECT COUNT(*) FROM [\(table)] WHERE create_time > \(cutoff)"
-                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                    if strict { throw ReaderError.sqlError("Cannot query message table: \(String(cString: sqlite3_errmsg(db)))") }
+                    continue
+                }
                 if sqlite3_step(stmt) == SQLITE_ROW {
                     recentCounts[username, default: 0] += Int(sqlite3_column_int64(stmt, 0))
+                } else if strict {
+                    let message = String(cString: sqlite3_errmsg(db))
+                    sqlite3_finalize(stmt)
+                    throw ReaderError.sqlError("Message count query failed: \(message)")
                 }
                 sqlite3_finalize(stmt)
             }
@@ -983,6 +1253,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             guard let cachedPath = entry["cachedPath"] as? String,
                   let encMtimeRaw = entry["encMtime"] as? Double,
                   let walMtimeRaw = entry["walMtime"] as? Double?,
+                  entry["accountIdentity"] as? String == Self.accountCacheIdentity(dbDir),
+                  URL(fileURLWithPath: cachedPath).deletingLastPathComponent().standardizedFileURL.path == URL(fileURLWithPath: cacheDir).standardizedFileURL.path,
                   fm.fileExists(atPath: cachedPath) else { continue }
             let encPath = "\(dbDir)/\(relPath)"
             guard fm.fileExists(atPath: encPath) else {
@@ -1016,7 +1288,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         guard cacheStrategy == .persistent else { return }
         var json: [String: [String: Any]] = [:]
         for (relPath, cachedPath) in decryptedCache {
-            var entry: [String: Any] = ["cachedPath": cachedPath]
+            var entry: [String: Any] = ["cachedPath": cachedPath, "accountIdentity": Self.accountCacheIdentity(dbDir)]
             if let m = mainMtimes[relPath] {
                 entry["encMtime"] = m.timeIntervalSince1970
             }
@@ -1028,7 +1300,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             json[relPath] = entry
         }
         guard let data = try? JSONSerialization.data(withJSONObject: json) else { return }
-        try? data.write(to: URL(fileURLWithPath: manifestPath))
+        try? data.write(to: URL(fileURLWithPath: manifestPath), options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifestPath)
     }
 
     // MARK: - Name2Id

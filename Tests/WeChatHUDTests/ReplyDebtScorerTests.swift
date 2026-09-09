@@ -21,6 +21,48 @@ final class ReplyDebtScorerTests: XCTestCase {
         XCTAssertTrue(item?.reasons.contains(where: { $0.code == .privateChat }) == true)
     }
 
+    func testDebtContextKeepsExactLatestInboundIdentityAndFullText() {
+        let text = "方案你定了吗？" + String(repeating: " 请给我完整上下文。", count: 12)
+        let item = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 0,
+                    latestInbound: 500,
+                    latestInboundText: text,
+                    latestOutbound: 100,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        ).first
+
+        XCTAssertEqual(item?.contextNotification?.messageID, "alice-in")
+        XCTAssertEqual(item?.contextNotification?.rawText, text)
+        XCTAssertEqual(item?.contextNotification?.timestamp, Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(item?.contextNotification?.senderName, "Bob")
+    }
+
+    func testUnsubstantiveReplyContextUsesTheInboundSourceMessage() {
+        let inboundText = "明天什么时候签？请确认最终日期。"
+        let item = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: inboundText,
+                    latestOutbound: 600,
+                    now: 660
+                )
+            ],
+            config: ReplyDebtConfig()
+        ).first
+
+        XCTAssertEqual(item?.reasons.first?.code, .unsubstantiveReply)
+        XCTAssertEqual(item?.contextNotification?.messageID, "alice-in")
+        XCTAssertEqual(item?.contextNotification?.rawText, inboundText)
+        XCTAssertEqual(item?.contextNotification?.timestamp, Date(timeIntervalSince1970: 500))
+    }
+
     func testLatestOutboundClearsDebt() {
         let items = ReplyDebtScorer.build(
             seeds: [

@@ -23,7 +23,7 @@ struct WhitelistSuggestionBadge: View {
         }
         .popover(isPresented: $showConfirm) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("AI 建议将此联系人加入白名单")
+                Text("AI 建议关注此联系人")
                     .font(.system(size: 12, weight: .semibold))
                 Text("分类：\(suggestion.category == "work" ? "工作" : suggestion.category == "life" ? "生活" : "其他")")
                     .font(.system(size: 11))
@@ -34,7 +34,7 @@ struct WhitelistSuggestionBadge: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 HStack {
-                    Button("加入白名单") {
+                    Button("添加关注") {
                         monitor.acceptWhitelistSuggestion(chatUsername: chatUsername, suggestion: suggestion)
                         showConfirm = false
                     }

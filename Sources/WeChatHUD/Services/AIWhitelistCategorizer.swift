@@ -126,6 +126,18 @@ actor AIWhitelistCategorizer {
         }
     }
 
+    /// Batch outcome used by the settings UI to distinguish a genuine empty
+    /// recommendation set from a failed or partially failed AI run. The
+    /// legacy `categorizeBatch` method below still returns only parsed rows
+    /// for existing callers.
+    struct BatchCategorizationResult {
+        let results: [BatchResult]
+        let attemptedChunks: Int
+        let failedChunks: Int
+
+        var succeededChunks: Int { attemptedChunks - failedChunks }
+    }
+
     private struct BatchResultEnvelope: Decodable {
         let items: [BatchResult]
     }
@@ -138,33 +150,57 @@ actor AIWhitelistCategorizer {
     private static let batchChunkSize = 25
 
     func categorizeBatch(_ items: [BatchItem]) async -> [BatchResult] {
-        guard !items.isEmpty else { return [] }
+        await categorizeBatchWithStatus(items).results
+    }
+
+    func categorizeBatchWithStatus(_ items: [BatchItem]) async -> BatchCategorizationResult {
+        guard !items.isEmpty else {
+            return BatchCategorizationResult(results: [], attemptedChunks: 0, failedChunks: 0)
+        }
 
         let template: String
         do {
             template = try promptLoader.load(version: "whitelist_batch_v1")
         } catch {
             print("[WCHUD] AIWhitelistCategorizer: batch prompt load failed: \(error)")
-            return []
+            let attempted = Int(ceil(Double(items.count) / Double(Self.batchChunkSize)))
+            return BatchCategorizationResult(results: [], attemptedChunks: attempted, failedChunks: attempted)
         }
 
         // Chunk to avoid overflowing the model's context window.
         var merged: [BatchResult] = []
         var cursor = 0
+        var attemptedChunks = 0
+        var failedChunks = 0
         while cursor < items.count {
             let end = min(cursor + Self.batchChunkSize, items.count)
             let chunk = Array(items[cursor..<end])
-            let results = await categorizeChunk(chunk, template: template)
-            merged.append(contentsOf: results)
+            attemptedChunks += 1
+            let outcome = await categorizeChunkWithStatus(chunk, template: template)
+            merged.append(contentsOf: outcome.results)
+            if !outcome.succeeded { failedChunks += 1 }
             cursor = end
         }
-        return merged
+        return BatchCategorizationResult(
+            results: merged,
+            attemptedChunks: attemptedChunks,
+            failedChunks: failedChunks
+        )
     }
 
     /// Single AI call for one chunk. Each `BatchResult.index` is the
     /// caller's original index (not re-numbered), so the merged output
     /// still aligns with the caller's input positions.
     private func categorizeChunk(_ items: [BatchItem], template: String) async -> [BatchResult] {
+        await categorizeChunkWithStatus(items, template: template).results
+    }
+
+    private struct ChunkCategorizationResult {
+        let results: [BatchResult]
+        let succeeded: Bool
+    }
+
+    private func categorizeChunkWithStatus(_ items: [BatchItem], template: String) async -> ChunkCategorizationResult {
         let candidatesText = items.map { item in
             let msgs = item.messages.prefix(5)
                 .map { "[\(clean($0.sender))] \(clean($0.body))" }
@@ -181,15 +217,22 @@ actor AIWhitelistCategorizer {
             .replacingOccurrences(of: "{candidates}", with: candidatesText)
 
         let response = await call(userPrompt)
-        guard !response.text.isEmpty else { return [] }
-        return parseBatch(response.text)
+        guard !response.text.isEmpty else {
+            return ChunkCategorizationResult(results: [], succeeded: false)
+        }
+        guard let results = parseBatch(response.text) else {
+            return ChunkCategorizationResult(results: [], succeeded: false)
+        }
+        // An explicitly valid empty array means the model found no useful
+        // recommendations; it is different from an empty/invalid response.
+        return ChunkCategorizationResult(results: results, succeeded: true)
     }
 
-    private func parseBatch(_ raw: String) -> [BatchResult] {
+    private func parseBatch(_ raw: String) -> [BatchResult]? {
         if let envelope = AIJSONExtractor.decodeFirstObject(from: raw, as: BatchResultEnvelope.self) {
             return envelope.items
         }
-        return AIJSONExtractor.decodeFirstArray(from: raw, as: BatchResult.self) ?? []
+        return AIJSONExtractor.decodeFirstArray(from: raw, as: BatchResult.self)
     }
 
     // MARK: - Model call

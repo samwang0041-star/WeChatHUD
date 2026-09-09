@@ -51,7 +51,7 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         let raw = String(data: try! JSONEncoder().encode(cached), encoding: .utf8)!
         try! store.writeAnalysisCache(
             chatUsername: notification.chatUsername,
-            analysisType: "group_context_briefing_v1",
+            analysisType: "group_context_briefing_v1:context_window_v2",
             inputHash: notification.briefingKey,
             result: raw,
             ttlHours: 24
@@ -61,7 +61,9 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         {"situation":"不该被调用","why_mentioned":"不该被调用","current_status":"不该被调用","next_step":"不该被调用","participants":[],"confidence":0.1}
         """)
         let service = GroupContextBriefingService(
-            reader: FakeGroupContextMessageProvider(messages: []),
+            reader: FakeGroupContextMessageProvider(messages: [
+                makeMessage(id: "m-cache", sender: "Bob", text: "@你 今天给个判断", ts: 200)
+            ]),
             store: store,
             client: client
         )
@@ -69,15 +71,40 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         let result = await service.explain(notification: notification)
 
         XCTAssertEqual(result.briefing.situation, cached.situation)
+        XCTAssertEqual(result.contextMessages.map(\.id), ["m-cache"])
         let calls = await client.callCount
         XCTAssertEqual(calls, 0)
+    }
+
+    func testMissingSourceDoesNotReuseCachedAIBriefing() async {
+        let notification = makeNotification(messageID: "m-evicted", rawText: "@你 看下这个", ts: 210)
+        let provider = MutableGroupContextMessageProvider(messages: [
+            makeMessage(id: "m-evicted", sender: "Bob", text: "@你 看下这个", ts: 210)
+        ])
+        let client = FakeGroupContextLLMClient(response: """
+        {"situation":"缓存前的真实分析","why_mentioned":"需要你确认","current_status":"等待判断","next_step":"回复","participants":["Bob"],"confidence":0.9}
+        """)
+        let service = GroupContextBriefingService(reader: provider, store: store, client: client)
+
+        let first = await service.explain(notification: notification)
+        XCTAssertEqual(first.briefing.source, .ai)
+
+        provider.messages = []
+        let second = await service.explain(notification: notification)
+
+        XCTAssertEqual(second.briefing.source, .fallback)
+        XCTAssertTrue(second.errorMessage?.contains("找不到") == true)
+        XCTAssertFalse(second.briefing.situation.contains("缓存前的真实分析"))
+        XCTAssertTrue(second.contextMessages.isEmpty)
+        let calls = await client.callCount
+        XCTAssertEqual(calls, 1, "missing source must return before consulting the cached AI result or model")
     }
 
     func testServiceFallsBackOnInvalidJSONAndWritesParseAudit() async {
         let notification = makeNotification(messageID: "m-invalid", rawText: "@你 这个今天能不能定", ts: 200)
         let provider = FakeGroupContextMessageProvider(messages: [
             makeMessage(id: "m1", sender: "Alice", text: "这事还没定", ts: 160),
-            makeMessage(id: "m2", sender: "Bob", text: "@你 这个今天能不能定", ts: 200)
+            makeMessage(id: "m-invalid", sender: "Bob", text: "@你 这个今天能不能定", ts: 200)
         ])
         let client = FakeGroupContextLLMClient(response: "not-json")
         let service = GroupContextBriefingService(
@@ -171,7 +198,7 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         XCTAssertNil(result.errorMessage)
         let cached = store.loadAnalysisCache(
             chatUsername: notification.chatUsername,
-            analysisType: "group_context_briefing_v1",
+            analysisType: "group_context_briefing_v1:context_window_v2",
             inputHash: notification.briefingKey
         )
         XCTAssertNotNil(cached)
@@ -203,6 +230,91 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         XCTAssertEqual(options[0].thinkingEnabled, nil)
     }
 
+    func testServiceFindsHistoricalTargetBeyondNewestPage() async throws {
+        let messages = (0..<60).map { index in
+            makeMessage(
+                id: "m" + String(index),
+                sender: index.isMultiple(of: 2) ? "Alice" : "Bob",
+                text: "context-" + String(index),
+                ts: 100 + index / 2,
+                localId: index + 1
+            )
+        }
+        // The notification timestamp represents a session-level latest time,
+        // while the source message itself is much older than the newest page.
+        let notification = makeNotification(messageID: "m5", rawText: "@你 看下这个", ts: 160)
+        let provider = FakeGroupContextMessageProvider(messages: messages)
+        let client = FakeGroupContextLLMClient(response: """
+        {"situation":"已按顺序读取","why_mentioned":"需要你确认","current_status":"等待判断","next_step":"回复","participants":["Alice","Bob","Carol"],"confidence":0.9}
+        """)
+        let service = GroupContextBriefingService(
+            reader: provider,
+            store: store,
+            client: client
+        )
+
+        let result = await service.explain(notification: notification)
+
+        XCTAssertEqual(result.briefing.source, .ai)
+        XCTAssertEqual(result.contextMessages.map(\.id), (0...8).map { "m\($0)" })
+        let prompt = await client.lastUserPrompt
+        XCTAssertTrue(prompt.contains("context-5"), "historical source should be loaded by ID")
+        XCTAssertFalse(prompt.contains("context-40"), "window should stay centered on the old source")
+        let sameSecondFirst = try XCTUnwrap(prompt.range(of: "context-4")?.lowerBound)
+        let sameSecondSecond = try XCTUnwrap(prompt.range(of: "context-5")?.lowerBound)
+        XCTAssertLessThan(sameSecondFirst, sameSecondSecond)
+    }
+
+    func testSourceTimestampStillIncludesThreeFollowingMessages() async {
+        let messages = (0..<12).map { index in
+            makeMessage(id: "m\(index)", sender: "Alice", text: "context-\(index)", ts: 100 + index, localId: index + 1)
+        }
+        let service = GroupContextBriefingService(
+            reader: FakeGroupContextMessageProvider(messages: messages),
+            store: store,
+            client: FakeGroupContextLLMClient(response: "", configured: false)
+        )
+        let result = await service.explain(notification: makeNotification(messageID: "m5", rawText: "@你 看下这个", ts: 105))
+        XCTAssertEqual(result.contextMessages.map(\.id), (0...8).map { "m\($0)" })
+    }
+
+    func testMissingSourceFallsBackWithoutUsingNewestMessageAsContext() async {
+        let notification = makeNotification(messageID: "missing-source", rawText: "@你 原始提醒", ts: 200)
+        let provider = FakeGroupContextMessageProvider(messages: [
+            makeMessage(id: "latest", sender: "Alice", text: "今天最新的无关消息", ts: 200)
+        ])
+        let client = FakeGroupContextLLMClient(response: "", configured: false)
+        let service = GroupContextBriefingService(reader: provider, store: store, client: client)
+
+        let result = await service.explain(notification: notification)
+
+        XCTAssertEqual(result.briefing.source, .fallback)
+        XCTAssertTrue(result.errorMessage?.contains("找不到") == true)
+        XCTAssertTrue(result.briefing.situation.contains("只能确认收到"))
+        XCTAssertTrue(result.briefing.currentStatus.contains("未知"))
+        XCTAssertTrue(result.briefing.nextStep.contains("暂不直接承诺"))
+        XCTAssertFalse(result.briefing.situation.contains("群里最近"))
+        XCTAssertFalse(result.briefing.situation.contains("今天最新的无关消息"))
+    }
+
+    func testSourceLookupNeverUsesMessageFromAnotherChat() async {
+        let notification = makeNotification(messageID: "same-id", rawText: "@你 当前提醒", ts: 200)
+        let provider = FakeGroupContextMessageProvider(messages: [
+            makeMessage(
+                id: "same-id", sender: "Other", text: "其他群的私密上下文", ts: 190,
+                chatUsername: "other@chatroom"
+            )
+        ])
+        let client = FakeGroupContextLLMClient(response: "", configured: false)
+        let service = GroupContextBriefingService(reader: provider, store: store, client: client)
+
+        let result = await service.explain(notification: notification)
+
+        XCTAssertEqual(result.briefing.source, .fallback)
+        XCTAssertTrue(result.errorMessage?.contains("找不到") == true)
+        XCTAssertFalse(result.briefing.situation.contains("其他群的私密上下文"))
+    }
+
     private func makeNotification(
         messageID: String,
         rawText: String,
@@ -227,11 +339,14 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         id: String,
         sender: String,
         text: String,
-        ts: Int
+        ts: Int,
+        localId: Int = 0,
+        chatUsername: String = "room@chatroom"
     ) -> MessageInfo {
         MessageInfo(
             id: id,
-            chatUsername: "room@chatroom",
+            localId: localId,
+            chatUsername: chatUsername,
             chatName: "项目群",
             senderUsername: sender.lowercased(),
             senderName: sender,
@@ -243,17 +358,56 @@ final class GroupContextBriefingServiceTests: XCTestCase {
     }
 }
 
-private struct FakeGroupContextMessageProvider: GroupContextMessageProvider {
-    let messages: [MessageInfo]
+private final class MutableGroupContextMessageProvider: GroupContextMessageProvider, @unchecked Sendable {
+    var messages: [MessageInfo]
 
-    func getMessages(chatUsername: String, limit: Int, sinceLocalId: Int?) throws -> [MessageInfo] {
-        Array(messages.prefix(limit))
+    init(messages: [MessageInfo]) {
+        self.messages = messages
+    }
+
+    func getMessages(
+        chatUsername: String,
+        limit: Int,
+        sinceLocalId: Int?,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)?,
+        oldestFirst: Bool,
+        startTime: Int?,
+        endTime: Int?,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)?
+    ) throws -> [MessageInfo] {
+        let filtered = messages.filter { message in
+            guard message.chatUsername == chatUsername else { return false }
+            if let sinceLocalId, message.localId <= sinceLocalId { return false }
+            if let startTime, message.createTime < startTime { return false }
+            if let endTime, message.createTime >= endTime { return false }
+            if let cursor = afterCursor,
+               !(message.createTime > cursor.lastCreateTime
+                 || (message.createTime == cursor.lastCreateTime && message.localId > cursor.lastLocalId)) {
+                return false
+            }
+            if let cursor = beforeCursor,
+               !(message.createTime < cursor.lastCreateTime
+                 || (message.createTime == cursor.lastCreateTime && message.localId <= cursor.lastLocalId)) {
+                return false
+            }
+            return true
+        }
+        let ordered = filtered.sorted {
+            if $0.createTime != $1.createTime {
+                return oldestFirst ? $0.createTime < $1.createTime : $0.createTime > $1.createTime
+            }
+            return oldestFirst ? $0.localId < $1.localId : $0.localId > $1.localId
+        }
+        return Array(ordered.prefix(limit))
     }
 }
+
+private typealias FakeGroupContextMessageProvider = MutableGroupContextMessageProvider
 
 private actor FakeGroupContextLLMClient: GroupContextLLMClient {
     private(set) var callCount = 0
     private(set) var optionsSeen: [CompleteOptions] = []
+    private(set) var lastUserPrompt = ""
 
     let response: String
     let configured: Bool
@@ -265,17 +419,20 @@ private actor FakeGroupContextLLMClient: GroupContextLLMClient {
 
     func complete(system: String, user: String) async throws -> String {
         callCount += 1
+        lastUserPrompt = user
         return response
     }
 
     func complete(system: String, user: String, options: CompleteOptions) async throws -> String {
         callCount += 1
+        lastUserPrompt = user
         optionsSeen.append(options)
         return response
     }
 
     func completeWithMetadata(system: String, user: String, options: CompleteOptions) async throws -> AICompletionResult {
         callCount += 1
+        lastUserPrompt = user
         optionsSeen.append(options)
         return AICompletionResult(text: response, providerID: "test", model: "test-model")
     }

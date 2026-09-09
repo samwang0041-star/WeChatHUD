@@ -224,7 +224,20 @@ enum ReplyDebtScorer {
             isAtMention: seed.isAtMention,
             inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
             reasons: reasons,
-            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority)
+            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority),
+            contextNotification: contextNotification(seed: seed, message: latestInbound)
+        )
+    }
+
+    private static func contextNotification(seed: Seed, message: MessageInfo) -> HUDNotification {
+        HUDNotification(
+            chatUsername: seed.session.username, chatName: seed.chatName,
+            senderUsername: message.senderUsername, senderName: message.senderName,
+            attentionLevel: seed.isVIP ? .vip : .watch,
+            messageID: message.id, rawText: message.text,
+            snippet: String(message.text.prefix(80)), isAtMention: seed.isAtMention,
+            timestamp: Date(timeIntervalSince1970: Double(message.createTime)),
+            kind: seed.session.isGroup ? (seed.isAtMention ? .groupAt : .groupMessage) : .privateChat
         )
     }
 
@@ -289,7 +302,8 @@ enum ReplyDebtScorer {
             isAtMention: seed.isAtMention,
             inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
             reasons: reasons,
-            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority)
+            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority),
+            contextNotification: contextNotification(seed: seed, message: latestInbound)
         )
     }
 

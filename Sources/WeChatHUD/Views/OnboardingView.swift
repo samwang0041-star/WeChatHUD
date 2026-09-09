@@ -1,190 +1,389 @@
 import SwiftUI
+import AppKit
 
-/// First-launch onboarding flow. Guides through:
-/// 1. WeChat detection  2. AI setup  3. First whitelist  4. Feature overview
+/// First launch introduces the product without treating a wizard click as
+/// evidence of connectivity or enabling additional analysis/sending scope.
 struct OnboardingView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
+    let onOpenSettings: ((String) -> Void)?
     let onComplete: () -> Void
 
     @State private var step = 0
+    @State private var candidates: [String] = []
+    @State private var configuration = AIConfig()
+    @State private var saveError: String?
+    @State private var refreshID = 0
+
+    init(onOpenSettings: ((String) -> Void)? = nil, onComplete: @escaping () -> Void) {
+        self.onOpenSettings = onOpenSettings
+        self.onComplete = onComplete
+    }
+
+    private let steps = FirstLaunchGuide.stepTitles
 
     var body: some View {
         VStack(spacing: 0) {
-            // Progress dots
-            HStack(spacing: 6) {
-                ForEach(0..<4, id: \.self) { i in
-                    Circle()
-                        .fill(i <= step ? Color.accentColor : Color.white.opacity(0.2))
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .animation(.easeInOut(duration: 0.3), value: step)
-            .padding(.top, 16)
-            .padding(.bottom, 12)
-
-            // Step content
-            Group {
-                switch step {
-                case 0: wechatDetection
-                case 1: aiSetup
-                case 2: whitelistGuide
-                default: featureOverview
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 20)
-
-            // Navigation
-            HStack {
-                if step > 0 {
-                    Button("上一步") { step -= 1 }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+            HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(CompanionProductCopy.brandName).font(.headline)
+                    Text(CompanionProductCopy.brandPromise).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if step < 3 {
-                    Button("下一步") { step += 1 }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                } else {
-                    Button("开始使用") {
-                        try? store.setSetting("onboarded", value: "true")
-                        onComplete()
+            }
+            .padding(.horizontal, 24).padding(.top, 20)
+            stepIndicator
+                .padding(.horizontal, 40).padding(.top, 18).padding(.bottom, 16)
+                .accessibilityLabel("\(steps[step])，第 \(step + 1) 步，共 \(steps.count) 步")
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    switch step {
+                    case 0: wechatDetection
+                    default: whitelistGuide
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    if let saveError {
+                        Text(saveError).font(.callout).foregroundStyle(.red)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20).padding(.bottom, 20)
+            }
+            Divider()
+            HStack {
+                if step > 0 {
+                    Button(FirstLaunchGuide.backCTA) { step -= 1; refresh() }
+                        .keyboardShortcut(.cancelAction)
+                } else {
+                    // Opening the workspace without writing the onboarded
+                    // marker keeps the introduction available next launch.
+                    Button(FirstLaunchGuide.skipCTA) { finish(openWorkspace: true, markOnboarded: false) }
+                        .keyboardShortcut(.cancelAction)
+                }
+                Spacer()
+                if let footerHint {
+                    Text(footerHint)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Button(primaryCTA) {
+                    if step == 0 { step = 1; refresh() }
+                    else { finish(openWorkspace: true) }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled)
+            }
+            .controlSize(.regular)
+            .padding(20)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .tint(CompanionPalette.accent)
+        .companionAnimation(CompanionMotion.ease(0.15), value: step)
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(for: .hudOnboardingAdvance)) { _ in
+            guard step == 0 else { return }
+            step = 1
+            refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConfigDidChange)) { _ in refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConnectionEvidenceDidChange).receive(on: RunLoop.main)) { _ in refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+    }
+
+    private var directoryDiagnosis: SyncConnectionDiagnosis {
+        let configured = (store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()).wechatDBPath
+        return SyncConnectionDiagnosis.evaluate(configuredPath: configured, candidates: candidates,
+            exists: { path in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+            }, readable: { FileManager.default.isReadableFile(atPath: $0) },
+            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") })
+    }
+
+    private var readiness: OnboardingReadiness {
+        _ = refreshID
+        let sourceMatches: Bool
+        if case .ready(let root) = directoryDiagnosis {
+            sourceMatches = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
+                == URL(fileURLWithPath: monitor.reader.dbDir).standardizedFileURL.resolvingSymlinksInPath()
+        } else {
+            sourceMatches = false
+        }
+        return OnboardingReadiness(
+            directoryReady: !directoryDiagnosis.needsAttention,
+            keyFileReadable: monitor.reader.accessMaterialState == .available,
+            hasSuccessfulSync: sourceMatches && monitor.stats.lastSyncAt != nil,
+            aiConfigurationValid: AISettingsValidation.connectionError(configuration.provider, requireModel: true) == nil,
+            aiConnectionTested: AIConnectionEvidenceStore.isSuccessful(configuration, store: store),
+            trackedConversationCount: store.getWhitelist().count)
+    }
+
+    private var primaryCTA: String {
+        FirstLaunchGuide.primaryCTA(forStep: step)
+    }
+
+    private var footerHint: String? {
+        if step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled {
+            return "连上微信后才能继续"
+        }
+        if step == 1 && readiness.trackedConversationCount == 0 {
+            return FirstLaunchGuide.contactsSkipHint
+        }
+        return nil
+    }
+
+    private var stepIndicator: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, title in
+                VStack(spacing: 6) {
+                    Text("\(index + 1)")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(index <= step ? Color.white : .secondary)
+                        .frame(width: 26, height: 26)
+                        .background(index <= step ? CompanionPalette.jade : Color.primary.opacity(0.08), in: Circle())
+                    Text(title)
+                        .font(.system(size: 11, weight: index == step ? .semibold : .regular))
+                        .foregroundStyle(index == step ? CompanionPalette.jade : .secondary)
+                }
+                if index < steps.count - 1 {
+                    Rectangle()
+                        .fill(index < step ? CompanionPalette.jade : Color.primary.opacity(0.12))
+                        .frame(height: 1)
+                        .padding(.bottom, 18)
+                        .padding(.horizontal, 8)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
         }
     }
 
-    // MARK: - Step 1: WeChat Detection
+    /// Opening screen: what this is, what it does, and where the data goes.
+    /// It asks for nothing, so a first launch never starts with a permission
+    /// or a connection request before the value is clear.
+    private var welcomeStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(FirstLaunchGuide.productName).font(.largeTitle.weight(.semibold))
+                Text(FirstLaunchGuide.productPitch)
+                    .font(.title3).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(FirstLaunchGuide.welcomeCapabilities, id: \.title) { item in
+                    welcomeCapability(item.icon, item.title, item.detail)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("开始前准备好")
+                    .font(.callout.weight(.medium))
+                ForEach(FirstLaunchGuide.welcomeNeeds, id: \.self) { need in
+                    Label(need, systemImage: "checkmark")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Text(FirstLaunchGuide.timeEstimate)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Label(FirstLaunchGuide.neverAutoSend, systemImage: "lock.shield")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func welcomeCapability(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24, alignment: .center)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.body.weight(.semibold))
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
     private var wechatDetection: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "message.fill")
-                .font(.system(size: 32))
-                .foregroundColor(.green)
-            Text("检测微信")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-            let running = NSWorkspace.shared.runningApplications.contains {
-                $0.bundleIdentifier == "com.tencent.xinWeChat"
+        VStack(alignment: .leading, spacing: 18) {
+            heading("先连接你的微信", subtitle: "连接后，助手会在需要时帮你梳理重要消息，不漏下该处理的事。")
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 14) {
+                    numberedStep(1, "在这台 Mac 上登录微信", "请先确保已在本地正常登录微信。")
+                    numberedStep(2, "点击连接，按系统提示允许读取", "我们只读取聊天内容，不会修改任何记录。")
+                    numberedStep(3, "看到连接成功后继续", "连接成功后，进入下一步选择你关注的对象。")
+                }
+                VStack(spacing: 8) {
+                    Image(systemName: "laptopcomputer")
+                        .font(.system(size: 42, weight: .light))
+                        .foregroundStyle(CompanionPalette.jade)
+                    Text((!NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat").isEmpty
+                          || !NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.WeChat").isEmpty)
+                         ? "微信已登录" : "等待连接")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 140)
+                .padding(.top, 8)
             }
-            if running {
-                Label("微信正在运行", systemImage: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.system(size: 13))
-            } else {
-                Label("请先启动微信", systemImage: "exclamationmark.triangle")
-                    .foregroundColor(.orange)
-                    .font(.system(size: 13))
-                Text("WeChatHUD 需要读取微信的本地数据库")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
-            }
+            WeChatConnectionSetupView()
+            Text("只读取聊天，不修改微信记录。AI 和自动回复稍后按需开启。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: - Step 2: AI Setup
+    private func numberedStep(_ number: Int, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(CompanionPalette.jade, in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var aiSetup: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "brain")
-                .font(.system(size: 32))
-                .foregroundColor(.purple)
-            Text("AI 引擎配置")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-
-            let config = store.loadAIConfig()
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("当前 API:")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
-                    Text(config.baseURL.isEmpty ? "未配置" : config.baseURL)
-                        .font(.system(size: 11))
-                        .foregroundColor(config.baseURL.isEmpty ? .orange : .green)
-                }
-                HStack {
-                    Text("模型:")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
-                    Text(config.model.isEmpty ? "未配置" : config.model)
-                        .font(.system(size: 11))
-                        .foregroundColor(config.model.isEmpty ? .orange : .green)
-                }
-            }
-
-            Text("可以稍后在设置 → AI 引擎中修改")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.4))
+        VStack(alignment: .leading, spacing: 14) {
+            heading(FirstLaunchGuide.aiTitle, subtitle: FirstLaunchGuide.aiSubtitle)
+            checkpoint("AI 连接", detail: readiness.aiConfigurationValid && readiness.aiConnectionTested
+                ? "连接已验证，可以开始使用。"
+                : readiness.aiConfigurationValid
+                    ? "设置已保存，点「测试连接」确认可用。"
+                    : "选一个服务，填入密钥，再点测试。", complete: readiness.aiConfigurationValid && readiness.aiConnectionTested)
+            Text(FirstLaunchGuide.aiPrivacy)
+                .font(.callout).foregroundStyle(.secondary)
+            FirstLaunchAISetupView()
         }
     }
-
-    // MARK: - Step 3: Whitelist
 
     private var whitelistGuide: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 32))
-                .foregroundColor(.blue)
-            Text("添加关注联系人")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-
-            let whitelist = store.getWhitelist()
-            if whitelist.isEmpty {
-                Text("白名单为空 — HUD 只分析白名单中的对话")
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-                Text("稍后在设置 → 联系人中添加")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
-            } else {
-                Label("已有 \(whitelist.count) 个联系人", systemImage: "checkmark.circle.fill")
-                    .foregroundColor(.green)
-                    .font(.system(size: 13))
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            heading(FirstLaunchGuide.contactsTitle, subtitle: FirstLaunchGuide.contactsSubtitle)
+            FirstLaunchContactPicker()
+            Label(FirstLaunchGuide.contactsFooter, systemImage: "info.circle")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
-
-    // MARK: - Step 4: Features
 
     private var featureOverview: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("功能概览")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            featureRow("tray.full.fill", .blue, "统一收件箱", "悬停展开：未读、@你的、等你回复，一处清完")
-            featureRow("calendar", .orange, "日报", "每天的待办、风险、高亮，一键复制微信草稿")
-            featureRow("checkmark.circle", .green, "承诺追踪", "自动记下你说过的话，到期前提醒")
-            featureRow("airplane.circle.fill", .purple, "自动托管", "忙时 AI 代回，默认关闭，随时接管")
-            featureRow("chart.line.uptrend.xyaxis", .cyan, "复盘", "菜单栏或收件箱右上角打开，定期回顾")
-            featureRow("keyboard", .secondary, "快捷键", "Esc 折叠面板，Cmd+, 打开设置")
+        VStack(alignment: .leading, spacing: 14) {
+            heading("可以开始用了", subtitle: "平时收在屏幕上方；有事时点开「今天」，看摘要和草稿，确认后再回复。")
+            ForEach(FirstLaunchGuide.finishRecipe, id: \.title) { item in
+                featureRow(item.icon, item.title, item.detail)
+            }
+            if !readiness.remainingActions.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("还有这些准备未完成")
+                        .font(.body.weight(.medium))
+                    ForEach(readiness.remainingActions) { action in
+                        Button {
+                            perform(action)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label(action.title, systemImage: action.systemImage)
+                                Text(action.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityHint(action == .wechatConnection
+                            ? "返回微信连接步骤"
+                            : action.detail)
+                    }
+                }
+            }
+            Text("没做完的步骤会继续显示真实状态，不会被当成已经完成。")
+                .font(.callout).foregroundStyle(.secondary)
         }
     }
 
-    private func featureRow(_ systemIcon: String, _ tint: Color, _ title: String, _ desc: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: systemIcon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(tint)
-                .frame(width: 20, alignment: .center)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-                Text(desc)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+    private func heading(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.title2.weight(.semibold))
+            Text(subtitle).font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private func checkpoint(_ title: String, detail: String, complete: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: complete ? "checkmark.circle" : "circle.dashed")
+                .foregroundStyle(complete ? Color.green : Color.orange)
+                .font(.body)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.medium))
+                Text(detail).font(.callout).foregroundStyle(.secondary)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func featureRow(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(Color.accentColor).frame(width: 20)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body.weight(.medium))
+                Text(detail).font(.callout).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func refresh() {
+        candidates = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
+        configuration = store.loadAIConfig()
+        refreshID += 1
+    }
+
+    private func perform(_ action: OnboardingReadinessAction) {
+        switch action {
+        case .wechatConnection:
+            step = 0
+            refresh()
+        case .configureAI, .testAI:
+            _ = openSettings("aiButler")
+        case .chooseContacts:
+            _ = openSettings("contacts")
+        }
+    }
+
+    @discardableResult
+    private func openSettings(_ tab: String) -> Bool {
+        if let onOpenSettings { onOpenSettings(tab); return true }
+        guard let app = NSApp.delegate as? AppDelegate, let state = app.panelState else {
+            saveError = "暂时无法打开设置，请使用菜单栏的设置入口。"
+            return false
+        }
+        state.pendingSettingsTab = tab
+        state.showDetail()
+        return true
+    }
+
+    private func finish(openWorkspace: Bool, markOnboarded: Bool = true) {
+        do {
+            // "稍后再设置" opens the workspace without recording the
+            // introduction as done, so the next launch still offers it.
+            if markOnboarded {
+                try store.setSetting("onboarded", value: "true")
+            }
+            saveError = nil
+            if openWorkspace && !openSettings("today") { return }
+            onComplete()
+        } catch {
+            saveError = "介绍进度未能保存，请重试。连接设置不受影响。"
         }
     }
 }

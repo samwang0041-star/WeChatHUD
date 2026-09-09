@@ -26,12 +26,11 @@ final class HUDStoreTests: XCTestCase {
 
     func testSettingsJSONRoundTrip() throws {
         var cfg = AIConfig()
-        cfg.localProvider = AIProviderSlot(providerID: "custom", baseURL: "http://test:8080/v1", model: "test-model", apiKey: "")
-        cfg.activeMode = .local
+        cfg.provider = AIProviderSlot(providerID: "custom", baseURL: "http://test:8080/v1", model: "test-model", apiKey: "")
         try store.setSettingJSON("ai", value: cfg)
         let loaded = store.getSettingJSON("ai", as: AIConfig.self)
-        XCTAssertEqual(loaded?.localProvider.baseURL, "http://test:8080/v1")
-        XCTAssertEqual(loaded?.localProvider.model, "test-model")
+        XCTAssertEqual(loaded?.provider.baseURL, "http://test:8080/v1")
+        XCTAssertEqual(loaded?.provider.model, "test-model")
         // Compatibility shims should resolve correctly
         XCTAssertEqual(loaded?.baseURL, "http://test:8080/v1")
         XCTAssertEqual(loaded?.model, "test-model")
@@ -51,10 +50,10 @@ final class HUDStoreTests: XCTestCase {
 
         let cfg = store.loadAIConfig()
 
-        XCTAssertEqual(cfg.localProvider.providerID, "custom")
-        XCTAssertEqual(cfg.localProvider.baseURL, "http://test:8080/v1")
-        XCTAssertEqual(cfg.localProvider.model, "test-model")
-        XCTAssertEqual(cfg.localProvider.apiKey, "")
+        XCTAssertEqual(cfg.provider.providerID, "custom")
+        XCTAssertEqual(cfg.provider.baseURL, "http://test:8080/v1")
+        XCTAssertEqual(cfg.provider.model, "test-model")
+        XCTAssertEqual(cfg.provider.apiKey, "")
         XCTAssertEqual(cfg.baseURL, "http://test:8080/v1")
     }
 
@@ -471,6 +470,22 @@ final class HUDStoreTests: XCTestCase {
         let actions = store.loadChatActions()
         XCTAssertEqual(actions.count, 1)
         XCTAssertEqual(actions["room@chatroom"]?.silencedAt, 200)
+    }
+
+    func testSnoozeClearsExistingSilence() throws {
+        try store.silenceChat(chatUsername: "room@chatroom", silencedAt: 1_700_000_000)
+        try store.snoozeChat(chatUsername: "room@chatroom", until: 1_700_003_600)
+        let action = store.loadChatActions()["room@chatroom"]
+        XCTAssertEqual(action?.snoozedUntil, 1_700_003_600)
+        XCTAssertEqual(action?.silencedAt, 0)
+    }
+
+    func testSilenceClearsExistingSnooze() throws {
+        try store.snoozeChat(chatUsername: "room@chatroom", until: 1_700_003_600)
+        try store.silenceChat(chatUsername: "room@chatroom", silencedAt: 1_700_000_000)
+        let action = store.loadChatActions()["room@chatroom"]
+        XCTAssertEqual(action?.silencedAt, 1_700_000_000)
+        XCTAssertEqual(action?.snoozedUntil, 0)
     }
 
     func testLoadChatActionsEmpty() {
@@ -987,6 +1002,10 @@ final class HUDStoreTests: XCTestCase {
             aiReasoning: nil, sentAt: nil, createdAt: Date()
         ))
 
+        XCTAssertThrowsError(try store.clearAutopilotHistory())
+        XCTAssertNotNil(store.currentAutopilotSession())
+        XCTAssertEqual(store.loadAutopilotLog(sessionId: sessionId).count, 1)
+        try store.endAutopilotSession(id: sessionId)
         try store.clearAutopilotHistory()
         XCTAssertNil(store.currentAutopilotSession())
         XCTAssertTrue(store.loadAutopilotSessions().isEmpty)

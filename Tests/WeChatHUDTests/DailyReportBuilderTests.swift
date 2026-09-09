@@ -250,6 +250,43 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.narrative?.contains("今日高亮 1 条") == true)
     }
 
+    func testHistoricalBuildSelectsOlderMatchingRunWhenNewerRunIsForAnotherDay() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let calendar = Calendar(identifier: .gregorian)
+        let selectedDay = calendar.date(from: DateComponents(year: 2025, month: 1, day: 10))!
+        let nextDay = selectedDay.addingTimeInterval(86_400)
+        let matchingID = try XCTUnwrap(store.insertReviewRun(
+            rangeStart: selectedDay.addingTimeInterval(3_600),
+            rangeEnd: selectedDay.addingTimeInterval(7_200), chatCount: 1
+        ))
+        store.finalizeReviewRun(runID: matchingID, status: .completed,
+                                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                                msgCount: 1, failedChats: [])
+        store.insertReviewHighlight(ReviewHighlight(
+            id: 0, runID: matchingID, date: selectedDay.addingTimeInterval(4_000),
+            summary: "历史日期高亮", quotedSnippet: nil, involved: [],
+            sourceChatUsername: "wxid_history", sourceChatName: "历史会话",
+            relation: .unknown, sourceMsgIDs: [], confidence: 0.9,
+            category: .progress, flaggedUncertain: false
+        ))
+        let unrelatedID = try XCTUnwrap(store.insertReviewRun(
+            rangeStart: nextDay, rangeEnd: nextDay.addingTimeInterval(3_600), chatCount: 1
+        ))
+        store.finalizeReviewRun(runID: unrelatedID, status: .completed,
+                                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                                msgCount: 1, failedChats: [])
+
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats())
+            .build(for: selectedDay, now: nextDay.addingTimeInterval(3_600))
+
+        XCTAssertEqual(report.retrospectiveRunID, matchingID)
+        XCTAssertEqual(report.highlights.first?.summary, "历史日期高亮")
+    }
+
     func testBuildCreatesReadableLocalFallbackFromLocalSignals() throws {
         let (store, path) = try makeTempStore()
         defer {
@@ -302,9 +339,58 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertFalse(report.tomorrowFocus?.isEmpty ?? true)
         XCTAssertFalse(report.wechatDraft?.isEmpty ?? true)
         XCTAssertTrue(report.wechatDraft?.contains("工作小结") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("本地记录：") == true)
+        XCTAssertFalse(report.wechatDraft?.contains("今日完成：") == true)
+        XCTAssertFalse(report.wechatDraft?.contains("完成微信消息巡检") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("需要支持：暂无") == true)
+    }
+
+    func testCommitmentFallbackDescribesRecordAndReviewWithoutClaimingCompletion() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        try store.upsertCommitment(
+            msgUID: "commit-fallback-1",
+            chatUsername: "wxid_pm",
+            chatName: "PM",
+            content: "补一版排期",
+            commitTo: "PM",
+            deadlineAt: Date().addingTimeInterval(7_200),
+            confidence: 0.92,
+            promptVersion: "test"
+        )
+
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build()
+        let draft = try XCTUnwrap(report.wechatDraft)
+
+        XCTAssertTrue(draft.contains("本地记录：进行中承诺 1 项"))
+        XCTAssertTrue(draft.contains("待核对：补一版排期"))
+        XCTAssertFalse(draft.contains("今日完成："))
+        XCTAssertFalse(draft.contains("完成微信消息巡检"))
+        XCTAssertFalse(draft.contains("需要支持：补一版排期"))
     }
 
     func testBuildCreatesQuietDayFallbackWhenNoSignalsExist() {
+        let (store, path) = try! makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+
+        var stats = HUDStats()
+        stats.lastSyncAt = Date()
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: stats).build()
+
+        XCTAssertEqual(report.status, .localOnly)
+        XCTAssertTrue(report.actions.isEmpty)
+        XCTAssertTrue(report.highlights.isEmpty)
+        XCTAssertTrue(report.narrative?.contains("已成功同步") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("暂无待处理事项") == true)
+    }
+
+    func testBuildMarksNoSyncEmptyDayAsUnverifiedWithoutClaimingQuietDay() {
         let (store, path) = try! makeTempStore()
         defer {
             store.close()
@@ -315,9 +401,43 @@ final class DailyReportBuilderTests: XCTestCase {
 
         XCTAssertEqual(report.status, .localOnly)
         XCTAssertTrue(report.actions.isEmpty)
-        XCTAssertTrue(report.highlights.isEmpty)
-        XCTAssertTrue(report.narrative?.contains("暂无需要处理") == true)
-        XCTAssertTrue(report.wechatDraft?.contains("暂无待处理事项") == true)
+        XCTAssertTrue(report.narrative?.contains("尚无成功同步记录") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("尚未验证") == true)
+        XCTAssertFalse(report.wechatDraft?.contains("保持关注列表清空") == true)
+        XCTAssertTrue(report.statusMessage?.contains("未验证") == true)
+    }
+
+    func testHistoricalReportUsesSelectedDateAndDoesNotProjectCurrentSnapshot() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let today = Date()
+        try store.upsertCommitment(
+            msgUID: "future-commitment",
+            chatUsername: "wxid_future",
+            chatName: "同事",
+            content: "今天新增承诺",
+            commitTo: "同事",
+            deadlineAt: today.addingTimeInterval(3600),
+            confidence: 0.9,
+            promptVersion: "test"
+        )
+        var stats = HUDStats()
+        stats.unreadCount = 9
+        stats.lastSyncAt = today
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today)!
+
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: stats)
+            .build(for: yesterday, now: today)
+
+        XCTAssertEqual(report.date.dailyReportDateKey, yesterday.dailyReportDateKey)
+        XCTAssertTrue(report.wechatDraft?.hasPrefix("\(yesterday.dailyReportDateKey) 工作小结") == true)
+        XCTAssertEqual(report.metrics.unreadMessageCount, 0)
+        XCTAssertEqual(report.metrics.replyDebtCount, 0)
+        XCTAssertFalse(report.actions.contains { $0.content.contains("今天新增承诺") })
+        XCTAssertTrue(report.wechatDraft?.contains("没有历史快照") == true)
     }
 
     private func makeTempStore() throws -> (HUDStore, String) {

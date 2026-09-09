@@ -16,8 +16,8 @@ enum CompactInboxMetrics {
 }
 
 struct CompactInboxBar: View {
-    @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
     @ObservedObject private var aiTracker = AIActivityTracker.shared
 
     @State private var idleSince: Date? = nil
@@ -26,9 +26,14 @@ struct CompactInboxBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            ZStack(alignment: .trailing) {
-                leftWing
+            Button { panelState.goExtended() } label: {
+                leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开聊天收件箱")
+            .accessibilityValue(accessibilityStatus)
+            .help(accessibilityStatus + " · 点击打开收件箱")
             .padding(.trailing, 8)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
@@ -40,9 +45,16 @@ struct CompactInboxBar: View {
                 .fill(Color.clear)
                 .frame(width: notchWidth)
 
-            ZStack(alignment: .leading) {
-                rightWing
+            Button {
+                panelState.pendingSettingsTab = "today"
+                panelState.showDetail()
+            } label: {
+                rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("打开今天")
+            .help("打开今天")
             .padding(.leading, 8)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
         }
@@ -76,6 +88,24 @@ struct CompactInboxBar: View {
             idleTimer?.invalidate()
             idleTimer = nil
         }
+    }
+
+    private var accessibilityStatus: String {
+        let count = monitor.inboxItems.filter(\.surfacesInCompact).count
+        let sync: String
+        switch monitor.stats.syncStatus {
+        case .ok: sync = "微信连接正常"
+        case .idle: sync = "等待同步"
+        case .syncing: sync = "正在同步"
+        case .waitingForWeChat: sync = "等待微信运行"
+        case .accountSwitched: sync = "当前数据目录已失效"
+        case .stale: sync = "同步已延迟"
+        case .error: sync = "同步失败"
+        }
+        return CompanionProductCopy.compactStatus(
+            count: count,
+            sync: sync + (aiTracker.isActive ? "，AI 正在分析" : "")
+        )
     }
 
     // MARK: - Notch width lookup
@@ -134,7 +164,7 @@ struct CompactInboxBar: View {
                 Circle()
                     .fill(status.color)
                     .frame(width: 7, height: 7)
-                    .animation(.easeInOut(duration: 0.3), value: status.color)
+                    .companionAnimation(CompanionMotion.ease(0.3), value: status.color)
             }
 
             if let badge = status.badge {
@@ -143,6 +173,7 @@ struct CompactInboxBar: View {
                     .monospacedDigit()
                     .foregroundColor(.white.opacity(0.78))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
 
             if aiCount > 0 {
@@ -166,25 +197,26 @@ struct CompactInboxBar: View {
         let p0p1Items = actionItems.filter { $0.priority != .p2 }
         let hasUrgent = !p0p1Items.isEmpty
 
+        let pendingCount = surfacedItems.count
         if hasUrgent {
             let topPriority = p0p1Items.sorted(by: compactPrioritySort).first?.priority ?? .p1
             return CompactStatus(
                 color: topPriority == .p0 ? .red : .yellow,
-                badge: compactCountBadge(p0p1Items.count),
+                badge: compactCountBadge(pendingCount),
                 isError: false
             )
         }
         if !actionItems.isEmpty {
             return CompactStatus(
                 color: .white.opacity(0.42),
-                badge: compactCountBadge(actionItems.count),
+                badge: compactCountBadge(pendingCount),
                 isError: false
             )
         }
         if !fyiItems.isEmpty {
             return CompactStatus(
                 color: .blue.opacity(0.78),
-                badge: compactCountBadge(fyiItems.count),
+                badge: compactCountBadge(pendingCount),
                 isError: false
             )
         }
@@ -281,10 +313,10 @@ private struct PulsingOpacity: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .opacity(active ? (lit ? 1.0 : 0.45) : 1.0)
+            .opacity(active && !CompanionMotion.reduceMotion ? (lit ? 1.0 : 0.45) : 1.0)
             .onAppear {
                 guard active else { return }
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                withMotion(CompanionMotion.ease(1.2).map { $0.repeatForever(autoreverses: true) }) {
                     lit = true
                 }
             }

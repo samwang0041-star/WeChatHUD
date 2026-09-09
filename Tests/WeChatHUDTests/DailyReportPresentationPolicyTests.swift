@@ -123,6 +123,35 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         XCTAssertTrue(md.contains("Draft text"))
     }
 
+    func testUnverifiedEmptySourceIsExplicitInViewModelAndMarkdown() {
+        let report = makeReport(
+            actions: [], risks: [], highlights: [],
+            narrative: "尚无成功同步记录，暂不能判断。",
+            tomorrowFocus: "先完成同步",
+            statusMessage: "未验证：尚无成功同步记录，未对今日事项下结论。"
+        )
+        let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
+        let md = DailyReportPresentationPolicy.markdown(for: report, viewModel: vm)
+
+        XCTAssertTrue(vm.isSourceUnavailable)
+        XCTAssertTrue(md.contains("今日来源未验证"))
+        XCTAssertTrue(md.contains("暂不能判断是否有待处理事项"))
+        XCTAssertFalse(md.contains("暂无需要处理"))
+    }
+
+    func testLocalFallbackIsLabeledAsRulesInMarkdown() {
+        let report = makeReport(
+            actions: [], risks: [], highlights: [],
+            narrative: "基于本地数据整理",
+            tomorrowFocus: nil
+        )
+        let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
+        let md = DailyReportPresentationPolicy.markdown(for: report, viewModel: vm)
+
+        XCTAssertTrue(md.contains("## 💡 规则整理"))
+        XCTAssertFalse(md.contains("## 💡 AI 洞察"))
+    }
+
     func testActionInsightsExposedThroughViewModel() {
         let action = makeAction(content: "Reply", urgency: .high)
         let report = makeReport(actions: [action], risks: [], highlights: [])
@@ -150,7 +179,8 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         highlights: [DailyReportHighlight],
         narrative: String? = nil,
         tomorrowFocus: String? = nil,
-        wechatDraft: String? = nil
+        wechatDraft: String? = nil,
+        statusMessage: String? = nil
     ) -> DailyReport {
         DailyReport(
             date: Date(),
@@ -171,6 +201,7 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
             actions: actions,
             risks: risks,
             pendingAsks: [],
+            statusMessage: statusMessage,
             narrative: narrative,
             tomorrowFocus: tomorrowFocus,
             wechatDraft: wechatDraft

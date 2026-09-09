@@ -215,9 +215,30 @@ extension HUDStore {
             SELECT id, range_start, range_end, generated_at, summary_top3, summary_risk,
                    summary_missed, chat_count, progress_chat_count, msg_count, failed_chats, status
             FROM review_runs WHERE status IN ('completed', 'partial')
-            ORDER BY generated_at DESC LIMIT 1;
+            ORDER BY generated_at DESC, id DESC LIMIT 1;
         """
         return queryOne(sql, bind: { _ in }, decode: decodeReviewRun)
+    }
+
+    /// Returns the newest completed run whose source range overlaps the
+    /// half-open interval `[start, end)`. Keeping the overlap predicate in
+    /// SQL is important: a newer run for another date must not hide the run
+    /// that actually covers the requested report date.
+    nonisolated func latestCompletedRun(overlapping start: Date, end: Date) -> ReviewRun? {
+        guard start < end else { return nil }
+        let sql = """
+            SELECT id, range_start, range_end, generated_at, summary_top3, summary_risk,
+                   summary_missed, chat_count, progress_chat_count, msg_count, failed_chats, status
+            FROM review_runs
+            WHERE status IN ('completed', 'partial')
+              AND range_end > ?
+              AND range_start < ?
+            ORDER BY generated_at DESC, id DESC LIMIT 1;
+        """
+        return queryOne(sql, bind: { stmt in
+            sqlite3_bind_int64(stmt, 1, Int64(start.timeIntervalSince1970))
+            sqlite3_bind_int64(stmt, 2, Int64(end.timeIntervalSince1970))
+        }, decode: decodeReviewRun)
     }
 
     nonisolated func runByID(_ runID: Int) -> ReviewRun? {
@@ -594,34 +615,35 @@ extension HUDStore {
 
     nonisolated func recordLedgerBatch(_ entries: [AILedgerEntry]) {
         guard !entries.isEmpty else { return }
-        execIgnoringError("BEGIN TRANSACTION;")
-        let sql = """
-            INSERT INTO ai_data_ledger(
-                ts, provider, model, purpose,
-                chat_count, msg_count, byte_count,
-                token_in, token_out, redacted
-            ) VALUES (?,?,?,?,?,?,?,?,?,?);
-        """
-        var failed = 0
-        for e in entries {
-            let changes = executeUpdate(sql) { stmt in
-                sqlite3_bind_int64(stmt, 1, Int64(e.ts.timeIntervalSince1970))
-                sqlite3_bind_text(stmt, 2, e.provider, -1, HUDStore.sqliteTransient)
-                sqlite3_bind_text(stmt, 3, e.model, -1, HUDStore.sqliteTransient)
-                sqlite3_bind_text(stmt, 4, e.purpose.rawValue, -1, HUDStore.sqliteTransient)
-                if let c = e.chatCount { sqlite3_bind_int(stmt, 5, Int32(c)) } else { sqlite3_bind_null(stmt, 5) }
-                if let m = e.msgCount { sqlite3_bind_int(stmt, 6, Int32(m)) } else { sqlite3_bind_null(stmt, 6) }
-                sqlite3_bind_int(stmt, 7, Int32(e.byteCount))
-                if let i = e.tokenIn { sqlite3_bind_int(stmt, 8, Int32(i)) } else { sqlite3_bind_null(stmt, 8) }
-                if let o = e.tokenOut { sqlite3_bind_int(stmt, 9, Int32(o)) } else { sqlite3_bind_null(stmt, 9) }
-                sqlite3_bind_int(stmt, 10, Int32(e.redacted ? 1 : 0))
-            }
-            if changes == 0 { failed += 1 }
-        }
-        if failed == entries.count {
-            execIgnoringError("ROLLBACK;")
-        } else {
-            execIgnoringError("COMMIT;")
+        try? withTransaction {
+                let sql = """
+                    INSERT INTO ai_data_ledger(
+                        ts, provider, model, purpose,
+                        chat_count, msg_count, byte_count,
+                        token_in, token_out, redacted
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?);
+                """
+                var failed = 0
+                for e in entries {
+                    let changes = executeUpdate(sql) { stmt in
+                        sqlite3_bind_int64(stmt, 1, Int64(e.ts.timeIntervalSince1970))
+                        sqlite3_bind_text(stmt, 2, e.provider, -1, HUDStore.sqliteTransient)
+                        sqlite3_bind_text(stmt, 3, e.model, -1, HUDStore.sqliteTransient)
+                        sqlite3_bind_text(stmt, 4, e.purpose.rawValue, -1, HUDStore.sqliteTransient)
+                        if let c = e.chatCount { sqlite3_bind_int(stmt, 5, Int32(c)) } else { sqlite3_bind_null(stmt, 5) }
+                        if let m = e.msgCount { sqlite3_bind_int(stmt, 6, Int32(m)) } else { sqlite3_bind_null(stmt, 6) }
+                        sqlite3_bind_int(stmt, 7, Int32(e.byteCount))
+                        if let i = e.tokenIn { sqlite3_bind_int(stmt, 8, Int32(i)) } else { sqlite3_bind_null(stmt, 8) }
+                        if let o = e.tokenOut { sqlite3_bind_int(stmt, 9, Int32(o)) } else { sqlite3_bind_null(stmt, 9) }
+                        sqlite3_bind_int(stmt, 10, Int32(e.redacted ? 1 : 0))
+                    }
+                    if changes == 0 { failed += 1 }
+                }
+                if failed == entries.count {
+                    // Throwing rolls back this transaction (or savepoint),
+                    // while one or more successful rows still commit below.
+                    throw HUDStoreError.sqlError("Could not persist any ledger entry")
+                }
         }
     }
 

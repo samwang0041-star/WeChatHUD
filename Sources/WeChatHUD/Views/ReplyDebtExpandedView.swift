@@ -124,7 +124,7 @@ struct ReplyDebtExpandedView: View {
             Spacer(minLength: 0)
             Button("打开微信并粘贴") {
                 copiedSuggestion = nil
-                WeChatLauncher.openChatAndPaste(named: item.chatName, text: suggestion.text)
+                WeChatLauncher.openChatAndPaste(named: monitor.displayName(for: item.chatUsername), text: suggestion.text)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.mini)

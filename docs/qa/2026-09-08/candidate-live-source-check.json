@@ -1,0 +1,23 @@
+{
+  "account_candidates": 1,
+  "bundled_prompts": "ready",
+  "business_store": "unavailable",
+  "database": "readable",
+  "diagnostic_cache": "temporary_only",
+  "discussion_feedback": "unavailable",
+  "discussion_items": "unavailable",
+  "generated_at": "2026-09-08T11:00:08Z",
+  "legacy_records": "account_confirmation_required",
+  "message_probe": "readable",
+  "message_probe_count": 1,
+  "message_probe_failures": 0,
+  "mode": "source-read-only",
+  "pending_classifications": "unavailable",
+  "probed_sessions": 1,
+  "reply_drafts": "unavailable",
+  "sessions": 2724,
+  "tracked_chats": "unavailable",
+  "wechat_contacts": 12323,
+  "process_exit_code": 0,
+  "candidate_executable_sha256": "3f0736a41c7abaa208c775100cc69a27d1832063c1b1b49edda15126fae783d3"
+}

@@ -90,7 +90,7 @@ struct RecalledMessageRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withMotion(CompanionMotion.ease(0.18)) {
                 expanded.toggle()
             }
         }

@@ -1,16 +1,21 @@
 import SwiftUI
 import AppKit
 
-/// 承诺 tab — track promises the user made and their fulfillment state.
+/// 我答应的事 — expand/collapse cards matching 不漏事 figure 03 / 28.
 struct CommitmentTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     @State private var filter: CommitmentFilter = .active
     @State private var query = ""
+    @State private var expandedID: Int64?
+    @State private var pendingCancel: Commitment?
+    @State private var receipt: String?
+    @State private var undo: (msgUID: String, status: CommitmentStatus)?
+    @State private var actionError: String?
 
     enum CommitmentFilter: String, CaseIterable {
         case active = "进行中"
-        case overdue = "超期"
+        case overdue = "已超期"
         case fulfilled = "已完成"
         case all = "全部"
     }
@@ -27,7 +32,7 @@ struct CommitmentTabView: View {
                 case .active:
                     return commitment.status == .pending || commitment.status == .overdue
                 case .overdue:
-                    return commitment.status == .overdue
+                    return CommitmentPresentation.isOverdue(commitment)
                 case .fulfilled:
                     return commitment.status == .fulfilled
                 case .all:
@@ -51,138 +56,278 @@ struct CommitmentTabView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            filters
             Divider()
-
             if filteredCommitments.isEmpty {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(filteredCommitments) { commitment in
-                            CommitmentActionRow(commitment: commitment)
-                                .environmentObject(monitor)
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(CommitmentPresentation.groups(filteredCommitments), id: \.title) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(group.title)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                ForEach(group.items) { commitment in
+                                    card(commitment)
+                                }
+                            }
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 16)
                 }
             }
+            if let receipt {
+                receiptBar(receipt)
+            }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(maxWidth: 1180)
+        .padding(.horizontal, 28).padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
+        .background(CompanionPalette.canvas)
+        .onAppear {
+            if expandedID == nil { expandedID = filteredCommitments.first?.id }
+        }
+        .alert(CompanionProductCopy.cancelCommitmentTitle, isPresented: Binding(
+            get: { pendingCancel != nil },
+            set: { if !$0 { pendingCancel = nil } }
+        )) {
+            Button("取消承诺", role: .destructive) {
+                if let commitment = pendingCancel {
+                    pendingCancel = nil
+                    updateStatus(commitment, .cancelled)
+                }
+            }
+            Button("保留", role: .cancel) { pendingCancel = nil }
+        } message: {
+            Text(CompanionProductCopy.cancelCommitmentMessage)
+        }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                TextField("搜索承诺、原话、背景、群聊或对象", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer(minLength: 12)
-
-                Text("\(summary.active) 进行中")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(summary.overdue > 0 ? .red : .orange)
-                    .monospacedDigit()
-                Text("\(summary.fulfilled) 已完成 · \(summary.cancelled) 已取消")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            HStack(spacing: 10) {
-                Picker("", selection: $filter) {
-                    ForEach(CommitmentFilter.allCases, id: \.self) { item in
-                        Text(filterTitle(item)).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
-                .controlSize(.small)
-
+    private var filters: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                CompanionFilterPill(title: "进行中 \(summary.active)", selected: filter == .active) { filter = .active }
+                CompanionFilterPill(title: "已超期 \(summary.overdue)", selected: filter == .overdue) { filter = .overdue }
+                CompanionFilterPill(title: "已完成", selected: filter == .fulfilled) { filter = .fulfilled }
+                CompanionFilterPill(title: "全部", selected: filter == .all) { filter = .all }
                 Spacer()
-
-                CommitmentMetricPill(label: "超期", count: summary.overdue, color: .red)
-                CommitmentMetricPill(label: "今天", count: summary.dueToday, color: .orange)
-                CommitmentMetricPill(label: "无期限", count: summary.noDeadline, color: .secondary)
+                if summary.overdue > 0 {
+                    Button {
+                        filter = .overdue
+                    } label: {
+                        Label("有 \(summary.overdue) 项已超期，去查看", systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    .controlSize(.small)
+                }
             }
-
-            HStack(spacing: 6) {
-                Image(systemName: "sparkle.magnifyingglass")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("出现条件：你自己发出的消息 + 上下文有明确任务/请求/安排 + AI 置信度 ≥ 72%。纯“收到/好的”只有在上文明确让你执行时才收录。")
-                    .font(.system(size: 11))
-                    .lineLimit(2)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索承诺、原话或对象", text: $query).textFieldStyle(.plain)
+                if !query.isEmpty {
+                    Button("清除搜索") { query = "" }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(CompanionPalette.jade)
+                }
             }
-            .foregroundStyle(.secondary)
+            .padding(10)
+            .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+            if let actionError {
+                Label(actionError, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
         .padding(.bottom, 12)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: emptyIcon)
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(emptyTitle)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
+        ContentUnavailableView(
+            query.isEmpty ? emptyTitle : "没有匹配的承诺",
+            systemImage: query.isEmpty ? emptyIcon : "magnifyingglass",
+            description: Text(query.isEmpty ? emptyDescription : "当前搜索：\(query)")
+        )
+        .frame(maxWidth: .infinity, minHeight: 280)
+        .overlay(alignment: .bottom) {
             if !query.isEmpty {
-                Text("换个关键词试试")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                Button("清除搜索") { query = "" }
+                    .buttonStyle(.bordered)
+                    .padding(.bottom, 24)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 36)
     }
 
     private var emptyIcon: String {
-        if !query.isEmpty { return "magnifyingglass" }
         switch filter {
         case .active: return "checkmark.seal"
-        case .overdue: return "clock.badge.checkmark"
-        case .fulfilled: return "tray"
-        case .all: return "tray"
+        case .overdue: return "clock.badge.exclamationmark"
+        case .fulfilled, .all: return "tray"
         }
     }
 
     private var emptyTitle: String {
-        if !query.isEmpty { return "没有匹配的承诺" }
         switch filter {
         case .active: return "没有进行中的承诺"
-        case .overdue: return "没有超期承诺"
+        case .overdue: return "没有已超期的承诺"
         case .fulfilled: return "还没有已完成记录"
-        case .all: return "暂无承诺记录"
+        case .all: return "还没有记下你答应过的事"
         }
     }
 
-    private func filterTitle(_ filter: CommitmentFilter) -> String {
-        switch filter {
-        case .active: return "进行中 \(summary.active)"
-        case .overdue: return "超期 \(summary.overdue)"
-        case .fulfilled: return "已完成 \(summary.fulfilled)"
-        case .all: return "全部 \(summary.total)"
+    private var emptyDescription: String {
+        "答应过别人的话会留在这里，带着原话和截止时间。"
+    }
+
+    private func card(_ commitment: Commitment) -> some View {
+        let expanded = expandedID == commitment.id
+        let isActive = commitment.status == .pending || commitment.status == .overdue
+        return VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withMotion(CompanionMotion.rowExpand()) {
+                    expandedID = expanded ? nil : commitment.id
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: commitment.status == .fulfilled ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(commitment.status == .fulfilled ? CompanionPalette.jade : .secondary)
+                        .frame(width: 22)
+                        .accessibilityLabel(commitment.status == .fulfilled ? "已完成" : "未完成")
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(CommitmentPresentation.timeLabel(commitment.deadlineAt))
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(commitment.content.isEmpty ? "未命名承诺" : commitment.content)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Text("答应 \(monitor.commitmentTargetName(commitment.commitTo, chatUsername: commitment.chatUsername))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    contextBlock("原话", commitment.sourceText.isEmpty ? "这条记录缺少当时原话。" : "“ \(commitment.sourceText)")
+                    HStack(alignment: .top, spacing: 16) {
+                        contextBlock("来源", sourceLine(commitment))
+                        if !bestNextStep(commitment).isEmpty {
+                            contextBlock("下一步", bestNextStep(commitment))
+                        }
+                    }
+                    if isActive {
+                        HStack(spacing: 8) {
+                            Button {
+                                updateStatus(commitment, .fulfilled)
+                            } label: {
+                                Text("标记完成")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("取消承诺") { pendingCancel = commitment }
+                                .buttonStyle(.bordered)
+                            Spacer()
+                            Button("查看对话") {
+                                WeChatLauncher.openChat(named: monitor.displayName(for: commitment.chatUsername))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(CompanionPalette.jade)
+                        }
+                        .controlSize(.regular)
+                    } else {
+                        Button("恢复进行中") { updateStatus(commitment, .pending) }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .padding(12)
+                .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .padding(16)
+        .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(expanded ? CompanionPalette.jade.opacity(0.45) : CompanionPalette.border, lineWidth: 1)
+        )
+        .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
+    }
+
+    private func contextBlock(_ label: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            Text(text).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func sourceLine(_ commitment: Commitment) -> String {
+        let name = monitor.displayName(for: commitment.chatUsername)
+        let when = commitment.createdAt.formatted(date: .abbreviated, time: .shortened)
+        return "\(when)  ·  \(name)"
+    }
+
+    private func bestNextStep(_ commitment: Commitment) -> String {
+        if !commitment.nextStep.isEmpty { return commitment.nextStep }
+        if !commitment.content.isEmpty { return "推进：\(commitment.content)" }
+        return ""
+    }
+
+    private func receiptBar(_ text: String) -> some View {
+        HStack {
+            Label(text, systemImage: "checkmark.circle.fill")
+                .foregroundStyle(CompanionPalette.jade)
+            Spacer()
+            if undo != nil {
+                Button("撤销") { undoLast() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .padding(.top, 10)
+    }
+
+    private func updateStatus(_ commitment: Commitment, _ status: CommitmentStatus) {
+        do {
+            let previous = commitment.status
+            try monitor.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
+            actionError = nil
+            if status == .fulfilled {
+                undo = (commitment.msgUID, previous)
+                receipt = "\(commitment.content)已标记完成"
+            } else if status == .cancelled {
+                undo = (commitment.msgUID, previous)
+                receipt = "已取消承诺"
+            } else {
+                undo = nil
+                receipt = "已恢复为进行中"
+            }
+        } catch {
+            actionError = "状态没有保存，这条承诺还在原来的位置。请重试。"
+        }
+    }
+
+    private func undoLast() {
+        guard let undo else { return }
+        do {
+            try monitor.updateCommitmentStatus(msgUID: undo.msgUID, status: undo.status)
+            self.undo = nil
+            receipt = "已撤销"
+            actionError = nil
+        } catch {
+            actionError = "撤销没有成功，请重试。"
         }
     }
 
@@ -190,11 +335,9 @@ struct CommitmentTabView: View {
         let leftRank = statusRank(lhs.status)
         let rightRank = statusRank(rhs.status)
         if leftRank != rightRank { return leftRank < rightRank }
-
         let leftDeadline = lhs.deadlineAt ?? Date.distantFuture
         let rightDeadline = rhs.deadlineAt ?? Date.distantFuture
         if leftDeadline != rightDeadline { return leftDeadline < rightDeadline }
-
         return lhs.createdAt > rhs.createdAt
     }
 
@@ -208,407 +351,53 @@ struct CommitmentTabView: View {
     }
 }
 
-private struct CommitmentActionRow: View {
-    @EnvironmentObject var monitor: ChatMonitor
-
-    let commitment: Commitment
-
-    @State private var hovered = false
-    @State private var actionError: String?
-
-    private var isActive: Bool {
-        commitment.status == .pending || commitment.status == .overdue
+enum CommitmentPresentation {
+    struct Group {
+        let title: String
+        let items: [Commitment]
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            statusIcon
-                .frame(width: 30, height: 30)
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(commitment.content.isEmpty ? "未命名承诺" : commitment.content)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(contentStyle)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 10)
-
-                    statusPill
-                }
-
-                HStack(spacing: 6) {
-                    metadataPill(systemImage: "bubble.left.and.bubble.right", text: commitment.chatName)
-                    if !commitment.commitTo.isEmpty {
-                        metadataPill(systemImage: "arrow.right", text: commitment.commitTo)
-                    }
-                    if !commitment.commitmentKind.isEmpty {
-                        metadataPill(systemImage: "tag", text: kindLabel(commitment.commitmentKind))
-                    }
-                    metadataPill(systemImage: "calendar", text: createdText(commitment.createdAt))
-                    metadataPill(systemImage: "waveform.path.ecg", text: "\(Int(commitment.confidence * 100))%")
-                }
-
-                timelineLine
-
-                if !bestNextStep.isEmpty {
-                    detailBlock(
-                        systemImage: "arrow.forward.circle",
-                        label: "下一步",
-                        text: bestNextStep,
-                        accent: isActive ? .blue : .secondary
-                    )
-                }
-
-                detailGrid
-
-                if let actionError {
-                    Text(actionError)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                }
-            }
-
-            actionButtons
+    static func groups(_ items: [Commitment], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
+        let mapped = Dictionary(grouping: items) { sectionTitle(for: $0.deadlineAt, now: now, calendar: calendar) }
+        let titles = mapped.keys.sorted { lhs, rhs in
+            sectionRank(lhs) < sectionRank(rhs)
         }
-        .padding(10)
-        .background(rowBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(rowStroke, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .contextMenu { contextMenuContent }
-    }
-
-    @ViewBuilder
-    private var actionButtons: some View {
-        VStack(alignment: .trailing, spacing: 6) {
-            if isActive {
-                Button {
-                    updateStatus(.fulfilled)
-                } label: {
-                    Label("完成", systemImage: "checkmark")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .controlSize(.small)
-                .help("标记完成")
-
-                Button {
-                    updateStatus(.cancelled)
-                } label: {
-                    Label("取消", systemImage: "xmark")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("取消承诺")
-            } else {
-                Button {
-                    updateStatus(.pending)
-                } label: {
-                    Label("恢复", systemImage: "arrow.uturn.backward")
-                        .labelStyle(.iconOnly)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("恢复为进行中")
-            }
+        return titles.compactMap { title in
+            mapped[title].map { Group(title: title, items: $0) }
         }
     }
 
-    @ViewBuilder
-    private var contextMenuContent: some View {
-        Button {
-            WeChatLauncher.openChat(named: commitment.chatName)
-        } label: {
-            Label("在微信中打开", systemImage: "bubble.left.and.bubble.right")
+    static func isOverdue(_ commitment: Commitment, now: Date = Date()) -> Bool {
+        if commitment.status == .overdue { return true }
+        guard commitment.status == .pending, let deadline = commitment.deadlineAt else { return false }
+        return deadline < now
+    }
+
+    static func timeLabel(_ date: Date?) -> String {
+        guard let date else { return "无期限" }
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    static func sectionTitle(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard let date else { return "无期限" }
+        if date < now && !calendar.isDateInToday(date) { return "已过期" }
+        if calendar.isDateInToday(date) {
+            return "今天 " + date.formatted(.dateTime.month().day().weekday(.wide))
         }
-
-        Button {
-            copy(commitment.content)
-        } label: {
-            Label("复制承诺内容", systemImage: "doc.on.doc")
+        if calendar.isDateInTomorrow(date) { return "明天" }
+        if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
+            return date.formatted(.dateTime.weekday(.wide))
         }
-
-        if !bestNextStep.isEmpty {
-            Button {
-                copy(bestNextStep)
-            } label: {
-                Label("复制下一步", systemImage: "arrow.forward.circle")
-            }
-        }
-
-        if !commitment.sourceText.isEmpty {
-            Button {
-                copy(commitment.sourceText)
-            } label: {
-                Label("复制当时原话", systemImage: "quote.bubble")
-            }
-        }
-
-        Divider()
-
-        if isActive {
-            Button {
-                updateStatus(.fulfilled)
-            } label: {
-                Label("标记完成", systemImage: "checkmark")
-            }
-
-            Button(role: .destructive) {
-                updateStatus(.cancelled)
-            } label: {
-                Label("取消承诺", systemImage: "xmark")
-            }
-        } else {
-            Button {
-                updateStatus(.pending)
-            } label: {
-                Label("恢复为进行中", systemImage: "arrow.uturn.backward")
-            }
-        }
+        return "之后"
     }
 
-    private var statusIcon: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(statusColor.opacity(commitment.status == .cancelled ? 0.16 : 0.86))
-            Image(systemName: statusSymbol)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(commitment.status == .cancelled ? Color.secondary : Color.white)
-        }
-    }
-
-    private var statusPill: some View {
-        Text(statusLabel)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(statusColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(statusColor.opacity(0.12))
-            .clipShape(Capsule())
-    }
-
-    private func metadataPill(systemImage: String, text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: systemImage)
-                .font(.system(size: 9, weight: .semibold))
-            Text(text.isEmpty ? "未知" : text)
-                .lineLimit(1)
-        }
-        .font(.system(size: 10))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .clipShape(Capsule())
-    }
-
-    private var timelineLine: some View {
-        HStack(spacing: 8) {
-            Label(ageText(commitment.createdAt), systemImage: "clock.arrow.circlepath")
-            Text("·")
-            if let deadline = commitment.deadlineAt {
-                Text(deadlineText(deadline))
-                    .foregroundStyle(deadlineStyle(deadline))
-                    .monospacedDigit()
-            } else {
-                Text(commitment.deadlineLabel.isEmpty ? "无明确截止时间" : commitment.deadlineLabel)
-            }
-        }
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder
-    private var detailGrid: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !commitment.contextText.isEmpty {
-                detailBlock(systemImage: "text.bubble", label: "当时背景", text: commitment.contextText, accent: .secondary)
-            }
-            if !commitment.sourceText.isEmpty {
-                detailBlock(systemImage: "quote.bubble", label: "你当时说", text: commitment.sourceText, accent: .secondary)
-            }
-            if !commitment.captureReason.isEmpty {
-                detailBlock(systemImage: "checkmark.seal", label: "为什么出现", text: commitment.captureReason, accent: .secondary)
-            } else if commitment.contextText.isEmpty && commitment.sourceText.isEmpty {
-                detailBlock(
-                    systemImage: "exclamationmark.circle",
-                    label: "旧记录",
-                    text: "这条承诺来自旧版本，缺少原话和上下文；打开微信可复盘原始聊天。",
-                    accent: .orange
-                )
-            }
-        }
-    }
-
-    private func detailBlock(systemImage: String, label: String, text: String, accent: Color) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(accent)
-                .frame(width: 14)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(label == "下一步" && isActive ? .primary : .secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color.primary.opacity(label == "下一步" && isActive ? 0.055 : 0.035))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-
-    private var bestNextStep: String {
-        if !commitment.nextStep.isEmpty { return commitment.nextStep }
-        if !commitment.content.isEmpty { return "推进：\(commitment.content)" }
-        return ""
-    }
-
-    private var rowBackground: Color {
-        if commitment.status == .overdue {
-            return Color.red.opacity(hovered ? 0.10 : 0.06)
-        }
-        return hovered ? Color.primary.opacity(0.045) : Color(nsColor: .controlBackgroundColor).opacity(0.38)
-    }
-
-    private var rowStroke: Color {
-        if commitment.status == .overdue {
-            return Color.red.opacity(0.25)
-        }
-        return Color(nsColor: .separatorColor).opacity(hovered ? 0.55 : 0.28)
-    }
-
-    private var contentStyle: Color {
-        switch commitment.status {
-        case .overdue:   return .red
-        case .cancelled: return .secondary
-        default:         return .primary
-        }
-    }
-
-    private var statusColor: Color {
-        switch commitment.status {
-        case .overdue:   return .red
-        case .pending:   return .orange
-        case .fulfilled: return .green
-        case .cancelled: return .secondary
-        }
-    }
-
-    private var statusSymbol: String {
-        switch commitment.status {
-        case .overdue:   return "exclamationmark"
-        case .pending:   return "clock"
-        case .fulfilled: return "checkmark"
-        case .cancelled: return "minus"
-        }
-    }
-
-    private var statusLabel: String {
-        switch commitment.status {
-        case .overdue:   return "超期"
-        case .pending:   return "进行中"
-        case .fulfilled: return "已完成"
-        case .cancelled: return "已取消"
-        }
-    }
-
-    private func kindLabel(_ raw: String) -> String {
-        switch raw {
-        case "deliverable": return "交付物"
-        case "followup": return "跟进"
-        case "coordination": return "协调"
-        case "decision": return "决策"
-        case "schedule": return "安排"
-        default: return "承诺"
-        }
-    }
-
-    private func updateStatus(_ status: CommitmentStatus) {
-        do {
-            try monitor.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
-            actionError = nil
-        } catch {
-            actionError = "状态更新失败"
-        }
-    }
-
-    private func deadlineText(_ date: Date) -> String {
-        let diff = date.timeIntervalSince(Date())
-        if diff < 0 {
-            let past = Int(-diff)
-            if past < 3600  { return "超期 \(max(1, past / 60)) 分钟" }
-            if past < 86400 { return "超期 \(max(1, past / 3600)) 小时" }
-            return "超期 \(past / 86400) 天"
-        }
-        if diff < 3600  { return "\(max(1, Int(diff) / 60)) 分钟后到期" }
-        if diff < 86400 { return "\(Int(diff) / 3600) 小时后到期" }
-        if diff < 172800 { return "明天到期" }
-        return "\(Int(diff) / 86400) 天后到期"
-    }
-
-    private func deadlineStyle(_ date: Date) -> Color {
-        let diff = date.timeIntervalSince(Date())
-        if diff < 0 { return .red }
-        if diff < 24 * 3600 { return .orange }
-        return .secondary
-    }
-
-    private func createdText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm"
-        return formatter.string(from: date)
-    }
-
-    private func ageText(_ date: Date) -> String {
-        let seconds = max(0, Int(Date().timeIntervalSince(date)))
-        if seconds < 3600 { return "\(max(1, seconds / 60)) 分钟前答应" }
-        if seconds < 86400 { return "\(seconds / 3600) 小时前答应" }
-        if seconds < 604800 { return "\(seconds / 86400) 天前答应" }
-        return createdText(date) + " 答应"
-    }
-
-    private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-private struct CommitmentMetricPill: View {
-    let label: String
-    let count: Int
-    let color: Color
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text("\(count)")
-                .font(.system(size: 11, weight: .semibold))
-            Text(label)
-                .font(.system(size: 11))
-        }
-        .foregroundStyle(count > 0 ? color : .secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background((count > 0 ? color : Color.secondary).opacity(0.10))
-        .clipShape(Capsule())
+    private static func sectionRank(_ title: String) -> Int {
+        if title == "已过期" { return 0 }
+        if title.hasPrefix("今天") { return 1 }
+        if title == "明天" { return 2 }
+        if title == "之后" { return 4 }
+        if title == "无期限" { return 5 }
+        return 3
     }
 }
 
@@ -626,7 +415,7 @@ private struct CommitmentSummary {
     init(commitments: [Commitment]) {
         total = commitments.count
         pending = commitments.filter { $0.status == .pending }.count
-        overdue = commitments.filter { $0.status == .overdue }.count
+        overdue = commitments.filter { CommitmentPresentation.isOverdue($0) }.count
         fulfilled = commitments.filter { $0.status == .fulfilled }.count
         cancelled = commitments.filter { $0.status == .cancelled }.count
 

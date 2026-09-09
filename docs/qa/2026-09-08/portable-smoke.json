@@ -1,0 +1,16 @@
+{
+  "archive": "/Users/yuriwong/wechatcli/WeChatHUD/.build/distribution/WeChatHUD-1.1.0-macOS14-arm64.zip",
+  "mode": "bundle-check",
+  "relocated_archive": {
+    "bundled_prompts": "ready",
+    "mode": "bundle-check",
+    "native_dependency": "ready",
+    "result": "ready"
+  },
+  "missing_resource_fixture": {
+    "mode": "bundle-check",
+    "reason": "bundled_prompts",
+    "result": "failed"
+  },
+  "missing_resource_exit_code": 1
+}

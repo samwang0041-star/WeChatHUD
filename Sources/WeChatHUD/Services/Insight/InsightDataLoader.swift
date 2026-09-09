@@ -130,23 +130,34 @@ final class InsightDataLoader {
         )
     }
 
-    /// Compute detailed stats for a single non-whitelisted session.
-    func statsForSession(
-        _ session: InsightSessionEntry,
-        reader: WeChatReader
+    /// Detail statistics cover the selected calendar day, including all messages.
+    /// Overview windows and AI's bounded sample must not change these totals.
+    func statsForDay(
+        chatUsername: String, chatName: String, isGroup: Bool,
+        category: WhitelistCategory, date: Date, reader: WeChatReader
     ) -> ChatStatsData? {
-        guard let messages = try? reader.getMessages(chatUsername: session.id, limit: 200) else { return nil }
+        let range = Self.dayRange(for: date)
+        guard let messages = try? reader.getMessages(
+            chatUsername: chatUsername, limit: Int.max, afterCursor: nil,
+            startTime: range.start, endTime: range.end
+        ) else { return nil }
         let myUsername = reader.myUsername()
         return ChatStatsEngine.computeStats(
             messages: messages,
             selfUsername: myUsername,
             selfDisplayName: reader.displayName(for: myUsername),
             selfNames: reader.mySelfNames,
-            chatUsername: session.id,
-            chatName: session.displayName,
-            isGroup: session.isGroup,
-            category: .other
+            chatUsername: chatUsername,
+            chatName: chatName,
+            isGroup: isGroup,
+            category: category
         )
+    }
+
+    static func dayRange(for date: Date, calendar: Calendar = .current) -> (start: Int, end: Int) {
+        let start = calendar.startOfDay(for: date)
+        let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        return (Int(start.timeIntervalSince1970), Int(end.timeIntervalSince1970))
     }
 
     // MARK: - Helpers

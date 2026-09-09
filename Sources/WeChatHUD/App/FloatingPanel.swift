@@ -188,27 +188,19 @@ class FloatingPanel: NSPanel {
     var displayScreen: DisplayScreen = .builtIn
 
     /// Resolve the target screen based on the displayScreen preference.
-    private var targetScreen: NSScreen {
-        let screens = NSScreen.screens
-        switch displayScreen {
-        case .builtIn:
-            // Prefer the screen with a physical notch (safeAreaInsets.top > 0).
-            // This is more reliable than localizedName matching, which fails on
-            // systems where the built-in display is named "Color LCD" etc.
-            let notched = screens.first { $0.safeAreaInsets.top > 0 }
-            let byName = screens.first {
-                $0.localizedName.contains("Built") || $0.localizedName.contains("内置")
-            }
-            return notched ?? byName ?? NSScreen.main ?? screens[0]
-        case .external:
-            // External = any screen without a notch AND not named built-in.
-            // Prefer the one without a notch first.
-            return screens.first { $0.safeAreaInsets.top == 0 }
-                ?? screens.first {
-                    !$0.localizedName.contains("Built") && !$0.localizedName.contains("内置")
-                }
-                ?? NSScreen.main ?? screens[0]
+    var targetScreen: NSScreen {
+        let mapped = NSScreen.screens.map { screen -> (NSScreen, IslandScreenPolicy.Candidate) in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let isBuiltIn = number.map { CGDisplayIsBuiltin(CGDirectDisplayID($0.uint32Value)) != 0 } ?? false
+            return (screen, IslandScreenPolicy.Candidate(
+                id: number?.intValue ?? 0,
+                isBuiltIn: isBuiltIn,
+                hasNotch: screen.safeAreaInsets.top > 0,
+                name: screen.localizedName
+            ))
         }
+        let picked = IslandScreenPolicy.pick(preference: displayScreen, screens: mapped.map(\.1))
+        return mapped.first(where: { $0.1 == picked })?.0 ?? NSScreen.main ?? NSScreen.screens[0]
     }
 
     /// Cached geometry of the target screen's notch. Refreshed on
@@ -237,6 +229,32 @@ class FloatingPanel: NSPanel {
         let x = notch.notchCenterX - panelWidth / 2
         let y = targetScreen.frame.maxY - frame.height
         setFrameOrigin(NSPoint(x: x, y: y))
+        recordIslandScreenIfPreviewing()
+    }
+
+    private func recordIslandScreenIfPreviewing() {
+        guard PreviewRuntime.isEnabled else { return }
+        let screen = targetScreen
+        let payload: [String: Any] = [
+            "screen": screen.localizedName,
+            "hasRealNotch": notch.hasRealNotch,
+            "notchWidth": notch.notchWidth,
+            "notchHeight": notch.notchHeight,
+            "notchCenterX": notch.notchCenterX,
+            "panelX": frame.minX,
+            "panelY": frame.minY,
+            "panelW": frame.width,
+            "panelH": frame.height,
+            "screenX": screen.frame.minX,
+            "screenY": screen.frame.minY,
+            "screenW": screen.frame.width,
+            "screenH": screen.frame.height,
+            "preference": displayScreen.rawValue
+        ]
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wechathud-island-screen.json")
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
+            try? data.write(to: url)
+        }
     }
 
     private var animationTimer: Timer?
@@ -263,15 +281,14 @@ class FloatingPanel: NSPanel {
     /// Manual interpolation gives us pixel-perfect symmetric expansion.
     func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil, caller: String = #function) {
         let newWidth = width ?? frame.width
-        let duration = AnimationDebugger.isEnabled ? AnimationDebugger.slowDuration : 0.25
-
-        // Anchor every animated target to the notch center and screen top.
-        // Using the current frame center lets stale compact measurements
-        // leak into the next hover, which shows up as a horizontal flash.
         refreshNotchGeometry(caller: caller)
         let x = notch.notchCenterX - newWidth / 2
         let y = targetScreen.frame.maxY - newHeight
         let target = NSRect(x: x, y: y, width: newWidth, height: newHeight)
+        let expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+        let duration = AnimationDebugger.isEnabled
+            ? AnimationDebugger.slowDuration
+            : (expanding ? IslandMotion.expandDuration : IslandMotion.collapseDuration)
 
         AnimationDebugger.logStart(from: self.frame, to: target, caller: caller, duration: duration)
 
@@ -281,17 +298,26 @@ class FloatingPanel: NSPanel {
         cancelFrameAnimation(notify: false)
         onFrameAnimationStarted?()
 
+        if CompanionMotion.reduceMotion || self.frame == target {
+            IslandFrameTiming.recordInstant()
+            setFrame(target, display: true)
+            onFrameAnimationEnded?()
+            return
+        }
+
         let startFrame = self.frame
         let startTime = Date()
+        let monotonicStart = ProcessInfo.processInfo.systemUptime
+        IslandFrameTiming.begin()
 
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.0/60.0, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] timer in
             guard let self = self else { timer.invalidate(); return }
-            let elapsed = Date().timeIntervalSince(startTime)
+            let elapsed = ProcessInfo.processInfo.systemUptime - monotonicStart
+            IslandFrameTiming.tick(uptime: ProcessInfo.processInfo.systemUptime)
             let rawT = min(elapsed / duration, 1.0)
-            // Cubic ease-in-out for a native macOS feel.
-            let progress = rawT < 0.5
-                ? 4 * rawT * rawT * rawT
-                : 1 - pow(-2 * rawT + 2, 3) / 2
+            let progress = expanding
+                ? IslandMotion.expandProgress(rawT)
+                : IslandMotion.collapseProgress(rawT)
 
             let ix = startFrame.origin.x + (target.origin.x - startFrame.origin.x) * progress
             let iy = startFrame.origin.y + (target.origin.y - startFrame.origin.y) * progress
@@ -306,8 +332,12 @@ class FloatingPanel: NSPanel {
                 self.animationTimer = nil
                 self.onFrameAnimationEnded?()
                 AnimationDebugger.logEnd(frame: self.frame)
+                IslandFrameTiming.finish(duration: duration)
             }
         }
+        animationTimer = timer
+        // Continue animating during mouse tracking and menu interactions.
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     /// Snap the panel to the target size with NO animation. Used on
@@ -315,16 +345,20 @@ class FloatingPanel: NSPanel {
     /// doesn't animate down to the real compact size — that's the
     /// "first animation is wrong" artifact on launch.
     func setFrameInstantly(height: CGFloat, width: CGFloat? = nil) {
-        cancelFrameAnimation()
+        let wasAnimating = animationTimer != nil
+        cancelFrameAnimation(notify: false)
         setFrame(targetFrame(height: height, width: width), display: true)
+        if wasAnimating { onFrameAnimationEnded?() }
     }
 
     func setFrameInstantlyCentered(height newHeight: CGFloat, width newWidth: CGFloat) {
-        cancelFrameAnimation()
+        let wasAnimating = animationTimer != nil
+        cancelFrameAnimation(notify: false)
         let centerX = frame.midX
         let x = centerX - newWidth / 2
         let y = frame.maxY - newHeight
         setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
+        if wasAnimating { onFrameAnimationEnded?() }
     }
 
     /// Compute the target NSRect given a desired height/width. Keeps
@@ -418,5 +452,66 @@ struct AnimationDebugger {
     static func logEnd(frame: NSRect) {
         guard isEnabled else { return }
         print("[ANIM] <<< END   final=(x:\(String(format: "%.1f", frame.origin.x)) y:\(String(format: "%.1f", frame.origin.y)) w:\(String(format: "%.1f", frame.size.width)) h:\(String(format: "%.1f", frame.size.height)))")
+    }
+}
+
+/// Records island frame-timer cadence for the 60fps acceptance gate.
+enum IslandFrameTiming {
+    static var lastIntervals: [TimeInterval] = []
+    static var lastDuration: TimeInterval = 0
+    static var lastWasInstant = false
+    private static var previousUptime: TimeInterval?
+
+    static func begin() {
+        lastIntervals = []
+        lastWasInstant = false
+        previousUptime = nil
+    }
+
+    static func recordInstant() {
+        lastIntervals = []
+        lastDuration = 0
+        lastWasInstant = true
+        persist()
+    }
+
+    static func tick(uptime: TimeInterval) {
+        if let previousUptime {
+            lastIntervals.append(uptime - previousUptime)
+        }
+        previousUptime = uptime
+    }
+
+    static func finish(duration: TimeInterval) {
+        lastDuration = duration
+        lastWasInstant = false
+        persist()
+    }
+
+    static var estimatedFPS: Double {
+        guard let avg = averageInterval, avg > 0 else { return 0 }
+        return 1 / avg
+    }
+
+    static var averageInterval: TimeInterval? {
+        guard !lastIntervals.isEmpty else { return nil }
+        return lastIntervals.reduce(0, +) / Double(lastIntervals.count)
+    }
+
+    static var reportPath: URL {
+        URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wechathud-island-fps.json")
+    }
+
+    private static func persist() {
+        let payload: [String: Any] = [
+            "instant": lastWasInstant,
+            "duration": lastDuration,
+            "samples": lastIntervals.count,
+            "fps": estimatedFPS,
+            "averageMs": (averageInterval ?? 0) * 1000
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
+            try? data.write(to: reportPath)
+        }
     }
 }

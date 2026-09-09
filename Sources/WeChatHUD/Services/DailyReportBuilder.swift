@@ -17,47 +17,53 @@ struct DailyReportBuilder {
         let startOfDay = calendar.startOfDay(for: date)
         let isToday = calendar.isDate(date, inSameDayAs: now)
         let endOfRange = isToday ? now : calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+        let historical = !isToday
         let dateRange = (start: startOfDay, end: endOfRange)
 
         // 1. Retrospective data. Only use a run whose source range overlaps
         // today; old runs must not be presented as today's highlights.
-        let latestRun = store.latestCompletedRun()
-        let targetRun = latestRun.flatMap { run in
-            run.rangeEnd >= startOfDay && run.rangeStart <= endOfRange ? run : nil
-        }
+        let targetRun = store.latestCompletedRun(overlapping: startOfDay, end: endOfRange)
         let runHighlights: [ReviewHighlight] = targetRun
-            .map { store.highlights(for: $0.id).filter { $0.date >= startOfDay && $0.date <= endOfRange } } ?? []
-        let runTodos: [ReviewTodo] = targetRun.map { store.todos(for: $0.id, statuses: [.pending]) } ?? []
+            .map { store.highlights(for: $0.id).filter { $0.date >= startOfDay && $0.date < endOfRange } } ?? []
+        let runTodos: [ReviewTodo] = targetRun
+            .map { store.todos(for: $0.id, statuses: historical ? nil : [.pending])
+                .filter { !historical || ($0.createdAt >= startOfDay && $0.createdAt < endOfRange) } } ?? []
 
-        let pendingAsks = store.loadPendingAsks(status: .pending)
-            .filter { $0.createdAt >= startOfDay && $0.createdAt <= endOfRange }
-        let handledAsks = store.loadPendingAsks(status: .done)
-            .filter { $0.updatedAt >= startOfDay && $0.updatedAt <= endOfRange }
+        let pendingAsks = store.loadPendingAsks(status: historical ? nil : .pending)
+            .filter { $0.createdAt >= startOfDay && $0.createdAt < endOfRange }
+        let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
+            .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }
 
         // 3. Commitments
         let allCommitments = store.loadCommitments()
-        let pendingCommitments = allCommitments.filter { $0.status == .pending }
-        let overdueCommitments = allCommitments.filter { $0.status == .overdue }
+        let scopedCommitments = allCommitments.filter {
+            historical
+                ? ($0.createdAt >= startOfDay && $0.createdAt < endOfRange)
+                : $0.createdAt < endOfRange
+        }
+        let pendingCommitments = historical ? [] : scopedCommitments.filter { $0.status == .pending }
+        let overdueCommitments = historical ? [] : scopedCommitments.filter { $0.status == .overdue }
 
         // 4. Recalled messages (today)
         let todayRecalled = store.loadRecalledMessages(since: Int(startOfDay.timeIntervalSince1970), limit: 50)
-            .filter { $0.recalledAt >= Int(startOfDay.timeIntervalSince1970) && $0.recalledAt <= Int(endOfRange.timeIntervalSince1970) }
+            .filter { $0.recalledAt >= Int(startOfDay.timeIntervalSince1970) && $0.recalledAt < Int(endOfRange.timeIntervalSince1970) }
 
         // 5. Build metrics
         let metrics = DailyReportMetrics(
-            unreadMessageCount: stats.unreadCount,
-            pendingTodoCount: runTodos.count,
-            pendingAskCount: pendingAsks.count,
+            unreadMessageCount: historical ? 0 : stats.unreadCount,
+            pendingTodoCount: historical ? 0 : runTodos.count,
+            pendingAskCount: historical ? 0 : pendingAsks.count,
             pendingCommitmentCount: pendingCommitments.count,
             overdueCommitmentCount: overdueCommitments.count,
-            replyDebtCount: replyDebtItems.count,
+            replyDebtCount: historical ? 0 : replyDebtItems.filter { $0.timestamp < endOfRange }.count,
             recalledMessageCount: todayRecalled.count,
-            highlightCount: runHighlights.count,
+            highlightCount: runHighlights.count
+                + (historical ? scopedCommitments.count + runTodos.count + pendingAsks.count : 0),
             analyzedChatCount: targetRun?.progressChatCount ?? 0
         )
 
         // 6. Build highlights (from retrospective)
-        let highlights = runHighlights.map { h in
+        var highlights = runHighlights.map { h in
             DailyReportHighlight(
                 summary: h.summary,
                 category: h.category,
@@ -69,12 +75,29 @@ struct DailyReportBuilder {
                 involved: h.involved
             )
         }
+        if historical {
+            highlights += scopedCommitments.map { c in
+                DailyReportHighlight(summary: "当天记录的承诺：\(c.content)", category: .progress,
+                                     sourceChatName: c.chatName, sourceChatUsername: c.chatUsername,
+                                     date: c.createdAt, confidence: c.confidence, quotedSnippet: c.sourceText)
+            }
+            highlights += runTodos.map { todo in
+                DailyReportHighlight(summary: "当天记录的待办：\(todo.content)", category: .progress,
+                                     sourceChatName: todo.sourceChatName, sourceChatUsername: todo.sourceChatUsername,
+                                     date: todo.createdAt, confidence: todo.confidence)
+            }
+            highlights += pendingAsks.map { ask in
+                DailyReportHighlight(summary: "当天记录的请求：\(ask.summary)", category: .discussion,
+                                     sourceChatName: ask.chatName, sourceChatUsername: ask.chatUsername,
+                                     date: ask.createdAt, confidence: ask.confidence, quotedSnippet: ask.rawText)
+            }
+        }
 
         // 7. Build unified actions
         var actions: [DailyReportAction] = []
 
         // Todos from retrospective
-        for todo in runTodos {
+        for todo in historical ? [] : runTodos {
             actions.append(DailyReportAction(
                 content: todo.content,
                 type: .todo,
@@ -100,7 +123,7 @@ struct DailyReportBuilder {
         }
 
         // Reply debt
-        for debt in replyDebtItems {
+        for debt in historical ? [] : replyDebtItems where debt.timestamp < endOfRange {
             actions.append(DailyReportAction(
                 content: "回复 \(debt.senderName): \(debt.preview.prefix(60))\(debt.preview.count > 60 ? "…" : "")",
                 type: .replyDebt,
@@ -113,7 +136,7 @@ struct DailyReportBuilder {
         }
 
         // Pending asks
-        for ask in pendingAsks {
+        for ask in historical ? [] : pendingAsks {
             actions.append(DailyReportAction(
                 content: ask.summary,
                 type: .ask,
@@ -141,7 +164,7 @@ struct DailyReportBuilder {
             ))
         }
 
-        for todo in runTodos where todo.deadline != nil && todo.deadline! < endOfRange {
+        for todo in historical ? [] : runTodos where todo.deadline != nil && todo.deadline! < endOfRange {
             risks.append(DailyReportRisk(
                 type: .overdueTodo,
                 description: "待办「\(todo.content)」已超期",
@@ -180,7 +203,8 @@ struct DailyReportBuilder {
             actions: actions,
             risks: risks,
             handledAskCount: handledAsks.count,
-            now: endOfRange
+            reportDate: startOfDay,
+            historical: historical
         )
 
         return DailyReport(
@@ -231,9 +255,23 @@ struct DailyReportBuilder {
         actions: [DailyReportAction],
         risks: [DailyReportRisk],
         handledAskCount: Int,
-        now: Date
+        reportDate: Date,
+        historical: Bool
     ) -> (narrative: String, tomorrowFocus: String, wechatDraft: String, statusMessage: String) {
-        let dateKey = now.dailyReportDateKey
+        let dateKey = reportDate.dailyReportDateKey
+        if historical {
+            let recordedCount = highlights.count
+            let recordedText = recordedCount == 0 ? "当天可追溯来源中暂无记录。" : "当天可追溯来源记录 \(recordedCount) 条。"
+            let first = highlights.first?.summary
+            let narrative = first.map { "\(dateKey) 的历史记录：\(recordedText) 重点：\($0)" } ?? "\(dateKey) 的历史记录：\(recordedText)"
+            let review = first.map { "复核记录：\($0)" } ?? "复核记录：暂无明确事项。"
+            return (
+                narrative,
+                "历史记录仅反映当日来源，不代表当前待办状态。",
+                "\(dateKey) 工作小结\n\(recordedText)\n\(review)\n当前未读、待回复和待处理状态没有历史快照，未作当日结论。",
+                "历史来源记录：未将当前未读、待回复或状态倒推为当日快照。"
+            )
+        }
         let actionableCount = metrics.pendingTodoCount + metrics.pendingAskCount + metrics.pendingCommitmentCount + metrics.replyDebtCount
         let hasSignals = metrics.unreadMessageCount > 0
             || actionableCount > 0
@@ -243,11 +281,19 @@ struct DailyReportBuilder {
             || handledAskCount > 0
 
         if !hasSignals {
+            guard stats.lastSyncAt != nil else {
+                return (
+                    "尚无成功同步记录，暂不能判断今天是否有需要处理的微信事项。",
+                    "连接微信并完成一次成功同步，再查看今天的待回复、请求和承诺。",
+                    "\(dateKey) 工作小结\n今日微信数据尚未验证，暂无足够来源生成工作小结。\n需要支持：请先连接微信并完成一次成功同步。",
+                    "未验证：尚无成功同步记录，未对今日事项下结论。"
+                )
+            }
             return (
-                "今天暂无需要处理的微信事项；未读、待回复、承诺和复盘高亮都为空。",
+                "今天已成功同步的数据中，暂未发现需要处理的微信事项。",
                 "明天先做一次微信巡检，确认是否有新的待回复、请求或承诺。",
-                "\(now.dailyReportDateKey) 工作小结\n今日微信侧暂无待处理事项，已保持关注列表清空。明日计划：继续巡检重点对话，及时处理新增请求和承诺。\n需要支持：暂无。",
-                "本地生成：暂无 AI 增强，当前没有可汇总的今日事项。"
+                "\(dateKey) 工作小结\n今日微信侧暂无待处理事项（基于已成功同步的数据）。明日计划：继续巡检重点对话，及时处理新增请求和承诺。\n需要支持：暂无。",
+                "规则整理：基于已成功同步的本地数据，暂无待处理事项。"
             )
         }
 
@@ -283,20 +329,30 @@ struct DailyReportBuilder {
             tomorrowFocus = "复查今日高亮，补齐需要沉淀的行动项。"
         }
 
-        let completedLine = handledAskCount > 0 ? "处理微信请求 \(handledAskCount) 项" : "完成微信消息巡检与重点事项整理"
-        let followLine = firstAction ?? firstRisk ?? "暂无明确阻塞，保持重点对话巡检"
+        let recordLine = facts.isEmpty
+            ? "本地记录：当前没有可汇总的本地信号。"
+            : "本地记录：\(facts.joined(separator: "；"))。"
+        let reviewLine: String
+        if let firstRisk {
+            reviewLine = "待核对：\(firstRisk)"
+        } else if let firstAction {
+            reviewLine = "待核对：\(firstAction)"
+        } else {
+            reviewLine = "待核对：暂无明确事项。"
+        }
         let wechatDraft = """
         \(dateKey) 工作小结
-        今日完成：1) \(completedLine)；2) 汇总\(facts.joined(separator: "、"))。
-        明日计划：\(tomorrowFocus)
-        需要支持：\(followLine)
+        \(recordLine)
+        建议核对：\(tomorrowFocus)
+        \(reviewLine)
+        需要支持：暂无（如需协作请人工补充）。
         """
 
         return (
             narrative,
             tomorrowFocus,
             wechatDraft,
-            "本地生成：AI 未完成前先展示可读日报。"
+            "规则整理：AI 未完成前先展示可读日报。"
         )
     }
 

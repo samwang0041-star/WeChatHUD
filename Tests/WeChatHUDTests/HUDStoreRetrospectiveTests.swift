@@ -40,6 +40,46 @@ struct HUDStoreRetrospectiveTests {
         #expect(run?.progressChatCount == 0)
     }
 
+    @Test("latest completed run is selected within a half-open date window")
+    func latestCompletedRunOverlappingWindow() throws {
+        let store = try tempStore()
+        let calendar = Calendar(identifier: .gregorian)
+        let day = calendar.date(from: DateComponents(year: 2025, month: 1, day: 10))!
+        let nextDay = day.addingTimeInterval(86_400)
+
+        let matchingID = store.insertReviewRun(
+            rangeStart: day.addingTimeInterval(3_600),
+            rangeEnd: day.addingTimeInterval(7_200),
+            chatCount: 1
+        )!
+        store.finalizeReviewRun(runID: matchingID, status: .completed,
+                                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                                msgCount: 1, failedChats: [])
+
+        // This run is generated later, but belongs entirely to the next day.
+        let unrelatedID = store.insertReviewRun(
+            rangeStart: nextDay,
+            rangeEnd: nextDay.addingTimeInterval(3_600),
+            chatCount: 1
+        )!
+        store.finalizeReviewRun(runID: unrelatedID, status: .completed,
+                                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                                msgCount: 1, failedChats: [])
+
+        #expect(store.latestCompletedRun(overlapping: day, end: nextDay)?.id == matchingID)
+
+        // An interval ending exactly at the requested start does not overlap.
+        let boundaryID = store.insertReviewRun(
+            rangeStart: day.addingTimeInterval(-7_200),
+            rangeEnd: day,
+            chatCount: 1
+        )!
+        store.finalizeReviewRun(runID: boundaryID, status: .completed,
+                                summaryTop3: [], summaryRisk: nil, summaryMissed: nil,
+                                msgCount: 1, failedChats: [])
+        #expect(store.latestCompletedRun(overlapping: day, end: nextDay)?.id == matchingID)
+    }
+
     @Test("finalizeReviewRun writes summary + posts notification")
     func finalizeWritesAndPosts() async throws {
         let store = try tempStore()
@@ -47,11 +87,20 @@ struct HUDStoreRetrospectiveTests {
 
         // Set up observer BEFORE the finalize call.
         let tokenBox = ObserverTokenBox()
+        let resumeLock = NSLock()
+        var resumed = false
         let received = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             tokenBox.value = NotificationCenter.default.addObserver(
                 forName: .retrospectiveLiveUpdate, object: nil, queue: nil
             ) { note in
-                if let kind = note.userInfo?["kind"] as? String, kind == "completed" {
+                guard note.userInfo?["runId"] as? Int == runID,
+                      note.userInfo?["kind"] as? String == "completed" else { return }
+                let shouldResume = resumeLock.withLock {
+                    guard !resumed else { return false }
+                    resumed = true
+                    return true
+                }
+                if shouldResume {
                     continuation.resume(returning: true)
                 }
             }
