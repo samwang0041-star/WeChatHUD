@@ -98,13 +98,39 @@ final class VIPAggregatorTests: XCTestCase {
 
     private func makeAIService() -> AIService {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "requested-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
         return AIService(config: cfg)
+    }
+
+    func testDisabledMoodDoesNotExposeModelMoodButKeepsUsefulFacts() async throws {
+        var config = store.loadAIConfig()
+        config.moodDetectionEnabled = false
+        try store.setSettingJSON("ai", value: config)
+        try store.insertVIPTrace(vipUsername: "boss1", vipName: "测试联系人", chatUsername: "g1", chatName: "测试群",
+                                 msgUID: "m-disabled", rawText: "周五确认预算", msgTime: 2000)
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: """
+        {"summary":"周五确认预算","involves_user":true,"involve_detail":"待确认","mood":"angry","mood_evidence":"模型推测","mood_trend_analysis":"变差","urgency":"routine","urgency_reason":"周五","recommended_action":"确认预算","action_timing":"this_week","key_topics":["预算"]}
+        """)
+        let aggregator = VIPAggregator(store: store, aiService: makeAIService())
+        let result = await aggregator.aggregate(vipUsername: "boss1", vipName: "测试联系人", vipRole: .boss,
+                                               userNameVariants: [], recentMoodHistory: "历史", lastInteraction: "", commitmentCount: 0)
+        XCTAssertEqual(result?.summary, "周五确认预算")
+        XCTAssertEqual(result?.mood, "")
+        XCTAssertEqual(result?.moodEvidence, "")
+        XCTAssertEqual(result?.moodTrendAnalysis, "")
+        XCTAssertEqual(result?.recommendedAction, "确认预算")
+    }
+
+    func testNoHistoryCannotProduceMoodTrend() {
+        let result = VIPAggregator.AggregateResult(summary: "摘要", involvesUser: false, involveDetail: nil,
+            mood: "neutral", moodEvidence: "原文", moodTrendAnalysis: "伪造趋势", urgency: "routine",
+            urgencyReason: "", recommendedAction: "", actionTiming: "no_action", keyTopics: [])
+        XCTAssertEqual(result.applyingMoodPreference(enabled: true, hasHistory: false).moodTrendAnalysis, "")
+        XCTAssertEqual(result.applyingMoodPreference(enabled: true, hasHistory: false).mood, "neutral")
     }
 }

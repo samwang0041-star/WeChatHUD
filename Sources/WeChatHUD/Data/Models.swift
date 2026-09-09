@@ -102,7 +102,7 @@ struct ChatInfo: Identifiable, Hashable {
     static func == (lhs: ChatInfo, rhs: ChatInfo) -> Bool { lhs.id == rhs.id }
 }
 
-struct MessageInfo: Identifiable {
+struct MessageInfo: Identifiable, Codable {
     let id: String           // message UID
     /// Local row id inside the chat's Msg table. Used only as a
     /// tie-breaker when multiple WeChat messages share the same second.
@@ -298,6 +298,8 @@ struct ReplyDebtItem: Identifiable {
     let reasons: [ReplyDebtReason]
     /// AI-suggested reply window in minutes. nil = no prediction available.
     let suggestedReplyMinutes: Int?
+    /// Exact source retained for context; never substitute another message in this chat.
+    var contextNotification: HUDNotification? = nil
 }
 
 struct ReplyDebtConfig: Codable {
@@ -372,6 +374,32 @@ struct HUDNotification: Identifiable {
     var briefingKey: String {
         if !messageID.isEmpty { return messageID }
         return "\(chatUsername):\(Int(timestamp.timeIntervalSince1970)):\(senderName)"
+    }
+
+    /// Action target for banner/island snooze. Never fall back to another chat.
+    func actionInboxItem() -> InboxItem {
+        InboxItem(
+            id: chatUsername,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            senderName: senderName,
+            preview: snippet,
+            isGroup: kind != .privateChat,
+            timestamp: timestamp,
+            actionRequired: true,
+            priority: isVIP ? .p0 : .p1,
+            isVIP: isVIP,
+            isWhitelisted: true,
+            unreadCount: 1,
+            isAtMention: isAtMention,
+            askType: .none,
+            reasons: [],
+            suggestedReplyMinutes: 60,
+            status: .active,
+            dismissedAtMsgId: nil,
+            aiSummary: nil,
+            moodEmoji: nil
+        )
     }
 }
 
@@ -710,19 +738,9 @@ struct AIProviderSlot: Codable, Equatable {
     }
 }
 
-/// Which provider to use for requests.
-enum AIActiveMode: String, Codable, CaseIterable {
-    case cloud  = "cloud"     // cloud only
-    case local  = "local"     // local only
-    case auto   = "auto"      // fallback mode (priority determined by autoCloudFirst)
-}
-
 struct AIConfig: Codable {
-    // Dual-provider slots
-    var cloudProvider: AIProviderSlot = AIProviderSlot()
-    var localProvider: AIProviderSlot = AIProviderSlot()
-    var activeMode: AIActiveMode = .local
-    var autoCloudFirst: Bool = true   // auto mode: true = cloud→local, false = local→cloud
+    // Single provider slot — a preset vendor or a custom service.
+    var provider: AIProviderSlot = AIProviderSlot()
 
     // Legacy single-provider fields — migration only, encoded as _legacy* to
     // avoid clashing with the computed compatibility shims below.
@@ -746,52 +764,50 @@ struct AIConfig: Codable {
 
     // ── Compatibility shims ──
     // All existing services read `config.baseURL` / `.model` / `.apiKey`.
-    // These resolve to the active (primary) slot so nothing else needs to change.
+    // These resolve to the single provider slot so nothing else needs to change.
     var baseURL: String {
-        get { primarySlot.baseURL }
+        get { provider.baseURL }
         set { /* no-op — use slot setters */ }
     }
     var model: String {
-        get { primarySlot.model }
+        get { provider.model }
         set { /* no-op */ }
     }
     var apiKey: String {
-        get { primarySlot.apiKey }
+        get { provider.apiKey }
         set { /* no-op */ }
     }
 
-    /// The primary provider slot for the current mode.
-    var primarySlot: AIProviderSlot {
-        switch activeMode {
-        case .cloud: return cloudProvider
-        case .local: return localProvider
-        case .auto: return autoCloudFirst ? cloudProvider : localProvider
-        }
-    }
-
-    /// Fallback slot (only used in .auto mode).
-    var fallbackSlot: AIProviderSlot? {
-        guard activeMode == .auto else { return nil }
-        return autoCloudFirst ? localProvider : cloudProvider
+    private static func slotIsConfigured(_ slot: AIProviderSlot) -> Bool {
+        // Codex slots are valid even with an empty baseURL — the URL is
+        // hardcoded and auth comes from the codex CLI login state.
+        !slot.baseURL.isEmpty || slot.providerID == "openai-codex"
     }
 
     /// Migrate from old single-provider format if needed.
     mutating func migrateIfNeeded() {
-        if let url = _legacyBaseURL, !url.isEmpty, localProvider.baseURL.isEmpty {
-            localProvider.baseURL = url
-            localProvider.model = _legacyModel ?? ""
-            localProvider.apiKey = _legacyApiKey ?? ""
-            localProvider.providerID = _legacyProviderID ?? "custom"
-            _legacyBaseURL = nil
-            _legacyModel = nil
-            _legacyApiKey = nil
-            _legacyProviderID = nil
+        if !Self.slotIsConfigured(provider), let url = _legacyBaseURL, !url.isEmpty {
+            provider = AIProviderSlot(
+                providerID: _legacyProviderID ?? "custom",
+                baseURL: url,
+                model: _legacyModel ?? "",
+                apiKey: _legacyApiKey ?? ""
+            )
         }
+        _legacyBaseURL = nil
+        _legacyModel = nil
+        _legacyApiKey = nil
+        _legacyProviderID = nil
     }
 
-    // Custom coding keys — decode old "baseURL"/"model"/"apiKey" into _legacy*
+    // Custom coding keys — decode old dual-slot and single-provider keys into
+    // migration-only fields. Encoding writes the single "provider" key only.
     enum CodingKeys: String, CodingKey {
-        case cloudProvider, localProvider, activeMode, autoCloudFirst
+        case provider
+        case legacyCloudProvider = "cloudProvider"
+        case legacyLocalProvider = "localProvider"
+        case legacyActiveMode = "activeMode"
+        case legacyAutoCloudFirst = "autoCloudFirst"
         case _legacyBaseURL = "baseURL"
         case _legacyModel = "model"
         case _legacyApiKey = "apiKey"
@@ -799,20 +815,40 @@ struct AIConfig: Codable {
         case maxTokens, temperature
         case summaryEnabled, suggestionsEnabled, moodDetectionEnabled
         case debtJudgeEnabled, debtJudgeShadowMode, thinkingEnabled
+        case dailyReportActionInsightsEnabled
     }
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        cloudProvider = try container.decodeIfPresent(AIProviderSlot.self, forKey: .cloudProvider) ?? AIProviderSlot()
-        localProvider = try container.decodeIfPresent(AIProviderSlot.self, forKey: .localProvider) ?? AIProviderSlot()
-        activeMode = try container.decodeIfPresent(AIActiveMode.self, forKey: .activeMode) ?? .local
-        autoCloudFirst = try container.decodeIfPresent(Bool.self, forKey: .autoCloudFirst) ?? true
+        provider = try container.decodeIfPresent(AIProviderSlot.self, forKey: .provider) ?? AIProviderSlot()
+        let legacyCloud = try container.decodeIfPresent(AIProviderSlot.self, forKey: .legacyCloudProvider) ?? AIProviderSlot()
+        let legacyLocal = try container.decodeIfPresent(AIProviderSlot.self, forKey: .legacyLocalProvider) ?? AIProviderSlot()
+        // Old activeMode values were "local"/"cloud"/"auto"; unreadable values
+        // (corrupt data or future formats) fall back to the local slot.
+        let legacyModeRaw = try container.decodeIfPresent(String.self, forKey: .legacyActiveMode) ?? "local"
+        let legacyAutoCloudFirst = try container.decodeIfPresent(Bool.self, forKey: .legacyAutoCloudFirst) ?? true
+        if !Self.slotIsConfigured(provider) {
+            let primary: AIProviderSlot
+            switch legacyModeRaw {
+            case "cloud": primary = legacyCloud
+            case "auto": primary = legacyAutoCloudFirst ? legacyCloud : legacyLocal
+            default: primary = legacyLocal
+            }
+            if Self.slotIsConfigured(primary) {
+                provider = primary
+            } else if Self.slotIsConfigured(legacyCloud) {
+                provider = legacyCloud
+            } else if Self.slotIsConfigured(legacyLocal) {
+                provider = legacyLocal
+            }
+        }
         _legacyBaseURL = try container.decodeIfPresent(String.self, forKey: ._legacyBaseURL)
         _legacyModel = try container.decodeIfPresent(String.self, forKey: ._legacyModel)
         _legacyApiKey = try container.decodeIfPresent(String.self, forKey: ._legacyApiKey)
         _legacyProviderID = try container.decodeIfPresent(String.self, forKey: ._legacyProviderID)
+        migrateIfNeeded()
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 2048
         temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.3
         summaryEnabled = try container.decodeIfPresent(Bool.self, forKey: .summaryEnabled) ?? true
@@ -821,18 +857,12 @@ struct AIConfig: Codable {
         debtJudgeEnabled = try container.decodeIfPresent(Bool.self, forKey: .debtJudgeEnabled) ?? true
         debtJudgeShadowMode = try container.decodeIfPresent(Bool.self, forKey: .debtJudgeShadowMode) ?? true
         thinkingEnabled = try container.decodeIfPresent(Bool.self, forKey: .thinkingEnabled) ?? false
+        dailyReportActionInsightsEnabled = try container.decodeIfPresent(Bool.self, forKey: .dailyReportActionInsightsEnabled) ?? true
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(cloudProvider, forKey: .cloudProvider)
-        try container.encode(localProvider, forKey: .localProvider)
-        try container.encode(activeMode, forKey: .activeMode)
-        try container.encode(autoCloudFirst, forKey: .autoCloudFirst)
-        try container.encodeIfPresent(_legacyBaseURL, forKey: ._legacyBaseURL)
-        try container.encodeIfPresent(_legacyModel, forKey: ._legacyModel)
-        try container.encodeIfPresent(_legacyApiKey, forKey: ._legacyApiKey)
-        try container.encodeIfPresent(_legacyProviderID, forKey: ._legacyProviderID)
+        try container.encode(provider, forKey: .provider)
         try container.encode(maxTokens, forKey: .maxTokens)
         try container.encode(temperature, forKey: .temperature)
         try container.encode(summaryEnabled, forKey: .summaryEnabled)
@@ -841,6 +871,7 @@ struct AIConfig: Codable {
         try container.encode(debtJudgeEnabled, forKey: .debtJudgeEnabled)
         try container.encode(debtJudgeShadowMode, forKey: .debtJudgeShadowMode)
         try container.encode(thinkingEnabled, forKey: .thinkingEnabled)
+        try container.encode(dailyReportActionInsightsEnabled, forKey: .dailyReportActionInsightsEnabled)
     }
 }
 
@@ -867,7 +898,7 @@ struct AIProvider: Identifiable, Hashable {
             id: "deepseek",
             name: "DeepSeek",
             baseURL: "https://api.deepseek.com",
-            models: ["deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+            models: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
             requiresKey: true,
             signupURL: "https://platform.deepseek.com/"
         ),
@@ -950,6 +981,8 @@ struct AIProvider: Identifiable, Hashable {
 struct SyncConfig: Codable {
     var intervalSeconds: Int = 30
     var wechatDBPath: String = "auto"
+    /// User-selected local key JSON. nil keeps the historical default path.
+    var keysFilePath: String? = nil
     var cacheStrategy: CacheStrategy = .temporary
     var displayScreen: DisplayScreen = .builtIn
 }
@@ -971,13 +1004,13 @@ enum DisplayScreen: String, Codable, CaseIterable {
 enum CacheStrategy: String, Codable, CaseIterable {
     case persistent   // ~/.wechat-hud/cache/ — fast cold start, plaintext on disk
     case temporary    // /tmp/wechat_hud_cache/ — cleared on reboot
-    case memory       // never touches disk — most secure, slowest cold start
+    case memory       // process-scoped temporary files; removed on normal cleanup
 
     var label: String {
         switch self {
         case .persistent: return "持久磁盘"
         case .temporary:  return "临时磁盘"
-        case .memory:     return "仅内存"
+        case .memory:     return "会话临时"
         }
     }
 
@@ -985,7 +1018,7 @@ enum CacheStrategy: String, Codable, CaseIterable {
         switch self {
         case .persistent: return "~/.wechat-hud/cache — 启动最快，明文落盘"
         case .temporary:  return "/tmp — 重启清空，每次开机首次解密"
-        case .memory:     return "进程内存 — 最安全，每次启动都全量解密"
+        case .memory:     return "会话临时文件 — 正常退出时清理，每次启动重新解密"
         }
     }
 }
@@ -995,6 +1028,15 @@ struct NotificationConfig: Codable {
     var important: Bool = true
     var allWhitelist: Bool = false
     var durationSeconds: Int = 3
+
+    func shouldPresent(_ semantic: InboxSemanticState) -> Bool {
+        switch semantic {
+        case .privateVIPRisk: return important
+        case .groupMentionFYI: return atMention
+        case .privateInfoOnly, .groupInfoOnly: return allWhitelist
+        default: return false
+        }
+    }
 }
 
 // MARK: - AI Subsystem
@@ -1319,6 +1361,15 @@ enum DiscussionItemOwner: String, Codable {
         case .shared: return "双方"
         }
     }
+
+    /// Customer-facing label used in the 不漏事 workspace.
+    var workspaceLabel: String {
+        switch self {
+        case .mine: return "我来做"
+        case .theirs: return "等对方"
+        case .shared: return "共同推进"
+        }
+    }
 }
 
 enum DiscussionItemStatus: String, Codable {
@@ -1595,7 +1646,7 @@ enum AutopilotReplyStyle: String, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .auto:     return "跟随历史风格"
+        case .auto:     return "跟随我的习惯"
         case .brief:    return "极简模式"
         case .detailed: return "详细模式"
         }
@@ -1603,7 +1654,7 @@ enum AutopilotReplyStyle: String, Codable, CaseIterable {
 
     var hint: String {
         switch self {
-        case .auto:     return "分析你的聊天记录，模仿真实风格回复"
+        case .auto:     return "根据你过往的聊天风格来生成回复。"
         case .brief:    return "所有回复控制在 15 字以内"
         case .detailed: return "完整回答对方的问题，不省略细节"
         }

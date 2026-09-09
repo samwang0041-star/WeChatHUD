@@ -179,34 +179,15 @@ enum ScanEngine {
             }
             let sortedSuppressed = suppressedCollected.sorted { $0.timestamp > $1.timestamp }
             let totalUnread = privateUnreadChats + groupAtCount
-
-            // DEBUG MODE: empty whitelist → cheap sqlite_sequence sweep
-            // just for a total unread count. No VIP list, no preview.
+            let debugUnreadExtra: Int
             if whitelist.isEmpty {
-                let (extra, _) = (try? debugScanAllTables(
+                debugUnreadExtra = (try? debugScanAllTables(
                     reader: reader,
                     store: store,
                     changedRelPaths: changedRelPaths
-                )) ?? (0, 0)
-                return ScanOutcome(
-                    stats: HUDStats(
-                        unreadCount: totalUnread + extra,
-                        atMentionCount: groupAtCount,
-                        vipCount: 0,
-                        replyDebtCount: replyDebtItems.count,
-                        syncStatus: .ok,
-                        lastSyncAt: Date()
-                    ),
-                    unreadItems: sortedUnread,
-                    suppressedItems: sortedSuppressed,
-                    replyDebtItems: replyDebtItems,
-                    recentNotifications: [],
-                    latestPreview: nil,
-                    newInboundMessages: [],
-                    newInboundForClassifier: [],
-                    vipTraceMessages: [],
-                    selfOutgoingMessages: []
-                )
+                ))?.unread ?? 0
+            } else {
+                debugUnreadExtra = 0
             }
 
             // ---- Whitelist scan (for the follow feed & VIP alerts) ----
@@ -216,6 +197,7 @@ enum ScanEngine {
             var vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)] = []
             var newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)] = []
             var selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)] = []
+            let notificationConfig = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
 
             // Usernames of contacts explicitly marked VIP — used to detect
             // their presence in any whitelisted group chat, not just their
@@ -226,11 +208,17 @@ enum ScanEngine {
             let sessionMap = Dictionary(uniqueKeysWithValues: sessions.map { ($0.username, $0) })
 
             for entry in whitelist {
+                let isFirstWhitelistScan = store.getWhitelistCursor(username: entry.id) == nil
                 let messages: [MessageInfo]
                 do {
+                    let unreadHint = sessionMap[entry.id]?.unreadCount ?? 0
+                    let fetchLimit = Self.whitelistFetchLimit(
+                        hasCursor: !isFirstWhitelistScan,
+                        unreadCount: unreadHint
+                    )
                     messages = try reader.getMessages(
                         chatUsername: entry.id,
-                        limit: 100,
+                        limit: fetchLimit,
                         sinceLocalId: nil
                     )
                 } catch { continue }
@@ -248,6 +236,11 @@ enum ScanEngine {
                 let baseline: (lastCreateTime: Int, lastLocalId: Int)
                 if let existing = store.getWhitelistCursor(username: entry.id) {
                     baseline = existing
+                } else if sessions.isEmpty {
+                    // Unread counts come from session.db. An empty list is a
+                    // locked/failed read, not "no unread". Do not persist a
+                    // newest-message cursor that would swallow the backlog.
+                    baseline = currentCursor
                 } else {
                     let unreadCount = sessionMap[entry.id]?.unreadCount ?? 0
                     let seed: (lastCreateTime: Int, lastLocalId: Int)
@@ -266,11 +259,6 @@ enum ScanEngine {
                     } else {
                         seed = (Int(Date().timeIntervalSince1970), 0)
                     }
-                    try? store.setWhitelistCursor(
-                        username: entry.id,
-                        lastCreateTime: seed.lastCreateTime,
-                        lastLocalId: seed.lastLocalId
-                    )
                     baseline = seed
                 }
 
@@ -278,6 +266,14 @@ enum ScanEngine {
                     $0.createTime > baseline.lastCreateTime
                         || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
                 }
+
+                // Queue persistence and the source cursor are one durable
+                // unit. A failed queue write must leave the cursor unchanged
+                // so the next scan can retry the same source messages.
+                var classificationMessages: [MessageInfo] = []
+                classificationMessages.reserveCapacity(newMessages.count)
+                var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
+                autopilotMessagesToQueue.reserveCapacity(newMessages.count)
 
                 for msg in newMessages {
                     // Collect self messages for commitment tracking BEFORE skipping
@@ -340,7 +336,7 @@ enum ScanEngine {
                         kind: kind
                     )
 
-                    if notif.isVIP,
+                    if notificationConfig.shouldPresent(notif.presentationSemanticState),
                        (latestPreview == nil || msgTime > latestPreview!.timestamp) {
                         latestPreview = notif
                     }
@@ -376,10 +372,13 @@ enum ScanEngine {
                             messageType: msg.baseType,
                             appType: msg.appType
                         )
-                        if autopilotActive {
-                            try? store.enqueueAutopilotInbound(inbound)
+                        if autopilotActive && Self.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: isFirstWhitelistScan) {
+                            // Persist this queue row together with the
+                            // whitelist cursor below. A failed insert must
+                            // leave the cursor behind so the next scan retries.
+                            autopilotMessagesToQueue.append(inbound)
+                            autopilotInbound.append(inbound)
                         }
-                        autopilotInbound.append(inbound)
                     }
 
                     // Collect VIP traces for VIPAggregator
@@ -423,15 +422,41 @@ enum ScanEngine {
                         chatUsername: entry.id,
                         isVIP: entry.attentionLevel == .vip
                     ))
+                    classificationMessages.append(msg)
                 }
 
                 if currentCursor.0 > baseline.lastCreateTime
                     || (currentCursor.0 == baseline.lastCreateTime && currentCursor.1 > baseline.lastLocalId) {
-                    try? store.setWhitelistCursor(
-                        username: entry.id,
-                        lastCreateTime: currentCursor.0,
-                        lastLocalId: currentCursor.1
-                    )
+                    do {
+                        try store.withTransaction {
+                            // Discussion extraction includes both sides of the
+                            // conversation, while classification receives only
+                            // non-self, non-ignored inbound messages above.
+                            if !newMessages.isEmpty {
+                                try store.enqueueDiscussionMessages(newMessages)
+                            }
+                            if !classificationMessages.isEmpty {
+                                try store.enqueueClassificationMessages(classificationMessages)
+                            }
+                            if autopilotActive {
+                                for inbound in autopilotMessagesToQueue {
+                                    try store.enqueueAutopilotInbound(inbound)
+                                }
+                            }
+                            try store.setWhitelistCursor(
+                                username: entry.id,
+                                lastCreateTime: currentCursor.0,
+                                lastLocalId: currentCursor.1
+                            )
+                        }
+                    } catch {
+                        // Do not advance the watermark after a queue or cursor
+                        // failure. The next scan must retry this batch.
+                        // Keep account identifiers and SQLite paths out of the
+                        // user-visible log. The watermark remains unchanged
+                        // and the next scan will retry this batch.
+                        print("[WCHUD] queue persistence failed; scan watermark unchanged for retry")
+                    }
                 }
             }
 
@@ -469,11 +494,15 @@ enum ScanEngine {
                     guard let baseline = store.getAutopilotCursor(username: session.username) else {
                         let seed = messages.first.map { ($0.createTime, $0.localId) }
                             ?? (Int(Date().timeIntervalSince1970), 0)
-                        try? store.setAutopilotCursor(
-                            username: session.username,
-                            lastCreateTime: seed.0,
-                            lastLocalId: seed.1
-                        )
+                        do {
+                            try store.setAutopilotCursor(
+                                username: session.username,
+                                lastCreateTime: seed.0,
+                                lastLocalId: seed.1
+                            )
+                        } catch {
+                            print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
+                        }
                         continue
                     }
 
@@ -481,6 +510,8 @@ enum ScanEngine {
                         $0.createTime > baseline.lastCreateTime
                             || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
                     }
+                    var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
+                    autopilotMessagesToQueue.reserveCapacity(newMessages.count)
                     for msg in newMessages {
                         if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
                         guard let contact = store.getContact(username: msg.senderUsername) else {
@@ -504,7 +535,10 @@ enum ScanEngine {
                             appType: msg.appType
                         )
                         if autopilotActive {
-                            try? store.enqueueAutopilotInbound(inbound)
+                            // Persist this queue row together with the
+                            // autopilot cursor below. A failed insert must
+                            // leave the cursor behind so the next scan retries.
+                            autopilotMessagesToQueue.append(inbound)
                         }
                         autopilotInbound.append(inbound)
                     }
@@ -512,19 +546,30 @@ enum ScanEngine {
                     // Update baseline
                     if let newest = newMessages.first,
                        newest.createTime > baseline.lastCreateTime
-                        || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
-                        try? store.setAutopilotCursor(
-                            username: session.username,
-                            lastCreateTime: newest.createTime,
-                            lastLocalId: newest.localId
-                        )
+                       || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
+                        do {
+                            try store.withTransaction {
+                                if autopilotActive {
+                                    for inbound in autopilotMessagesToQueue {
+                                        try store.enqueueAutopilotInbound(inbound)
+                                    }
+                                }
+                                try store.setAutopilotCursor(
+                                    username: session.username,
+                                    lastCreateTime: newest.createTime,
+                                    lastLocalId: newest.localId
+                                )
+                            }
+                        } catch {
+                            print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
+                        }
                     }
                 }
             }
 
             return ScanOutcome(
                 stats: HUDStats(
-                    unreadCount: totalUnread,
+                    unreadCount: totalUnread + debugUnreadExtra,
                     atMentionCount: groupAtCount,
                     vipCount: vipCount,
                     replyDebtCount: replyDebtItems.count,
@@ -545,6 +590,28 @@ enum ScanEngine {
             print("[WCHUD] performScan error: \(error)")
             return nil
         }
+    }
+
+    /// First whitelist scan must cover the unread backlog. Messages are
+    /// newest-first; a hard 100-row page would seed the cursor past older
+    /// unread and never classify them.
+    static func firstScanFetchLimit(unreadCount: Int, defaultLimit: Int = 100, hardCap: Int = 500) -> Int {
+        max(defaultLimit, min(max(0, unreadCount), hardCap))
+    }
+
+    static func whitelistFetchLimit(hasCursor: Bool, unreadCount: Int, defaultLimit: Int = 100, hardCap: Int = 500) -> Int {
+        hasCursor ? defaultLimit : firstScanFetchLimit(unreadCount: unreadCount, defaultLimit: defaultLimit, hardCap: hardCap)
+    }
+
+    /// First whitelist scan classifies unread for the inbox. Those messages
+    /// must not enter Autopilot — they can be days old.
+    static func shouldEnqueueAutopilotInbound(isFirstWhitelistScan: Bool) -> Bool {
+        !isFirstWhitelistScan
+    }
+
+    /// A failed session.db read must not persist a newest-message cursor.
+    static func shouldPersistFirstScanBaseline(sessionsAvailable: Bool) -> Bool {
+        sessionsAvailable
     }
 
     // MARK: - Cross-group VIP helpers (pure, testable)

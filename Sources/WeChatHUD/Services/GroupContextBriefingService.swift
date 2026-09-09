@@ -11,7 +11,16 @@ protocol GroupContextLLMClient: Sendable {
 extension AIService: GroupContextLLMClient {}
 
 protocol GroupContextMessageProvider {
-    func getMessages(chatUsername: String, limit: Int, sinceLocalId: Int?) throws -> [MessageInfo]
+    func getMessages(
+        chatUsername: String,
+        limit: Int,
+        sinceLocalId: Int?,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)?,
+        oldestFirst: Bool,
+        startTime: Int?,
+        endTime: Int?,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)?
+    ) throws -> [MessageInfo]
 }
 
 extension WeChatReader: GroupContextMessageProvider {}
@@ -19,6 +28,9 @@ extension WeChatReader: GroupContextMessageProvider {}
 struct GroupContextBriefingResult {
     let briefing: GroupContextBriefing
     let errorMessage: String?
+    /// The exact source-centered window used by both phase-1 briefing and
+    /// phase-2 catch-up/context analysis. Empty means the source was missing.
+    let contextMessages: [MessageInfo]
 }
 
 actor GroupContextBriefingService {
@@ -49,8 +61,24 @@ actor GroupContextBriefingService {
         notification: HUDNotification,
         forceRefresh: Bool = false
     ) async -> GroupContextBriefingResult {
-        let analysisType = promptVersion
+        // Keep the prompt resource name stable while invalidating summaries
+        // generated before exact source-centered retrieval existed.
+        let analysisType = "\(promptVersion):context_window_v2"
         let cacheKey = notification.briefingKey
+
+        let contextWindow = loadContextMessages(notification: notification)
+
+        // The briefing cache is only valid while the exact source message is
+        // still available. Check source availability before returning a
+        // cached AI result so a deleted/rotated message cannot surface stale
+        // analysis as if it were grounded in current context.
+        guard let contextWindow else {
+            return GroupContextBriefingResult(
+                briefing: missingSourceBriefing(notification: notification),
+                errorMessage: "找不到这条 @ 消息，未使用其他消息冒充上下文",
+                contextMessages: []
+            )
+        }
 
         if !forceRefresh,
            let cached = store?.loadAnalysisCache(
@@ -61,30 +89,23 @@ actor GroupContextBriefingService {
            let briefing = parseStoredBriefing(cached) {
             return GroupContextBriefingResult(
                 briefing: briefing,
-                errorMessage: nil
+                errorMessage: nil,
+                contextMessages: contextWindow
             )
         }
-
-        let contextMessages = (try? reader.getMessages(
-            chatUsername: notification.chatUsername,
-            limit: 24,
-            sinceLocalId: nil
-        )) ?? []
-        let contextWindow = Self.contextWindow(
-            messages: contextMessages,
-            notification: notification
-        )
 
         guard let client else {
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-                errorMessage: "AI 未配置，使用本地兜底判断"
+                errorMessage: "AI 未配置，使用本地兜底判断",
+                contextMessages: contextWindow
             )
         }
         guard await client.isConfigured() else {
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-                errorMessage: "AI 未配置，使用本地兜底判断"
+                errorMessage: "AI 未配置，使用本地兜底判断",
+                contextMessages: contextWindow
             )
         }
 
@@ -94,7 +115,8 @@ actor GroupContextBriefingService {
         } catch {
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-                errorMessage: "上下文提示词缺失，使用本地兜底判断"
+                errorMessage: "上下文提示词缺失，使用本地兜底判断",
+                contextMessages: contextWindow
             )
         }
 
@@ -104,7 +126,8 @@ actor GroupContextBriefingService {
         } catch {
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-                errorMessage: "上下文打包失败，使用本地兜底判断"
+                errorMessage: "上下文打包失败，使用本地兜底判断",
+                contextMessages: contextWindow
             )
         }
 
@@ -129,7 +152,7 @@ actor GroupContextBriefingService {
                 errorMessage: nil
             )
             cache(final, notification: notification, analysisType: analysisType, cacheKey: cacheKey)
-            return GroupContextBriefingResult(briefing: final, errorMessage: nil)
+            return GroupContextBriefingResult(briefing: final, errorMessage: nil, contextMessages: contextWindow)
         }
 
         if firstResponse.text.isEmpty, let error = firstResponse.error {
@@ -143,7 +166,8 @@ actor GroupContextBriefingService {
             )
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-                errorMessage: "AI 请求失败，使用本地兜底判断"
+                errorMessage: "AI 请求失败，使用本地兜底判断",
+                contextMessages: contextWindow
             )
         }
 
@@ -160,7 +184,7 @@ actor GroupContextBriefingService {
                 errorMessage: "recovered after retry"
             )
             cache(final, notification: notification, analysisType: analysisType, cacheKey: cacheKey)
-            return GroupContextBriefingResult(briefing: final, errorMessage: nil)
+            return GroupContextBriefingResult(briefing: final, errorMessage: nil, contextMessages: contextWindow)
         }
 
         writeAudit(
@@ -173,13 +197,23 @@ actor GroupContextBriefingService {
         )
         return GroupContextBriefingResult(
             briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
-            errorMessage: "AI 输出不可解析，使用本地兜底判断"
+            errorMessage: "AI 输出不可解析，使用本地兜底判断",
+            contextMessages: contextWindow
         )
     }
 
     private func parseStoredBriefing(_ raw: String) -> GroupContextBriefing? {
         guard let data = raw.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(GroupContextBriefing.self, from: data)
+    }
+
+    /// Loads the exact source message and then performs two bounded queries
+    /// around its real `(createTime, localId)` cursor. The initial walk is
+    /// newest-first only to locate an old source that fell out of page one;
+    /// the returned array is always the small source-centered window shared
+    /// by phase 1 and phase 2.
+    private func loadContextMessages(notification: HUDNotification) -> [MessageInfo]? {
+        GroupContextSourceLoader.load(notification: notification, reader: reader)
     }
 
     private func cache(
@@ -246,6 +280,25 @@ actor GroupContextBriefingService {
             nextStep: trim(nextStep, limit: 70),
             participants: Array(participants),
             confidence: 0.45,
+            source: .fallback,
+            generatedAt: Date()
+        )
+    }
+
+    /// A source-less notification only proves that an @ arrived. Keep this
+    /// fallback factual instead of inferring the group's current discussion
+    /// or suggesting a commitment from unrelated messages.
+    private func missingSourceBriefing(notification: HUDNotification) -> GroupContextBriefing {
+        let sourceText = trim(notification.rawText, limit: 60)
+        return GroupContextBriefing(
+            situation: sourceText.isEmpty
+                ? "目前只能确认收到一条 @ 消息。"
+                : "目前只能确认收到这条 @ 消息：\(sourceText)。",
+            whyMentioned: "由于原始消息不可用，无法确认群聊上下文或为什么需要你介入。",
+            currentStatus: "讨论当前状态未知，不能据此判断是否已经达成结论。",
+            nextStep: "先打开群聊核对原文和上下文，再决定是否回复；暂不直接承诺。",
+            participants: [],
+            confidence: 0.1,
             source: .fallback,
             generatedAt: Date()
         )
@@ -428,20 +481,21 @@ actor GroupContextBriefingService {
         historyCount: Int = 8,
         futureCount: Int = 3
     ) -> [MessageInfo] {
-        let chronological = messages.sorted { $0.createTime < $1.createTime }
-        guard !chronological.isEmpty else { return [] }
-
-        let targetTs = Int(notification.timestamp.timeIntervalSince1970)
-        let anchorIndex = chronological.firstIndex {
+        let chronological = messages.sorted(by: Self.messageOrder)
+        guard let anchorIndex = chronological.firstIndex(where: {
             $0.id == notification.messageID
-        } ?? chronological.lastIndex {
-            $0.createTime == targetTs
-                && $0.senderName == notification.senderName
-        } ?? max(0, chronological.count - 1)
+        }) else { return [] }
 
         let start = max(0, anchorIndex - historyCount)
         let end = min(chronological.count - 1, anchorIndex + futureCount)
         return Array(chronological[start...end])
+    }
+
+    private static func messageOrder(_ lhs: MessageInfo, _ rhs: MessageInfo) -> Bool {
+        if lhs.createTime != rhs.createTime {
+            return lhs.createTime < rhs.createTime
+        }
+        return lhs.localId < rhs.localId
     }
 }
 

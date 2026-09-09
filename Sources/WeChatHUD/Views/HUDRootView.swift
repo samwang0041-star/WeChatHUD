@@ -44,39 +44,30 @@ struct HUDRootView: View {
                 extendedContent
             case .notification:
                 if let notif = monitor.latestNotification {
-                    NotificationBannerView(notification: notif)
+                    StableNotificationBanner(notification: notif)
                         .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
                 }
             case .detail:
                 DetailPanelView()
+                    .padding(.top, islandNotchHeight)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            // Island silhouette rendered in two layers so the notch
-            // region reads as SOLID BLACK (mimicking hardware) on
-            // external displays, instead of a transparent cutout
-            // that reveals the menu bar behind.
-            //
-            // 1) `IslandShape` (with the notch cutout) gives the
-            //    pill's visible silhouette — flat top, notch dip in
-            //    the middle, bottom-rounded wings.
-            // 2) Behind it, a plain black bar fills the notch band
-            //    with opaque black. On notched Macs this band is
-            //    hidden by hardware anyway; on external it becomes
-            //    the "fake notch" proper — solid black like the
-            //    real thing, no menu-bar bleed-through.
+            // One black body: notch band + pill are the same color as
+            // the hardware Dynamic Island, so compact wings disappear
+            // into it and expand reads as that island growing down.
             ZStack(alignment: .top) {
-                Color.black
+                CompanionPalette.island
                     .frame(height: islandNotchHeight)
                     .frame(maxWidth: islandNotchWidth)
                 IslandShape(
                     notchWidth: islandNotchWidth,
                     notchHeight: islandNotchHeight,
-                    pillCornerRadius: 18,
+                    pillCornerRadius: 22,
                     notchCornerRadius: 10
                 )
-                .fill(Color.black)
+                .fill(CompanionPalette.island)
             }
         )
         .overlay(alignment: .top) {
@@ -89,28 +80,49 @@ struct HUDRootView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: panelState.toastMessage)
+        .onReceive(monitor.$inboxActionError) { message in
+            if let message { panelState.showToast(message) }
+        }
+        .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
         .transaction { $0.animation = nil }
+        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
     }
 
     private func toastView(_ message: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
+        let snoozeUndo = panelState.islandSnoozeUndo
+        return HStack(spacing: 6) {
+            Image(systemName: snoozeUndo == nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 10))
-                .foregroundColor(.orange)
+                .foregroundColor(snoozeUndo == nil ? .orange : CompanionPalette.islandMint)
             Text(message)
                 .font(.system(size: 11))
                 .foregroundColor(.white)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
             Spacer(minLength: 0)
+            if snoozeUndo != nil {
+                Button("撤销") {
+                    if let item = panelState.islandSnoozeUndo?.item {
+                        _ = monitor.restoreInboxItem(item)
+                    }
+                    panelState.islandSnoozeUndo = nil
+                    panelState.toastMessage = nil
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(CompanionPalette.islandMint)
+                .accessibilityLabel("撤销")
+            }
             Button(action: { panelState.toastMessage = nil }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9))
                     .foregroundColor(.white.opacity(0.6))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭提示")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(message)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
@@ -148,7 +160,7 @@ struct HUDRootView: View {
     private var extendedContent: some View {
         InboxView()
             .fixedSize(horizontal: false, vertical: true)
-            .frame(width: 420)
+            .frame(width: IslandChrome.expandedWidth)
             .background(
                 GeometryReader { proxy in
                     Color.clear
@@ -166,27 +178,29 @@ struct HUDRootView: View {
 /// a large empty tail. Caller passes the count of action-required rows (the
 /// only rows drawn in the top list) and whether the handled footer is shown.
 func inboxSize(actionCount: Int, hasHandled: Bool) -> (CGFloat, CGFloat) {
-    let width: CGFloat = 420
+    let width = IslandChrome.expandedWidth
 
-    // Empty inbox — just the "没有待处理消息" stub.
+    // Empty inbox — brand + status + empty copy + workspace bar.
     if actionCount == 0 && !hasHandled {
-        return (width, 92)
+        return (width, 220)
     }
 
     let rows = min(max(actionCount, 1), 10)
-    let headerHeight: CGFloat = 42       // padding 26 + 4 + label ~12
+    let headerHeight: CGFloat = 52
     let dividerHeight: CGFloat = 1
-    // Row height estimate lives on the "plenty of headroom" side of
-    // the measured value. Rows with an inline AI briefing line (Tier
-    // 2) measure ~78pt; plain rows ~58pt. Using 72pt keeps the
-    // first-ever-hover animation within ~10pt of the measured size
-    // (which then arrives via PreferenceKey and snaps instantly via
-    // the sub-2pt tolerance in AppDelegate's measurement sink).
-    let rowHeight: CGFloat = 72
-    let handledHeaderHeight: CGFloat = hasHandled ? 28 : 0
-    let bottomPadding: CGFloat = 8
+    let rowHeight: CGFloat = 88
+    let handledHeaderHeight: CGFloat = hasHandled ? 32 : 0
+    let bottomPadding: CGFloat = 12
 
     let bodyHeight = CGFloat(rows) * rowHeight
     let total = headerHeight + dividerHeight + bodyHeight + handledHeaderHeight + bottomPadding
-    return (width, min(total, 520))
+    return (width, min(total, 720))
+}
+
+/// Freeze the recipient and evidence while the user is interacting with a banner.
+/// New arrivals remain in the inbox and appear after this presentation is dismissed.
+private struct StableNotificationBanner: View {
+    @State private var notification: HUDNotification
+    init(notification: HUDNotification) { _notification = State(initialValue: notification) }
+    var body: some View { NotificationBannerView(notification: notification) }
 }

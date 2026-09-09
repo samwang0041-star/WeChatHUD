@@ -6,52 +6,76 @@ import AppKit
 struct InboxRowView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var reader: WeChatReader
     let item: InboxItem
+    var islandCatalog: Bool = false
     let onDismiss: () -> Void
     var onSnooze: ((Date) -> Void)? = nil
     var onSilence: (() -> Void)? = nil
 
     @State private var hovered = false
     @State private var expanded = false
-    @State private var showSnoozePopover = false
+    @State private var showSnoozeMenu = false
+    @State private var snoozeHoverClose: DispatchWorkItem?
+    @State private var renamingChat: InboxItem?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
-                priorityDot
-                    .padding(.top, 4)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    // First line: name + badges + status + time
-                    firstLine
-                    // Second line: summary or preview
-                    secondLine
-                    // Tier 2: auto-briefing for group @mentions — a one-
-                    // line "他想你: ..." that appears without the user
-                    // having to click. The view itself decides whether
-                    // to render anything (empty when not applicable).
-                    inlineBriefingLine
+                if islandCatalog {
+                    CompanionAvatar(name: monitor.displayName(for: item.chatUsername), size: 36)
+                } else {
+                    priorityDot
+                        .padding(.top, 4)
                 }
 
-                if hovered {
+                VStack(alignment: .leading, spacing: 2) {
+                    firstLine
+                    if islandCatalog {
+                        catalogTitle
+                    } else {
+                        secondLine
+                        inlineBriefingLine
+                    }
+                }
+
+                if hovered || showSnoozeMenu {
                     hoverButtons
                         .padding(.top, 2)
                         .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(hovered ? Color.white.opacity(0.06) : Color.clear)
+            .padding(.horizontal, islandCatalog ? 18 : 14)
+            .padding(.vertical, islandCatalog ? 10 : 6)
+            .background(hovered || showSnoozeMenu ? Color.white.opacity(0.06) : Color.clear)
             .contentShape(Rectangle())
-            .onHover { hovered = $0 }
-            .animation(.easeInOut(duration: 0.15), value: hovered)
             .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withMotion(CompanionMotion.ease(0.2)) {
                     expanded.toggle()
                 }
             }
             .contextMenu {
                 contextMenuContent
+            }
+            .sheet(item: $renamingChat, onDismiss: {
+                panelState.islandTextInputActive = false
+            }) { target in
+                ChatRenameSheet(
+                    chatUsername: target.chatUsername,
+                    currentName: monitor.displayName(for: target.chatUsername),
+                    memberNames: reader.groupMemberNames(for: target.chatUsername)
+                )
+                .onAppear { panelState.islandTextInputActive = true }
+            }
+
+            if showSnoozeMenu {
+                IslandSnoozeMenu { date in
+                    showSnoozeMenu = false
+                    panelState.setSnoozeMenuExpanded(false)
+                    onSnooze?(date)
+                }
+                .padding(.horizontal, islandCatalog ? 18 : 14)
+                .padding(.bottom, 10)
             }
 
             if expanded {
@@ -59,6 +83,29 @@ struct InboxRowView: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .onHover { inside in
+            hovered = inside
+            snoozeHoverClose?.cancel()
+            if inside { return }
+            let work = DispatchWorkItem {
+                guard showSnoozeMenu else { return }
+                showSnoozeMenu = false
+                panelState.setSnoozeMenuExpanded(false)
+            }
+            snoozeHoverClose = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)
+        }
+        .onChange(of: showSnoozeMenu) { _, open in
+            panelState.setSnoozeMenuExpanded(open)
+        }
+        .onDisappear {
+            if showSnoozeMenu {
+                showSnoozeMenu = false
+                panelState.setSnoozeMenuExpanded(false)
+            }
+        }
+        .companionAnimation(CompanionMotion.ease(0.15), value: hovered)
+        .companionAnimation(CompanionMotion.rowExpand(), value: showSnoozeMenu)
     }
 
     @ViewBuilder
@@ -67,9 +114,9 @@ struct InboxRowView: View {
             onDismiss()
         }
         Menu("稍后提醒") {
-            Button("15 分钟后") { onSnooze?(Date().addingTimeInterval(15 * 60)) }
-            Button("1 小时后") { onSnooze?(Date().addingTimeInterval(60 * 60)) }
-            Button("明天上午") { onSnooze?(tomorrowMorning()) }
+            ForEach(CompanionProductCopy.snoozeChoices()) { choice in
+                Button("\(choice.label)  \(choice.whenLabel)") { onSnooze?(choice.until) }
+            }
         }
         Button("静音此对话") {
             onSilence?()
@@ -77,11 +124,15 @@ struct InboxRowView: View {
 
         Divider()
 
+        Button("重命名此对话…") {
+            renamingChat = item
+        }
         Button("在微信中打开") {
-            WeChatLauncher.openChat(named: item.chatName)
+            WeChatLauncher.openChat(named: monitor.displayName(for: item.chatUsername))
         }
         Button("查看对话详情") {
-            panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+            panelState.showChatDetail(chatUsername: item.chatUsername,
+                                      chatName: monitor.displayName(for: item.chatUsername))
         }
         Button("复制消息原文") {
             NSPasteboard.general.clearContents()
@@ -123,32 +174,16 @@ struct InboxRowView: View {
         }
     }
 
-    private func tomorrowMorning() -> Date {
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        components.day = (components.day ?? 0) + 1
-        components.hour = 9
-        components.minute = 0
-        components.second = 0
-        return Calendar.current.date(from: components) ?? Date().addingTimeInterval(24 * 3600)
-    }
-
     // MARK: - First Line
 
     private var firstLine: some View {
         HStack(spacing: 6) {
-            Text(item.chatName)
-                .font(.system(size: 12, weight: .semibold))
+            Text(item.displayReason.isEmpty
+                 ? monitor.displayName(for: item.chatUsername)
+                 : "\(monitor.displayName(for: item.chatUsername)) · \(item.displayReason)")
+                .font(.system(size: islandCatalog ? 15 : 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(1)
-
-            // Single reason tag replaces the old badge pile (VIP / @mention / overdue / replied)
-            Text(item.displayReason)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(reasonTagColor)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(reasonTagColor.opacity(0.12))
-                .cornerRadius(3)
 
             if item.isVIP, let mood = item.moodEmoji, !mood.isEmpty {
                 Text(mood)
@@ -158,9 +193,21 @@ struct InboxRowView: View {
             Spacer()
 
             Text(relativeTime(item.timestamp))
-                .font(.system(size: 10))
+                .font(.system(size: islandCatalog ? 12 : 10))
                 .foregroundColor(.white.opacity(0.35))
+            if islandCatalog {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.28))
+            }
         }
+    }
+
+    private var catalogTitle: some View {
+        Text(item.aiSummary?.isEmpty == false ? item.aiSummary! : item.preview)
+            .font(.system(size: 14))
+            .foregroundColor(.white.opacity(0.7))
+            .lineLimit(2)
     }
 
     private var reasonTagColor: Color {
@@ -296,24 +343,14 @@ struct InboxRowView: View {
         HStack(spacing: 6) {
             if !item.replied {
                 Button(action: {
-                    panelState.popoverOpen = true
-                    showSnoozePopover = true
+                    showSnoozeMenu.toggle()
                 }) {
                     Text("\u{23F0}")
                         .font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
                 .help("稍后提醒")
-                .popover(isPresented: $showSnoozePopover, arrowEdge: .bottom) {
-                    SnoozePopoverContent { date in
-                        showSnoozePopover = false
-                        panelState.popoverOpen = false
-                        onSnooze?(date)
-                    }
-                }
-                .onChange(of: showSnoozePopover) { _, isOpen in
-                    panelState.popoverOpen = isOpen
-                }
+                .accessibilityLabel("稍后提醒")
             }
 
             Button(action: onDismiss) {
@@ -354,7 +391,7 @@ private struct PriorityPulseDot: View {
         }
         .onAppear {
             guard isUrgent else { return }
-            withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) {
+            withMotion(CompanionMotion.easeOut(1.4).map { $0.repeatForever(autoreverses: false) }) {
                 pulseOn = true
             }
         }
@@ -363,24 +400,58 @@ private struct PriorityPulseDot: View {
 
 // MARK: - Snooze Popover Content
 
+struct IslandSnoozeMenu: View {
+    let onSelect: (Date) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(CompanionProductCopy.snoozeChoices().enumerated()), id: \.element.id) { index, choice in
+                if index > 0 {
+                    Divider().background(Color.white.opacity(0.08))
+                }
+                Button {
+                    onSelect(choice.until)
+                } label: {
+                    HStack {
+                        Text(choice.label)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white)
+                        Spacer(minLength: 12)
+                        Text(choice.whenLabel)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(choice.label)
+                .accessibilityHint(choice.whenLabel)
+                .accessibilityIdentifier("companion.snooze.\(choice.label)")
+            }
+        }
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("稍后提醒时间")
+    }
+}
+
 struct SnoozePopoverContent: View {
     let onSelect: (Date) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            snoozeButton(label: "30 分钟后", date: Date().addingTimeInterval(30 * 60))
-            Divider().opacity(0.2)
-            snoozeButton(label: "2 小时后", date: Date().addingTimeInterval(2 * 3600))
-            Divider().opacity(0.2)
-            snoozeButton(label: "今晚 20:00", date: tonightAt20())
-            Divider().opacity(0.2)
-            snoozeButton(label: "明早 09:00", date: tomorrowAt09())
+            ForEach(Array(CompanionProductCopy.snoozeChoices().enumerated()), id: \.element.id) { index, choice in
+                if index > 0 { Divider().opacity(0.2) }
+                snoozeButton(label: "\(choice.label)  \(choice.whenLabel)", date: choice.until, name: choice.label)
+            }
         }
         .padding(.vertical, 4)
-        .frame(width: 140)
+        .frame(width: 220)
     }
 
-    private func snoozeButton(label: String, date: Date) -> some View {
+    private func snoozeButton(label: String, date: Date, name: String) -> some View {
         Button(action: { onSelect(date) }) {
             Text(label)
                 .font(.system(size: 12))
@@ -390,28 +461,7 @@ struct SnoozePopoverContent: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private func tonightAt20() -> Date {
-        let cal = Calendar.current
-        let now = Date()
-        var components = cal.dateComponents([.year, .month, .day], from: now)
-        components.hour = 20
-        components.minute = 0
-        components.second = 0
-        let tonight = cal.date(from: components) ?? now
-        // If already past 20:00 today, use tomorrow
-        return tonight > now ? tonight : cal.date(byAdding: .day, value: 1, to: tonight) ?? tonight
-    }
-
-    private func tomorrowAt09() -> Date {
-        let cal = Calendar.current
-        let now = Date()
-        var components = cal.dateComponents([.year, .month, .day], from: now)
-        components.hour = 9
-        components.minute = 0
-        components.second = 0
-        let today9 = cal.date(from: components) ?? now
-        return cal.date(byAdding: .day, value: 1, to: today9) ?? now
+        .accessibilityLabel(name)
+        .accessibilityHint(label)
     }
 }

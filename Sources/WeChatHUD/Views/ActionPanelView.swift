@@ -17,6 +17,7 @@ struct ActionPanelView: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
     let item: InboxItem
+    var showsConversationLink = true
 
     // MARK: - State
 
@@ -386,6 +387,7 @@ struct ActionPanelView: View {
 
     private var primaryCTAs: some View {
         HStack(spacing: 8) {
+            if showsConversationLink || item.semanticState != .groupMentionFYI {
             Button(action: {
                 runPrimaryCTA()
             }) {
@@ -402,6 +404,7 @@ struct ActionPanelView: View {
                 .cornerRadius(6)
             }
             .buttonStyle(.plain)
+            }
 
             if item.replySuggestionMode != .hidden {
                 Button(action: runReplySuggestions) {
@@ -447,7 +450,7 @@ struct ActionPanelView: View {
 
     private func suggestionRow(_ suggestion: SuggestedReply) -> some View {
         Button(action: {
-            WeChatLauncher.openChatAndPaste(named: item.chatName, text: suggestion.text)
+            WeChatLauncher.openChatAndPaste(named: monitor.displayName(for: item.chatUsername), text: suggestion.text)
         }) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -557,11 +560,12 @@ struct ActionPanelView: View {
     private func runPrimaryCTA() {
         switch item.semanticState {
         case .groupMentionFYI:
-            panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+            panelState.showChatDetail(chatUsername: item.chatUsername,
+                                      chatName: monitor.displayName(for: item.chatUsername))
         case .handled:
             monitor.restoreInboxItem(item)
         default:
-            WeChatLauncher.openChat(named: item.chatName)
+            WeChatLauncher.openChat(named: monitor.displayName(for: item.chatUsername))
         }
     }
 

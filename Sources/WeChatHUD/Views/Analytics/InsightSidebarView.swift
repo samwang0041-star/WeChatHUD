@@ -6,18 +6,24 @@ struct InsightSidebarView: View {
     @ObservedObject var store: HUDStore
     @Binding var selectedChat: String?
     @Binding var searchText: String
-    let onRefresh: () -> Void
     let onAnalyzeChat: (String) -> Void
+    @State private var filter: ChatReviewFilter = .all
+
+    private enum ChatReviewFilter: String, CaseIterable {
+        case all = "全部"
+        case groups = "群聊"
+        case direct = "单聊"
+        case updated = "有更新"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             searchBar
+            filterBar
             Divider()
             chatList
-            Divider()
-            refreshButton
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(CompanionPalette.canvas)
     }
 
     private var searchBar: some View {
@@ -25,32 +31,53 @@ struct InsightSidebarView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
                 .font(.system(size: 12))
-            TextField("搜索聊天...", text: $searchText)
+            TextField("搜索聊天或联系人", text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .accessibilityLabel("搜索聊天或联系人")
+            if !searchText.isEmpty {
+                Button("清除搜索") { searchText = "" }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jade)
+            }
         }
         .padding(8)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(6)
+        .background(CompanionPalette.surface)
+        .cornerRadius(8)
         .padding(.horizontal, 12)
         .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var filterBar: some View {
+        HStack(spacing: 6) {
+            ForEach(ChatReviewFilter.allCases, id: \.self) { value in
+                CompanionFilterPill(title: value.rawValue, selected: filter == value) {
+                    filter = value
+                }
+            }
+        }
+        .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
 
     private var chatList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                let whitelist = insightStore.filteredWhitelist(store: store, searchText: searchText)
+                let whitelist = insightStore.filteredWhitelist(store: store, searchText: searchText).filter(matchesFilter)
                 if !whitelist.isEmpty {
-                    sidebarSection("关注", icon: "star", count: whitelist.count)
+                    sidebarSection("关注的对话", icon: "star", count: whitelist.count)
                     ForEach(whitelist, id: \.id) { entry in
                         whitelistRow(entry)
                     }
                 }
 
-                let others = insightStore.filteredOtherSessions(searchText: searchText)
-                if !others.isEmpty {
-                    sidebarSection("其他活跃", icon: "clock", count: others.count)
+                let others = insightStore.filteredOtherSessions(searchText: searchText).filter { session in
+                    matchesFilter(isGroup: session.isGroup, id: session.id, messageCount: session.messageCount)
+                }
+                if !others.isEmpty && filter != .updated {
+                    sidebarSection("其他最近聊天", icon: "clock", count: others.count)
                     ForEach(others) { session in
                         otherSessionRow(session)
                     }
@@ -58,26 +85,6 @@ struct InsightSidebarView: View {
             }
             .padding(.vertical, 4)
         }
-    }
-
-    private var refreshButton: some View {
-        Button(action: {
-            selectedChat = nil
-            onRefresh()
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: "chart.bar.doc.horizontal")
-                    .font(.system(size: 11))
-                Text("今日态势")
-                    .font(.system(size: 11))
-            }
-            .foregroundColor(.accentColor)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
     }
 
     private func sidebarSection(_ title: String, icon: String, count: Int) -> some View {
@@ -107,9 +114,7 @@ struct InsightSidebarView: View {
 
         return Button(action: {
             selectedChat = entry.id
-            if !hasInsight {
-                onAnalyzeChat(entry.id)
-            }
+            onAnalyzeChat(entry.id)
         }) {
             HStack(spacing: 8) {
                 ZStack {
@@ -222,6 +227,20 @@ struct InsightSidebarView: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 4)
+    }
+
+    private func matchesFilter(_ entry: WhitelistEntry) -> Bool {
+        matchesFilter(isGroup: entry.isGroup, id: entry.id, messageCount: insightStore.allStats[entry.id]?.messageCount ?? 0)
+    }
+
+    private func matchesFilter(isGroup: Bool, id: String, messageCount: Int) -> Bool {
+        switch filter {
+        case .all: return true
+        case .groups: return isGroup
+        case .direct: return !isGroup
+        case .updated:
+            return insightCoordinator.chatInsights[id] != nil || messageCount > 0
+        }
     }
 
     private func categoryColor(_ cat: WhitelistCategory) -> Color {

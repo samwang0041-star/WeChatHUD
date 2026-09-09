@@ -112,6 +112,27 @@ final class ChatInsightEngineTests: XCTestCase {
         XCTAssertEqual(stats.avgResponseTimeSeconds, 0)
     }
 
+    func testDetailMessageStats_useLocalCountsWhenAIHasNoTopics() throws {
+        let stats = ChatInsightEngine.computeStats(
+            messages: [msg(selfUsername, "only message", 1000)],
+            selfUsername: selfUsername,
+            chatUsername: "wxid_a", chatName: "Test", isGroup: false, category: .other
+        )
+        let aiResult = try JSONDecoder().decode(
+            ChatInsightResult.self,
+            from: Data("""
+            {"headline":"","topics":[],"decisions":[],"action_items":[],"mentions_me":0,"waiting_for_me":[],"my_commitments":[],"needs_my_attention":false,"overall_mood":"","signal_noise_ratio":0,"decision_efficiency":"","importance_to_me":{"level":"","reason":""},"cross_chat_topics":null,"insight":"","suggestion":""}
+            """.utf8)
+        )
+
+        let projected = ChatInsightMessageStats(stats: stats, result: aiResult)
+
+        XCTAssertEqual(projected.total, 1)
+        XCTAssertEqual(projected.mine, 1)
+        XCTAssertEqual(projected.others, 0)
+        XCTAssertEqual(projected.myRatio, 1.0, accuracy: 0.001)
+    }
+
     // MARK: - Response time
 
     func testAvgResponseTime_calculated() {
@@ -349,13 +370,12 @@ final class ChatInsightEngineTests: XCTestCase {
         """)
 
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "requested-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
         cfg.summaryEnabled = true
 
         let insight = AIChatInsight(store: store, aiService: AIService(config: cfg))

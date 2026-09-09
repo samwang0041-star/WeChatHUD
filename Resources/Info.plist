@@ -1,25 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>WeChatHUD</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.wechat-cli.hud</string>
-    <key>CFBundleName</key>
-    <string>WeChat HUD</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>WeChatHUD 需要通过 System Events 向微信发送搜索指令，以便在点击消息条目时跳转到对应会话。</string>
+	<key>CFBundleExecutable</key>
+	<string>WeChatHUD</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon.icns</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.wechat-cli.hud</string>
+	<key>CFBundleName</key>
+	<string>WeChat HUD</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>1.2.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>WeChatHUD 需要通过辅助功能/AppleScript 联动微信跳转到对应会话。</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 </dict>
 </plist>

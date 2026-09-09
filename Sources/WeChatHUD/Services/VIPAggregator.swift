@@ -40,6 +40,14 @@ actor VIPAggregator {
             case actionTiming       = "action_timing"
             case keyTopics          = "key_topics"
         }
+
+        func applyingMoodPreference(enabled: Bool, hasHistory: Bool) -> Self {
+            Self(summary: summary, involvesUser: involvesUser, involveDetail: involveDetail,
+                 mood: enabled ? mood : "", moodEvidence: enabled ? moodEvidence : "",
+                 moodTrendAnalysis: enabled && hasHistory ? moodTrendAnalysis : "",
+                 urgency: urgency, urgencyReason: urgencyReason, recommendedAction: recommendedAction,
+                 actionTiming: actionTiming, keyTopics: keyTopics)
+        }
     }
 
     // MARK: - Public API
@@ -105,8 +113,13 @@ actor VIPAggregator {
             .replacingOccurrences(of: "{user_mentioned_in}", with: userMentionedIn)
             .replacingOccurrences(of: "{role_dimensions}", with: roleDimensions)
 
+        let moodEnabled = store.loadAIConfig().moodDetectionEnabled
+        let hasMoodHistory = !recentMoodHistory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let moodInstruction = moodEnabled
+            ? "情绪只能作为有原文依据的语气线索，不得断言对方心理状态。没有历史证据时 mood_trend_analysis 必须为空字符串。"
+            : "用户已关闭 VIP 情绪检测。不要分析或推断情绪、语气、态度变化，mood、mood_evidence、mood_trend_analysis 必须为空字符串。仅整理消息事实与行动。"
         let started = Date()
-        let response = await callModel(prompt: prompt)
+        let response = await callModel(prompt: prompt, instruction: moodInstruction)
         let latency = Int(Date().timeIntervalSince(started) * 1000)
         let model: String
         if let actualModel = response.model {
@@ -148,7 +161,10 @@ actor VIPAggregator {
             outputText: body,
             latencyMs: latency, status: .ok, errorMessage: nil
         ))
-        return result
+        // A setting disabled while the request was in flight also takes effect.
+        return result.applyingMoodPreference(
+            enabled: moodEnabled && store.loadAIConfig().moodDetectionEnabled,
+            hasHistory: hasMoodHistory)
     }
 
     // MARK: - Private helpers
@@ -159,14 +175,14 @@ actor VIPAggregator {
         let model: String?
     }
 
-    private func callModel(prompt: String) async -> ModelResponse {
+    private func callModel(prompt: String, instruction: String) async -> ModelResponse {
         let trackID = "vip:\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: "VIP 摘要")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {
             let result = try await aiService.completeWithMetadata(
-                system: "只输出 JSON。",
+                system: "只输出 JSON。" + instruction,
                 user: prompt,
                 options: CompleteOptions(timeout: 60, temperature: 0.1, maxTokens: 512, responseFormatJSON: true)
             )

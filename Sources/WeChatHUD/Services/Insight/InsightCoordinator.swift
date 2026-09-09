@@ -26,6 +26,9 @@ final class InsightCoordinator: ObservableObject {
 
     // MARK: - Dependencies
 
+    private var requestVersions: [String: UUID] = [:]
+    private var resultDays: [String: Date] = [:]
+
     private let reader: WeChatReader
     private let store: HUDStore
     private let aiService: AIService
@@ -62,14 +65,16 @@ final class InsightCoordinator: ObservableObject {
     /// Analyze a single chat on-demand for a specific date.
     /// If a result for a different date exists, it is replaced.
     func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
+        let request = UUID()
+        requestVersions[chatUsername] = request
         chatInsightLoading.insert(chatUsername)
         chatInsightErrors[chatUsername] = nil
         insightProgress = "正在分析单聊..."
 
         defer {
-            chatInsightLoading.remove(chatUsername)
-            if !insightLoading {
-                insightProgress = ""
+            if requestVersions[chatUsername] == request {
+                chatInsightLoading.remove(chatUsername)
+                if !insightLoading { insightProgress = "" }
             }
         }
 
@@ -85,11 +90,25 @@ final class InsightCoordinator: ObservableObject {
             entry, date: date,
             selfUsername: selfUsername, selfDisplayName: selfDisplayName
         ) else {
+            guard requestVersions[chatUsername] == request else { return }
             chatInsightErrors[chatUsername] = "该日期没有可分析内容，或 AI 暂时不可用"
             return
         }
 
+        guard requestVersions[chatUsername] == request, !Task.isCancelled else { return }
+        resultDays[chatUsername] = Calendar.current.startOfDay(for: date)
         chatInsights[chatUsername] = result
+    }
+
+    func seedPreviewResult(chatUsername: String, date: Date = Date(), result: ChatInsightResult) {
+        resultDays[chatUsername] = Calendar.current.startOfDay(for: date)
+        chatInsights[chatUsername] = result
+    }
+
+    func result(for chatUsername: String, date: Date) -> ChatInsightResult? {
+        let resultDay = resultDays[chatUsername] ?? Calendar.current.startOfDay(for: Date())
+        guard Calendar.current.isDate(resultDay, inSameDayAs: date) else { return nil }
+        return chatInsights[chatUsername]
     }
 
     // MARK: - Full Insight Load
@@ -125,6 +144,7 @@ final class InsightCoordinator: ObservableObject {
         }
 
         let total = activeEntries.count
+        let initialRequestVersions = requestVersions
         var results: [String: ChatInsightResult] = [:]
         var statsResults: [ChatStatsData] = []
 
@@ -136,24 +156,18 @@ final class InsightCoordinator: ObservableObject {
             insightProgressFraction = Double(i) / Double(max(total, 1))
 
             if let result = await chatInsightService.analyzeEntry(
-                entry, date: Date(),
+                entry, date: todayStart,
                 selfUsername: selfUsername, selfDisplayName: selfDisplayName
             ) {
                 results[entry.id] = result
             }
 
-            // Also compute stats
-            if let messages = try? reader.getMessages(chatUsername: entry.id, limit: 200) {
-                let todayMessages = messages.filter { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
-                if !todayMessages.isEmpty {
-                    let stats = ChatInsightEngine.computeStats(
-                        messages: todayMessages, selfUsername: selfUsername,
-                        selfDisplayName: selfDisplayName, selfNames: reader.mySelfNames,
-                        chatUsername: entry.id, chatName: entry.displayName,
-                        isGroup: entry.isGroup, category: entry.category
-                    )
-                    statsResults.append(stats)
-                }
+            if let stats = InsightDataLoader().statsForDay(
+                chatUsername: entry.id, chatName: entry.displayName,
+                isGroup: entry.isGroup, category: entry.category,
+                date: todayStart, reader: reader
+            ), stats.messageCount > 0 {
+                statsResults.append(stats)
             }
         }
 
@@ -191,7 +205,15 @@ final class InsightCoordinator: ObservableObject {
             chatInsights: insightPairs, globalStats: globalStats
         )
 
-        chatInsights = results
+        for (chatUsername, result) in results {
+            // A later user-selected day takes precedence over this bulk run.
+            guard requestVersions[chatUsername] == initialRequestVersions[chatUsername],
+                  !chatInsightLoading.contains(chatUsername) else { continue }
+            if let selectedDay = resultDays[chatUsername],
+               !Calendar.current.isDate(selectedDay, inSameDayAs: todayStart) { continue }
+            resultDays[chatUsername] = todayStart
+            chatInsights[chatUsername] = result
+        }
         globalBriefing = briefing
         insightLoading = false
         insightProgress = ""

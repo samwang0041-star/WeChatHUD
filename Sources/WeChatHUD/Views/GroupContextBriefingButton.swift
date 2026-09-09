@@ -7,8 +7,6 @@ struct GroupContextBriefingButton: View {
     let notification: HUDNotification
     let compact: Bool
 
-    @State private var showingPopover = false
-
     init(notification: HUDNotification, compact: Bool = false) {
         self.notification = notification
         self.compact = compact
@@ -18,8 +16,13 @@ struct GroupContextBriefingButton: View {
         let state = monitor.groupContextState(for: notification)
 
         Button {
-            showingPopover = true
-            monitor.loadGroupContextBriefing(for: notification)
+            let target = !panelState.briefingExpanded
+            withMotion(CompanionMotion.spring) {
+                panelState.setBriefingExpanded(target)
+            }
+            if target {
+                monitor.loadGroupContextBriefing(for: notification)
+            }
         } label: {
             HStack(spacing: 4) {
                 if state.isLoading {
@@ -27,7 +30,7 @@ struct GroupContextBriefingButton: View {
                         .controlSize(.mini)
                         .scaleEffect(0.7)
                 }
-                Text(state.isLoading ? "分析中…" : "什么情况")
+                Text(state.isLoading ? "分析中…" : "看看什么事")
                     .font(.system(size: compact ? 10 : 9, weight: .semibold))
                     .lineLimit(1)
             }
@@ -42,14 +45,7 @@ struct GroupContextBriefingButton: View {
             .cornerRadius(compact ? 7 : 6)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
-            GroupContextBriefingPopover(notification: notification)
-                .environmentObject(monitor)
-                .environmentObject(panelState)
-        }
-        .onChange(of: showingPopover) { _, isOpen in
-            panelState.popoverOpen = isOpen
-        }
+        .accessibilityLabel(panelState.briefingExpanded ? "收起群聊上下文" : "看看什么事")
     }
 
     private func buttonBackground(state: GroupContextBriefingLoadState) -> Color {
@@ -65,117 +61,90 @@ struct GroupContextBriefingButton: View {
     }
 }
 
-private struct GroupContextBriefingPopover: View {
+/// The in-place context-briefing card, rendered inline by the surface
+/// that hosts the trigger button (notification banner below the action
+/// row, conversation detail inside the context section). Lives inside
+/// the panel's AX tree, unlike the removed anchored popover.
+struct GroupContextBriefingCard: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
 
     let notification: HUDNotification
-
-    private var allowsDeepActionContext: Bool {
-        notification.supportsDeepActionContext
-    }
+    @State private var showSnooze = false
 
     var body: some View {
         let state = monitor.groupContextState(for: notification)
 
         VStack(alignment: .leading, spacing: 12) {
-            header(state: state)
+            header
 
             if let briefing = state.briefing {
+                if let errorMessage = state.errorMessage {
+                    errorBody(errorMessage)
+                }
                 briefingBody(briefing)
+                originalSection
             } else if state.isLoading {
                 loadingBody
             } else {
-                errorBody(state.errorMessage ?? "还没有拿到上下文简报")
+                errorBody(state.errorMessage ?? "还没有拿到这段群聊上下文")
             }
 
-            footer(state: state)
+            footer
         }
         .padding(14)
-        .frame(width: 360, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func header(state: GroupContextBriefingLoadState) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("什么情况")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("\(notification.chatName) · \(notification.senderName)")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            if let briefing = state.briefing {
-                HStack(spacing: 6) {
-                    Text(briefing.source.label)
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(briefing.source == .ai ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.15))
-                        .cornerRadius(4)
-                    Text("置信 \(Int(briefing.confidence * 100))%")
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-            }
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(notification.chatName)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white.opacity(0.55))
+            Text("为什么 @ 你?")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.white)
+            Text("AI 解读 · 根据最近消息")
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.45))
         }
     }
 
     private func briefingBody(_ briefing: GroupContextBriefing) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            section("发生了什么", text: briefing.situation)
-            section("为什么@你", text: briefing.whyMentioned)
-            section("当前状态", text: briefing.currentStatus)
-            section("下一步", text: briefing.nextStep)
-            if !briefing.participants.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("关键参与人")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    FlowChips(items: briefing.participants)
-                }
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            card("在聊什么", text: briefing.situation, systemImage: "bubble.left")
+            card("为什么找你", text: briefing.whyMentioned, systemImage: "person")
+            card("下一步", text: briefing.nextStep, systemImage: "checkmark.circle")
+        }
+    }
 
-            if allowsDeepActionContext, let bg = briefing.deepBackground {
-                Divider().padding(.vertical, 4)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("深度分析")
-                        .font(.system(size: 11, weight: .bold))
-                    section("背景", text: bg)
-                    if let want = briefing.deepWhatTheyWant {
-                        section("为什么提到你", text: want)
-                    }
-                    if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("利益相关方")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            FlowChips(items: stakeholders)
-                        }
-                    }
-                    if let position = briefing.deepYourPosition {
-                        section("你的立场", text: position)
-                    }
-                    if let action = briefing.deepSuggestedAction {
-                        section("下一步参考", text: action)
-                    }
-                    if let timing = briefing.deepSuggestedTiming {
-                        section("建议时机", text: timing)
-                    }
-                    if let risk = briefing.deepRiskIfIgnore {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.orange)
-                            Text("风险：\(risk)")
-                                .font(.system(size: 11))
-                                .foregroundColor(.orange)
-                        }
-                    }
+    private var originalSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("原文")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.white.opacity(0.5))
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.7))
+                    Text(notification.snippet)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer()
+                Button("查看完整上下文 >") {
+                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(CompanionPalette.islandMint)
             }
+            .padding(10)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -191,99 +160,86 @@ private struct GroupContextBriefingPopover: View {
     }
 
     private func errorBody(_ message: String) -> some View {
-        Text(message)
-            .font(.system(size: 12))
-            .foregroundColor(.secondary)
-            .padding(.vertical, 12)
-    }
-
-    private func footer(state: GroupContextBriefingLoadState) -> some View {
-        HStack(spacing: 8) {
-            Button("重新分析") {
-                monitor.loadGroupContextBriefing(for: notification, forceRefresh: true)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            if let briefing = state.briefing {
-                Button("复制结果") {
-                    WeChatLauncher.copyText(copyText(for: briefing, includeDeepAction: allowsDeepActionContext))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-
-            Spacer(minLength: 0)
-
-            Button("打开群聊") {
-                WeChatLauncher.openChat(named: notification.chatName)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-        }
-    }
-
-    private func section(_ title: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.secondary)
-            Text(text)
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
+            Text(message)
                 .font(.system(size: 12))
-                .foregroundColor(.primary)
+                .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 4)
     }
 
-    private func copyText(for briefing: GroupContextBriefing, includeDeepAction: Bool) -> String {
-        var lines = [
-            "发生了什么：\(briefing.situation)",
-            "为什么@你：\(briefing.whyMentioned)",
-            "当前状态：\(briefing.currentStatus)",
-            "下一步：\(briefing.nextStep)"
-        ]
-        guard includeDeepAction else { return lines.joined(separator: "\n") }
-        if let bg = briefing.deepBackground {
-            lines.append("")
-            lines.append("【深度分析】")
-            lines.append("背景：\(bg)")
-        }
-        if let want = briefing.deepWhatTheyWant {
-            lines.append("为什么提到你：\(want)")
-        }
-        if let stakeholders = briefing.deepStakeholders, !stakeholders.isEmpty {
-            lines.append("利益相关方：\(stakeholders.joined(separator: "、"))")
-        }
-        if let position = briefing.deepYourPosition {
-            lines.append("你的立场：\(position)")
-        }
-        if let action = briefing.deepSuggestedAction {
-            lines.append("下一步参考：\(action)")
-        }
-        if let timing = briefing.deepSuggestedTiming {
-            lines.append("建议时机：\(timing)")
-        }
-        if let risk = briefing.deepRiskIfIgnore {
-            lines.append("风险：\(risk)")
-        }
-        return lines.joined(separator: "\n")
-    }
-}
-
-private struct FlowChips: View {
-    let items: [String]
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(items, id: \.self) { item in
-                Text(item)
-                    .font(.system(size: 10, weight: .medium))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.12))
-                    .cornerRadius(5)
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 8) {
+            Button {
+                WeChatLauncher.openChat(named: notification.chatName)
+            } label: {
+                Label("去微信回复", systemImage: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(CompanionPalette.jade, in: Capsule())
             }
-            Spacer(minLength: 0)
+            .buttonStyle(.plain)
+
+            Button {
+                showSnooze.toggle()
+                panelState.setSnoozeMenuExpanded(showSnooze)
+            } label: {
+                Label("稍后提醒", systemImage: "clock")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(showSnooze ? CompanionPalette.jade : Color.white.opacity(0.10), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("打开稍后提醒时间")
+            .onChange(of: showSnooze) { _, isOpen in
+                panelState.setSnoozeMenuExpanded(isOpen)
+            }
         }
+        if showSnooze {
+            IslandSnoozeMenu { date in
+                showSnooze = false
+                panelState.setSnoozeMenuExpanded(false)
+                let item = monitor.inboxItems.first(where: { $0.chatUsername == notification.chatUsername })
+                    ?? notification.actionInboxItem()
+                if monitor.snoozeInboxItem(item, until: date) {
+                    panelState.islandSnoozeUndo = (item, date)
+                    panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
+                }
+                panelState.setBriefingExpanded(false)
+                panelState.islandSurface = .inbox
+                panelState.goExtended()
+            }
+        }
+        }
+    }
+
+    private func card(_ title: String, text: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12))
+                .foregroundStyle(CompanionPalette.islandMint)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(title):")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

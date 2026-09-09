@@ -37,7 +37,7 @@ struct InsightAttentionBar: View {
                     if hasOverdueChats {
                         actionCountRow(
                             icon: "clock.badge.exclamationmark",
-                            text: "\(overview.overdueChats) 个白名单对话待回超时",
+                            text: "\(overview.overdueChats) 个关注的对话待回超时",
                             color: .red
                         )
                     }

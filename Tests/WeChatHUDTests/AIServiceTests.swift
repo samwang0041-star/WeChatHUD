@@ -25,13 +25,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
     /// `chatgpt.com/backend-api/codex/responses`.
     func testCodexSlotSkipsOpenAIPath() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "openai-codex",
             baseURL: "",
             model: "gpt-5.4",
             apiKey: ""
         )
-        cfg.activeMode = .cloud
 
         let service = AIService(config: cfg)
         // Call may fail (no real codex token in tests) but what matters is
@@ -70,13 +69,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
     /// (timeout) and body (model override, temperature, max_tokens).
     func testOpenAISlotBuildsRequestWithOptions() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "test-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
         cfg.temperature = 0.5
         cfg.maxTokens = 100
 
@@ -141,13 +139,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testCompletionMetadataUsesProviderReturnedModel() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "requested-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
 
         let body = try JSONSerialization.data(withJSONObject: [
             "model": "actual-provider-model",
@@ -182,13 +179,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
     /// through Kimi's `thinking.type` field.
     func testKimiCodingSlotUsesHermesStableRequestShape() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "kimicode",
             baseURL: "https://api.kimi.com/coding/v1",
             model: "kimi-for-coding",
             apiKey: "sk-kimi-test"
         )
-        cfg.activeMode = .cloud
 
         let body = try JSONSerialization.data(withJSONObject: [
             "model": "kimi-for-coding",
@@ -245,13 +241,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testKimiThinkingRequestUsesHermesThinkingParameters() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "kimicode",
             baseURL: "https://api.kimi.com/coding/v1",
             model: "kimi-for-coding",
             apiKey: "sk-kimi-test"
         )
-        cfg.activeMode = .cloud
 
         URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: "ok")
 
@@ -277,13 +272,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testDeepSeekJSONRequestDisablesThinkingAndUsesResponseFormat() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "deepseek",
             baseURL: "https://api.deepseek.com",
             model: "deepseek-v4-pro",
             apiKey: "sk-deepseek-test"
         )
-        cfg.activeMode = .cloud
         cfg.thinkingEnabled = true
 
         URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: #"{"ok":true}"#)
@@ -307,13 +301,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testDeepSeekThinkingRequestUsesOfficialThinkingParameters() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "deepseek",
             baseURL: "https://api.deepseek.com",
             model: "deepseek-v4-pro",
             apiKey: "sk-deepseek-test"
         )
-        cfg.activeMode = .cloud
 
         URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: "ok")
 
@@ -335,13 +328,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testEmptyCodexModelDoesNotFallbackToHardcodedModel() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "openai-codex",
             baseURL: "",
             model: "",
             apiKey: ""
         )
-        cfg.activeMode = .cloud
 
         let service = AIService(config: cfg)
 
@@ -356,13 +348,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testLengthFinishReasonReportsTruncation() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "deepseek",
             baseURL: "https://api.deepseek.com",
             model: "deepseek-v4-pro",
             apiKey: "sk-deepseek-test"
         )
-        cfg.activeMode = .cloud
 
         let body = try JSONSerialization.data(withJSONObject: [
             "choices": [[
@@ -395,13 +386,12 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
 
     func testLengthFinishReasonWithPartialContentReportsTruncation() async throws {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "deepseek",
             baseURL: "https://api.deepseek.com",
             model: "deepseek-v4-pro",
             apiKey: "sk-deepseek-test"
         )
-        cfg.activeMode = .cloud
 
         let body = try JSONSerialization.data(withJSONObject: [
             "choices": [[

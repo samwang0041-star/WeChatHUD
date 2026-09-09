@@ -37,7 +37,7 @@ class InsightWindow: NSWindow {
             backing: .buffered,
             defer: false
         )
-        window.title = "聊天洞察"
+        window.title = "聊天回顾"
         window.contentView = hostingView
         window.center()
         window.isReleasedWhenClosed = false

@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 enum InsightScope: String, CaseIterable {
-    case whitelist = "白名单"
+    case whitelist = "已关注"
     case all = "所有人"
 }
 
@@ -54,8 +54,10 @@ final class InsightStore: ObservableObject {
     @Published var reloadError: String?
 
     private let dataLoader = InsightDataLoader()
+    private var detailStatsCache: [String: ChatStatsData] = [:]
 
     func reload(store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem]) async {
+        detailStatsCache.removeAll()
         statsLoaded = false
         overview = nil
         reloadError = nil
@@ -102,8 +104,14 @@ final class InsightStore: ObservableObject {
         return otherActiveSessions.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
     }
 
-    func statsForSession(_ session: InsightSessionEntry, reader: WeChatReader) -> ChatStatsData? {
-        dataLoader.statsForSession(session, reader: reader)
+    func statsForDay(chatUsername: String, chatName: String, isGroup: Bool,
+                     category: WhitelistCategory, date: Date, reader: WeChatReader) -> ChatStatsData? {
+        let key = "\(chatUsername):\(InsightDataLoader.dayRange(for: date).start)"
+        if let cached = detailStatsCache[key] { return cached }
+        let stats = dataLoader.statsForDay(chatUsername: chatUsername, chatName: chatName,
+                                          isGroup: isGroup, category: category, date: date, reader: reader)
+        detailStatsCache[key] = stats
+        return stats
     }
 
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {

@@ -92,6 +92,52 @@ actor AIDailyReportGenerator {
     /// actions, and risks to respect token budgets.
     nonisolated func formatPrompt(template: String, report: DailyReport) -> String {
         let metrics = report.metrics
+        let historical = isHistoricalReport(report)
+        // Rewrite only the template's instructional prose. Do this before
+        // inserting source text so quoted messages containing 今日/明天 remain
+        // verbatim.
+        let templateForReport: String
+        if historical {
+            // Historical reports have no current-state snapshot. Use a
+            // dedicated instruction block so the ordinary current-day
+            // template cannot make the model invent a next-day plan or a
+            // manager-facing request for support.
+            templateForReport = """
+            你是一个专业的历史工作记录汇总助手。只根据所选日期已经保存的微信活动数据，生成一份事实性日报。
+
+            你必须输出单个 JSON 对象，不要包含 markdown 围栏或任何其他文本。
+
+            JSON schema:
+            {
+              "narrative": "所选日期的核心回顾，2-3 句话，最多 120 字。引用具体对话来源和已记录的活动。",
+              "tomorrow_focus": "基于已记录事实的后续复核建议，1 句话，最多 50 字；没有依据时留空。",
+              "wechat_draft": "可直接复制的历史工作记录，只陈述所选日期已记录的事实和具体交付物，不写后续计划、需要支持或当前完成状态。"
+            }
+
+            ## 所选日期概览
+            - 未读消息: {unread_count}
+            - 复盘对话数: {analyzed_chat_count}
+            - 提取高亮: {highlight_count}
+            - 待办事项: {pending_todo_count}
+            - 待处理请求: {pending_ask_count}
+            - 待履行承诺: {pending_commitment_count}（超期: {overdue_commitment_count}）
+            - 回复债务: {reply_debt_count}
+            - 撤回消息: {recalled_count}
+
+            ## 所选日期高亮（来自实际对话）
+            {highlights}
+
+            ## 所选日期待办与承诺
+            {actions}
+
+            ## 所选日期风险与异常
+            {risks}
+
+            规则：不得把未知计数、空列表或当前状态解释为没有；不得编造后续计划或完成状态；wechat_draft 必须保留高亮中的具体人名和交付物。
+            """
+        } else {
+            templateForReport = template
+        }
 
         let highlightsText = report.highlights.prefix(8).enumerated().map { (i, h) in
             let snippet = h.quotedSnippet.map { " \"\($0.prefix(40))\($0.count > 40 ? "…" : "")\"" } ?? ""
@@ -109,19 +155,59 @@ actor AIDailyReportGenerator {
             return "\(i + 1).\(source) \(r.description)"
         }.joined(separator: "\n")
 
-        return template
-            .replacingOccurrences(of: "{unread_count}", with: "\(metrics.unreadMessageCount)")
+        let unread = historical ? "未知（历史报告未保存该项）" : "\(metrics.unreadMessageCount)"
+        let pendingTodo = historical ? "未知（历史报告未保存该项）" : "\(metrics.pendingTodoCount)"
+        let pendingAsk = historical ? "未知（历史报告未保存该项）" : "\(metrics.pendingAskCount)"
+        let pendingCommitment = historical ? "未知（历史报告未保存该项）" : "\(metrics.pendingCommitmentCount)"
+        let overdueCommitment = historical ? "未知（历史报告未保存该项）" : "\(metrics.overdueCommitmentCount)"
+        let replyDebt = historical ? "未知（历史报告未保存该项）" : "\(metrics.replyDebtCount)"
+        // Recalled messages are source-day events, so their count remains
+        // factual in a historical report. Current-state counters above do not.
+        let recalled = "\(metrics.recalledMessageCount)"
+        let emptyHighlights = historical ? "这一天没有已记录的高亮（不代表没有发生对话）。" : "暂无高亮数据"
+        let emptyActions = historical ? "历史报告未保存待办的当前状态，不能据此判断无待办。" : "暂无待办"
+        let emptyRisks = historical ? "历史报告未保存风险的当前状态，不能据此判断无风险。" : "暂无风险"
+
+        let formatted = templateForReport
+            .replacingOccurrences(of: "{unread_count}", with: unread)
             .replacingOccurrences(of: "{analyzed_chat_count}", with: "\(metrics.analyzedChatCount)")
             .replacingOccurrences(of: "{highlight_count}", with: "\(metrics.highlightCount)")
-            .replacingOccurrences(of: "{pending_todo_count}", with: "\(metrics.pendingTodoCount)")
-            .replacingOccurrences(of: "{pending_ask_count}", with: "\(metrics.pendingAskCount)")
-            .replacingOccurrences(of: "{pending_commitment_count}", with: "\(metrics.pendingCommitmentCount)")
-            .replacingOccurrences(of: "{overdue_commitment_count}", with: "\(metrics.overdueCommitmentCount)")
-            .replacingOccurrences(of: "{reply_debt_count}", with: "\(metrics.replyDebtCount)")
-            .replacingOccurrences(of: "{recalled_count}", with: "\(metrics.recalledMessageCount)")
-            .replacingOccurrences(of: "{highlights}", with: highlightsText.isEmpty ? "暂无高亮数据" : highlightsText)
-            .replacingOccurrences(of: "{actions}", with: actionsText.isEmpty ? "暂无待办" : actionsText)
-            .replacingOccurrences(of: "{risks}", with: risksText.isEmpty ? "暂无风险" : risksText)
+            .replacingOccurrences(of: "{pending_todo_count}", with: pendingTodo)
+            .replacingOccurrences(of: "{pending_ask_count}", with: pendingAsk)
+            .replacingOccurrences(of: "{pending_commitment_count}", with: pendingCommitment)
+            .replacingOccurrences(of: "{overdue_commitment_count}", with: overdueCommitment)
+            .replacingOccurrences(of: "{reply_debt_count}", with: replyDebt)
+            .replacingOccurrences(of: "{recalled_count}", with: recalled)
+            .replacingOccurrences(of: "{highlights}", with: highlightsText.isEmpty ? emptyHighlights : highlightsText)
+            .replacingOccurrences(of: "{actions}", with: actionsText.isEmpty ? emptyActions : actionsText)
+            .replacingOccurrences(of: "{risks}", with: risksText.isEmpty ? emptyRisks : risksText)
+
+        guard historical else { return formatted }
+
+        let selectedDate = historicalDateString(report.date)
+        // Keep the output schema, but make the historical semantics explicit. The
+        // generated-at day is deliberately used as the comparison anchor above;
+        // no current wall-clock date is consulted here.
+        return formatted
+            + "\n\n# 历史日期模式\n"
+            + "所选日期：\(selectedDate)（报告生成于另一个日历日）。\n"
+            + "只根据所选日期的高亮和已记录事件写作；未保存的未读数、待办数、风险状态和完成状态必须明确写为未知，不能把 0 或空列表解释为没有。\n"
+            + "tomorrow_focus 只能给出基于已记录事实的后续复核建议，也可以为空；不得编造后续计划。wechat_draft 只能陈述所选日期已记录的活动，只有当日来源明确记录完成时才能写已完成，不得根据当前状态或空列表推断。"
+    }
+
+    /// Uses the same user calendar as the report builder. The comparison is
+    /// between the report's two persisted dates, never against wall-clock now.
+    nonisolated private func isHistoricalReport(_ report: DailyReport) -> Bool {
+        let calendar = Calendar.current
+        return !calendar.isDate(report.date, inSameDayAs: report.generatedAt)
+    }
+
+    nonisolated private func historicalDateString(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     nonisolated private func typeLabel(_ type: DailyReportActionType) -> String {

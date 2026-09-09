@@ -179,7 +179,7 @@ struct InsightRadarSection: View {
         case .openChat(let chatUsername):
             onOpenChat(chatUsername)
         case .expandExplanation, .expandPressure, .expandRelationships, .expandMetrics:
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withMotion(CompanionMotion.ease(0.18)) {
                 expandedFindingID = expandedFindingID == finding.id ? nil : finding.id
                 switch finding.route {
                 case .expandPressure:

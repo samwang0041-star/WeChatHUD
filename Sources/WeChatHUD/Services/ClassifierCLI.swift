@@ -64,7 +64,8 @@ enum ClassifierCLI {
             }
         }
 
-        let store = makeStore()
+        let context = makeContext()
+        let store = context.store
         let classifier = makeClassifier(store: store)
         let input = ClassifierInput(
             msgUID: "cli-\(Int(Date().timeIntervalSince1970))",
@@ -156,7 +157,8 @@ enum ClassifierCLI {
             exit(2)
         }
 
-        let store = makeStore()
+        let context = makeContext()
+        let store = context.store
         let classifier = makeClassifier(store: store)
 
         var tp = 0, fp = 0, tn = 0, fn = 0
@@ -240,18 +242,19 @@ enum ClassifierCLI {
             exit(2)
         }
 
-        let store = makeStore()
+        let context = makeContext()
+        let store = context.store
         let classifier = makeClassifier(store: store)
 
         // Use whatever the user has configured (or default) for the
         // sync / cache strategy.
-        let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let reader = WeChatReader(cacheStrategy: syncCfg.cacheStrategy)
+        let reader: WeChatReader
         do {
+            reader = try readerForAccount(context)
             try reader.loadKeys()
             try reader.loadContacts()
         } catch {
-            fputs("WeChatReader bootstrap failed: \(error)\n", stderr)
+            fputs("微信读取未就绪，请检查所选账号目录、密钥与连接诊断；未切换到其他账号。\n", stderr)
             exit(2)
         }
 
@@ -480,7 +483,8 @@ enum ClassifierCLI {
             }
         }
 
-        let store = makeStore()
+        let context = makeContext()
+        let store = context.store
         let suggester = AIReplySuggester(store: store, aiService: AIService(config: store.loadAIConfig()))
         let askType = AskType(rawValue: typeStr) ?? .info
         let senderName = sender
@@ -535,14 +539,15 @@ enum ClassifierCLI {
             }
         }
 
-        let store = makeStore()
-        let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let reader = WeChatReader(cacheStrategy: syncCfg.cacheStrategy)
+        let context = makeContext()
+        let store = context.store
+        let reader: WeChatReader
         do {
+            reader = try readerForAccount(context)
             try reader.loadKeys()
             try reader.loadContacts()
         } catch {
-            fputs("WeChatReader bootstrap failed: \(error)\n", stderr)
+            fputs("微信读取未就绪，请检查所选账号目录、密钥与连接诊断；未切换到其他账号。\n", stderr)
             exit(2)
         }
 
@@ -617,14 +622,15 @@ enum ClassifierCLI {
             }
         }
 
-        let store = makeStore()
-        let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let reader = WeChatReader(cacheStrategy: syncCfg.cacheStrategy)
+        let context = makeContext()
+        let store = context.store
+        let reader: WeChatReader
         do {
+            reader = try readerForAccount(context)
             try reader.loadKeys()
             try reader.loadContacts()
         } catch {
-            fputs("WeChatReader bootstrap failed: \(error)\n", stderr)
+            fputs("微信读取未就绪，请检查所选账号目录、密钥与连接诊断；未切换到其他账号。\n", stderr)
             exit(2)
         }
 
@@ -684,7 +690,8 @@ enum ClassifierCLI {
             }
         }
 
-        let store = makeStore()
+        let context = makeContext()
+        let store = context.store
         // Pull today's "done" + all "pending" asks.
         let allDone = store.loadPendingAsks(status: .done)
         let allPending = store.loadPendingAsks(status: .pending)
@@ -740,15 +747,31 @@ enum ClassifierCLI {
 
     // MARK: - Wiring
 
-    private static func makeStore() -> HUDStore {
-        let store = HUDStore()
+    /// Same account selection and device preference routing as the GUI.
+    /// Dependencies are injectable for tests; this does not read WeChat messages.
+    static func accountContext(
+        supportDirectory: URL = URL(fileURLWithPath: NSHomeDirectory() + "/.wechat-hud"),
+        databaseCandidates: [String] = WeChatReader.databaseCandidates()
+    ) throws -> AccountStoreCoordinator.Bootstrap {
+        try AccountStoreCoordinator(supportDirectory: supportDirectory)
+            .bootstrap(databaseCandidates: databaseCandidates)
+    }
+
+    enum AccountError: Error { case accountNotSelected }
+
+    static func readerForAccount(_ context: AccountStoreCoordinator.Bootstrap) throws -> WeChatReader {
+        guard let root = context.databaseRoot, !root.isEmpty else { throw AccountError.accountNotSelected }
+        let sync = context.store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
+        return WeChatReader(dbDir: root, cacheStrategy: sync.cacheStrategy)
+    }
+
+    private static func makeContext() -> AccountStoreCoordinator.Bootstrap {
         do {
-            try store.open()
+            return try accountContext()
         } catch {
-            fputs("HUDStore.open failed: \(error)\n", stderr)
+            fputs("助手账号数据或设备设置无法打开；为避免混用账号，命令已停止。\n", stderr)
             exit(2)
         }
-        return store
     }
 
     private static func makeClassifier(store: HUDStore) -> AIClassifier {

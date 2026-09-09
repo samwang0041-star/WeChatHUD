@@ -51,18 +51,6 @@ actor CommitmentTracker {
         "安排好了", "安排完了", "跟进完了"
     ]
 
-    /// Hints in the commitment content that the thing being promised
-    /// is a tangible deliverable (file/image/link). NOUNS only — we
-    /// deliberately don't include generic verbs like "发/给" because
-    /// phrases like "给个决定" or "发个通知" contain them but don't
-    /// imply a file will be sent. Only a concrete deliverable noun
-    /// gates the file-send-as-fulfillment heuristic.
-    private static let deliverableHints: [String] = [
-        "文件", "方案", "资料", "材料", "链接",
-        "图", "照片", "截图", "文档", "名单", "表格", "PPT", "ppt",
-        "合同", "报告", "草案", "清单"
-    ]
-
     /// Decide whether a commitment can be considered fulfilled given
     /// a set of the user's outbound messages that landed AFTER the
     /// commitment was made in the same chat.
@@ -71,29 +59,23 @@ actor CommitmentTracker {
         subsequentSelfMessages: [MessageInfo],
         now: Date = Date()
     ) -> FulfillmentSignal {
-        // 1. Text evidence — any fulfillment keyword in later messages.
-        for msg in subsequentSelfMessages {
-            if let matched = fulfillmentKeywords.first(where: { msg.text.contains($0) }) {
-                return .fulfilled(reason: "后续消息含「\(matched)」")
-            }
-        }
-
-        // 2. Deliverable evidence — commitment mentions sending
-        //    something AND we see a file-class outbound message.
-        let isDeliverable = deliverableHints.contains { commitment.content.contains($0) }
-        if isDeliverable {
-            for msg in subsequentSelfMessages {
-                // baseType 3=image, 43=video, 49=link (WeChat layout).
-                if msg.baseType == 3 || msg.baseType == 43 || msg.baseType == 49 {
-                    let label: String
-                    switch msg.baseType {
-                    case 3:  label = "图片"
-                    case 43: label = "视频"
-                    case 49: label = "链接/文件"
-                    default: label = "媒体"
-                    }
-                    return .fulfilled(reason: "后续发送了\(label)")
-                }
+        // An unqualified “完成/好了” or attachment cannot identify which promise
+        // was fulfilled. Require the specific subject and a declarative completion
+        // in the same later message; uncertain evidence stays available for review.
+        let subject = fulfillmentSubject(commitment.content)
+        if subject.count >= 4 {
+            for msg in subsequentSelfMessages where
+                msg.chatUsername == commitment.chatUsername &&
+                msg.createTime > Int(commitment.createdAt.timeIntervalSince1970) {
+                let text = compactFulfillmentText(msg.text)
+                let uncertain = ["没", "未", "不", "还差", "等", "将", "会", "准备", "打算",
+                                 "明天", "稍后", "回头", "能否", "是否", "如果", "吗", "么", "？", "?",
+                                 "部分", "初稿", "草稿", "进度", "一半", "%", "其中", "你说", "他说", "据说", "说过",
+                                 "待", "需要", "完成后", "完成前", "完成时", "完成再", "完成就", "预计", "计划", "正在", "怎么"]
+                guard !uncertain.contains(where: { text.contains($0) }),
+                      text.contains(subject),
+                      let matched = fulfillmentKeywords.first(where: { text.contains($0) }) else { continue }
+                return .fulfilled(reason: "后续消息明确交付「\(subject)」：\(matched)")
             }
         }
 
@@ -103,6 +85,27 @@ actor CommitmentTracker {
         }
 
         return .stillPending
+    }
+
+    private static func compactFulfillmentText(_ text: String) -> String {
+        text.lowercased().filter { !$0.isWhitespace }
+    }
+
+    /// Remove only delivery boilerplate, keeping the full remaining subject.
+    /// Short/generic subjects intentionally need manual confirmation.
+    private static func fulfillmentSubject(_ content: String) -> String {
+        var subject = compactFulfillmentText(content)
+        let prefixes = ["我会", "我来", "我", "明天", "今天", "稍后", "回头", "把", "发送", "发"]
+        while let prefix = prefixes.first(where: { subject.hasPrefix($0) }) {
+            subject.removeFirst(prefix.count)
+        }
+        for suffix in ["发给你", "发给您", "给你", "给您", "发你"] {
+            if subject.hasSuffix(suffix) {
+                subject.removeLast(suffix.count)
+                break
+            }
+        }
+        return subject.trimmingCharacters(in: .punctuationCharacters)
     }
 
     /// Quick pre-filter: does message contain commitment signal words?

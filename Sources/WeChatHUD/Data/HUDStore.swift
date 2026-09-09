@@ -3,14 +3,24 @@ import SQLite3
 
 final class HUDStore: ObservableObject {
     private let dbPath: String
+    private let cleanupPath: String?
     private var db: OpaquePointer?
+    /// Protected by sqlite3_db_mutex. This lets helpers called from an
+    /// existing transaction use savepoints without releasing the connection
+    /// mutex or attempting a nested BEGIN.
+    private var transactionDepth = 0
+    var deviceSettings: DeviceSettingsStore?
 
-    init(dbPath: String? = nil) {
+    init(dbPath: String? = nil, createParentDirectory: Bool = true, cleanupPath: String? = nil) {
         let home = NSHomeDirectory()
         let dir = dbPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
             ?? "\(home)/.wechat-hud"
         self.dbPath = dbPath ?? "\(dir)/hud.sqlite3"
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        self.cleanupPath = cleanupPath
+        if createParentDirectory {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                                     attributes: [.posixPermissions: 0o700])
+        }
     }
 
     func open() throws {
@@ -26,6 +36,15 @@ final class HUDStore: ObservableObject {
         // write throughput and disk usage.
         try exec("PRAGMA wal_autocheckpoint=256")
         try createTables()
+        try exec("""
+            CREATE TABLE IF NOT EXISTS classification_queue (
+                msg_uid TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                source_timestamp INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                retry_after INTEGER NOT NULL DEFAULT 0
+            )
+        """)
 
         // Seed AI configs to the settings table on first launch. After
         // this runs, every code path reads its AI config from the DB —
@@ -50,6 +69,24 @@ final class HUDStore: ObservableObject {
         }
 
         migrateDailyReportState()
+
+        // User-chosen conversation names. Must exist before any reader
+        // resolution runs so `repairStaleChatNames` can consult it.
+        migrateChatAliases()
+    }
+
+    /// Opens an existing business store without schema migration, PRAGMA
+    /// changes, housekeeping, or any other write-capable operation.
+    func openReadOnly() throws {
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            throw HUDStoreError.openFailed("Database does not exist")
+        }
+        // `mode=ro` permits SQLite to consult an existing WAL for current
+        // data while keeping the primary database connection read-only.
+        // Do not use immutable=1 here: it would silently ignore an active WAL.
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
+            throw HUDStoreError.openFailed(String(cString: sqlite3_errmsg(db)))
+        }
     }
 
     func close() {
@@ -57,6 +94,7 @@ final class HUDStore: ObservableObject {
             sqlite3_close(db)
             self.db = nil
         }
+        if let cleanupPath { try? FileManager.default.removeItem(atPath: cleanupPath) }
     }
 
     deinit { close() }
@@ -531,6 +569,9 @@ final class HUDStore: ObservableObject {
     // MARK: - Settings
 
     func getSetting(_ key: String) -> String? {
+        if DeviceSettingsStore.sharedKeys.contains(key), let deviceSettings {
+            return deviceSettings.get(key)
+        }
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
@@ -540,6 +581,10 @@ final class HUDStore: ObservableObject {
     }
 
     func setSetting(_ key: String, value: String) throws {
+        if DeviceSettingsStore.sharedKeys.contains(key), let deviceSettings {
+            try deviceSettings.set(key, value: value)
+            return
+        }
         try exec("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", params: [key, value])
     }
 
@@ -785,8 +830,9 @@ final class HUDStore: ObservableObject {
             INSERT INTO chat_actions(chat_username, silenced_at, snoozed_until, updated_at)
             VALUES(?, ?, 0, ?)
             ON CONFLICT(chat_username) DO UPDATE SET
-                silenced_at = excluded.silenced_at,
-                updated_at  = excluded.updated_at
+                silenced_at   = excluded.silenced_at,
+                snoozed_until = 0,
+                updated_at    = excluded.updated_at
         """, params: [chatUsername, "\(silencedAt)", "\(now)"])
     }
 
@@ -800,6 +846,7 @@ final class HUDStore: ObservableObject {
             VALUES(?, 0, ?, ?)
             ON CONFLICT(chat_username) DO UPDATE SET
                 snoozed_until = excluded.snoozed_until,
+                silenced_at   = 0,
                 updated_at    = excluded.updated_at
         """, params: [chatUsername, "\(until)", "\(now)"])
     }
@@ -1336,19 +1383,12 @@ final class HUDStore: ObservableObject {
 
     private static let factoryAIConfig: AIConfig = {
         var cfg = AIConfig()
-        cfg.localProvider = AIProviderSlot(
-            providerID: "custom",
-            baseURL: "http://127.0.0.1:8000/v1",
-            model: "Qwen3.5-27B-6bit",
+        cfg.provider = AIProviderSlot(
+            providerID: "deepseek",
+            baseURL: "https://api.deepseek.com",
+            model: "deepseek-v4-flash",
             apiKey: ""
         )
-        cfg.cloudProvider = AIProviderSlot(
-            providerID: "kimicode",
-            baseURL: "https://api.kimi.com/coding/v1",
-            model: "kimi-for-coding",
-            apiKey: ""
-        )
-        cfg.activeMode = .local
         cfg.maxTokens = 2048
         cfg.temperature = 0.3
         return cfg
@@ -1361,11 +1401,11 @@ final class HUDStore: ObservableObject {
                let data = oldCls.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 var cfg = HUDStore.factoryAIConfig
-                if let url = json["baseURL"] as? String { cfg.localProvider.baseURL = url }
-                if let model = json["model"] as? String { cfg.localProvider.model = model }
-                if let key = json["apiKey"] as? String { cfg.localProvider.apiKey = key }
+                if let url = json["baseURL"] as? String { cfg.provider.baseURL = url }
+                if let model = json["model"] as? String { cfg.provider.model = model }
+                if let key = json["apiKey"] as? String { cfg.provider.apiKey = key }
                 try? setSettingJSON("ai", value: cfg)
-                print("[WCHUD] migrated classifier config → dual-provider ai config")
+                print("[WCHUD] migrated classifier config → ai config")
             } else {
                 try? setSettingJSON("ai", value: HUDStore.factoryAIConfig)
                 print("[WCHUD] seeded settings.ai (first launch)")
@@ -1373,10 +1413,10 @@ final class HUDStore: ObservableObject {
         } else {
             // Existing config — migrate from single-provider to dual-provider if needed
             var cfg = loadAIConfig()
-            if cfg.localProvider.baseURL.isEmpty, let url = cfg._legacyBaseURL, !url.isEmpty {
+            if cfg.provider.baseURL.isEmpty, cfg.provider.providerID != "openai-codex", let url = cfg._legacyBaseURL, !url.isEmpty {
                 cfg.migrateIfNeeded()
                 try? setSettingJSON("ai", value: cfg)
-                print("[WCHUD] migrated single-provider → dual-provider ai config")
+                print("[WCHUD] migrated single-provider ai config")
             }
         }
 
@@ -1523,35 +1563,39 @@ final class HUDStore: ObservableObject {
         roleNote: String = "",
         replyWindowMinutes: Int = 120
     ) throws {
-        try upsertContact(
-            username: username,
-            displayName: displayName,
-            attentionLevel: attentionLevel,
-            role: role,
-            roleNote: roleNote,
-            replyWindowMinutes: replyWindowMinutes
-        )
-
-        switch attentionLevel {
-        case .vip, .whitelist:
-            let whitelistLevel: WhitelistAttentionLevel = attentionLevel == .vip ? .vip : .watch
-            try upsertWhitelistTracking(
+        try withTransaction {
+            try upsertContact(
                 username: username,
                 displayName: displayName,
-                isGroup: isGroup,
-                category: category,
-                attentionLevel: whitelistLevel
+                attentionLevel: attentionLevel,
+                role: role,
+                roleNote: roleNote,
+                replyWindowMinutes: replyWindowMinutes
             )
-        case .greylist, .stranger:
-            try untrackContact(username: username)
+
+            switch attentionLevel {
+            case .vip, .whitelist:
+                let whitelistLevel: WhitelistAttentionLevel = attentionLevel == .vip ? .vip : .watch
+                try upsertWhitelistTracking(
+                    username: username,
+                    displayName: displayName,
+                    isGroup: isGroup,
+                    category: category,
+                    attentionLevel: whitelistLevel
+                )
+            case .greylist, .stranger:
+                try untrackContact(username: username)
+            }
         }
     }
 
     /// Remove a contact from both product tables and scan-side state.
     func deleteContactAndTracking(username: String) throws {
-        try untrackContact(username: username)
-        try deleteContact(username: username)
-        try? exec("DELETE FROM relationship_profiles WHERE username=?", params: [username])
+        try withTransaction {
+            try untrackContact(username: username)
+            try deleteContact(username: username)
+            try exec("DELETE FROM relationship_profiles WHERE username=?", params: [username])
+        }
     }
 
     private func upsertWhitelistTracking(
@@ -1584,8 +1628,8 @@ final class HUDStore: ObservableObject {
 
     private func untrackContact(username: String) throws {
         try exec("DELETE FROM whitelist WHERE username=?", params: [username])
-        try? exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
-        try? exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
+        try exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
+        try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
     }
 
     func loadVIPUsernames() -> Set<String> {
@@ -2118,6 +2162,33 @@ final class HUDStore: ObservableObject {
         """, params: [status.rawValue, "\(now)", "\(id)"])
     }
 
+    /// Corrects AI-assigned responsibility without changing the item's status.
+    /// Returns false when the row no longer exists.
+    @discardableResult
+    func updateDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws -> Bool {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE discussion_items SET owner=?, updated_at=? WHERE id=?
+        """, params: [owner.rawValue, "\(now)", "\(id)"])
+        return sqlite3_changes(db) > 0
+    }
+
+    /// Corrects content, owner, and deadline without touching WeChat source text.
+    @discardableResult
+    func updateDiscussionItemCorrection(
+        id: Int64,
+        content: String,
+        owner: DiscussionItemOwner,
+        dueAt: Date?
+    ) throws -> Bool {
+        let now = Int(Date().timeIntervalSince1970)
+        let dueStr = dueAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        try exec("""
+            UPDATE discussion_items SET content=?, owner=?, due_at=?, updated_at=? WHERE id=?
+        """, params: [content, owner.rawValue, dueStr, "\(now)", "\(id)"])
+        return sqlite3_changes(db) > 0
+    }
+
     /// The most recent `source_timestamp` extracted for a chat — used
     /// by the tracker to skip messages it already analysed.
     func latestDiscussionSourceTimestamp(chatUsername: String) -> Int {
@@ -2153,7 +2224,7 @@ final class HUDStore: ObservableObject {
             FROM reply_drafts ORDER BY created_at DESC
         """, -1, &stmt, nil) == SQLITE_OK else { return [] }
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let sendAtTs = sqlite3_column_int64(stmt, 3)
+            let sendAtTs = sqlite3_column_int64(stmt, 4)
             results.append((
                 id: sqlite3_column_int64(stmt, 0),
                 chatUsername: String(cString: sqlite3_column_text(stmt, 1)),
@@ -2164,6 +2235,28 @@ final class HUDStore: ObservableObject {
             ))
         }
         return results
+    }
+
+    func updateDraft(id: Int64, text: String) throws {
+        try exec("UPDATE reply_drafts SET text=? WHERE id=?", params: [text, String(id)])
+    }
+
+    /// Update a continuation only when its saved row still belongs to the
+    /// same chat. This prevents a stale continuation from mutating another
+    /// conversation after a row was deleted/recreated.
+    func updateDraft(id: Int64, chatUsername: String, text: String) throws {
+        try withTransaction {
+            // Keep the UPDATE and sqlite3_changes check on the same locked
+            // connection so a deleted/stale row cannot be mistaken for a
+            // successful save (and SQL failures remain sqlError).
+            try exec(
+                "UPDATE reply_drafts SET text=? WHERE id=? AND chat_username=?",
+                params: [text, String(id), chatUsername]
+            )
+            guard sqlite3_changes(db) == 1 else {
+                throw HUDStoreError.draftNotFound(id: id, chatUsername: chatUsername)
+            }
+        }
     }
 
     func deleteDraft(id: Int64) throws {
@@ -2659,15 +2752,10 @@ final class HUDStore: ObservableObject {
 
     func deleteAutopilotInbound(msgUIDs: [String]) throws {
         guard !msgUIDs.isEmpty else { return }
-        try exec("BEGIN IMMEDIATE")
-        do {
+        try withTransaction {
             for uid in msgUIDs {
                 try exec("DELETE FROM autopilot_inbound_queue WHERE msg_uid=?", params: [uid])
             }
-            try exec("COMMIT")
-        } catch {
-            try? exec("ROLLBACK")
-            throw error
         }
     }
 
@@ -2701,10 +2789,15 @@ final class HUDStore: ObservableObject {
     }
 
     func clearAutopilotHistory() throws {
-        try exec("DELETE FROM autopilot_inbound_queue")
-        try exec("DELETE FROM autopilot_pending_sends")
-        try exec("DELETE FROM autopilot_log")
-        try exec("DELETE FROM autopilot_sessions")
+        try withTransaction {
+            guard currentAutopilotSession() == nil else {
+                throw NSError(domain: "WeChatHUD", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "请先结束自动托管，再清除历史记录。"])
+            }
+            // History maintenance must never discard queued work or pending sends.
+            try exec("DELETE FROM autopilot_log")
+            try exec("DELETE FROM autopilot_sessions WHERE ended_at IS NOT NULL")
+        }
     }
 
     // MARK: - Relationship Profiles
@@ -2834,6 +2927,62 @@ final class HUDStore: ObservableObject {
 
     // MARK: - Helpers
 
+    /// Persist source snapshots before the reader cursor moves. Inserts are idempotent.
+    func enqueueClassificationMessages(_ messages: [MessageInfo]) throws {
+        let encoder = JSONEncoder()
+        for message in messages {
+            let payload = String(decoding: try encoder.encode(message), as: UTF8.self)
+            // Keep a normal INSERT in the statement so triggers and other
+            // persistence failures remain visible to the caller. The NOT
+            // EXISTS predicate provides idempotency without INSERT OR IGNORE
+            // swallowing an actual write error.
+            try exec("""
+                INSERT INTO classification_queue(msg_uid,payload,source_timestamp)
+                SELECT ?,?,? WHERE NOT EXISTS(
+                    SELECT 1 FROM classification_queue WHERE msg_uid=?
+                )
+            """, params: [message.id, payload, String(message.createTime), message.id])
+        }
+    }
+
+    func pendingClassificationMessages(limit: Int = 40) -> [MessageInfo] {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT payload FROM classification_queue WHERE retry_after <= ? ORDER BY source_timestamp, msg_uid LIMIT ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        sqlite3_bind_int64(stmt, 1, Int64(Date().timeIntervalSince1970))
+        sqlite3_bind_int(stmt, 2, Int32(max(1, min(limit, 200))))
+        var messages: [MessageInfo] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let text = sqlite3_column_text(stmt, 0) else { continue }
+            let data = Data(String(cString: text).utf8)
+            if let message = try? JSONDecoder().decode(MessageInfo.self, from: data) { messages.append(message) }
+        }
+        return messages
+    }
+
+    func classificationQueueCount() -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM classification_queue", -1, &stmt, nil) == SQLITE_OK,
+              sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    func completeClassificationMessage(id: String) throws {
+        try exec("DELETE FROM classification_queue WHERE msg_uid=?", params: [id])
+    }
+
+    /// Preserve failed work; back off up to 30 minutes instead of losing it or hot-looping.
+    func deferClassificationMessage(id: String) throws {
+        try exec("UPDATE classification_queue SET attempts=attempts+1, retry_after=? + MIN(1800, 30 * (attempts+1)) WHERE msg_uid=?",
+                 params: [String(Int(Date().timeIntervalSince1970)), id])
+    }
+
+    func retryClassificationMessages() throws {
+        try exec("UPDATE classification_queue SET retry_after=0")
+    }
+
     private func exec(_ sql: String, params: [String] = []) throws {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -2850,6 +2999,54 @@ final class HUDStore: ObservableObject {
             if rc == SQLITE_ROW { continue }
             throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
         }
+    }
+
+    /// Run a synchronous unit of work while holding SQLite's connection
+    /// mutex for the complete transaction. FULLMUTEX only serializes each
+    /// sqlite call; without this boundary another thread could interleave
+    /// writes between BEGIN and COMMIT. Nested callers use savepoints.
+    func withTransaction<T>(_ body: () throws -> T) throws -> T {
+        try withDatabaseMutex {
+            let nested = transactionDepth > 0
+            let savepoint = "hud_store_sp_\(transactionDepth)"
+            if nested {
+                try exec("SAVEPOINT \(savepoint)")
+            } else {
+                try exec("BEGIN IMMEDIATE")
+            }
+            transactionDepth += 1
+            do {
+                let value = try body()
+                if nested {
+                    try exec("RELEASE SAVEPOINT \(savepoint)")
+                } else {
+                    try exec("COMMIT")
+                }
+                transactionDepth -= 1
+                return value
+            } catch {
+                transactionDepth -= 1
+                if nested {
+                    try? exec("ROLLBACK TO SAVEPOINT \(savepoint)")
+                    try? exec("RELEASE SAVEPOINT \(savepoint)")
+                } else {
+                    try? exec("ROLLBACK")
+                }
+                throw error
+            }
+        }
+    }
+
+    /// Hold the SQLite connection mutex across a synchronous sequence of
+    /// calls. Used by the intentionally best-effort ledger batch, whose
+    /// partial-success semantics are preserved.
+    func withDatabaseMutex<T>(_ body: () throws -> T) throws -> T {
+        guard let db, let mutex = sqlite3_db_mutex(db) else {
+            throw HUDStoreError.sqlError("Database is not open")
+        }
+        sqlite3_mutex_enter(mutex)
+        defer { sqlite3_mutex_leave(mutex) }
+        return try body()
     }
 
     // MARK: - Retrospective extension helpers
@@ -2946,4 +3143,5 @@ extension HUDStore {
 enum HUDStoreError: Error {
     case openFailed(String)
     case sqlError(String)
+    case draftNotFound(id: Int64, chatUsername: String)
 }

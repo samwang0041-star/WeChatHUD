@@ -31,8 +31,8 @@ actor MockAIService: AIServiceProtocol {
         calls.append((system, user, options))
         if let err = shouldThrow { throw err }
         let text = routes.first { user.contains($0.needle) }?.response ?? defaultResponse
-        let model = configToReturn.primarySlot.model.isEmpty ? "mock-model" : configToReturn.primarySlot.model
-        return AICompletionResult(text: text, providerID: configToReturn.primarySlot.providerID, model: model)
+        let model = configToReturn.provider.model.isEmpty ? "mock-model" : configToReturn.provider.model
+        return AICompletionResult(text: text, providerID: configToReturn.provider.providerID, model: model)
     }
 
     func currentConfig() async -> AIConfig {

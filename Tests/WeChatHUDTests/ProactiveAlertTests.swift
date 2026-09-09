@@ -1,10 +1,12 @@
 import XCTest
 @testable import WeChatHUD
 
-/// Tests for ProactiveAlertEngine rule logic.
-/// Cannot test actual UNNotification delivery in unit tests,
-/// so we test the rule evaluation conditions directly.
+/// Tests for ProactiveAlertEngine rule logic and injected delivery state.
+/// The sender is injected so these tests never request macOS notification
+/// permission or enqueue a real UNNotification.
 final class ProactiveAlertTests: XCTestCase {
+
+    private struct TestError: Error {}
 
     // MARK: - UnreadItem factory
 
@@ -13,7 +15,8 @@ final class ProactiveAlertTests: XCTestCase {
         senderName: String = "Alice",
         isVIP: Bool = false,
         status: UnreadStatus = .pending,
-        minutesAgo: Int = 5
+        minutesAgo: Int = 5,
+        timestamp: Date? = nil
     ) -> UnreadItem {
         UnreadItem(
             chatUsername: chatUsername,
@@ -21,7 +24,7 @@ final class ProactiveAlertTests: XCTestCase {
             senderUsername: "wxid_\(senderName.lowercased())",
             senderName: senderName,
             preview: "hello",
-            timestamp: Date(timeIntervalSinceNow: -Double(minutesAgo * 60)),
+            timestamp: timestamp ?? Date(timeIntervalSinceNow: -Double(minutesAgo * 60)),
             kind: .privateChat,
             isWhitelisted: true,
             isVIP: isVIP,
@@ -77,6 +80,90 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertFalse(remaining > 0 && remaining < 3600)
     }
 
+    @MainActor
+    func testCommitmentCrossingDeadlineAlertsOncePerPhase() {
+        let start = Date(timeIntervalSince1970: 4_000_000)
+        var current = start
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"), now: { current },
+            sendNotification: { title, _, _, _ in titles.append(title) }
+        )
+        let commitment = Commitment(
+            id: 1, msgUID: "due", chatUsername: "chat", chatName: "聊天",
+            content: "发报告", commitTo: "同事", deadlineAt: start.addingTimeInterval(60),
+            confidence: 0.9, status: .pending, promptVersion: "v1", createdAt: start, updatedAt: start
+        )
+        engine.evaluate(unreadItems: [], replyDebtItems: [], commitments: [commitment], recentNotifications: [])
+        current = start.addingTimeInterval(60)
+        engine.evaluate(unreadItems: [], replyDebtItems: [], commitments: [commitment], recentNotifications: [])
+        engine.evaluate(unreadItems: [], replyDebtItems: [], commitments: [commitment], recentNotifications: [])
+        XCTAssertEqual(titles, ["承诺即将到期", "承诺已到期"])
+    }
+
+    @MainActor
+    func testOverdueCommitmentAfterAbsenceAlertsButResolvedDoesNot() {
+        let current = Date(timeIntervalSince1970: 4_000_000)
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"), now: { current },
+            sendNotification: { title, _, _, _ in titles.append(title) }
+        )
+        func commitment(_ status: CommitmentStatus, id: String) -> Commitment {
+            Commitment(id: 1, msgUID: id, chatUsername: "chat", chatName: "聊天",
+                       content: "发报告", commitTo: "同事", deadlineAt: current.addingTimeInterval(-7200),
+                       confidence: 0.9, status: status, promptVersion: "v1", createdAt: current, updatedAt: current)
+        }
+        engine.evaluate(unreadItems: [], replyDebtItems: [], commitments: [
+            commitment(.overdue, id: "overdue"), commitment(.fulfilled, id: "done"),
+            commitment(.cancelled, id: "cancelled")
+        ], recentNotifications: [])
+        XCTAssertEqual(titles, ["承诺已到期"])
+    }
+
+    @MainActor
+    func testStandaloneDeadlineTickAlertsOverdueAndSkipsResolved() async {
+        let now = Date(timeIntervalSince1970: 4_500_000)
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"), now: { now },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        func make(_ status: CommitmentStatus, _ id: String) -> Commitment {
+            Commitment(id: 1, msgUID: id, chatUsername: "chat", chatName: "聊天",
+                       content: "发报告", commitTo: "同事", deadlineAt: now.addingTimeInterval(-60),
+                       confidence: 0.9, status: status, promptVersion: "v1", createdAt: now, updatedAt: now)
+        }
+
+        engine.evaluateCommitmentDeadlines(commitments: [make(.overdue, "late"), make(.fulfilled, "done"), make(.cancelled, "cancelled")])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"])
+    }
+
+    @MainActor
+    func testFullScanAndStandaloneTickShareCommitmentDedup() async {
+        let now = Date(timeIntervalSince1970: 4_600_000)
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"), now: { now },
+            sendNotification: { _, _, _, completion in
+                sends += 1
+                completion(nil)
+            }
+        )
+        let commitment = Commitment(id: 1, msgUID: "same", chatUsername: "chat", chatName: "聊天",
+                                    content: "发报告", commitTo: "同事", deadlineAt: now.addingTimeInterval(-60),
+                                    confidence: 0.9, status: .overdue, promptVersion: "v1", createdAt: now, updatedAt: now)
+
+        engine.evaluate(unreadItems: [], replyDebtItems: [], commitments: [commitment], recentNotifications: [])
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(sends, 1)
+    }
+
     // MARK: - Rule 3: Burst messages
 
     func testBurstDetection() {
@@ -121,5 +208,195 @@ final class ProactiveAlertTests: XCTestCase {
         history.removeAll { $0 < oneHourAgo }
         // All alerts are > 1 hour old → pruned → should allow
         XCTAssertTrue(history.count < 5)
+    }
+
+    // MARK: - Engine delivery state
+
+    @MainActor
+    func testIdentifierDedupExpiresAfterOneHour() async {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        var current = start
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { current },
+            sendNotification: { _, _, _, completion in
+                sends += 1
+                completion(nil)
+            }
+        )
+
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "hello", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 1)
+
+        current = start.addingTimeInterval(3599)
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "hello again", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 1)
+
+        current = start.addingTimeInterval(3600)
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "hello later", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 2)
+    }
+
+    @MainActor
+    func testHourlyBudgetIncludesInFlightAndReopensAfterWindow() async {
+        let start = Date(timeIntervalSince1970: 2_000_000)
+        var current = start
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { current },
+            sendNotification: { _, _, _, completion in
+                sends += 1
+                completion(nil)
+            }
+        )
+
+        for index in 0..<5 {
+            engine.pushCrossGroupVIPAlert(
+                vipName: "Alice", vipUsername: "alice-\(index)",
+                groupName: "群聊", groupUsername: "group-\(index)",
+                preview: "hello", messageCount: 1
+            )
+        }
+        // Completions are asynchronous from the engine's perspective. The
+        // five in-flight reservations must already consume the budget.
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice-six",
+            groupName: "群聊", groupUsername: "group-six",
+            preview: "blocked", messageCount: 1
+        )
+        XCTAssertEqual(sends, 5)
+        await Task.yield()
+
+        current = start.addingTimeInterval(3599)
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice-six",
+            groupName: "群聊", groupUsername: "group-six",
+            preview: "still blocked", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 5)
+
+        current = start.addingTimeInterval(3601)
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice-six",
+            groupName: "群聊", groupUsername: "group-six",
+            preview: "allowed", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 6)
+    }
+
+    @MainActor
+    func testFailedSendDoesNotConsumeDedupOrBudget() async {
+        var attempt = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            sendNotification: { _, _, _, completion in
+                attempt += 1
+                completion(attempt == 1 ? TestError() : nil)
+            }
+        )
+
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "first", messageCount: 1
+        )
+        await Task.yield()
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "retry", messageCount: 1
+        )
+        await Task.yield()
+
+        XCTAssertEqual(attempt, 2)
+    }
+
+    @MainActor
+    func testSameIdentifierCannotBeSubmittedConcurrently() async {
+        var completions: [@Sendable (Error?) -> Void] = []
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            sendNotification: { _, _, _, completion in
+                sends += 1
+                completions.append(completion)
+            }
+        )
+
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "first", messageCount: 1
+        )
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "duplicate", messageCount: 1
+        )
+        XCTAssertEqual(sends, 1)
+
+        completions[0](nil)
+        await Task.yield()
+        engine.pushCrossGroupVIPAlert(
+            vipName: "Alice", vipUsername: "alice",
+            groupName: "群聊", groupUsername: "group",
+            preview: "after success", messageCount: 1
+        )
+        XCTAssertEqual(sends, 1)
+    }
+
+    @MainActor
+    func testVIPTierRemainsVisibleAndRetriesAfterFailedSend() async {
+        let start = Date(timeIntervalSince1970: 3_000_000)
+        var attempt = 0
+        var advanced: [VIPAlertTier] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { _, _, _, completion in
+                attempt += 1
+                completion(attempt == 1 ? TestError() : nil)
+            }
+        )
+        engine.onTierAdvanced = { _, tier in advanced.append(tier) }
+        let item = makeUnread(
+            chatUsername: "vip-chat",
+            senderName: "Alice",
+            isVIP: true,
+            timestamp: start.addingTimeInterval(-40 * 60)
+        )
+
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
+        await Task.yield()
+        XCTAssertTrue(advanced.isEmpty)
+
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+
+        XCTAssertEqual(attempt, 2)
+        XCTAssertEqual(advanced, [.t1])
+        XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
     }
 }

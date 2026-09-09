@@ -1,0 +1,19 @@
+{
+  "account_candidates" : 1,
+  "bundled_prompts" : "ready",
+  "database" : "readable",
+  "discussion_feedback" : 0,
+  "discussion_items" : 0,
+  "generated_at" : "2026-09-08T04:57:42Z",
+  "legacy_records" : "account_confirmation_required",
+  "message_probe" : "readable",
+  "message_probe_count" : 1,
+  "message_probe_failures" : 0,
+  "mode" : "source-read-only",
+  "pending_classifications" : 0,
+  "probed_sessions" : 1,
+  "reply_drafts" : 1,
+  "sessions" : 2721,
+  "tracked_chats" : 2,
+  "wechat_contacts" : 12313
+}

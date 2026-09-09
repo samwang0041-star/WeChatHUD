@@ -1,116 +1,198 @@
 import SwiftUI
+import AppKit
 
 struct NotificationBannerView: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
     let notification: HUDNotification
+    @State private var showSnooze = false
 
-    /// "昵称: 内容" preview. For private chats chatName == senderName,
-    /// so it collapses to "senderName: snippet". For groups we prefix the
-    /// group name so you can tell which group the message is from.
-    private var previewText: String {
-        if notification.chatName == notification.senderName {
-            return "\(notification.senderName): \(notification.snippet)"
-        } else {
-            return "\(notification.chatName) · \(notification.senderName): \(notification.snippet)"
-        }
-    }
-
-    private var badgeColor: Color {
-        switch notification.presentationSemanticState {
-        case .privateVIPRisk:
-            return .yellow
-        case .groupMentionFYI:
-            return .blue
-        case .privateInfoOnly, .groupInfoOnly:
-            return .white.opacity(0.45)
-        default:
-            return .orange
-        }
+    private var notchHeight: CGFloat {
+        (NSApp.delegate as? AppDelegate)?.panel?.notch.notchHeight ?? 32
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(badgeColor)
-                .frame(width: 8, height: 8)
-
-            Text(previewText)
-                .font(.system(size: 12))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-
-            if notification.isVIP {
-                Text("VIP")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.yellow)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.yellow.opacity(0.12))
-                    .cornerRadius(3)
+        VStack(alignment: .leading, spacing: 10) {
+            if panelState.briefingExpanded, notification.canExplainContext {
+                briefingSurface
+            } else {
+                notificationSurface
             }
-
-            if notification.canExplainContext {
-                GroupContextBriefingButton(notification: notification, compact: true)
-            }
-
-            Spacer(minLength: 0)
-
-            // Quick action buttons
-            Button(action: {
-                WeChatLauncher.openChat(named: notification.chatName)
-            }) {
-                Image(systemName: "bubble.left.and.bubble.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.7))
-                    .frame(width: 22, height: 20)
-                    .background(Color.white.opacity(0.12))
-                    .cornerRadius(3)
-            }
-            .buttonStyle(.plain)
-            .help("在微信中打开")
-
-            Button(action: {
-                monitor.silenceChat(notification.chatUsername)
-                panelState.collapse()
-            }) {
-                Image(systemName: "eye.slash")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
-                    .frame(width: 22, height: 20)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(3)
-            }
-            .buttonStyle(.plain)
-            .help("静默处理")
-
-            Button(action: {
-                monitor.silenceChat(notification.chatUsername)
-                panelState.goExtended()
-            }) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.green.opacity(0.8))
-                    .frame(width: 22, height: 20)
-                    .background(Color.green.opacity(0.12))
-                    .cornerRadius(3)
-            }
-            .buttonStyle(.plain)
-            .help("标记已读，展开收件箱")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.08))
-        .cornerRadius(6)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            panelState.showChatDetail(
-                chatUsername: notification.chatUsername,
-                chatName: notification.chatName
+        .foregroundColor(.white)
+        .padding(.horizontal, 20)
+        .padding(.top, notchHeight + 12)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // No parent tap gesture: a quick-action click must have exactly one
+        // effect, and closing a banner must not also open a conversation.
+    }
+
+    private var notificationSurface: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .foregroundStyle(CompanionPalette.islandMint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CompanionProductCopy.brandName)
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(CompanionProductCopy.brandPromise)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 4)
+                closeButton
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(CompanionPalette.jade)
+                    .frame(width: 36, height: 36)
+                    .overlay(Image(systemName: "person.fill").font(.system(size: 14)).foregroundStyle(.white))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(headline)
+                        .font(.system(size: 15, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("“\(notification.snippet)”")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                Button("原文") {
+                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(CompanionPalette.islandMint)
+                .accessibilityLabel("查看原文")
+            }
+
+            HStack(spacing: 8) {
+                Button("看看什么事") {
+                    showSnooze = false
+                    panelState.setSnoozeMenuExpanded(false)
+                    if notification.canExplainContext {
+                        withMotion(CompanionMotion.spring) {
+                            panelState.setBriefingExpanded(true)
+                        }
+                        monitor.loadGroupContextBriefing(for: notification)
+                    } else {
+                        panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                    }
+                }
+                .buttonStyle(BannerChromeStyle(emphasized: !showSnooze))
+                snoozeButton
+                Spacer(minLength: 0)
+            }
+            if showSnooze {
+                IslandSnoozeMenu { date in
+                    showSnooze = false
+                    panelState.setSnoozeMenuExpanded(false)
+                    snooze(date)
+                }
+            }
+        }
+    }
+
+    private var briefingSurface: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    withMotion(CompanionMotion.spring) {
+                        panelState.setBriefingExpanded(false)
+                    }
+                } label: {
+                    Label(notification.chatName, systemImage: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("返回通知")
+                Spacer()
+                closeButton
+            }
+            GroupContextBriefingCard(notification: notification)
+        }
+    }
+
+    private var closeButton: some View {
+        Button { panelState.collapseAndYield() } label: {
+            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 22)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("关闭通知")
+        .help("关闭通知，保留待办状态")
+    }
+
+    private var snoozeButton: some View {
+        Button {
+            showSnooze.toggle()
+            panelState.setSnoozeMenuExpanded(showSnooze)
+        } label: {
+            Label("稍后提醒", systemImage: "clock")
+        }
+        .buttonStyle(BannerChromeStyle(emphasized: showSnooze))
+        .accessibilityHint("打开稍后提醒时间")
+        .onChange(of: showSnooze) { _, isOpen in
+            panelState.setSnoozeMenuExpanded(isOpen)
+        }
+    }
+
+    private var headline: String {
+        let when = Date().timeIntervalSince(notification.timestamp) < 60
+            ? "刚刚"
+            : CompanionProductCopy.clockLabel(notification.timestamp)
+        if notification.kind == .groupAt {
+            return "\(notification.senderName)在\(notification.chatName) @ 了你 · \(when)"
+        }
+        if notification.chatName == notification.senderName {
+            return "\(notification.senderName) · \(when)"
+        }
+        return "\(notification.senderName) · \(notification.chatName) · \(when)"
+    }
+
+    private func snooze(_ date: Date) {
+        let item = monitor.inboxItems.first(where: { $0.chatUsername == notification.chatUsername })
+            ?? notification.actionInboxItem()
+        if monitor.snoozeInboxItem(item, until: date) {
+            panelState.islandSnoozeUndo = (item, date)
+            panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
+        }
+        panelState.islandSurface = .inbox
+        panelState.goExtended()
+    }
+}
+
+private struct BannerChromeStyle: ButtonStyle {
+    var emphasized: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: emphasized ? .semibold : .medium))
+            .foregroundColor(.white.opacity(emphasized ? 1 : 0.9))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                emphasized
+                    ? CompanionPalette.jade.opacity(configuration.isPressed ? 0.82 : 1)
+                    : Color.white.opacity(configuration.isPressed ? 0.22 : 0.10)
             )
-        }
+            .clipShape(Capsule())
+    }
+}
+
+private struct BannerPrimaryStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BannerChromeStyle(emphasized: true).makeBody(configuration: configuration)
+    }
+}
+
+private struct BannerActionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        BannerChromeStyle(emphasized: false).makeBody(configuration: configuration)
     }
 }

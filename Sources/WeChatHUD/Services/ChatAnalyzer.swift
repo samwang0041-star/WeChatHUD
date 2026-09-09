@@ -118,7 +118,8 @@ actor ChatAnalyzer {
         myUsername: String,
         myName: String,
         myDisplayName: String = "",
-        mySelfNames: Set<String> = []
+        mySelfNames: Set<String> = [],
+        triggerMessage: MessageInfo? = nil
     ) async -> (GroupAnalysis?, String?) {
         let template: String
         do {
@@ -149,10 +150,17 @@ actor ChatAnalyzer {
             .replacingOccurrences(of: "{my_name}", with: myName.isEmpty ? myUsername : myName)
             .replacingOccurrences(of: "{messages}", with: formatted)
 
+        let anchoredPrompt: String
+        if let triggerMessage {
+            anchoredPrompt = userPrompt + "\n\n本次触发消息（必须以此为本次 @ 事件锚点）：\nmessageID: \(triggerMessage.id)\n原文: \(AIService.sanitizeForAI(triggerMessage.text))\n只将明确与这条消息相关的行动项归给我。"
+        } else {
+            anchoredPrompt = userPrompt
+        }
+
         print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(readableMessages.count)/\(messages.count) readable messages")
 
         let result = await pipeline.execute(
-            prompt: userPrompt,
+            prompt: anchoredPrompt,
             configuration: .init(
                 systemPrompt: "你是一个消息分析助手，严格按要求输出 JSON。",
                 options: CompleteOptions(timeout: 120, temperature: 0.2, maxTokens: 4096, responseFormatJSON: true),

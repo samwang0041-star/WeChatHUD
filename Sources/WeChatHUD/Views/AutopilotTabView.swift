@@ -4,6 +4,16 @@ import SwiftUI
 /// pending review queue, session stats, and start/stop toggle.
 struct AutopilotTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var store: HUDStore
+    /// The settings workspace already supplies the page title. The compact
+    /// detail host keeps this false so its smaller controls stay concise.
+    let isWorkspace: Bool
+
+    init(isWorkspace: Bool = false) {
+        self.isWorkspace = isWorkspace
+    }
+
     @State private var activityFilter: ActivityFilter = .all
     @State private var sessionStart: Date? = nil
 
@@ -56,19 +66,41 @@ struct AutopilotTabView: View {
                 activitySection
             }
         }
+        .foregroundStyle(.primary)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Header bar
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            // Start/stop button
+            Image(systemName: "cpu.fill")
+                .font(.system(size: isWorkspace ? 16 : 12, weight: .semibold))
+                .foregroundStyle(monitor.autopilotActive ? .green : .secondary)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(monitor.autopilotActive
+                     ? (isAutopilotPaused ? "代回复已暂停" : "正在整理回复")
+                     : "代回复还没开始")
+                    .font(.system(size: isWorkspace ? 13 : 10, weight: .semibold))
+                if isWorkspace {
+                    Text(autoSendSummary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            // Start/end button. Starting a session never changes the saved
+            // auto-send setting; that remains visible and editable below.
             Button(action: { monitor.toggleAutopilot() }) {
                 HStack(spacing: 4) {
                     Image(systemName: monitor.autopilotActive ? "stop.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text(monitor.autopilotActive ? "停止" : "开始托管")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: isWorkspace ? 12 : 11, weight: .semibold))
+                    Text(monitor.autopilotActive ? "停止" : "开始整理")
+                        .font(.system(size: isWorkspace ? 12 : 10, weight: .semibold))
                 }
                 .foregroundColor(monitor.autopilotActive ? .red : .green)
                 .padding(.horizontal, 7)
@@ -77,6 +109,8 @@ struct AutopilotTabView: View {
                 .cornerRadius(4)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(monitor.autopilotActive ? "停止整理回复" : "开始整理回复")
+            .accessibilityHint(monitor.autopilotActive ? "停止当前自动整理" : "开始整理该回的消息；发不发仍由自动回复设置决定")
 
             if monitor.autopilotActive {
                 // Pause/Resume button
@@ -89,14 +123,22 @@ struct AutopilotTabView: View {
                         }
                     }
                 }) {
-                    Image(systemName: monitor.autopilotManuallyPaused ? "play.fill" : "pause.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(monitor.autopilotManuallyPaused ? .green : .yellow)
-                        .padding(3)
-                        .background((monitor.autopilotManuallyPaused ? Color.green : Color.yellow).opacity(0.15))
-                        .cornerRadius(3)
+                    HStack(spacing: 4) {
+                        Image(systemName: monitor.autopilotManuallyPaused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 9))
+                        if isWorkspace {
+                            Text(monitor.autopilotManuallyPaused ? "恢复" : "暂停")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .foregroundColor(monitor.autopilotManuallyPaused ? .green : .yellow)
+                    .padding(.horizontal, isWorkspace ? 6 : 3)
+                    .padding(.vertical, 3)
+                    .background((monitor.autopilotManuallyPaused ? Color.green : Color.yellow).opacity(0.15))
+                    .cornerRadius(3)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(monitor.autopilotManuallyPaused ? "恢复自动回复" : "暂停自动回复")
 
                 // Session stats
                 HStack(spacing: 6) {
@@ -104,17 +146,24 @@ struct AutopilotTabView: View {
                     miniStat(systemIcon: "hourglass", value: monitor.autopilotSessionPending, color: .orange)
                 }
 
-                Spacer()
-
                 // Session duration
                 if let start = sessionStart {
                     Text(sessionDuration(since: start))
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
-            } else {
-                Spacer()
+            }
+
+            if isWorkspace {
+                Button {
+                    openAutopilotSettings()
+                } label: {
+                    Label("自动回复设置", systemImage: "slider.horizontal.3")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.link)
+                .accessibilityLabel("打开自动回复设置")
             }
         }
         .onAppear {
@@ -153,7 +202,7 @@ struct AutopilotTabView: View {
             dashStat("发送", value: "\(stats.totalSent)", color: .green)
             dashStat("已读", value: "\(stats.totalReadNoReply)", color: .blue)
             dashStat("风格", value: "\(stats.avgStyleScore)", color: stats.avgStyleScore >= 70 ? .green : .orange)
-            dashStat("延迟", value: "\(stats.avgDelay)s", color: .white.opacity(0.6))
+            dashStat("延迟", value: "\(stats.avgDelay)s", color: .secondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -166,8 +215,8 @@ struct AutopilotTabView: View {
                 .monospacedDigit()
                 .foregroundColor(color)
             Text(label)
-                .font(.system(size: 8))
-                .foregroundColor(.white.opacity(0.4))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -181,8 +230,8 @@ struct AutopilotTabView: View {
                 .font(.system(size: 10))
             Spacer()
             Text(monitor.autopilotManuallyPaused ? "点击恢复按钮继续" : "离开微信后自动恢复")
-                .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.4))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
         }
         .foregroundColor(.yellow)
         .padding(.horizontal, 12)
@@ -194,34 +243,127 @@ struct AutopilotTabView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "robot")
-                .font(.system(size: 22))
-                .foregroundColor(.white.opacity(0.2))
-            Text("点击「开始托管」启动自动回复")
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.35))
+            Image(systemName: "cpu.fill")
+                .font(.system(size: isWorkspace ? 30 : 22, weight: .medium))
+                .foregroundStyle(CompanionPalette.accent.opacity(0.75))
+            Text("还没有待确认的回复")
+                .font(.system(size: isWorkspace ? 16 : 12, weight: .semibold))
+            Text("点开始后，助理会整理该回的消息。发不发都由你决定。")
+                .font(.system(size: isWorkspace ? 13 : 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
 
-            VStack(alignment: .leading, spacing: 3) {
-                ruleRow("私聊", desc: "AI 模拟你的风格自动回复", color: .green)
-                ruleRow("VIP", desc: "发送忙碌通知，推送提醒你", color: .yellow)
-                ruleRow("群聊", desc: "仅记录，不回复", color: .blue)
+            if isWorkspace {
+                workspaceGuideCard
+                    .padding(.top, 6)
             }
-            .padding(.top, 4)
+
+            if !isWorkspace {
+                configSummaryCard
+
+                VStack(alignment: .leading, spacing: 3) {
+                    ruleRow("私聊", desc: "按自动回复设置处理", color: .green)
+                    ruleRow("群聊", desc: "不自动发送", color: .blue)
+                }
+                .padding(.top, 4)
+
+                Button("打开自动回复设置") { openAutopilotSettings() }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.top, 3)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
     }
 
-    private func ruleRow(_ label: String, desc: String, color: Color) -> some View {
+    /// Workspace empty-state guide: what the assistant does, in what order,
+    /// and which guardrails apply before anything is sent.
+    private var workspaceGuideCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            workspaceGuideStep(1, "自动整理需要回复的消息")
+            workspaceGuideStep(2, "按你的语气生成回复草稿")
+            workspaceGuideStep(3, "你确认后才发送；没打开「自动发出去」时，草稿会停在这里")
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                ruleRow("私聊", desc: "按自动回复设置处理", color: .green, labelSize: 11, descSize: 12)
+                ruleRow("群聊", desc: "不自动发送", color: .blue, labelSize: 11, descSize: 12)
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                Button("查看发送限制") { openAutopilotSettings() }
+                    .buttonStyle(.link)
+                    .font(.system(size: 12, weight: .medium))
+                    .accessibilityLabel("查看发送限制，打开自动回复设置")
+            }
+        }
+        .frame(width: 560, alignment: .leading)
+        .companionSurface(padding: 18)
+    }
+
+    private func workspaceGuideStep(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(CompanionPalette.accent)
+                .frame(width: 22, height: 22)
+                .background(CompanionPalette.accent.opacity(0.12), in: Circle())
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.system(size: 12))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var autoSendSummary: String {
+        let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        return config.autoSendEnabled
+            ? "已打开自动发出去 · 比较有把握的回复会按你设的节奏发出"
+            : "没有打开自动发出去 · 只写成草稿，等你确认"
+    }
+
+    private var isAutopilotPaused: Bool {
+        monitor.autopilotPaused || monitor.autopilotManuallyPaused
+    }
+
+    private var configSummaryCard: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(autoSendSummary)
+                .font(.system(size: isWorkspace ? 12 : 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: isWorkspace ? 560 : 340)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+    }
+
+    private func openAutopilotSettings() {
+        panelState.pendingSettingsTab = "autopilot"
+        if !isWorkspace {
+            panelState.onShowSettings?()
+        }
+    }
+
+    private func ruleRow(_ label: String, desc: String, color: Color, labelSize: CGFloat = 10, descSize: CGFloat = 11) -> some View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 5, height: 5)
             Text(label)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: labelSize, weight: .medium))
                 .foregroundColor(color)
                 .frame(width: 30, alignment: .leading)
             Text(desc)
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.3))
+                .font(.system(size: descSize))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -255,8 +397,8 @@ struct AutopilotTabView: View {
 
             if filtered.isEmpty {
                 Text(activity.isEmpty ? "暂无活动记录" : "无匹配记录")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             } else {
@@ -278,13 +420,15 @@ struct AutopilotTabView: View {
                         .monospacedDigit()
                 }
             }
-            .foregroundColor(selected ? .white : .white.opacity(0.4))
+            .foregroundColor(selected ? .primary : .secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(selected ? Color.white.opacity(0.15) : Color.clear)
+            .background(selected ? Color.primary.opacity(0.12) : Color.clear)
             .cornerRadius(3)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("筛选\(label)，\(count) 条")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - Section headers
@@ -314,7 +458,7 @@ struct AutopilotTabView: View {
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
         }
-        .foregroundColor(.white.opacity(0.5))
+        .foregroundColor(color)
         .padding(.horizontal, 12)
         .padding(.vertical, 3)
     }
@@ -333,11 +477,11 @@ private struct PendingReviewRow: View {
             // Line 1: sender + trigger text
             HStack(spacing: 5) {
                 Text(entry.senderName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
                 Text(entry.triggerText)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
                     .lineLimit(1)
                 Spacer()
                 Text(entry.riskLevel.rawValue.uppercased())
@@ -366,10 +510,10 @@ private struct PendingReviewRow: View {
                     if editing {
                         TextField("", text: $editedReply)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 10))
+                            .font(.system(size: 12))
                     } else {
                         Text(reply)
-                            .font(.system(size: 10))
+                            .font(.system(size: 12))
                             .foregroundColor(.cyan)
                             .lineLimit(2)
                     }
@@ -380,8 +524,8 @@ private struct PendingReviewRow: View {
             HStack(spacing: 6) {
                 if let reason = entry.aiReasoning {
                     Text(reason)
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.35))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -396,10 +540,11 @@ private struct PendingReviewRow: View {
                     }
                 }) {
                     Label("发送", systemImage: "paperplane.fill")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.green)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("发送待审核回复")
 
                 Button(action: {
                     if editing { editing = false } else {
@@ -408,17 +553,19 @@ private struct PendingReviewRow: View {
                     }
                 }) {
                     Text(editing ? "取消" : "改")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.5))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(editing ? "取消编辑回复" : "编辑回复")
 
                 Button(action: { monitor.rejectAutopilotItem(logId: entry.id) }) {
                     Text("忽略")
-                        .font(.system(size: 9))
-                        .foregroundColor(.red.opacity(0.6))
+                        .font(.system(size: 11))
+                        .foregroundColor(.red)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("忽略待审核回复")
             }
         }
         .padding(.horizontal, 12)
@@ -426,6 +573,8 @@ private struct PendingReviewRow: View {
         .background(Color.orange.opacity(0.05))
         .cornerRadius(5)
         .padding(.horizontal, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("待审核：\(entry.senderName)，风险\(entry.riskLevel.rawValue)，信心\(Int(entry.confidence * 100))%")
     }
 
     private func riskColor(_ risk: AutopilotRisk) -> Color {
@@ -446,39 +595,39 @@ private struct ActivityRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Main row
-            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } }) {
+            Button(action: { withMotion(CompanionMotion.ease(0.15)) { expanded.toggle() } }) {
                 HStack(spacing: 5) {
                     actionIcon
                         .frame(width: 12)
 
                     Text(entry.senderName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.75))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary)
                         .frame(width: 48, alignment: .leading)
                         .lineLimit(1)
 
                     if entry.action == .sent || entry.action == .vipNotified, let reply = entry.generatedReply {
                         Text("→ \(reply)")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.45))
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
                             .lineLimit(1)
                     } else {
                         Text(entry.triggerText)
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.35))
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
 
                     Spacer()
 
                     Text(relativeTime(entry.createdAt))
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.25))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                         .monospacedDigit()
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 7, weight: .bold))
-                        .foregroundColor(.white.opacity(0.2))
+                        .foregroundColor(.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .padding(.horizontal, 12)
@@ -486,6 +635,7 @@ private struct ActivityRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(expanded ? "收起自动回复活动详情" : "展开自动回复活动详情")
 
             // Expanded detail
             if expanded {
@@ -505,7 +655,7 @@ private struct ActivityRow: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 4)
-                .background(Color.white.opacity(0.03))
+                .background(Color.primary.opacity(0.03))
             }
         }
     }
@@ -513,11 +663,11 @@ private struct ActivityRow: View {
     private func detailRow(_ label: String, value: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.white.opacity(0.35))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
             Text(value)
-                .font(.system(size: 9))
-                .foregroundColor(.white.opacity(0.55))
+                .font(.system(size: 11))
+                .foregroundColor(.primary)
                 .lineLimit(2)
         }
     }
@@ -584,8 +734,8 @@ struct PendingSendRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(item.chatName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.primary)
                 Spacer()
                 Text(item.risk.rawValue.uppercased())
                     .font(.system(size: 8, weight: .bold))
@@ -603,10 +753,10 @@ struct PendingSendRow: View {
 
             if isEditing {
                 TextField("编辑回复", text: $editText)
-                    .font(.system(size: 10))
+                    .font(.system(size: 12))
                     .textFieldStyle(.plain)
                     .padding(4)
-                    .background(Color.white.opacity(0.08))
+                    .background(Color.primary.opacity(0.08))
                     .cornerRadius(3)
                 HStack(spacing: 6) {
                     Button("发送") {
@@ -627,36 +777,38 @@ struct PendingSendRow: View {
                             }
                         }
                     }
-                    .font(.system(size: 9)).foregroundColor(.green)
+                    .font(.system(size: 11)).foregroundColor(.green)
                     .buttonStyle(.plain)
+                    .accessibilityLabel("发送编辑后的回复")
                     Button("取消") { isEditing = false }
-                        .font(.system(size: 9)).foregroundColor(.gray)
+                        .font(.system(size: 11)).foregroundColor(.secondary)
                         .buttonStyle(.plain)
+                        .accessibilityLabel("取消编辑待发送回复")
                 }
             } else {
                 Text(item.replyText)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.7))
+                    .font(.system(size: 12))
+                    .foregroundColor(.primary)
                     .lineLimit(2)
             }
 
             if let trigger = item.peerLastMessage, !trigger.isEmpty {
                 Text("收到: \(trigger)")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.35))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
                     .lineLimit(1)
             }
 
             if let manualReason = item.manualOnlyReason {
                 Text("需人工确认: \(manualReason)")
-                    .font(.system(size: 9))
-                    .foregroundColor(.orange.opacity(0.9))
+                    .font(.system(size: 11))
+                    .foregroundColor(.orange)
                     .lineLimit(2)
             }
 
             if let sendError {
                 Text(sendError)
-                    .font(.system(size: 9))
+                    .font(.system(size: 11))
                     .foregroundColor(.orange)
                     .lineLimit(2)
             }
@@ -666,15 +818,16 @@ struct PendingSendRow: View {
                 Text(item.reasoning)
                     .lineLimit(1)
             }
-            .font(.system(size: 9))
-            .foregroundColor(.white.opacity(0.35))
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
 
             HStack(spacing: 8) {
                 Button("取消") {
                     Task { await monitor.autopilotService?.cancelPendingSend(id: item.id) }
                 }
-                .font(.system(size: 9)).foregroundColor(.red)
+                .font(.system(size: 11)).foregroundColor(.red)
                 .buttonStyle(.plain)
+                .accessibilityLabel("取消待发送回复")
 
                 Button("立即发送") {
                     Task {
@@ -692,15 +845,17 @@ struct PendingSendRow: View {
                         }
                     }
                 }
-                .font(.system(size: 9)).foregroundColor(.green)
+                .font(.system(size: 11)).foregroundColor(.green)
                 .buttonStyle(.plain)
+                .accessibilityLabel("立即发送待发送回复")
 
                 Button("编辑") {
                     editText = item.replyText
                     isEditing = true
                 }
-                .font(.system(size: 9)).foregroundColor(.blue)
+                .font(.system(size: 11)).foregroundColor(.blue)
                 .buttonStyle(.plain)
+                .accessibilityLabel("编辑待发送回复")
 
                 Spacer()
             }

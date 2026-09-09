@@ -33,7 +33,7 @@ struct AutopilotIndicator: View {
             // popover renders outside the pill, so the cursor naturally
             // leaves the pill bounds while interacting with it — lock
             // the pill open while the popover is visible.
-            panelState.popoverOpen = newValue
+            panelState.setAutopilotPopoverOpen(newValue)
         }
     }
 
@@ -73,7 +73,7 @@ struct AutopilotIndicator: View {
     }
 
     private var tooltip: String {
-        if !monitor.autopilotActive { return "自动托管 · 已关闭 · 点击打开" }
+        if !monitor.autopilotActive { return "自动回复 · 已关闭 · 点击打开" }
         let status: String = {
             if monitor.autopilotManuallyPaused { return "已手动暂停" }
             if monitor.autopilotPaused { return "已暂停 (微信前台)" }
@@ -81,7 +81,7 @@ struct AutopilotIndicator: View {
         }()
         let stats = monitor.autopilotSessionStats
         let duration = Self.formatDuration(stats.duration)
-        return "自动托管 · \(status) · 已跑 \(duration) · 点击查看"
+        return "自动回复 · \(status) · 已跑 \(duration) · 点击查看"
     }
 
     static func formatDuration(_ interval: TimeInterval) -> String {
@@ -130,7 +130,7 @@ struct AutopilotPopoverView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(monitor.autopilotActive ? .green : .secondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text("自动托管")
+                Text("自动回复")
                     .font(.system(size: 12, weight: .semibold))
                 if monitor.autopilotActive {
                     Text(runningHeaderSubtitle)
@@ -158,13 +158,13 @@ struct AutopilotPopoverView: View {
     private var offBody: some View {
         Button(action: {
             monitor.startAutopilot()
-            panelState.showToast("托管已启动", duration: 2)
+            panelState.showToast("自动回复已开始整理", duration: 2)
             close()
         }) {
             HStack(spacing: 4) {
                 Image(systemName: "play.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text("开始托管")
+                Text("开始整理")
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundColor(.white)
@@ -252,7 +252,7 @@ struct AutopilotPopoverView: View {
     private var stopButton: some View {
         Button(action: {
             monitor.stopAutopilot()
-            panelState.showToast("托管已停止", duration: 2)
+            panelState.showToast("自动回复已停止", duration: 2)
             close()
         }) {
             HStack(spacing: 3) {
@@ -275,10 +275,11 @@ struct AutopilotPopoverView: View {
     private var footerLinks: some View {
         HStack(spacing: 10) {
             Button(action: {
-                panelState.showDetail(kind: .autopilot)
+                panelState.pendingSettingsTab = "autopilotDashboard"
+                panelState.onShowSettings?()
                 close()
             }) {
-                Text(monitor.autopilotActive ? "查看日志" : "打开详情")
+                Text("待确认回复")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.accentColor)
             }

@@ -63,13 +63,12 @@ final class AIInboxSummarizerTests: XCTestCase {
 
     private func makeAIService() -> AIService {
         var cfg = AIConfig()
-        cfg.cloudProvider = AIProviderSlot(
+        cfg.provider = AIProviderSlot(
             providerID: "custom",
             baseURL: "http://localhost:9999",
             model: "requested-model",
             apiKey: "sk-test"
         )
-        cfg.activeMode = .cloud
         cfg.summaryEnabled = true
         return AIService(config: cfg)
     }

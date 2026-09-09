@@ -22,6 +22,7 @@ private func moodColor(_ mood: String) -> Color {
 /// VIP notification that has a loaded `VIPAggregator.AggregateResult`.
 struct VIPInsightCardView: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @State private var moodEnabled = false
     let insight: VIPAggregator.AggregateResult
     let vipName: String
     let chatUsername: String?
@@ -133,8 +134,8 @@ struct VIPInsightCardView: View {
                 }
 
                 // Mood section
-                if !insight.mood.isEmpty {
-                    insightSection(label: "情绪趋势") {
+                if moodEnabled && !insight.mood.isEmpty {
+                    insightSection(label: "语气线索 · AI 推断") {
                         HStack(spacing: 5) {
                             moodDot(insight.mood)
                             Text(insight.mood)
@@ -187,6 +188,10 @@ struct VIPInsightCardView: View {
             .padding(.vertical, 8)
         }
         .background(Color.white.opacity(0.04))
+        .onAppear { moodEnabled = monitor.store.loadAIConfig().moodDetectionEnabled }
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConfigDidChange)) { _ in
+            moodEnabled = monitor.store.loadAIConfig().moodDetectionEnabled
+        }
     }
 
     // MARK: - Section wrapper

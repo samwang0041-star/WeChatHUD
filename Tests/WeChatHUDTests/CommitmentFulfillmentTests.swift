@@ -39,7 +39,7 @@ final class CommitmentFulfillmentTests: XCTestCase {
 
     func testFulfilledByKeyword() {
         let c = makeCommitment()
-        let later = [msg(text: "发你了", t: 2000)]
+        let later = [msg(text: "Q2 方案发你了", t: 2000)]
         let result = CommitmentTracker.evaluateFulfillment(
             commitment: c,
             subsequentSelfMessages: later,
@@ -51,19 +51,17 @@ final class CommitmentFulfillmentTests: XCTestCase {
         XCTAssertTrue(reason.contains("发你了"))
     }
 
-    func testFulfilledByFileSendWhenDeliverableMentioned() {
+    func testUnrelatedMediaDoesNotFulfillDeliverable() {
         let c = makeCommitment(content: "发文件给你")
-        // baseType 3 = image (file-class in WeChat's encoding). The
-        // evaluator should count this as evidence when the
-        // commitment involves a deliverable.
+        // An arbitrary image cannot prove that this particular file was delivered.
         let later = [msg(text: "", t: 2000, baseType: 3)]
         let result = CommitmentTracker.evaluateFulfillment(
             commitment: c,
             subsequentSelfMessages: later,
             now: Date(timeIntervalSince1970: 3000)
         )
-        if case .fulfilled = result { /* ok */ } else {
-            XCTFail("expected fulfilled by file send, got \(result)")
+        if case .stillPending = result { /* ok */ } else {
+            XCTFail("An attachment alone cannot identify a delivered promise: \(result)")
         }
     }
 
@@ -113,4 +111,30 @@ final class CommitmentFulfillmentTests: XCTestCase {
             XCTFail("expected stillPending, got \(result)")
         }
     }
+    func testAmbiguousNegativeFutureAndUnrelatedEvidenceRemainPending() {
+        for text in ["发你了", "还没完成Q2方案", "Q2方案明天完成", "Q2方案完成了吗？", "Q3方案发你了", "Q2方案如果完成就发你", "Q2方案还差最后一页，其他已完成", "Q2方案第一部分完成了", "你说Q2方案完成了", "Q2方案待完成", "Q2方案完成后发你", "Q2方案正在完成"] {
+            let result = CommitmentTracker.evaluateFulfillment(
+                commitment: makeCommitment(), subsequentSelfMessages: [msg(text: text, t: 2000)],
+                now: Date(timeIntervalSince1970: 3000)
+            )
+            guard case .stillPending = result else { return XCTFail("False completion for \(text)") }
+        }
+    }
+
+    func testEvidenceBeforePromiseDoesNotCloseIt() {
+        let result = CommitmentTracker.evaluateFulfillment(
+            commitment: makeCommitment(), subsequentSelfMessages: [msg(text: "Q2方案发你了", t: 999)]
+        )
+        guard case .stillPending = result else { return XCTFail("Old evidence cannot close a new promise") }
+    }
+
+    func testAmbiguousEvidenceStillAllowsOverdueTransition() {
+        let result = CommitmentTracker.evaluateFulfillment(
+            commitment: makeCommitment(deadlineAt: Date(timeIntervalSince1970: 1500)),
+            subsequentSelfMessages: [msg(text: "还没完成Q2方案", t: 2000)],
+            now: Date(timeIntervalSince1970: 3000)
+        )
+        guard case .overdue = result else { return XCTFail("Unfulfilled promise should become overdue") }
+    }
+
 }

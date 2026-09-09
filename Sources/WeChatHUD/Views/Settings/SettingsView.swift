@@ -1,272 +1,473 @@
 import SwiftUI
 
-/// macOS System Settings–style layout: sidebar on the left with colored
-/// rounded-square icon + label rows, content pane on the right with a hero
-/// header (icon + title + description) followed by the tab body.
+/// One native workspace: daily work first, configuration in its own sidebar section.
 struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
-    @State private var selectedTab: Tab = SettingsView.initialTab
+    @EnvironmentObject var store: HUDStore
+    @State private var selectedTab: Tab = .today
+    @State private var previewA11yNonce = 0
+    @State private var hideCaptureChrome = false
+    @State private var previewAutoSendDialog = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
-    enum Tab: Hashable, CaseIterable {
-        // Settings
-        case contacts
-        case aiButler
-        case autopilot
-        case system
-        // Dashboards
-        case insight
-        case dailyReport
-        case commitments
+    enum Tab: String, Hashable, CaseIterable, Identifiable {
+        case today, tasks, commitments, drafts
+        case insight, dailyReport
         case autopilotDashboard
-
+        case contacts, aiButler, notifications, aiService, autopilot, system, preferences, localData, guide
+        var id: String { rawValue }
         var label: String {
             switch self {
-            case .contacts:           return "联系人"
-            case .aiButler:           return "AI 管家"
-            case .autopilot:          return "自动托管"
-            case .system:             return "系统"
-            case .insight:            return "洞察"
-            case .dailyReport:        return "日报"
-            case .commitments:        return "承诺"
-            case .autopilotDashboard: return "托管日志"
+            case .today: return "今天"
+            case .drafts: return "草稿"
+            case .tasks: return "待办"
+            case .commitments: return "我答应的事"
+            case .insight: return "聊天回顾"
+            case .dailyReport: return "今日小结"
+            case .contacts: return "关注谁"
+            case .aiButler: return "AI 分析与建议"
+            case .notifications: return "提醒方式"
+            case .aiService: return "AI 服务"
+            case .autopilot: return "自动回复"
+            case .autopilotDashboard: return "待确认回复"
+            case .system: return "微信连接"
+            case .preferences: return "使用偏好"
+            case .localData: return "本地资料"
+            case .guide: return "怎么用"
             }
         }
-
         var icon: String {
             switch self {
-            case .contacts:           return "person.2.fill"
-            case .aiButler:           return "brain.head.profile"
-            case .autopilot:          return "arrow.triangle.2.circlepath"
-            case .system:             return "gearshape.2.fill"
-            case .insight:            return "waveform.badge.magnifyingglass"
-            case .dailyReport:        return "doc.text.fill"
-            case .commitments:        return "checkmark.circle.fill"
-            case .autopilotDashboard: return "list.bullet.rectangle.fill"
+            case .today: return "sun.max"
+            case .drafts: return "square.and.pencil"
+            case .tasks: return "checklist"
+            case .commitments: return "checkmark.bubble"
+            case .insight: return "bubble.left.and.text.bubble.right"
+            case .dailyReport: return "doc.text"
+            case .contacts: return "person.2"
+            case .aiButler: return "sparkles"
+            case .notifications: return "bell"
+            case .aiService: return "link"
+            case .autopilot: return "bolt.shield"
+            case .autopilotDashboard: return "bubble.left.and.bubble.right"
+            case .system: return "antenna.radiowaves.left.and.right"
+            case .preferences: return "slider.horizontal.3"
+            case .localData: return "externaldrive"
+            case .guide: return "questionmark.circle"
             }
         }
-
-        var tint: Color {
-            switch self {
-            case .contacts:           return .blue
-            case .aiButler:           return .purple
-            case .autopilot:          return .cyan
-            case .system:             return .green
-            case .insight:            return .orange
-            case .dailyReport:        return .mint
-            case .commitments:        return .pink
-            case .autopilotDashboard: return .cyan
-            }
-        }
-
         var subtitle: String {
             switch self {
-            case .contacts:           return "管理联系人级别、角色配置和忽略规则。"
-            case .aiButler:           return "AI 服务连接、管家行为和通知过滤。"
-            case .autopilot:          return "自动回复的安全护栏和行为设置。"
-            case .system:             return "同步间隔、数据管理和系统信息。"
-            case .insight:            return "聊天态势分析、情绪洞察和暗信号。"
-            case .dailyReport:        return "查看日报摘要。自定义时间范围的复盘（原周报）已迁移到「复盘」tab。"
-            case .commitments:        return "追踪你和对方的承诺和待办。"
-            case .autopilotDashboard: return "自动回复活动日志和会话统计。"
+            case .today: return "从重要的对话开始，理清今天需要处理的事。"
+            case .drafts: return "写好的回复，确认后再发。"
+            case .tasks: return "从聊天里整理，分清谁来做。"
+            case .commitments: return "答应过的话，带着原文和截止时间留在这里。"
+            case .insight: return "一段聊天里发生了什么。"
+            case .dailyReport: return "今天处理了什么、还剩什么。"
+            case .contacts: return "只帮你看这些人和群。"
+            case .aiButler: return "决定助手帮你读什么、写什么。不设也能看原文。"
+            case .notifications: return "谁来的消息要弹出，停留多久。"
+            case .aiService: return "摘要和草稿用哪家服务。未测试也能先保存。"
+            case .autopilot: return "忙的时候，先替你准备好回复。"
+            case .autopilotDashboard: return "助理写好的回复，确认后再发。"
+            case .system: return "让重要的聊天及时出现在这里。"
+            case .preferences: return "按你的习惯，安静地陪在。"
+            case .localData: return "整理过的事情，随时能找回来。"
+            case .guide: return "不漏事，从这里开始。"
             }
         }
-
-        /// Whether this tab is a dashboard (read-only) vs settings (configurable)
-        var isDashboard: Bool {
-            switch self {
-            case .insight, .dailyReport, .commitments, .autopilotDashboard: return true
-            default: return false
-            }
+        var isDaily: Bool { [.today, .tasks, .commitments, .drafts].contains(self) }
+        var isReview: Bool { [.insight, .dailyReport].contains(self) }
+        var isSettings: Bool {
+            [.contacts, .aiButler, .notifications, .aiService, .autopilot, .system, .preferences, .localData, .guide].contains(self)
         }
-
-        static func from(raw: String?) -> Tab? {
-            guard let raw else { return nil }
-            return Tab.allCases.first { String(describing: $0) == raw }
-        }
-    }
-
-    private static var initialTab: Tab {
-        Tab.from(raw: UserDefaults.standard.string(forKey: "settings.lastTab")) ?? .contacts
+        static func from(raw: String?) -> Tab? { raw.flatMap(Self.init(rawValue:)) }
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: 180)
-
-            Divider()
-
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        NavigationSplitView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    sidebarSection(CompanionProductCopy.sectionHandle, Tab.allCases.filter(\.isDaily))
+                    sidebarSection(CompanionProductCopy.sectionReview, Tab.allCases.filter(\.isReview))
+                    sidebarSection(CompanionProductCopy.sectionReply, [.autopilotDashboard])
+                    sidebarSection(CompanionProductCopy.sectionSettings, Tab.allCases.filter(\.isSettings))
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+            }
+            .scrollContentBackground(.hidden)
+            .background(CompanionPalette.mist)
+            .companionDimmedByDialog(panelState.modalDialogOpen)
+            .navigationSplitViewColumnWidth(
+                min: largeChrome ? 240 : 208,
+                ideal: largeChrome ? 280 : 236,
+                max: largeChrome ? 340 : 268
+            )
+            .safeAreaInset(edge: .top) {
+                HStack(spacing: 10) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .companionFont(size: 16, weight: .semibold)
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(CompanionProductCopy.brandName).companionFont(size: 15, weight: .bold)
+                        Text(CompanionProductCopy.brandPromise)
+                            .companionFont(size: 11)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }.padding(.horizontal, 14).padding(.top, 16).padding(.bottom, 10)
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "lock.shield").foregroundStyle(CompanionPalette.accent)
+                    Text(CompanionProductCopy.sidebarFooter)
+                        .companionFont(size: 11)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .minimumScaleFactor(0.75)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, largeChrome ? 10 : 16)
+            }
+        } detail: {
+            VStack(alignment: .leading, spacing: 0) {
+                if PreviewRuntime.isEnabled && !hideCaptureChrome {
+                    HStack {
+                        Label("交互演示 · 全部为虚构数据，不读取或操作微信", systemImage: "play.rectangle")
+                        Spacer()
+                        Button("模拟新消息") { PreviewRuntime.simulateNotification(monitor: monitor, panelState: panelState) }
+                        Button("模拟首次浮窗") {
+                            panelState.islandSurface = .firstLaunch
+                            panelState.goExtended()
+                        }
+                        Button("模拟同步中") {
+                            monitor.stats.syncStatus = .syncing
+                            panelState.islandSurface = .inbox
+                            panelState.goExtended()
+                        }
+                        Button("模拟连接中断") {
+                            monitor.stats.syncStatus = .error("preview")
+                            panelState.islandSurface = .inbox
+                            panelState.goExtended()
+                        }
+                        Button("模拟离开回来") {
+                            PreviewRuntime.simulateReturnDigest(monitor: monitor, panelState: panelState)
+                        }
+                        Button("打开引导") { NotificationCenter.default.post(name: .hudShowOnboarding, object: nil) }
+                        Button("模拟发送成功") { PreviewRuntime.simulateSendSuccess(monitor: monitor, panelState: panelState) }
+                        Button("模拟发送待核对") { PreviewRuntime.simulateSendUncertain(monitor: monitor, panelState: panelState) }
+                        Button("模拟空浮窗") { PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState) }
+                        Button("模拟收起") { PreviewRuntime.simulateCompact(monitor: monitor, panelState: panelState) }
+                        Button("模拟 AI 测试失败") {
+                            panelState.pendingSettingsTab = "aiService"
+                            PreviewRuntime.simulateAITestFailure()
+                        }
+                        Button("模拟开启自动发送") { PreviewRuntime.simulateAutoSendConfirm(panelState: panelState) }
+                        Button(PreviewRuntime.reduceMotionOverride == true ? "关闭减少动态" : "模拟减少动态") {
+                            PreviewRuntime.toggleReduceMotion(); previewA11yNonce += 1
+                        }
+                        Button(PreviewRuntime.reduceTransparencyOverride == true ? "关闭减少透明" : "模拟减少透明") {
+                            PreviewRuntime.toggleReduceTransparency(); previewA11yNonce += 1
+                        }
+                        Button(PreviewRuntime.largeType ? "关闭大字号" : "模拟大字号") {
+                            PreviewRuntime.toggleLargeType(); previewA11yNonce += 1
+                        }
+                        Button(PreviewRuntime.usingExternalDisplay ? "回到原生屏" : "模拟扩展屏") {
+                            PreviewRuntime.toggleExternalDisplay(store: store); previewA11yNonce += 1
+                        }
+                        Button("导出界面快照") { PreviewRuntime.captureSurfaces() }
+                    }
+                    .font(.callout).foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 28).padding(.vertical, 10)
+                    .background(CompanionMotion.reduceTransparency ? CompanionPalette.surface : Color.orange.opacity(0.08))
+                    .companionDimmedByDialog(panelState.modalDialogOpen)
+                    .id(previewA11yNonce)
+                }
+                if selectedTab != .guide {
+                    pageHeader
+                        .companionDimmedByDialog(panelState.modalDialogOpen)
+                }
+                content
+                    .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
+                WorkspaceStatusBar()
+                    .companionDimmedByDialog(panelState.modalDialogOpen)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(CompanionPalette.canvas)
         }
+        .navigationTitle(CompanionProductCopy.brandName)
+        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
+        .tint(CompanionPalette.accent)
+        .accentColor(CompanionPalette.accent)
+        .alert("操作未保存", isPresented: Binding(get: { monitor.inboxActionError != nil }, set: { if !$0 { monitor.inboxActionError = nil } })) {
+            Button("知道了") { monitor.inboxActionError = nil }
+        } message: { Text(monitor.inboxActionError ?? "请重试") }
         .onAppear { applyPendingTab(panelState.pendingSettingsTab) }
         .onReceive(panelState.$pendingSettingsTab) { applyPendingTab($0) }
-        .onChange(of: selectedTab) { _, _ in persistTabSelection() }
-    }
-
-    /// Centralized pending-tab router so both onAppear and subsequent
-    /// `pendingSettingsTab` updates end up in the same switch. Each
-    /// matched case clears the flag so it only fires once per publish.
-    private func applyPendingTab(_ raw: String?) {
-        guard let raw = raw else { return }
-        switch raw {
-        case "insight":
-            selectedTab = .insight
-        case "autopilot":
-            selectedTab = .autopilot
-        default:
-            return
+        .onReceive(NotificationCenter.default.publisher(for: .hudSwitchTab)) { notification in
+            applyPendingTab(notification.object as? String ?? notification.userInfo?["tab"] as? String)
         }
-        panelState.pendingSettingsTab = nil
-    }
-
-    // MARK: - Sidebar
-
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            // Title header
-            HStack {
-                Text("设置")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.primary)
-                Spacer()
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            // Tab rows
-            VStack(spacing: 2) {
-                // Settings section
-                ForEach(Tab.allCases.filter { !$0.isDashboard }, id: \.self) { tab in
-                    sidebarRow(tab)
-                }
-
-                Divider()
-                    .padding(.vertical, 6)
-
-                Text("面板")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-
-                // Dashboard section
-                ForEach(Tab.allCases.filter { $0.isDashboard }, id: \.self) { tab in
-                    sidebarRow(tab)
+        .onReceive(NotificationCenter.default.publisher(for: .hudPreviewCaptureChrome)) { _ in
+            hideCaptureChrome = PreviewRuntime.hideDemoChromeForCapture
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hudPreviewAutoSendConfirm)) { _ in
+            applyPendingTab("autopilot")
+            previewAutoSendDialog = true
+        }
+        .companionDialogBackdrop(previewAutoSendDialog) {
+            if previewAutoSendDialog {
+                CompanionDialog(title: CompanionProductCopy.autoSendConfirmTitle, onClose: {
+                    previewAutoSendDialog = false
+                }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(CompanionProductCopy.autoSendConfirmMessage)
+                            .companionFont(size: 13)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer()
+                            Button(CompanionProductCopy.autoSendKeepManual) { previewAutoSendDialog = false }
+                            Button(CompanionProductCopy.autoSendAllow) {
+                                previewAutoSendDialog = false
+                                var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+                                cfg.autoSendEnabled = true
+                                try? store.setSettingJSON("autopilot", value: cfg)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CompanionPalette.jade)
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, 8)
-
-            Spacer(minLength: 0)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var largeChrome: Bool { PreviewRuntime.largeType || typeSize.isAccessibilitySize }
+
+    private var pageHeader: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(selectedTab.label).companionFont(size: 30, weight: .bold).minimumScaleFactor(0.7).lineLimit(2)
+                Text(selectedTab.subtitle).companionFont(size: 13).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 10)
+            if selectedTab == .today {
+                Text(Date(), format: .dateTime.month().day().weekday(.wide))
+                    .companionFont(size: 13, weight: .medium).foregroundStyle(.secondary)
+            }
+            if selectedTab == .contacts {
+                Button { NotificationCenter.default.post(name: .hudAddContact, object: nil) } label: {
+                    Label("添加关注", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+            }
+        }
+        .frame(maxWidth: headerWidth, alignment: .leading)
+        .padding(.horizontal, 28).padding(.top, 28).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: selectedTab == .guide ? .leading : .center)
+    }
+
+    private var headerWidth: CGFloat {
+        [.aiButler, .notifications, .aiService, .system, .preferences, .localData, .autopilot, .autopilotDashboard, .guide].contains(selectedTab) ? 960 : 1180
+    }
+
+    private func sidebarSection(_ title: String, _ tabs: [Tab]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .companionFont(size: 11, weight: .semibold)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
+            ForEach(tabs) { tab in sidebarRow(tab) }
+        }
     }
 
     private func sidebarRow(_ tab: Tab) -> some View {
-        let isSelected = selectedTab == tab
-        return Button(action: { selectedTab = tab }) {
-            HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(tab.tint)
-                        .frame(width: 20, height: 20)
-                    Image(systemName: tab.icon)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white)
-                }
+        let selected = selectedTab == tab
+        return Button { selectedTab = tab } label: {
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(selected ? CompanionPalette.jade : Color.clear)
+                    .frame(width: 3, height: 18)
+                Image(systemName: tab.icon)
+                    .companionFont(size: 14, weight: .medium)
+                    .foregroundStyle(selected ? CompanionPalette.jade : .secondary)
+                    .frame(width: 20)
                 Text(tab.label)
-                    .font(.system(size: 12))
-                    .foregroundColor(isSelected ? .white : .primary)
+                    .companionFont(size: 13, weight: selected ? .semibold : .regular)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
+                if let count = sidebarCount(tab), count > 0 {
+                    Text(count, format: .number)
+                        .companionFont(size: 11, weight: .semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(CompanionPalette.jade)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(CompanionPalette.sidebarSelectedFill, in: Capsule())
+                }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isSelected ? Color.accentColor : Color.clear)
-            )
+            .padding(.vertical, 7)
+            .padding(.trailing, 8)
             .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? CompanionPalette.sidebarSelectedFill : Color.clear)
+            )
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isSelected)
+        .focusable(!panelState.modalDialogOpen)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(tab.label)
+        .accessibilityHint("回车打开这一页")
+        .accessibilityIdentifier("workspace.\(tab.rawValue)")
+        .accessibilityValue(selected ? "已选中" : "")
     }
 
-    // MARK: - Tab persistence
-
-    private func persistTabSelection() {
-        let raw = String(describing: selectedTab)
-        UserDefaults.standard.set(raw, forKey: "settings.lastTab")
+    private func sidebarCount(_ tab: Tab) -> Int? {
+        switch tab {
+        case .tasks: return monitor.discussionItems.filter { $0.status == .pending && $0.kind != .info }.count
+        case .commitments: return monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count
+        case .drafts: return store.loadDrafts().count
+        case .autopilotDashboard:
+            let pending = monitor.autopilotLog.filter { $0.action == .pending }.count
+            return pending > 0 ? pending : nil
+        default: return nil
+        }
     }
 
-    // MARK: - Content
+    private func applyPendingTab(_ raw: String?) {
+        guard let tab = Tab.from(raw: raw) else { return }
+        selectedTab = tab
+        panelState.pendingSettingsTab = nil
+    }
 
-    @ViewBuilder
-    private var content: some View {
-        // Insight uses HSplitView and needs full space — no ScrollView or padding.
-        // Contacts uses its own List which needs full height — no ScrollView.
-        // Other tabs are form-based and need ScrollView.
-        if selectedTab == .insight {
+    @ViewBuilder private var content: some View {
+        switch selectedTab {
+        case .today:
+            AssistantTodayView(navigate: { selectedTab = $0 })
+        case .tasks:
+            DiscussionWorkspaceView()
+        case .drafts:
+            ReplyDraftsView()
+        case .commitments:
+            CommitmentTabView()
+        case .contacts:
+            ContactsSettingsView()
+                .frame(maxWidth: 1180)
+                .padding(.horizontal, 28).padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
+        case .insight:
             ChatInsightView(insightCoordinator: monitor.insightCoordinator)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if selectedTab == .contacts {
-            VStack(alignment: .leading, spacing: 16) {
-                heroHeader
-                ContactsSettingsView()
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        } else {
+        case .guide:
+            CompanionGuideView(navigate: { selectedTab = $0 }, showIntroduction: {
+                NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)
+            })
+        case .aiButler:
+            AISettingsView(section: "analysis")
+        case .notifications:
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    heroHeader
-
+                NotificationSettingsView()
+                    .frame(maxWidth: 960, alignment: .leading)
+                    .padding(.horizontal, 28).padding(.bottom, 28)
+                    .frame(maxWidth: .infinity)
+            }
+        case .aiService:
+            AISettingsView(section: "service")
+        case .autopilotDashboard:
+            ApprovalWorkspaceView()
+                .frame(maxWidth: 1180)
+                .padding(.horizontal, 28).padding(.bottom, 16)
+                .frame(maxWidth: .infinity)
+        default:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
                     switch selectedTab {
-                    case .contacts, .insight:
-                        EmptyView() // handled above
-                    case .aiButler:
-                        AISettingsView()
-                    case .autopilot:
-                        AutopilotSettingsView()
-                    case .system:
-                        SyncSettingsView()
-                    case .dailyReport:
-                        DailyReportTabView()
-                    case .commitments:
-                        CommitmentTabView()
-                    case .autopilotDashboard:
-                        AutopilotTabView()
+                    case .autopilot: AutopilotSettingsView()
+                    case .system: SyncSettingsView(pane: "connection")
+                    case .preferences: SyncSettingsView(pane: "preferences")
+                    case .localData: SyncSettingsView(pane: "data")
+                    case .dailyReport: DailyReportTabView()
+                    default: EmptyView()
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 18)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: 960, alignment: .leading)
+                .padding(.horizontal, 28).padding(.bottom, 28)
+                .frame(maxWidth: .infinity)
             }
+        }
+    }
+}
+
+private struct WorkspaceStatusBar: View {
+    @EnvironmentObject var monitor: ChatMonitor
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+            Text(title)
+                .companionFont(size: 12, weight: .medium)
+            Spacer()
+            if let date = monitor.stats.lastSyncAt {
+                Text("上次同步：\(date.formatted(date: .long, time: .shortened))")
+                    .companionFont(size: 11)
+                    .foregroundStyle(.secondary)
+            }
+            Button { monitor.refreshNow() } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.plain)
+            .disabled(isSyncing)
+            .accessibilityLabel("查看新消息")
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 10)
+        .background(CompanionPalette.surface)
+        .overlay(alignment: .top) { Divider() }
+    }
+
+    private var isSyncing: Bool { if case .syncing = monitor.stats.syncStatus { return true }; return false }
+
+    private var title: String {
+        switch monitor.stats.syncStatus {
+        case .ok: return "微信已连接 · 刚刚同步"
+        case .syncing: return "正在读取你关注的聊天"
+        case .idle: return "等待首次同步"
+        case .stale: return "消息可能不是最新的"
+        case .waitingForWeChat: return "等待微信启动"
+        case .accountSwitched: return "当前微信账号已经读不到了"
+        case .error: return "暂时读不到新消息"
         }
     }
 
-    private var heroHeader: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selectedTab.tint)
-                    .frame(width: 44, height: 44)
-                Image(systemName: selectedTab.icon)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(selectedTab.label)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.primary)
-                Text(selectedTab.subtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 0)
+    private var color: Color {
+        switch monitor.stats.syncStatus {
+        case .ok: return CompanionPalette.jade
+        case .syncing, .idle: return .secondary
+        default: return .orange
         }
     }
+
+    private var symbol: String {
+        switch monitor.stats.syncStatus {
+        case .ok: return "checkmark.circle.fill"
+        case .syncing, .idle: return "arrow.triangle.2.circlepath"
+        default: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+extension Notification.Name {
+    static let hudAddContact = Notification.Name("WeChatHUD.AddContact")
 }

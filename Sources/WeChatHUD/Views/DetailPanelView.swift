@@ -15,7 +15,8 @@ struct DetailPanelView: View {
                 // Inline notification bar for new urgent messages while in detail
                 if panelState.currentState == .detail,
                    let top = monitor.inboxItems.first,
-                   top.priority != .p2 {
+                   top.priority != .p2,
+                   top.chatUsername != panelState.selectedChatUsername {
                     detailNotificationBar(top)
                 }
 
@@ -27,6 +28,7 @@ struct DetailPanelView: View {
                             chatUsername: chatUsername,
                             chatName: chatName
                         )
+                        .id(chatUsername)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         // Chat name missing — fall back to empty pane
@@ -65,7 +67,7 @@ struct DetailPanelView: View {
                 .frame(width: 7, height: 7)
             Text(item.aiSummary ?? item.preview)
                 .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.85))
+                .foregroundColor(.primary)
                 .lineLimit(1)
             if item.isOverdue {
                 Text("超时\(item.overdueMinutes)分")
@@ -105,7 +107,7 @@ struct AutopilotDetailPane: View {
                 .padding(.bottom, 6)
 
             Divider()
-                .background(Color.white.opacity(0.08))
+                .background(Color.secondary.opacity(0.2))
 
             ScrollView {
                 AutopilotTabView()
@@ -122,22 +124,22 @@ struct AutopilotDetailPane: View {
             }) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
+                    .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
 
             Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
                 .font(.system(size: 11))
-                .foregroundColor(monitor.autopilotActive ? .green : .white.opacity(0.5))
+                .foregroundColor(monitor.autopilotActive ? .green : .secondary)
 
-            Text("自动托管")
+            Text("自动回复")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
 
             if monitor.autopilotActive {
                 Text(statusLabel)
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(.secondary)
             }
 
             Spacer()

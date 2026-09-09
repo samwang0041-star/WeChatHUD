@@ -50,13 +50,37 @@ actor AutopilotService {
     /// Read from config at runtime; fallback to 10s.
     private var batchWindowSeconds: TimeInterval = 10
 
+    /// Computes the next batch deadline without relying on actor state.
+    ///
+    /// The configured window controls the first deadline exactly. Later
+    /// messages may extend the deadline by ten seconds, but never shorten an
+    /// existing deadline and never push the batch beyond sixty seconds from
+    /// the first message.
+    nonisolated static func batchDeadline(
+        firstArrival: Date,
+        now: Date,
+        window: TimeInterval,
+        existingDeadline: Date?
+    ) -> Date {
+        let maxDeadline = firstArrival.addingTimeInterval(60)
+        let initialDeadline = firstArrival.addingTimeInterval(max(0, window))
+        let proposedDeadline = existingDeadline == nil
+            ? initialDeadline
+            : now.addingTimeInterval(10)
+
+        // A deadline produced by this helper is always bounded by the
+        // first-arrival cap. Preserve an existing deadline when a later
+        // message arrives before it would extend the window.
+        return min(max(existingDeadline ?? proposedDeadline, proposedDeadline), maxDeadline)
+    }
+
     /// Active session ID (nil if autopilot is off).
     private var sessionId: Int64?
 
     /// Running counters for the active session.
     private var sessionHandled = 0
     private var sessionPending = 0
-    private var sessionSent = 0
+    private(set) var sessionSent = 0
 
     /// Paused because user is actively using WeChat.
     private var pausedForUserActivity = false
@@ -344,18 +368,26 @@ actor AutopilotService {
 
             // Buffer this message for batching
             batchBuffer[msg.chatUsername, default: []].append(msg)
+            let now = Date()
             if batchTimers[msg.chatUsername] == nil {
                 // First message from this chat — set batch timer
-                let dynamicWindow = max(batchWindowSeconds, 15)
-                batchTimers[msg.chatUsername] = Date().addingTimeInterval(dynamicWindow)
-                batchStartTimes[msg.chatUsername] = Date()
+                batchStartTimes[msg.chatUsername] = now
+                batchTimers[msg.chatUsername] = Self.batchDeadline(
+                    firstArrival: now,
+                    now: now,
+                    window: batchWindowSeconds,
+                    existingDeadline: nil
+                )
             } else {
                 // Extend window by 10s on each new message (sender still typing)
                 // Cap at 60s total from actual first message arrival
-                let firstArrival = batchStartTimes[msg.chatUsername] ?? Date()
-                let maxDeadline = firstArrival.addingTimeInterval(60)
-                let extended = Date().addingTimeInterval(10)
-                batchTimers[msg.chatUsername] = min(extended, maxDeadline)
+                let firstArrival = batchStartTimes[msg.chatUsername] ?? now
+                batchTimers[msg.chatUsername] = Self.batchDeadline(
+                    firstArrival: firstArrival,
+                    now: now,
+                    window: batchWindowSeconds,
+                    existingDeadline: batchTimers[msg.chatUsername]
+                )
             }
         }
 
@@ -366,11 +398,18 @@ actor AutopilotService {
 
         let allExpired = isPaused ? [] : batchTimers.filter { now >= $0.value }.map(\.key)
         for chatUsername in allExpired {
+            guard !isPaused else { break }
             guard let batch = batchBuffer.removeValue(forKey: chatUsername) else { continue }
-            batchTimers.removeValue(forKey: chatUsername)
-            batchStartTimes.removeValue(forKey: chatUsername)
+            let savedTimer = batchTimers.removeValue(forKey: chatUsername)
+            let savedStart = batchStartTimes.removeValue(forKey: chatUsername)
 
             let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
+            if entry.action == .skipped, entry.aiReasoning?.contains("已暂停") == true {
+                batchBuffer[chatUsername] = batch
+                if let savedTimer { batchTimers[chatUsername] = savedTimer }
+                if let savedStart { batchStartTimes[chatUsername] = savedStart }
+                continue
+            }
             do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
             batchEntries.append(entry)
             ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
@@ -384,7 +423,6 @@ actor AutopilotService {
 
         let allEntries = immediateEntries + batchEntries
         sessionHandled += allEntries.count
-        sessionSent += sent
         sessionPending += pending
 
         if let sid = sessionId {
@@ -768,7 +806,13 @@ actor AutopilotService {
             styleScore: styleScore,
             scheduledSendTime: sendTime,
             peerLastMessage: combinedText,
-            topic: memory?.conversationPhase
+            topic: memory?.conversationPhase,
+            manualOnlyReason: Self.automaticSendHoldReason(
+                safetyHold: safetyHold,
+                replyText: replyText,
+                sensitiveKeywords: config.sensitiveKeywords,
+                downgradedAction: downgraded.action
+            )
         )
         pendingSendQueue.append(pendingItem)
         if let sid = self.sessionId {
@@ -1040,23 +1084,43 @@ actor AutopilotService {
         return await executeSend(item: item, config: config)
     }
 
+    func testingEnqueue(_ item: PendingSend) {
+        pendingSendQueue.append(item)
+    }
+
+    func testingExecuteSend(item: PendingSend, config: AutopilotConfig) async -> ManualSendOutcome {
+        await executeSend(item: item, config: config)
+    }
+
+    private func persistSessionCounts() {
+        guard let sid = sessionId else { return }
+        try? store.updateAutopilotSessionCounts(
+            id: sid, handled: sessionHandled, pending: sessionPending, sent: sessionSent
+        )
+    }
+
     /// Process pending queue — send items whose timer has expired.
     /// Called from ChatMonitor's 60s safety timer.
     func processPendingQueue(config: AutopilotConfig) async {
         guard config.autoSendEnabled, !isPaused, sessionId != nil else { return }
         let now = Date()
-        let expired = pendingSendQueue.filter {
-            $0.scheduledSendTime <= now && $0.manualOnlyReason == nil
-        }
+        let expired = pendingSendQueue.filter { Self.isEligibleForAutomaticSend($0, now: now) }
         for item in expired {
             pendingSendQueue.removeAll { $0.id == item.id }
-            _ = await executeSend(item: item, config: config)
+            let outcome = await executeSend(item: item, config: config)
+            if case .blocked = outcome,
+               !pendingSendQueue.contains(where: { $0.id == item.id }) {
+                pendingSendQueue.append(item)
+            }
         }
     }
 
     /// Execute a send from the queue.
     private func executeSend(item: PendingSend, config: AutopilotConfig) async -> ManualSendOutcome {
-        guard !isPaused, sessionId != nil else { return .blocked("自动驾驶暂停或会话未启动") }
+        guard !isPaused, sessionId != nil else {
+            pendingSendQueue.append(item)
+            return .blocked("自动驾驶暂停或会话未启动")
+        }
         guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
             print("[WCHUD] Autopilot: queued send blocked — session cap reached")
             var retained = item
@@ -1086,19 +1150,23 @@ actor AutopilotService {
             try? store.deletePendingSend(id: item.id)
             sessionStats.totalSent += 1
             sessionSent += 1
+            persistSessionCounts()
             // Refresh memory after send
             await refreshMemoryAfterSend(chatUsername: item.chatUsername, chatName: item.chatName)
             return .sent
         }
         var retained = item
-        retained.autoSendAttempts += 1
         let failureReason = lastSendFailureMessage ?? "发送结果无法确认"
-        retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
+        let busy = Self.isRetryableSendBusy(failureReason)
+        if !busy {
+            retained.autoSendAttempts += 1
+            retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
+        }
         pendingSendQueue.append(retained)
         if let sid = sessionId {
             try? store.upsertPendingSend(retained, sessionId: sid)
         }
-        return .blocked("\(failureReason)，已转为人工确认")
+        return .blocked(busy ? failureReason : "\(failureReason)，已转为人工确认")
     }
 
     private func stalePendingSendReason(_ item: PendingSend) -> String? {
@@ -1372,6 +1440,38 @@ actor AutopilotService {
         return (action, reasoning)
     }
 
+    static func isRetryableSendBusy(_ reason: String) -> Bool {
+        reason == "已有发送正在进行"
+    }
+
+    static func isEligibleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {
+        item.scheduledSendTime <= now && item.manualOnlyReason == nil
+    }
+
+    /// Safety holds, keyword hits, and other safety downgrades must never
+    /// auto-send the model's original reply. An AI-chosen stall with no
+    /// safety override still auto-sends that stall text (`downgradedAction == .sent`).
+    static func automaticSendHoldReason(
+        safetyHold: String?,
+        replyText: String,
+        sensitiveKeywords: [String],
+        downgradedAction: AutopilotAction = .sent
+    ) -> String? {
+        if let safetyHold {
+            return "安全检查：\(safetyHold)"
+        }
+        if !sensitiveKeywords.isEmpty, !replyText.isEmpty {
+            let lower = replyText.lowercased()
+            if let keyword = sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+                return "回复含敏感词「\(keyword)」，请人工确认"
+            }
+        }
+        if downgradedAction != .sent {
+            return "安全策略要求人工确认后再发送"
+        }
+        return nil
+    }
+
     // MARK: - Per-contact style hint
 
     /// Build a natural-language hint about the user's style with this specific contact.
@@ -1561,34 +1661,47 @@ enum ClipboardGuard {
     struct SavedState {
         let items: [NSPasteboardItem]?
         let changeCount: Int
+        let hadContent: Bool
     }
 
     static func save() -> SavedState {
         let pb = NSPasteboard.general
         let changeCount = pb.changeCount
+        let originalItems = pb.pasteboardItems ?? []
+        let hadContent = !originalItems.isEmpty || !(pb.types ?? []).isEmpty
 
         // Deep-copy pasteboard items so they survive clearContents()
         var saved: [NSPasteboardItem] = []
-        for item in pb.pasteboardItems ?? [] {
+        for item in originalItems {
             let copy = NSPasteboardItem()
             for type in item.types {
                 if let data = item.data(forType: type) {
                     copy.setData(data, forType: type)
                 }
             }
+            if copy.types.isEmpty, let data = pb.data(forType: item.types.first ?? .string) {
+                copy.setData(data, forType: item.types.first ?? .string)
+            }
             saved.append(copy)
         }
+        if saved.allSatisfy({ $0.types.isEmpty }) {
+            saved = []
+        }
 
-        return SavedState(items: saved.isEmpty ? nil : saved, changeCount: changeCount)
+        return SavedState(items: saved.isEmpty ? nil : saved, changeCount: changeCount, hadContent: hadContent)
     }
 
     static func restore(_ state: SavedState) {
         let pb = NSPasteboard.general
         // Only restore if the clipboard was changed (by our send)
         guard pb.changeCount != state.changeCount else { return }
-        guard let items = state.items, !items.isEmpty else { return }
-
+        if state.hadContent && (state.items == nil || state.items?.isEmpty == true) {
+            // Snapshot failed (promised files / images). Do not wipe irreplaceable data.
+            return
+        }
         pb.clearContents()
-        pb.writeObjects(items)
+        if let items = state.items, !items.isEmpty {
+            pb.writeObjects(items)
+        }
     }
 }

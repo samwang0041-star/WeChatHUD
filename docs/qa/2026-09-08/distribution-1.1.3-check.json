@@ -1,0 +1,24 @@
+{
+  "version": "1.1.3",
+  "submission": "e7d9f8ed-c79f-4a87-aba2-2d77f03b17e4",
+  "notary_status": "Accepted",
+  "sha256": "fb1c958c20265d2b36fbe77eb4e29b8385ce4d96cd6c856f0bfdf90cda2db7e8",
+  "checks": {
+    "signature": {
+      "exit_code": 0,
+      "output": ""
+    },
+    "ticket": {
+      "exit_code": 0,
+      "output": "Processing: <verification-directory>/WeChatHUD.app\nThe validate action worked!"
+    },
+    "gatekeeper": {
+      "exit_code": 0,
+      "output": "<verification-directory>/WeChatHUD.app: accepted\nsource=Notarized Developer ID"
+    },
+    "resources": {
+      "exit_code": 0,
+      "output": "{\n  \"bundled_prompts\" : \"ready\",\n  \"mode\" : \"bundle-check\",\n  \"native_dependency\" : \"ready\",\n  \"result\" : \"ready\"\n}"
+    }
+  }
+}

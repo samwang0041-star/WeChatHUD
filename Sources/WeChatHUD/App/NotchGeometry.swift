@@ -76,3 +76,29 @@ struct NotchGeometry {
         )
     }
 }
+
+/// Picks which display the island sits on. Isolated so multi-display
+/// preference can be tested without spinning up NSPanel.
+enum IslandScreenPolicy {
+    struct Candidate: Equatable {
+        let id: Int
+        let isBuiltIn: Bool
+        let hasNotch: Bool
+        let name: String
+    }
+
+    static func pick(preference: DisplayScreen, screens: [Candidate]) -> Candidate? {
+        guard !screens.isEmpty else { return nil }
+        switch preference {
+        case .builtIn:
+            return screens.first(where: \.isBuiltIn)
+                ?? screens.first(where: \.hasNotch)
+                ?? screens.first(where: { $0.name.contains("Built") || $0.name.contains("内置") })
+                ?? screens.first
+        case .external:
+            return screens.first(where: { !$0.isBuiltIn })
+                ?? screens.first(where: { !$0.name.contains("Built") && !$0.name.contains("内置") })
+                ?? screens.first
+        }
+    }
+}

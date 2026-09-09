@@ -211,18 +211,18 @@ final class WeChatDecryptorTests: XCTestCase {
         )
     }
 
-    func testApplyWALSkipsTooSmallFile() throws {
+    func testApplyWALRejectsIncompleteHeader() throws {
         let key = Data(count: 32)
         let walPath = NSTemporaryDirectory() + "test_wal_small_\(UUID()).wal"
-        // WAL with header smaller than 32 bytes should be skipped
+        // Incomplete headers must fail so callers retry instead of marking a sync successful.
         FileManager.default.createFile(atPath: walPath, contents: Data(count: 10))
         defer { try? FileManager.default.removeItem(atPath: walPath) }
 
-        try WeChatDecryptor.applyWAL(
+        XCTAssertThrowsError(try WeChatDecryptor.applyWAL(
             dbPath: "/tmp/nonexistent.db",
             walPath: walPath,
             key: key
-        )
+        ))
     }
 
     // MARK: - Helpers

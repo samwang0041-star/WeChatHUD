@@ -107,6 +107,10 @@ actor RelationshipInferrer {
             try store.upsertRelationshipProfile(profile)
         } catch {
             print("[WCHUD] RelationshipInferrer: DB save failed: \(error)")
+            // Do not report a successful inference when its durable result
+            // was not written. Callers use nil to keep the previous profile
+            // visible and show a retryable failure state.
+            return nil
         }
         return profile
     }

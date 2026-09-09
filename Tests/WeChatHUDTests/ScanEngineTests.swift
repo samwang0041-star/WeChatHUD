@@ -142,4 +142,17 @@ final class ScanEngineTests: XCTestCase {
             "A sender that isn't in the VIP person set produces no cross-group trace."
         )
     }
+
+    func testFirstScanFetchLimitCoversUnreadBacklog() {
+        XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 0), 100)
+        XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 40), 100)
+        XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 150), 150)
+        XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 800), 500)
+        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: true, unreadCount: 150), 100)
+        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: false, unreadCount: 150), 150)
+        XCTAssertFalse(ScanEngine.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: true))
+        XCTAssertTrue(ScanEngine.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: false))
+        XCTAssertFalse(ScanEngine.shouldPersistFirstScanBaseline(sessionsAvailable: false))
+        XCTAssertTrue(ScanEngine.shouldPersistFirstScanBaseline(sessionsAvailable: true))
+    }
 }

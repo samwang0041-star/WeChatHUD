@@ -23,6 +23,9 @@ struct WeChatDecryptor {
             throw DecryptorError.decryptFailed("Page size mismatch: \(pageData.count)")
         }
 
+        guard key.count == keySize else {
+            throw DecryptorError.invalidKey("Key must be \(keySize) bytes")
+        }
         // Work with a zero-based copy so all index math is straightforward.
         let page = Data(pageData)
         let ivOffset = pageSize - reserveSize
@@ -85,7 +88,7 @@ struct WeChatDecryptor {
         guard let inputData = FileManager.default.contents(atPath: inputPath) else {
             throw DecryptorError.readFailed("Cannot read \(inputPath)")
         }
-        guard inputData.count >= pageSize else {
+        guard inputData.count >= pageSize, inputData.count % pageSize == 0 else {
             throw DecryptorError.readFailed("File too small: \(inputData.count) bytes")
         }
 
@@ -143,7 +146,7 @@ struct WeChatDecryptor {
         let outputData = Data(bytesNoCopy: outputPtr, count: totalSize, deallocator: .free)
         ownsOutput = false
 
-        guard FileManager.default.createFile(atPath: outputPath, contents: outputData) else {
+        guard FileManager.default.createFile(atPath: outputPath, contents: outputData, attributes: [.posixPermissions: 0o600]) else {
             throw DecryptorError.writeFailed("Cannot write to \(outputPath)")
         }
     }
@@ -196,69 +199,39 @@ struct WeChatDecryptor {
         }
     }
 
-    /// Apply WAL (Write-Ahead Log) patches to a decrypted database.
-    /// WAL contains newer writes that haven't been checkpointed yet.
-    ///
-    /// Uses `FileHandle` seek+write so only the modified pages are touched
-    /// on disk — the previous implementation rewrote the entire file each
-    /// call, which for a 100 MB DB meant 200 MB of I/O per WAL delta.
-    /// This affects only our local cache file, never WeChat's original.
+    /// Replay only committed, checksum-valid WAL frames into an atomically
+    /// published cache copy. Never patch WeChat's source database.
     static func applyWAL(dbPath: String, walPath: String, key: Data) throws {
         guard FileManager.default.fileExists(atPath: walPath) else { return }
-        guard let walData = FileManager.default.contents(atPath: walPath) else { return }
-
-        let walHeaderSize = 32
-        let frameHeaderSize = 24
-        guard walData.count > walHeaderSize else { return }
-
-        let walSalt1 = walData.subdata(in: 16..<20)
-        let walSalt2 = walData.subdata(in: 20..<24)
-
-        guard let dbHandle = FileHandle(forUpdatingAtPath: dbPath) else {
-            throw DecryptorError.writeFailed("Cannot open \(dbPath) for updating")
+        guard let walData = FileManager.default.contents(atPath: walPath) else {
+            throw DecryptorError.readFailed("Cannot read WAL snapshot")
         }
-        defer { try? dbHandle.close() }
-
-        // Sanity: know the file length so we don't seek past it.
-        let dbLen: UInt64
+        let plan = try WALReplay.plan(walData, expectedPageSize: pageSize)
+        guard let pageCount = plan.databasePageCount else { return }
+        let fm = FileManager.default
+        let staging = dbPath + ".wal-" + UUID().uuidString
+        try fm.copyItem(atPath: dbPath, toPath: staging)
+        defer { try? fm.removeItem(atPath: staging) }
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: staging)
+        let handle = try FileHandle(forUpdating: URL(fileURLWithPath: staging))
         do {
-            dbLen = try dbHandle.seekToEnd()
+            for frame in plan.frames where frame.pageNumber <= pageCount {
+                let decrypted = try decryptPage(frame.data, key: key, isFirstPage: frame.pageNumber == 1)
+                try handle.seek(toOffset: UInt64(frame.pageNumber - 1) * UInt64(pageSize))
+                try handle.write(contentsOf: decrypted)
+            }
+            // Committed database size may grow or shrink; both are valid WAL transactions.
+            try handle.truncate(atOffset: UInt64(pageCount) * UInt64(pageSize))
+            try handle.synchronize()
+            try handle.close()
         } catch {
-            throw DecryptorError.readFailed("Cannot seek \(dbPath)")
+            try? handle.close()
+            throw error
         }
-
-        var offset = walHeaderSize
-        while offset + frameHeaderSize + pageSize <= walData.count {
-            let pgnoBytes = walData.subdata(in: offset..<(offset + 4))
-            let pgno = pgnoBytes.withUnsafeBytes { buf -> UInt32 in
-                UInt32(bigEndian: buf.loadUnaligned(as: UInt32.self))
-            }
-
-            // Skip frames whose salts don't match the WAL header — a sign
-            // that WeChat is mid-write / mid-checkpoint and the frame is
-            // stale.
-            let frameSalt1 = walData.subdata(in: (offset + 8)..<(offset + 12))
-            let frameSalt2 = walData.subdata(in: (offset + 12)..<(offset + 16))
-            guard frameSalt1 == walSalt1 && frameSalt2 == walSalt2 else {
-                offset += frameHeaderSize + pageSize
-                continue
-            }
-
-            let frameStart = offset + frameHeaderSize
-            let frameData = walData.subdata(in: frameStart..<(frameStart + pageSize))
-            let decrypted = try decryptPage(frameData, key: key, isFirstPage: pgno == 1)
-
-            let dbOffset = UInt64(Int(pgno - 1) * pageSize)
-            if dbOffset + UInt64(pageSize) <= dbLen {
-                do {
-                    try dbHandle.seek(toOffset: dbOffset)
-                    try dbHandle.write(contentsOf: decrypted)
-                } catch {
-                    throw DecryptorError.writeFailed("WAL patch write failed at page \(pgno): \(error)")
-                }
-            }
-
-            offset += frameHeaderSize + pageSize
+        // POSIX rename atomically replaces the destination; existing readers retain
+        // their previous inode and new readers see only the finished snapshot.
+        guard rename(staging, dbPath) == 0 else {
+            throw DecryptorError.writeFailed("Cannot publish WAL snapshot")
         }
     }
 }

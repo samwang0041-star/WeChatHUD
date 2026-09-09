@@ -5,6 +5,18 @@ import Foundation
 // Line-buffer stdout so `tee`/`tail -f` sees prints immediately.
 setvbuf(stdout, nil, _IOLBF, 0)
 
+if CommandLine.arguments.dropFirst().first == "bundle-check" {
+    exit(BundleSelfCheck.run())
+}
+if CommandLine.arguments.dropFirst().first == "self-check" {
+    ProductSelfCheck.run()
+    exit(0)
+}
+if CommandLine.arguments.dropFirst().first == "ai-check" {
+    let code = ProductSelfCheck.runAICheck()
+    exit(code)
+}
+
 // CLI subcommand dispatch. Runs BEFORE NSApplication.run() so the binary
 // can be used as a one-shot tool for prompt iteration without bringing
 // up the full HUD. Recognised subcommands:
@@ -16,6 +28,7 @@ setvbuf(stdout, nil, _IOLBF, 0)
 //   group-catchup <chat_username> [--limit N]
 //   categorize <chat_username> [--limit N]
 //   retrospect [--date YYYY-MM-DD]
+//   ai-check
 //
 // Anything else falls through to launching the GUI.
 let aiSubcommands: Set<String> = [
@@ -25,7 +38,8 @@ let aiSubcommands: Set<String> = [
     "suggest-reply",
     "group-catchup",
     "categorize",
-    "retrospect"
+    "retrospect",
+    "ai-check"
 ]
 if CommandLine.arguments.count >= 2 {
     let sub = CommandLine.arguments[1]

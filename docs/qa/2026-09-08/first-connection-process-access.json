@@ -1,0 +1,32 @@
+{
+  "self_control": {
+    "kern_return": 0,
+    "success": true,
+    "exit_code": 0
+  },
+  "official_wechat": {
+    "kern_return": 5,
+    "success": false,
+    "exit_code": 1
+  },
+  "caller": "local_unprivileged_probe",
+  "memory_read": false,
+  "privilege_escalation": false,
+  "signing_changes": false,
+  "login_action": false,
+  "source_sha256": "d5fbf377c4155201808307c4be34d65d5ff545abe43d4f29fc4b69157c4b2d18",
+  "limits": "Does not establish outcome for a separately authorized signed helper; WeChat was at its entry screen.",
+  "read_port_probe": {
+    "self_control": {
+      "return": 0,
+      "errno": 0,
+      "exit_code": 0
+    },
+    "official_wechat": {
+      "return": -1,
+      "errno": 1,
+      "exit_code": 1
+    },
+    "memory_read": false
+  }
+}

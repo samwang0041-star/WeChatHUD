@@ -11,14 +11,41 @@ import Foundation
 /// (上级派给我 / 我派给下级).
 actor DiscussionTracker {
     private let store: HUDStore
-    private let aiService: AIService
+    private let aiService: any AIServiceProtocol
     private let promptLoader: PromptLoader
-    private let promptVersion = "discussion_v1"
+    private let promptVersion = "discussion_v2"
+    private var extractingChats: Set<String> = []
+    private let retryBaseDelay: TimeInterval
+    private let maxBatchesPerRun = 3
+    private var retryAfterByChat: [String: TimeInterval] = [:]
 
-    init(store: HUDStore, aiService: AIService, promptLoader: PromptLoader = PromptLoader()) {
+    struct SourceCursor: Codable, Equatable {
+        let timestamp: Int
+        let localID: Int
+        let messageID: String
+
+        init(_ message: MessageInfo) {
+            timestamp = message.createTime
+            localID = message.localId
+            messageID = message.id
+        }
+
+        func precedes(_ other: SourceCursor) -> Bool {
+            if timestamp != other.timestamp { return timestamp < other.timestamp }
+            if localID != other.localID { return localID < other.localID }
+            return messageID < other.messageID
+        }
+    }
+
+    static func cursorKey(_ chatUsername: String) -> String {
+        "discussion_processed_cursor_v1:\(chatUsername)"
+    }
+
+    init(store: HUDStore, aiService: any AIServiceProtocol, promptLoader: PromptLoader = PromptLoader(), retryBaseDelay: TimeInterval = 30) {
         self.store = store
         self.aiService = aiService
         self.promptLoader = promptLoader
+        self.retryBaseDelay = max(0, retryBaseDelay)
     }
 
     struct ExtractedItem {
@@ -42,20 +69,97 @@ actor DiscussionTracker {
         myDisplayName: String,
         mySelfNames: Set<String>
     ) async -> Int {
-        guard !messages.isEmpty else { return 0 }
-        guard await aiService.isConfigured() else { return 0 }
+        guard store.getWhitelistEntry(username: chatUsername) != nil else {
+            try? store.clearDiscussionMessages(chatUsername: chatUsername)
+            return 0
+        }
+        // Persist before the first await. Overlapping scans append to the
+        // same durable queue while the active caller is awaiting a model.
+        do { try store.enqueueDiscussionMessages(messages) }
+        catch { return 0 }
+        return await drainChat(chatUsername: chatUsername, chatName: chatName,
+                               myUsername: myUsername, myDisplayName: myDisplayName,
+                               mySelfNames: mySelfNames, enforceScope: true)
+    }
 
-        // Skip if we've already extracted recently enough — don't want
-        // to re-call the model on every 10s scan for chats that
-        // haven't had new messages. The latest source_timestamp we
-        // persisted is the watermark.
-        let watermark = store.latestDiscussionSourceTimestamp(chatUsername: chatUsername)
-        let fresh = messages.filter { $0.createTime > watermark }
-        // Even when nothing is technically new we still want a window
-        // of context, so widen to the full input when fresh is empty
-        // but the overall conversation has grown. However if literally
-        // nothing is new, bail out fast.
-        guard !fresh.isEmpty else { return 0 }
+    /// Called even with no new source messages. Scope is checked both before
+    /// sending and again after the provider returns; revoked chats are purged.
+    func resetRetryBackoff() { retryAfterByChat.removeAll() }
+
+    @discardableResult
+    func resumePending(myUsername: String, myDisplayName: String, mySelfNames: Set<String>) async -> Int {
+        guard let chats = try? store.discussionQueueChats() else { return 0 }
+        var inserted = 0
+        var serviced = 0
+        for chat in chats {
+            guard !Task.isCancelled else { break }
+            guard (retryAfterByChat[chat] ?? 0) <= Date().timeIntervalSince1970 else { continue }
+            guard let entry = store.getWhitelistEntry(username: chat) else {
+                try? store.clearDiscussionMessages(chatUsername: chat)
+                continue
+            }
+            guard let head = try? store.pendingDiscussionMessages(chatUsername: chat, limit: 1).first,
+                  head.retryAfter <= Date().timeIntervalSince1970 else { continue }
+            guard serviced < 4 else { break }
+            serviced += 1
+            inserted += await drainChat(chatUsername: chat, chatName: entry.displayName,
+                myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames, enforceScope: true)
+        }
+        return inserted
+    }
+
+    private func drainChat(chatUsername: String, chatName: String, myUsername: String,
+                           myDisplayName: String, mySelfNames: Set<String>, enforceScope: Bool) async -> Int {
+        guard !extractingChats.contains(chatUsername),
+              (retryAfterByChat[chatUsername] ?? 0) <= Date().timeIntervalSince1970 else { return 0 }
+        extractingChats.insert(chatUsername)
+        defer { extractingChats.remove(chatUsername) }
+        var inserted = 0
+        for _ in 0..<maxBatchesPerRun {
+            guard !Task.isCancelled else { break }
+            if enforceScope, store.getWhitelistEntry(username: chatUsername) == nil {
+                try? store.clearDiscussionMessages(chatUsername: chatUsername)
+                break
+            }
+            guard let batch = try? store.pendingDiscussionMessages(chatUsername: chatUsername), !batch.isEmpty else { break }
+            guard batch.allSatisfy({ $0.retryAfter <= Date().timeIntervalSince1970 }) else { break }
+            let result = await extractWindow(chatUsername: chatUsername, chatName: chatName,
+                messages: batch.map(\.message), myUsername: myUsername, myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames, enforceScope: enforceScope)
+            inserted += result.inserted
+            if result.acknowledged {
+                retryAfterByChat.removeValue(forKey: chatUsername)
+                do { try store.completeDiscussionMessages(batch.map { $0.message.id }) }
+                catch { break }
+            } else {
+                let attempts = batch.map(\.attempts).max() ?? 0
+                let delay = min(1800, retryBaseDelay * pow(2, Double(min(attempts, 6))))
+                let retryAfter = Date().timeIntervalSince1970 + delay
+                retryAfterByChat[chatUsername] = retryAfter
+                try? store.deferDiscussionMessages(batch.map { $0.message.id }, until: retryAfter)
+                // A failed oldest batch is a barrier. Never advance into newer
+                // source rows, and never hot-loop even if persisting backoff fails.
+                break
+            }
+        }
+        return inserted
+    }
+
+    private func extractWindow(
+        chatUsername: String, chatName: String, messages: [MessageInfo],
+        myUsername: String, myDisplayName: String, mySelfNames: Set<String>, enforceScope: Bool
+    ) async -> (inserted: Int, acknowledged: Bool) {
+        let slot = await aiService.currentConfig().provider
+        guard !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              slot.providerID == "openai-codex" || !slot.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (0, false) }
+
+        let ordered = messages.sorted { SourceCursor($0).precedes(SourceCursor($1)) }
+        let cursor = store.getSettingJSON(Self.cursorKey(chatUsername), as: SourceCursor.self)
+        let fresh = ordered.filter { message in
+            cursor.map { $0.precedes(SourceCursor(message)) } ?? true
+        }
+        guard let newest = fresh.last else { return (0, true) }
+        let watermark = cursor?.timestamp ?? 0
 
         // Load existing items so the AI can dedupe against known
         // content (prompt-level dedupe in addition to the SQL UNIQUE).
@@ -71,14 +175,14 @@ actor DiscussionTracker {
             template = try promptLoader.load(version: promptVersion)
         } catch {
             print("[WCHUD] DiscussionTracker: prompt load failed: \(error)")
-            return 0
+            return (0, false)
         }
 
         // Build a compact conversation transcript for the prompt. We
         // tag each line with "我" or the actual sender so the model
         // can assign ownership correctly — critical for the weekly
         // report's "上级派给我 / 我派给下级" slicing.
-        let lines = messages.suffix(40).map { msg -> String in
+        let lines = fresh.map { msg -> String in
             let isSelf = MessageHelpers.isFromSelf(
                 msg, chatUsername: chatUsername,
                 myUsername: myUsername, myDisplayName: myDisplayName,
@@ -90,10 +194,15 @@ actor DiscussionTracker {
         }.joined(separator: "\n")
 
         let knownList = existing.map { "- \($0.kind.label): \($0.content)" }.joined(separator: "\n")
+        let correctionHint = DiscussionCorrection.hint(
+            entries: store.loadAIFeedback(limit: 100, msgUIDPrefix: "discussion_item:"),
+            chatUsername: chatUsername
+        )
         let prompt = template
             .replacingOccurrences(of: "{chat_name}", with: chatName)
             .replacingOccurrences(of: "{messages}", with: lines)
             .replacingOccurrences(of: "{known_items}", with: knownList.isEmpty ? "（暂无）" : knownList)
+            .replacingOccurrences(of: "{recent_corrections}", with: correctionHint)
 
         let started = Date()
         let response = await callModel(prompt: prompt)
@@ -113,10 +222,10 @@ actor DiscussionTracker {
                 outputText: "", latencyMs: latency,
                 status: .httpError, errorMessage: response.error ?? "no response"
             ))
-            return 0
+            return (0, false)
         }
 
-        var items = parseItems(body)
+        var items = parseItems(body, relativeTo: Date(timeIntervalSince1970: Double(newest.createTime)))
         var outputBody = body
         // One strict-retry, same pattern as CommitmentTracker / Classifier
         if items == nil {
@@ -127,7 +236,7 @@ actor DiscussionTracker {
             }
             if let retryBody = retry.text {
                 outputBody = retryBody
-                items = parseItems(retryBody)
+                items = parseItems(retryBody, relativeTo: Date(timeIntervalSince1970: Double(newest.createTime)))
             }
         }
         guard let parsed = items else {
@@ -138,30 +247,50 @@ actor DiscussionTracker {
                 latencyMs: latency, status: .parseError,
                 errorMessage: "JSON parse failed after strict retry"
             ))
-            return 0
+            return (0, false)
+        }
+
+        // A user may revoke this conversation while the network call is in
+        // flight. Do not insert results after that scope change.
+        guard !Task.isCancelled else { return (0, false) }
+        if enforceScope, store.getWhitelistEntry(username: chatUsername) == nil {
+            try? store.clearDiscussionMessages(chatUsername: chatUsername)
+            return (0, false)
         }
 
         // Persist. Each item is keyed by (chat, anchor_msg_uid, content)
         // so re-runs don't produce duplicates; the UNIQUE constraint
         // short-circuits silently in that case.
-        let anchor = fresh.last?.id ?? messages.first?.id ?? ""
-        let anchorTs = fresh.last?.createTime ?? messages.first?.createTime ?? Int(Date().timeIntervalSince1970)
+        let anchor = newest.id
+        let anchorTs = newest.createTime
         var inserted = 0
         for item in parsed {
-            let did = (try? store.insertDiscussionItem(
-                chatUsername: chatUsername,
-                chatName: chatName,
-                kind: item.kind,
-                owner: item.owner,
-                content: item.content,
-                detail: item.detail,
-                anchorMsgUID: anchor,
-                sourceTimestamp: anchorTs,
-                dueAt: item.dueAt,
-                confidence: item.confidence,
-                promptVersion: promptVersion
-            )) ?? false
+            let did: Bool
+            do {
+                did = try store.insertDiscussionItem(
+                    chatUsername: chatUsername,
+                    chatName: chatName,
+                    kind: item.kind,
+                    owner: item.owner,
+                    content: item.content,
+                    detail: item.detail,
+                    anchorMsgUID: anchor,
+                    sourceTimestamp: anchorTs,
+                    dueAt: item.dueAt,
+                    confidence: item.confidence,
+                    promptVersion: promptVersion
+                )
+            } catch {
+                // Keep the checkpoint unchanged so a later scan can retry persistence.
+                return (inserted, false)
+            }
             if did { inserted += 1 }
+        }
+        // A successful empty result is processed too. Item timestamps are not checkpoints.
+        do {
+            try store.setSettingJSON(Self.cursorKey(chatUsername), value: SourceCursor(newest))
+        } catch {
+            return (inserted, false)
         }
 
         try? store.writeAIAudit(AIAuditEntry(
@@ -171,12 +300,12 @@ actor DiscussionTracker {
             outputText: "inserted=\(inserted)",
             latencyMs: latency, status: .ok, errorMessage: nil
         ))
-        return inserted
+        return (inserted, true)
     }
 
     // MARK: - Parsing
 
-    private func parseItems(_ raw: String) -> [ExtractedItem]? {
+    private func parseItems(_ raw: String, relativeTo sourceDate: Date) -> [ExtractedItem]? {
         let cleaned = Self.cleanJSON(raw)
         guard let data = cleaned.data(using: .utf8) else { return nil }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -192,9 +321,9 @@ actor DiscussionTracker {
                   let ownerStr = row["owner"] as? String,
                   let owner = DiscussionItemOwner(rawValue: ownerStr),
                   let content = row["content"] as? String,
-                  !content.isEmpty else { continue }
+                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             let detail = row["detail"] as? String
-            let deadline = (row["due"] as? String).flatMap { MessageHelpers.resolveDeadline($0) }
+            let deadline = (row["due"] as? String).flatMap { MessageHelpers.resolveDeadline($0, relativeTo: sourceDate) }
             let confidence = (row["confidence"] as? Double) ?? 0.6
             out.append(ExtractedItem(
                 kind: kind, owner: owner,

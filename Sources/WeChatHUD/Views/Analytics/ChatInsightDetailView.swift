@@ -1,5 +1,26 @@
 import SwiftUI
 
+struct ChatInsightMessageStats: Equatable {
+    let total: Int
+    let mine: Int
+    let others: Int
+
+    var myRatio: Double {
+        total > 0 ? Double(mine) / Double(total) : 0
+    }
+
+    init(stats: ChatStatsData?, result: ChatInsightResult?) {
+        // Message totals are measured from the local scan. AI topics are a
+        // derived summary and may be empty or incomplete.
+        _ = result
+        let localTotal = max(0, stats?.messageCount ?? 0)
+        let localMine = min(max(0, stats?.myMessageCount ?? 0), localTotal)
+        total = localTotal
+        mine = localMine
+        others = localTotal - localMine
+    }
+}
+
 /// Detail view for a single chat — macOS native style with card modules.
 /// Shows pure-algorithm stats immediately, AI results overlay when available.
 struct ChatInsightDetailView: View {
@@ -13,6 +34,13 @@ struct ChatInsightDetailView: View {
     @Binding var selectedDate: Date
 
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
+    @State private var surface: ReviewSurface = .overview
+
+    private enum ReviewSurface: String, CaseIterable {
+        case overview = "概览"
+        case timeline = "对话时间线"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,48 +59,93 @@ struct ChatInsightDetailView: View {
     // MARK: - Header
 
     private var headerBar: some View {
-        HStack(spacing: 12) {
-            // Chat name + category badge
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(categoryColor.opacity(0.15))
-                        .frame(width: 28, height: 28)
+                    Circle()
+                        .fill(CompanionPalette.jade.opacity(0.14))
+                        .frame(width: 44, height: 44)
                     Text(String(chatName.prefix(1)))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(categoryColor)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(CompanionPalette.jade)
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(chatName)
-                        .font(.system(size: 14, weight: .semibold))
-                    Text(dateLabel)
-                        .font(.system(size: 11))
+                        .font(.system(size: 18, weight: .semibold))
+                    Text(headerSummary)
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }
+
+                Spacer()
+
+                DatePicker("回顾日期", selection: $selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.compact)
+                    .labelsHidden()
+                    .frame(width: 120)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("回顾日期")
+
+                Button {
+                    Task { await monitor.analyzeOneChat(chatUsername: chatUsername, date: selectedDate) }
+                } label: {
+                    if insightCoordinator.chatInsightLoading.contains(chatUsername) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("分析", systemImage: "sparkles")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(CompanionPalette.jade)
+                .controlSize(.small)
+                .disabled(insightCoordinator.chatInsightLoading.contains(chatUsername))
             }
 
-            Spacer()
-
-            // Date picker
-            DatePicker("", selection: $selectedDate, displayedComponents: .date)
-                .datePickerStyle(.compact)
-                .labelsHidden()
-                .frame(width: 120)
-
-            // AI status
-            if result != nil {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-            } else if insightCoordinator.chatInsightLoading.contains(chatUsername) {
-                ProgressView()
-                    .controlSize(.small)
+            HStack(spacing: 16) {
+                ForEach(ReviewSurface.allCases, id: \.self) { tab in
+                    Button(tab.rawValue) { surface = tab }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 13, weight: surface == tab ? .semibold : .regular))
+                        .foregroundStyle(surface == tab ? CompanionPalette.jade : .secondary)
+                        .padding(.bottom, 6)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(surface == tab ? CompanionPalette.jade : Color.clear)
+                                .frame(height: 2)
+                        }
+                }
+                Spacer()
+                Button("查看待办") {
+                    panelState.pendingDiscussionChatUsername = chatUsername
+                    panelState.pendingSettingsTab = "tasks"
+                    panelState.showDetail()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CompanionPalette.jade)
+                Button("查看原文") {
+                    panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CompanionPalette.jade)
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 10)
+        .padding(.vertical, 14)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var headerSummary: String {
+        var parts = [dateLabel]
+        if let stats {
+            if stats.participantCount > 0 {
+                parts.append("\(stats.participantCount) 位成员")
+            }
+            if stats.messageCount > 0 {
+                parts.append("\(stats.messageCount) 条对话")
+            }
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var categoryColor: Color {
@@ -91,11 +164,11 @@ struct ChatInsightDetailView: View {
 
         let cal = Calendar.current
         if cal.isDateInToday(selectedDate) {
-            return "分析今天 (\(dateStr))"
+            return "今天 · \(dateStr)"
         } else if cal.isDateInYesterday(selectedDate) {
-            return "分析昨天 (\(dateStr))"
+            return "昨天 · \(dateStr)"
         } else {
-            return "分析 \(dateStr)"
+            return dateStr
         }
     }
 
@@ -106,7 +179,7 @@ struct ChatInsightDetailView: View {
             if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                 ProgressView()
                     .controlSize(.regular)
-                Text("正在分析 \(dateLabel)…")
+                Text("正在整理 \(dateLabel)…")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             } else if let error = insightCoordinator.chatInsightErrors[chatUsername] {
@@ -120,7 +193,7 @@ struct ChatInsightDetailView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 28))
                     .foregroundColor(.orange.opacity(0.4))
-                Text("选择日期开始 AI 分析")
+                Text("选一个日期后，这里会整理这段聊天发生了什么。")
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
             }
@@ -132,182 +205,158 @@ struct ChatInsightDetailView: View {
 
     @ViewBuilder
     private var analysisContent: some View {
-        let msgCount = result.map { r in r.topics.reduce(0) { $0 + $1.messageCount } } ?? stats?.messageCount ?? 0
-        let partCount = stats?.participantCount ?? 1
-        let myCount = stats?.myMessageCount ?? 0
+        let messageStats = ChatInsightMessageStats(stats: stats, result: result)
+        let msgCount = messageStats.total
 
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-
-                // Row 1: Stats cards
-                HStack(spacing: 12) {
-                    statCard(
-                        value: "\(msgCount)",
-                        label: "消息数",
-                        icon: "bubble.left.and.bubble.right",
-                        color: .blue
-                    )
-                    statCard(
-                        value: "\(partCount)",
-                        label: "发言人数",
-                        icon: "person.2",
-                        color: .purple
-                    )
-                    if let topSender = stats?.topSenders.first {
-                        VStack(spacing: 4) {
-                            Text(topSender.name)
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.orange)
-                                .lineLimit(1)
-                            Text("最活跃 (\(topSender.count)条)")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color(nsColor: .controlBackgroundColor))
-                        .cornerRadius(10)
-                    }
-                }
-
-                // Row 2: Hourly chart + Donut
-                HStack(alignment: .top, spacing: 12) {
-                    // Hourly bar chart
-                    if let hourly = stats?.messagesByHour {
-                        moduleCard("消息时段分布", icon: "clock") {
-                            hourlyBarChart(hourly)
-                                .frame(height: 100)
-                        }
-                    }
-
-                    // Message ratio donut
-                    moduleCard("消息类型分布", icon: "chart.pie") {
-                        HStack(spacing: 16) {
-                            messageDonut(my: myCount, total: msgCount)
-                            VStack(alignment: .leading, spacing: 4) {
-                                legendRow(color: .blue, label: "我的消息", count: myCount)
-                                legendRow(color: .blue.opacity(0.15), label: "其他人", count: msgCount - myCount)
-                                if let avgResp = stats?.avgResponseTimeSeconds, avgResp > 0 {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "timer")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.secondary)
-                                        Text("平均回复 \(formatResponseTime(avgResp))")
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(.top, 4)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Row 3: AI-powered sections (only when result available)
-                if let r = result {
-                    // Mood + Signal noise + Relevance
-                    HStack(spacing: 12) {
-                        moduleCard("群氛围", icon: "face.smiling") {
-                            HStack(spacing: 8) {
-                                moodIcon(r.overallMood)
-                                Text(r.overallMood)
-                                    .font(.system(size: 14, weight: .medium))
-                            }
-                        }
-
-                        moduleCard("信息质量", icon: "chart.bar") {
-                            HStack(spacing: 8) {
-                                signalBar(r.signalNoiseRatio)
-                                Text("\(Int(r.signalNoiseRatio * 100))%")
-                                    .font(.system(size: 16, weight: .bold).monospacedDigit())
-                                    .foregroundColor(r.signalNoiseRatio > 0.6 ? .green : .orange)
-                            }
-                            Text("决策效率: \(r.decisionEfficiency)")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-
-                        moduleCard("与我相关", icon: "at") {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("@我").font(.system(size: 10)).foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(r.mentionsMe)次").font(.system(size: 12, weight: .medium))
-                                }
-                                HStack {
-                                    Text("等回复").font(.system(size: 10)).foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(r.waitingForMe.count)项")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(r.waitingForMe.isEmpty ? .primary : .red)
-                                }
-                                HStack {
-                                    Text("我的承诺").font(.system(size: 10)).foregroundColor(.secondary)
-                                    Spacer()
-                                    Text("\(r.myCommitments.count)项").font(.system(size: 12, weight: .medium))
-                                }
-                            }
-                        }
-                    }
-
-                    // Topics
-                    moduleCardFull("话题讨论", icon: "text.bubble") {
-                        ForEach(Array(r.topics.enumerated()), id: \.offset) { _, topic in
-                            topicCard(topic)
-                        }
-                    }
-
-                    // Insight + Suggestion
-                    HStack(spacing: 12) {
-                        moduleCard("洞察", icon: "lightbulb") {
-                            Text(r.insight)
-                                .font(.system(size: 12))
-                                .foregroundColor(.primary)
-                        }
-                        moduleCard("行动建议", icon: "arrow.right.circle") {
-                            Text(r.suggestion)
-                                .font(.system(size: 12))
-                                .foregroundColor(.green)
-                        }
-                    }
+                if surface == .timeline {
+                    timelineContent
                 } else {
-                    // No AI result yet — show participants from stats
-                    if let topSenders = stats?.topSenders, !topSenders.isEmpty {
-                        moduleCardFull("成员参与度", icon: "person.3") {
-                            ForEach(Array(topSenders.prefix(8).enumerated()), id: \.offset) { _, sender in
-                                statsParticipantRow(name: sender.name, count: sender.count, maxCount: topSenders.first?.count ?? 1)
-                            }
-                        }
-                    }
-
-                    // Waiting for AI
-                    HStack(spacing: 8) {
-            if insightCoordinator.chatInsightLoading.contains(chatUsername) {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else if insightCoordinator.chatInsightErrors[chatUsername] != nil {
-                            Image(systemName: "exclamationmark.circle")
-                                .font(.system(size: 12))
-                                .foregroundColor(.orange)
-                        } else {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 12))
-                                .foregroundColor(.orange)
-                        }
-                        Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "AI 分析完成前只显示基础统计")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.05))
-                    .cornerRadius(8)
+                    overviewContent(msgCount: msgCount)
                 }
-
                 Spacer().frame(height: 20)
             }
             .padding(20)
         }
+    }
+
+    @ViewBuilder
+    private func overviewContent(msgCount: Int) -> some View {
+        if let result {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(result.headline)
+                    .font(.system(size: 22, weight: .semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Label("AI 解读", systemImage: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(CompanionPalette.jade)
+                if !result.suggestion.isEmpty {
+                    Text(result.suggestion)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .companionSurface(padding: 20)
+        } else {
+            HStack(spacing: 8) {
+                if insightCoordinator.chatInsightLoading.contains(chatUsername) {
+                    ProgressView().controlSize(.small)
+                    Text("正在整理这段聊天…")
+                } else {
+                    Image(systemName: "sparkles")
+                    Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "还没有 AI 解读时，先看来源和待办。")
+                }
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+        }
+
+        if let hourly = stats?.messagesByHour, hourly.contains(where: { $0 > 0 }) {
+            moduleCard("对话活跃度", icon: "chart.bar") {
+                hourlyBarChart(hourly)
+                    .frame(height: 100)
+            }
+        }
+
+        if !followUps.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("仍需跟进")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(Array(followUps.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.title)
+                                .font(.system(size: 15, weight: .semibold))
+                            Text([item.owner, item.due].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("查看待办") {
+                            panelState.pendingDiscussionChatUsername = chatUsername
+                            panelState.pendingSettingsTab = "tasks"
+                            panelState.showDetail()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(CompanionPalette.jade)
+                        .controlSize(.small)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(CompanionPalette.jade.opacity(0.28), lineWidth: 1)
+                    )
+                }
+            }
+        }
+
+        if let result, !result.insight.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("原文")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(result.insight)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                Button("查看原文") {
+                    panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CompanionPalette.jade)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .companionSurface(padding: 18)
+        } else if msgCount > 0 {
+            Button("查看原文") {
+                panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CompanionPalette.jade)
+        }
+    }
+
+    private var timelineContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let result, !result.topics.isEmpty {
+                ForEach(Array(result.topics.enumerated()), id: \.offset) { index, topic in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 0) {
+                            Circle()
+                                .strokeBorder(CompanionPalette.jade, lineWidth: 2)
+                                .background(Circle().fill(topic.status.contains("待") ? Color.clear : CompanionPalette.jade))
+                                .frame(width: 12, height: 12)
+                            if index < result.topics.count - 1 {
+                                Rectangle()
+                                    .fill(CompanionPalette.jade.opacity(0.2))
+                                    .frame(width: 2)
+                            }
+                        }
+                        topicCard(topic)
+                    }
+                }
+            } else {
+                Text("还没有时间线。先点「分析」，或直接查看原文。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private struct FollowUpItem {
+        let title: String
+        let owner: String
+        let due: String
+    }
+
+    private var followUps: [FollowUpItem] {
+        ChatReviewFollowUps.items(chatUsername: chatUsername, discussion: monitor.discussionItems)
+            .map { FollowUpItem(title: $0.title, owner: $0.owner, due: $0.due) }
     }
 
     // MARK: - Chart Components

@@ -54,7 +54,8 @@ enum InboxBuilder {
                 status: .active,
                 dismissedAtMsgId: nil,
                 isOverdue: isOverdue,
-                overdueMinutes: overdueMinutes
+                overdueMinutes: overdueMinutes,
+                contextNotification: debt.contextNotification
             )
 
             // Check silenced
@@ -127,7 +128,8 @@ enum InboxBuilder {
                 reasons: [],
                 suggestedReplyMinutes: 0,
                 status: .active,
-                dismissedAtMsgId: nil
+                dismissedAtMsgId: nil,
+                contextNotification: notif
             )
 
             // Check silenced
