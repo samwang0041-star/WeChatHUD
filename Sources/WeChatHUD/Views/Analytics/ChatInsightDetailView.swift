@@ -93,7 +93,7 @@ struct ChatInsightDetailView: View {
                     if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("分析", systemImage: "sparkles")
+                        Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
                     }
                 }
                 .buttonStyle(.borderedProminent)

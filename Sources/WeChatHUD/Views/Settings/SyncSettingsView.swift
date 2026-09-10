@@ -205,7 +205,10 @@ struct SyncSettingsView: View {
 
     private var connectionCapabilityList: some View {
         let readingReady = monitor.stats.lastSyncAt != nil
-        let aiReady = AISettingsValidation.connectionError(store.loadAIConfig().provider, requireModel: true) == nil
+        let aiConfig = store.loadAIConfig()
+        let aiConfigured = AISettingsValidation.connectionError(aiConfig.provider, requireModel: true) == nil
+        let aiTested = AIConnectionEvidenceStore.isSuccessful(aiConfig, store: store)
+        let aiReady = aiConfigured
         let sendReady = AXIsProcessTrusted()
         return VStack(alignment: .leading, spacing: 0) {
             capabilityRow(
@@ -220,7 +223,7 @@ struct SyncSettingsView: View {
                 icon: "sparkles",
                 title: "AI 整理",
                 detail: "配置后，AI 将帮你从聊天中提取要点、待办和你答应的事。",
-                status: aiReady ? "已就绪" : "尚未设置",
+                status: aiTested ? "已就绪" : (aiConfigured ? "已配置" : "尚未设置"),
                 ready: aiReady,
                 actionTitle: aiReady ? nil : "设置 AI"
             ) {
