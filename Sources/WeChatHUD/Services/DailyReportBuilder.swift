@@ -37,13 +37,12 @@ struct DailyReportBuilder {
                 if historical {
                     return ask.createdAt >= startOfDay && ask.createdAt < endOfRange
                 }
-                let createdToday = ask.createdAt >= startOfDay && ask.createdAt < endOfRange
-                let dueOrOverdue = ask.deadlineAt.map { $0 < endOfRange } ?? false
-                let live = DiscussionLiveWindow.contains(
+                // Same 14-day live window as 待办. "还剩什么" is open work,
+                // not only asks created this calendar day.
+                return DiscussionLiveWindow.contains(
                     ask,
                     cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
                 )
-                return createdToday || (dueOrOverdue && live)
             }
         let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
             .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }

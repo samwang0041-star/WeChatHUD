@@ -14,7 +14,7 @@ struct CompanionSetupCard: View {
     private var connected: Bool {
         guard monitor.stats.lastSyncAt != nil else { return false }
         switch monitor.stats.syncStatus {
-        case .ok, .idle, .syncing: return true
+        case .ok, .idle, .syncing, .stale: return true
         default: return false
         }
     }

@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Detail panel — routes on `panelState.detailKind`:
 /// - `.conversation`: the analysis workbench for a specific chat.
-/// - `.autopilot`: the full autopilot control surface (same content the
-///   old tab used to render, now living behind the compact-bar indicator).
+/// - `.autopilot`: ApprovalWorkspaceView behind the compact-bar bolt,
+///   matching Settings 「待确认回复」.
 /// - `nil`: the standalone Settings window (the gear fallback).
 struct DetailPanelView: View {
     @EnvironmentObject var panelState: PanelState
@@ -93,9 +93,9 @@ struct DetailPanelView: View {
 }
 
 /// Host for the autopilot full-view inside the detail panel. Renders
-/// a header consistent with `ConversationDetailView` (back chevron +
-/// title) above the existing `AutopilotTabView` content so the two
-/// detail kinds feel like siblings.
+/// a header consistent with ConversationDetailView (back chevron +
+/// title) above ApprovalWorkspaceView so the island bolt opens the
+/// same 待确认回复 surface as Settings.
 struct AutopilotDetailPane: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
@@ -110,10 +110,10 @@ struct AutopilotDetailPane: View {
             Divider()
                 .background(Color.secondary.opacity(0.2))
 
-            ScrollView {
-                AutopilotTabView()
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
+            ApprovalWorkspaceView(showsSessionToggle: false)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -144,6 +144,23 @@ struct AutopilotDetailPane: View {
             }
 
             Spacer()
+
+            Button(action: { monitor.toggleAutopilot() }) {
+                HStack(spacing: 4) {
+                    Image(systemName: monitor.autopilotActive ? "stop.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(monitor.autopilotActive ? "停止" : "开始整理")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundColor(monitor.autopilotActive ? .red : .green)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background((monitor.autopilotActive ? Color.red : Color.green).opacity(0.15))
+                .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(monitor.autopilotActive ? "停止整理回复" : "开始整理回复")
+            .accessibilityHint(monitor.autopilotActive ? "停止当前自动整理" : "开始整理该回的消息；发不发仍由自动回复设置决定")
         }
     }
 

@@ -2767,6 +2767,14 @@ final class ChatMonitor: ObservableObject {
     }
 
     func startAutopilot() {
+        Task { _ = await startAutopilotAndWait() }
+    }
+
+    /// Approval workspace can send a draft without a prior 「开始整理」 press.
+    /// A missing service is prepared rather than treated as a failed send.
+    nonisolated static func canApproveWithoutRunningSession() -> Bool { true }
+
+    private func makeAutopilotServiceIfNeeded() {
         if autopilotService == nil {
             autopilotService = AutopilotService(
                 store: store,
@@ -2788,30 +2796,58 @@ final class ChatMonitor: ObservableObject {
                 }
             )
         }
-        let service = autopilotService
+    }
+
+    /// Creates the service if needed and starts a session if one is not
+    /// already running. Does not change autoSendEnabled.
+    @discardableResult
+    func startAutopilotAndWait() async -> Bool {
+        makeAutopilotServiceIfNeeded()
+        guard let service = autopilotService else { return false }
+        if await service.isActive {
+            applyAutopilotRunningUI(
+                recoveredQueue: await service.pendingSendQueue,
+                recoveredStats: await service.sessionStats
+            )
+            return true
+        }
         // Clear any stale ledger entries from a previous session before
         // flipping the active flag, so observers never see fresh-active
         // state with stale entries.
         resetSessionLedger()
-        Task {
-            do {
-                try await service?.start()
-                let recoveredQueue = await service?.pendingSendQueue ?? []
-                let recoveredStats = await service?.sessionStats ?? AutopilotService.SessionStats()
-                await MainActor.run {
-                    self.autopilotActive = true
-                    self.autopilotSessionSent = recoveredStats.totalSent
-                    self.autopilotSessionPending = recoveredStats.totalPending
-                    self.autopilotPendingSendQueue = recoveredQueue
-                    self.autopilotSessionStats = recoveredStats
-                    self.reloadAutopilotDisplayLog()
-                    self.refreshWorkspaceChrome()
-                }
-                print("[WCHUD] Autopilot: ON")
-            } catch {
-                print("[WCHUD] Autopilot: failed to start: \(error)")
-            }
+        do {
+            try await service.start()
+            applyAutopilotRunningUI(
+                recoveredQueue: await service.pendingSendQueue,
+                recoveredStats: await service.sessionStats
+            )
+            print("[WCHUD] Autopilot: ON")
+            return true
+        } catch {
+            print("[WCHUD] Autopilot: failed to start: \(error)")
+            return false
         }
+    }
+
+    /// Prepares a live service for one-off 确认发送 when the user has not
+    /// pressed 「开始整理」. Does not flip autoSendEnabled.
+    @discardableResult
+    func ensureAutopilotReadyForSend() async -> AutopilotService? {
+        let started = await startAutopilotAndWait()
+        return started ? autopilotService : nil
+    }
+
+    private func applyAutopilotRunningUI(
+        recoveredQueue: [PendingSend],
+        recoveredStats: AutopilotService.SessionStats
+    ) {
+        autopilotActive = true
+        autopilotSessionSent = recoveredStats.totalSent
+        autopilotSessionPending = recoveredStats.totalPending
+        autopilotPendingSendQueue = recoveredQueue
+        autopilotSessionStats = recoveredStats
+        reloadAutopilotDisplayLog()
+        refreshWorkspaceChrome()
     }
 
     func stopAutopilot() {
@@ -2824,6 +2860,7 @@ final class ChatMonitor: ObservableObject {
             }
         }
         autopilotActive = false
+        autopilotPendingSendQueue = []
         refreshWorkspaceChrome()
         // Drop ledger entries after marking inactive — anything accumulated
         // while autopilot was off-by-a-hair shouldn't leak into the next
@@ -2874,19 +2911,28 @@ final class ChatMonitor: ObservableObject {
 
     /// Approve a pending autopilot item and send it.
     func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String) async -> Bool {
-        guard let service = autopilotService else { return false }
+        guard let service = await ensureAutopilotReadyForSend() else { return false }
         let success = await service.approvePending(logId: logId, reply: reply, chatName: chatName, chatUsername: chatUsername)
         // I1 fix: refresh counters from DB session instead of manual adjustment
         refreshAutopilotSessionState()
+        await refreshAutopilotLiveState()
         return success
     }
 
     /// Reject a pending autopilot item.
     func rejectAutopilotItem(logId: Int64) {
         Task { @MainActor in
-            await autopilotService?.rejectPending(logId: logId)
+            if let service = autopilotService {
+                await service.rejectPending(logId: logId)
+            } else {
+                try? store.updateAutopilotLogAction(id: logId, action: .skipped)
+            }
             refreshAutopilotSessionState()
         }
+    }
+
+    func syncAutopilotPendingQueue() async {
+        await refreshAutopilotLiveState()
     }
 
     func saveAutopilotDraft(logId: Int64, reply: String) throws {
