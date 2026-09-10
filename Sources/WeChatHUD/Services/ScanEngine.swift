@@ -551,8 +551,8 @@ enum ScanEngine {
             let vipCount = mergedRecent.filter(\.isVIP).count
 
             // ---- Autopilot: scan non-whitelist private chats ----
-            // Design spec: autopilot handles ALL private chats (VIP/whitelist/greylist),
-            // not just whitelisted ones. Different tiers get different processing depth.
+            // Private chats that are VIP/关注 but missing from whitelist still
+            // reach autopilot. 仅保留资料 and strangers do not.
             let whitelistUsernames = Set(whitelist.map(\.id))
             if let allSessions = try? reader.getSessions() {
                 for session in allSessions {
@@ -591,6 +591,11 @@ enum ScanEngine {
                     for msg in newMessages {
                         if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
                         guard let contact = store.getContact(username: msg.senderUsername) else {
+                            continue
+                        }
+                        // 仅保留资料 / 未关注 stay off autopilot. Copy is
+                        // "只记住是谁，不日常提醒。"
+                        guard contact.attentionLevel == .vip || contact.attentionLevel == .whitelist else {
                             continue
                         }
                         let level: AttentionLevel = contact.attentionLevel
