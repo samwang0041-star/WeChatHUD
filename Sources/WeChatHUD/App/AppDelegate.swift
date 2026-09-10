@@ -505,23 +505,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             .store(in: &cancellables)
 
-        // VIP escalation: when the engine advances a chat to T3+,
-        // surface a toast on top of whatever the user is currently
-        // doing. We intentionally don't auto-open the extended panel
-        // — the user might be mid-typing in WeChat and we shouldn't
-        // steal their attention, just tap them on the shoulder.
-        monitor.$pendingEscalationBanner
-            .compactMap { $0 }
-            .sink { [weak self] banner in
-                guard let self = self else { return }
-                let label = "「\(banner.chatName)」已等你 \(banner.tier.agingLabel) — 该回一下了"
-                self.panelState.showToast(label, duration: 6)
-                // Consume it so a re-run of the sink doesn't re-fire.
-                Task { @MainActor in self.monitor.pendingEscalationBanner = nil }
-            }
-            .store(in: &cancellables)
-
-
         // Keyboard shortcuts — only active when the panel is key.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
