@@ -241,13 +241,6 @@ final class ChatMonitor: ObservableObject {
             self?.vipAlertTiers = tiers
             self?.refreshWorkspaceChrome()
         }
-        // A tier advance (e.g. T3: "已等 2 小时") also pops an in-panel
-        // toast so the user sees it even if they dismissed the OS
-        // notification.
-        engine.onTierAdvanced = { [weak self] chatName, tier in
-            guard tier >= .t3 else { return }
-            self?.pendingEscalationBanner = (chatName, tier)
-        }
         return engine
     }()
 
@@ -256,10 +249,6 @@ final class ChatMonitor: ObservableObject {
     /// without needing to traverse into the alert engine directly.
     @Published private(set) var vipAlertTiers: [String: VIPAlertTier] = [:]
 
-    /// Set by the alert engine when a VIP advances to T3+; AppDelegate
-    /// observes and turns it into a one-shot toast. Tuple form so we
-    /// can include both the chat name and the aging label.
-    @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     lazy var dailyReportGenerator: AIDailyReportGenerator = {
         AIDailyReportGenerator(aiService: aiService, store: store)
     }()
