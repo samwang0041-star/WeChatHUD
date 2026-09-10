@@ -671,7 +671,7 @@ struct SyncSettingsView: View {
                                     Text("已完成")
                                         .font(.system(size: 12))
                                         .foregroundColor(CompanionPalette.jade)
-                                } else if let d = item.deadlineAt {
+                                } else if item.status == .pending || item.status == .overdue, let d = item.deadlineAt {
                                     Text(d < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(d.timeIntervalSince1970)))")
                                         .font(.system(size: 12))
                                         .foregroundColor(d < Date() ? .red : .secondary)
