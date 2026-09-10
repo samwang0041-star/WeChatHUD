@@ -98,7 +98,12 @@ actor ChatInsightService {
             selfAliases: selfAliases,
             timeRange: dateLabel,
             messages: formatted,
-            recalledMessages: [],
+            recalledMessages: Self.recalledForAnalysis(
+                store.loadRecalledMessages(since: Int(dayStart.timeIntervalSince1970), limit: 200),
+                chatUsername: entry.id,
+                dayStart: Int(dayStart.timeIntervalSince1970),
+                dayEnd: Int(dayEnd.timeIntervalSince1970)
+            ),
             memory: memoryStr,
             recentContext: recentContext
         ) else { return nil }
@@ -107,6 +112,23 @@ actor ChatInsightService {
 
     /// Rolling memory is a current snapshot, not historical evidence. Exclude
     /// snapshots newer than the selected day or older than its seven-day window.
+    static func recalledForAnalysis(
+        _ messages: [RecalledMessage],
+        chatUsername: String,
+        dayStart: Int,
+        dayEnd: Int
+    ) -> [(sender: String, content: String)] {
+        messages.compactMap { message in
+            guard message.chatUsername == chatUsername,
+                  message.recalledAt >= dayStart,
+                  message.recalledAt < dayEnd else { return nil }
+            let sender = message.senderName.isEmpty ? message.senderUsername : message.senderName
+            let content = message.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { return nil }
+            return (sender: sender, content: content)
+        }
+    }
+
     static func memoryForAnalysis(_ memory: ConversationMemory?, dayStart: Date, dayEnd: Date) -> ConversationMemory? {
         guard let memory,
               memory.lastUpdated < dayEnd,
