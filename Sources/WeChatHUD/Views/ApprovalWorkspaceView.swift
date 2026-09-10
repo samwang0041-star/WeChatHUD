@@ -63,10 +63,8 @@ struct ApprovalWorkspaceView: View {
         }
         .onAppear { selectedUID = selected?.triggerMsgUID; syncEditor() }
         .onChange(of: selected?.triggerMsgUID) { _, _ in syncEditor() }
-        .onChange(of: entries.map(\.triggerMsgUID)) { _, ids in
-            if let selectedUID, ids.contains(selectedUID) { return }
-            selectedUID = ids.first
-        }
+        .onChange(of: entries.count) { _, _ in reconcileSelection() }
+        .onChange(of: filter) { _, _ in reconcileSelection() }
         .companionDialogBackdrop(showSendConfirm) {
             if showSendConfirm {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showSendConfirm = false }) {
@@ -273,6 +271,11 @@ struct ApprovalWorkspaceView: View {
             .padding(.leading, 16)
             .padding(.vertical, 12)
         }
+    }
+
+    private func reconcileSelection() {
+        if let selectedUID, entries.contains(where: { $0.triggerMsgUID == selectedUID }) { return }
+        selectedUID = entries.first?.triggerMsgUID
     }
 
     private func syncEditor() {

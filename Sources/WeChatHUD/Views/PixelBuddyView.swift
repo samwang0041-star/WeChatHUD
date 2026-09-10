@@ -32,6 +32,7 @@ struct AIBuddyOverlay: View {
             PixelBuddyView(mood: effectiveMood)
                 .onHover { hovering in
                     withMotion(CompanionMotion.ease(0.15)) { isHovering = hovering }
+                    if hovering { startRefresh() } else { stopRefresh() }
                 }
 
             if isHovering {
@@ -41,7 +42,6 @@ struct AIBuddyOverlay: View {
                     .zIndex(1)
             }
         }
-        .onAppear { startRefresh() }
         .onDisappear { stopRefresh() }
     }
 
@@ -186,20 +186,23 @@ enum BuddyMood: CaseIterable, Equatable {
 // MARK: - Mood Derivation (pure function for testability)
 
 /// Derive compact-bar mood from sync status and inbox items.
-/// Priority: syncing > error > urgent > pending > idle
+/// Same priority as `CompactIslandPolicy`: connection > P0 > work > pending > idle.
 func deriveCompactMood(syncStatus: SyncStatus, hasUrgent: Bool, hasPending: Bool, idleMinutes: Int) -> BuddyMood {
-    switch syncStatus {
-    case .syncing:
-        return .scanning
-    case .stale, .waitingForWeChat, .error, .accountSwitched:
-        return .error
-    default:
-        break
+    var actions: [CompactIslandAction] = []
+    if hasUrgent {
+        actions.append(CompactIslandAction(priority: .p0, isVIP: false, isOverdue: false))
+    } else if hasPending {
+        actions.append(CompactIslandAction(priority: .p2, isVIP: false, isOverdue: false))
     }
-    if hasUrgent { return .urgent }
-    if hasPending { return .pending }
-    if idleMinutes >= 5 { return .sleepy }
-    return .idle
+    return CompactIslandPolicy.snapshot(CompactIslandInput(
+        sync: syncStatus,
+        actions: actions,
+        noticeCount: 0,
+        aiActive: false,
+        autopilotActive: false,
+        idleMinutes: idleMinutes,
+        worstVIPTier: .none
+    )).buddy
 }
 
 /// Derive extended-inbox mood from inbox state and AI activity.
@@ -510,7 +513,7 @@ struct PixelBuddyView: View {
     private func startTimer() {
         stopTimer()
         guard !reduceMotion else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { _ in
             DispatchQueue.main.async {
                 frameIndex = (frameIndex + 1) % frames.count
             }

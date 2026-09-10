@@ -3,7 +3,6 @@ import SwiftUI
 /// One native workspace: daily work first, configuration in its own sidebar section.
 struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
-    @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var store: HUDStore
     @State private var selectedTab: Tab = .today
     @State private var previewA11yNonce = 0
@@ -88,12 +87,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    sidebarSection(CompanionProductCopy.sectionHandle, Tab.allCases.filter(\.isDaily))
-                    sidebarSection(CompanionProductCopy.sectionReview, Tab.allCases.filter(\.isReview))
-                    sidebarSection(CompanionProductCopy.sectionReply, [.autopilotDashboard])
-                    sidebarSection(CompanionProductCopy.sectionSettings, Tab.allCases.filter(\.isSettings))
-                }
+                SettingsSidebarSections(selectedTab: $selectedTab)
                 .padding(.horizontal, 10)
                 .padding(.top, 4)
                 .padding(.bottom, 12)
@@ -139,54 +133,7 @@ struct SettingsView: View {
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
                 if PreviewRuntime.isEnabled && !hideCaptureChrome {
-                    HStack {
-                        Label("交互演示 · 全部为虚构数据，不读取或操作微信", systemImage: "play.rectangle")
-                        Spacer()
-                        Button("模拟新消息") { PreviewRuntime.simulateNotification(monitor: monitor, panelState: panelState) }
-                        Button("模拟首次浮窗") {
-                            panelState.islandSurface = .firstLaunch
-                            panelState.goExtended()
-                        }
-                        Button("模拟同步中") {
-                            monitor.stats.syncStatus = .syncing
-                            panelState.islandSurface = .inbox
-                            panelState.goExtended()
-                        }
-                        Button("模拟连接中断") {
-                            monitor.stats.syncStatus = .error("preview")
-                            panelState.islandSurface = .inbox
-                            panelState.goExtended()
-                        }
-                        Button("打开引导") { NotificationCenter.default.post(name: .hudShowOnboarding, object: nil) }
-                        Button("模拟发送成功") { PreviewRuntime.simulateSendSuccess(monitor: monitor, panelState: panelState) }
-                        Button("模拟发送待核对") { PreviewRuntime.simulateSendUncertain(monitor: monitor, panelState: panelState) }
-                        Button("模拟空浮窗") { PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState) }
-                        Button("模拟收起") { PreviewRuntime.simulateCompact(monitor: monitor, panelState: panelState) }
-                        Button("模拟 AI 测试失败") {
-                            panelState.pendingSettingsTab = "aiService"
-                            PreviewRuntime.simulateAITestFailure()
-                        }
-                        Button("模拟开启自动发送") { PreviewRuntime.simulateAutoSendConfirm(panelState: panelState) }
-                        Button(PreviewRuntime.reduceMotionOverride == true ? "关闭减少动态" : "模拟减少动态") {
-                            PreviewRuntime.toggleReduceMotion(); previewA11yNonce += 1
-                        }
-                        Button(PreviewRuntime.reduceTransparencyOverride == true ? "关闭减少透明" : "模拟减少透明") {
-                            PreviewRuntime.toggleReduceTransparency(); previewA11yNonce += 1
-                        }
-                        Button(PreviewRuntime.largeType ? "关闭大字号" : "模拟大字号") {
-                            PreviewRuntime.toggleLargeType(); previewA11yNonce += 1
-                        }
-                        Button(PreviewRuntime.usingExternalDisplay ? "回到原生屏" : "模拟扩展屏") {
-                            PreviewRuntime.toggleExternalDisplay(store: store); previewA11yNonce += 1
-                        }
-                        Button("导出界面快照") { PreviewRuntime.captureSurfaces() }
-                    }
-                    .font(.callout).foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 28).padding(.vertical, 10)
-                    .background(CompanionMotion.reduceTransparency ? CompanionPalette.surface : Color.orange.opacity(0.08))
-                    .companionDimmedByDialog(panelState.modalDialogOpen)
-                    .id(previewA11yNonce)
+                    SettingsPreviewChrome(previewA11yNonce: $previewA11yNonce)
                 }
                 if selectedTab != .guide {
                     pageHeader
@@ -204,9 +151,7 @@ struct SettingsView: View {
         .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
         .tint(CompanionPalette.accent)
         .accentColor(CompanionPalette.accent)
-        .alert("操作未保存", isPresented: Binding(get: { monitor.inboxActionError != nil }, set: { if !$0 { monitor.inboxActionError = nil } })) {
-            Button("知道了") { monitor.inboxActionError = nil }
-        } message: { Text(monitor.inboxActionError ?? "请重试") }
+        .background(SettingsInboxErrorAlert())
         .onAppear { applyPendingTab(panelState.pendingSettingsTab) }
         .onReceive(panelState.$pendingSettingsTab) { applyPendingTab($0) }
         .onReceive(NotificationCenter.default.publisher(for: .hudSwitchTab)) { notification in
@@ -277,7 +222,84 @@ struct SettingsView: View {
         [.aiButler, .notifications, .aiService, .system, .preferences, .localData, .autopilot, .autopilotDashboard, .guide].contains(selectedTab) ? 960 : 1180
     }
 
-    private func sidebarSection(_ title: String, _ tabs: [Tab]) -> some View {
+    private func applyPendingTab(_ raw: String?) {
+        guard let tab = Tab.from(raw: raw) else { return }
+        selectedTab = tab
+        panelState.pendingSettingsTab = nil
+    }
+
+    @ViewBuilder private var content: some View {
+        switch selectedTab {
+        case .today:
+            AssistantTodayView(navigate: { selectedTab = $0 })
+        case .tasks:
+            DiscussionWorkspaceView()
+        case .drafts:
+            ReplyDraftsView()
+        case .commitments:
+            CommitmentTabView()
+        case .contacts:
+            ContactsSettingsView()
+                .frame(maxWidth: 1180)
+                .padding(.horizontal, 28).padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
+        case .insight:
+            ChatInsightWorkspacePage()
+        case .guide:
+            CompanionGuideView(navigate: { selectedTab = $0 }, showIntroduction: {
+                NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)
+            })
+        case .aiButler:
+            AISettingsView(section: "analysis")
+        case .notifications:
+            ScrollView {
+                NotificationSettingsView()
+                    .frame(maxWidth: 960, alignment: .leading)
+                    .padding(.horizontal, 28).padding(.bottom, 28)
+                    .frame(maxWidth: .infinity)
+            }
+        case .aiService:
+            AISettingsView(section: "service")
+        case .autopilotDashboard:
+            ApprovalWorkspaceView()
+                .frame(maxWidth: 1180)
+                .padding(.horizontal, 28).padding(.bottom, 16)
+                .frame(maxWidth: .infinity)
+        default:
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    switch selectedTab {
+                    case .autopilot: AutopilotSettingsView()
+                    case .system: SyncSettingsView(pane: "connection")
+                    case .preferences: SyncSettingsView(pane: "preferences")
+                    case .localData: SyncSettingsView(pane: "data")
+                    case .dailyReport: DailyReportTabView()
+                    default: EmptyView()
+                    }
+                }
+                .frame(maxWidth: 960, alignment: .leading)
+                .padding(.horizontal, 28).padding(.bottom, 28)
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+}
+
+private struct SettingsSidebarSections: View {
+    @Binding var selectedTab: SettingsView.Tab
+    @EnvironmentObject var workspaceBadges: WorkspaceBadges
+    @EnvironmentObject var panelState: PanelState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sidebarSection(CompanionProductCopy.sectionHandle, SettingsView.Tab.allCases.filter(\.isDaily))
+            sidebarSection(CompanionProductCopy.sectionReview, SettingsView.Tab.allCases.filter(\.isReview))
+            sidebarSection(CompanionProductCopy.sectionReply, [.autopilotDashboard])
+            sidebarSection(CompanionProductCopy.sectionSettings, SettingsView.Tab.allCases.filter(\.isSettings))
+        }
+    }
+
+    private func sidebarSection(_ title: String, _ tabs: [SettingsView.Tab]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .companionFont(size: 11, weight: .semibold)
@@ -288,7 +310,7 @@ struct SettingsView: View {
         }
     }
 
-    private func sidebarRow(_ tab: Tab) -> some View {
+    private func sidebarRow(_ tab: SettingsView.Tab) -> some View {
         let selected = selectedTab == tab
         return Button { selectedTab = tab } label: {
             HStack(spacing: 8) {
@@ -331,78 +353,92 @@ struct SettingsView: View {
         .accessibilityValue(selected ? "已选中" : "")
     }
 
-    private func sidebarCount(_ tab: Tab) -> Int? {
+    private func sidebarCount(_ tab: SettingsView.Tab) -> Int? {
         switch tab {
-        case .tasks: return monitor.discussionItems.filter { $0.status == .pending && $0.kind != .info }.count
-        case .commitments: return monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }.count
-        case .drafts: return store.loadDrafts().count
+        case .tasks: return workspaceBadges.counts.tasks
+        case .commitments: return workspaceBadges.counts.commitments
+        case .drafts: return workspaceBadges.counts.drafts
         case .autopilotDashboard:
-            let pending = monitor.autopilotLog.filter { $0.action == .pending }.count
-            return pending > 0 ? pending : nil
+            return workspaceBadges.counts.pendingReplies > 0 ? workspaceBadges.counts.pendingReplies : nil
         default: return nil
         }
     }
+}
 
-    private func applyPendingTab(_ raw: String?) {
-        guard let tab = Tab.from(raw: raw) else { return }
-        selectedTab = tab
-        panelState.pendingSettingsTab = nil
-    }
+private struct SettingsPreviewChrome: View {
+    @Binding var previewA11yNonce: Int
+    @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var store: HUDStore
 
-    @ViewBuilder private var content: some View {
-        switch selectedTab {
-        case .today:
-            AssistantTodayView(navigate: { selectedTab = $0 })
-        case .tasks:
-            DiscussionWorkspaceView()
-        case .drafts:
-            ReplyDraftsView()
-        case .commitments:
-            CommitmentTabView()
-        case .contacts:
-            ContactsSettingsView()
-                .frame(maxWidth: 1180)
-                .padding(.horizontal, 28).padding(.bottom, 24)
-                .frame(maxWidth: .infinity)
-        case .insight:
-            ChatInsightView(insightCoordinator: monitor.insightCoordinator)
-        case .guide:
-            CompanionGuideView(navigate: { selectedTab = $0 }, showIntroduction: {
-                NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)
-            })
-        case .aiButler:
-            AISettingsView(section: "analysis")
-        case .notifications:
-            ScrollView {
-                NotificationSettingsView()
-                    .frame(maxWidth: 960, alignment: .leading)
-                    .padding(.horizontal, 28).padding(.bottom, 28)
-                    .frame(maxWidth: .infinity)
+    var body: some View {
+        HStack {
+            Label("交互演示 · 全部为虚构数据，不读取或操作微信", systemImage: "play.rectangle")
+            Spacer()
+            Button("模拟新消息") { PreviewRuntime.simulateNotification(monitor: monitor, panelState: panelState) }
+            Button("模拟首次浮窗") {
+                panelState.islandSurface = .firstLaunch
+                panelState.goExtended()
             }
-        case .aiService:
-            AISettingsView(section: "service")
-        case .autopilotDashboard:
-            ApprovalWorkspaceView()
-                .frame(maxWidth: 1180)
-                .padding(.horizontal, 28).padding(.bottom, 16)
-                .frame(maxWidth: .infinity)
-        default:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    switch selectedTab {
-                    case .autopilot: AutopilotSettingsView()
-                    case .system: SyncSettingsView(pane: "connection")
-                    case .preferences: SyncSettingsView(pane: "preferences")
-                    case .localData: SyncSettingsView(pane: "data")
-                    case .dailyReport: DailyReportTabView()
-                    default: EmptyView()
-                    }
-                }
-                .frame(maxWidth: 960, alignment: .leading)
-                .padding(.horizontal, 28).padding(.bottom, 28)
-                .frame(maxWidth: .infinity)
+            Button("模拟同步中") {
+                monitor.stats.syncStatus = .syncing
+                panelState.islandSurface = .inbox
+                panelState.goExtended()
             }
+            Button("模拟连接中断") {
+                monitor.stats.syncStatus = .error("preview")
+                panelState.islandSurface = .inbox
+                panelState.goExtended()
+            }
+            Button("打开引导") { NotificationCenter.default.post(name: .hudShowOnboarding, object: nil) }
+            Button("模拟发送成功") { PreviewRuntime.simulateSendSuccess(monitor: monitor, panelState: panelState) }
+            Button("模拟发送待核对") { PreviewRuntime.simulateSendUncertain(monitor: monitor, panelState: panelState) }
+            Button("模拟空浮窗") { PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState) }
+            Button("模拟收起") { PreviewRuntime.simulateCompact(monitor: monitor, panelState: panelState) }
+            Button("模拟 AI 测试失败") {
+                panelState.pendingSettingsTab = "aiService"
+                PreviewRuntime.simulateAITestFailure()
+            }
+            Button("模拟开启自动发送") { PreviewRuntime.simulateAutoSendConfirm(panelState: panelState) }
+            Button(PreviewRuntime.reduceMotionOverride == true ? "关闭减少动态" : "模拟减少动态") {
+                PreviewRuntime.toggleReduceMotion(); previewA11yNonce += 1
+            }
+            Button(PreviewRuntime.reduceTransparencyOverride == true ? "关闭减少透明" : "模拟减少透明") {
+                PreviewRuntime.toggleReduceTransparency(); previewA11yNonce += 1
+            }
+            Button(PreviewRuntime.largeType ? "关闭大字号" : "模拟大字号") {
+                PreviewRuntime.toggleLargeType(); previewA11yNonce += 1
+            }
+            Button(PreviewRuntime.usingExternalDisplay ? "回到原生屏" : "模拟扩展屏") {
+                PreviewRuntime.toggleExternalDisplay(store: store); previewA11yNonce += 1
+            }
+            Button("导出界面快照") { PreviewRuntime.captureSurfaces() }
         }
+        .font(.callout).foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 28).padding(.vertical, 10)
+        .background(CompanionMotion.reduceTransparency ? CompanionPalette.surface : Color.orange.opacity(0.08))
+        .companionDimmedByDialog(panelState.modalDialogOpen)
+        .id(previewA11yNonce)
+    }
+}
+
+private struct SettingsInboxErrorAlert: View {
+    @EnvironmentObject var monitor: ChatMonitor
+
+    var body: some View {
+        Color.clear
+            .alert("操作未保存", isPresented: Binding(get: { monitor.inboxActionError != nil }, set: { if !$0 { monitor.inboxActionError = nil } })) {
+                Button("知道了") { monitor.inboxActionError = nil }
+            } message: { Text(monitor.inboxActionError ?? "请重试") }
+    }
+}
+
+private struct ChatInsightWorkspacePage: View {
+    @EnvironmentObject var monitor: ChatMonitor
+
+    var body: some View {
+        ChatInsightView(insightCoordinator: monitor.insightCoordinator)
     }
 }
 

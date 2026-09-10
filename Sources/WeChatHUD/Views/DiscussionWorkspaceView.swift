@@ -13,9 +13,15 @@ struct DiscussionWorkspaceView: View {
     @State private var error: String?
     @State private var receipt: String?
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
+    @State private var historyItems: [DiscussionItem] = []
+    @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
+
+    private var sourceItems: [DiscussionItem] {
+        showHistory ? historyItems : monitor.discussionItems
+    }
 
     private var items: [DiscussionItem] {
-        DiscussionPresentation.items(monitor.discussionItems, scope: scope, query: query, history: showHistory)
+        DiscussionPresentation.items(sourceItems, scope: scope, query: query, history: showHistory)
     }
 
     private var selected: DiscussionItem? {
@@ -44,12 +50,17 @@ struct DiscussionWorkspaceView: View {
         .frame(maxWidth: .infinity)
         .onAppear {
             applyPendingScope()
-            selectedID = selected?.id
+            reconcileSelection()
         }
-        .onChange(of: items.map(\.id)) { _, ids in
-            if let selectedID, ids.contains(selectedID) { return }
-            selectedID = ids.first
+        .onChange(of: monitor.discussionItems) { _, _ in
+            reconcileSelection()
         }
+        .onChange(of: showHistory) { _, on in
+            if on { refreshHistory() }
+            reconcileSelection()
+        }
+        .onChange(of: scope) { _, _ in reconcileSelection() }
+        .onChange(of: query) { _, _ in reconcileSelection() }
         .onReceive(panelState.$pendingDiscussionScope) { value in
             if let value { scope = value; showHistory = false; panelState.pendingDiscussionScope = nil }
         }
@@ -62,6 +73,7 @@ struct DiscussionWorkspaceView: View {
                     DiscussionCorrectionForm(item: item) { content, owner, dueAt in
                         do {
                             try monitor.setDiscussionItemCorrection(id: item.id, content: content, owner: owner, dueAt: dueAt)
+                            if showHistory { refreshHistory() }
                             error = nil
                             receipt = "修改已保存"
                             correcting = nil
@@ -114,6 +126,9 @@ struct DiscussionWorkspaceView: View {
             .padding(10)
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+            Text("未完成的都会留下。已结束的只留近 \(DiscussionLiveWindow.historyDays) 天。")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
@@ -126,7 +141,7 @@ struct DiscussionWorkspaceView: View {
             query.isEmpty ? "还没有待办" : "没有匹配的待办",
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
             description: Text(query.isEmpty
-                ? (showHistory ? "做完或忽略的事情会留在这里，可以再打开。" : "连上微信并选好对话后，该做的事会出现在这里。")
+                ? (showHistory ? "近 \(DiscussionLiveWindow.historyDays) 天做完或忽略的事情会留在这里，可以再打开。" : "连上微信并选好对话后，还没做完的事会出现在这里。")
                 : "当前搜索：\(query)")
         )
         .frame(maxWidth: .infinity, minHeight: 280)
@@ -142,7 +157,7 @@ struct DiscussionWorkspaceView: View {
     private var listPane: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(DiscussionPresentation.groups(items), id: \.title) { group in
+                ForEach(DiscussionPresentation.groups(items, now: groupingAnchor), id: \.title) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title)
                             .font(.system(size: 12, weight: .semibold))
@@ -176,12 +191,12 @@ struct DiscussionWorkspaceView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                    Text("\(monitor.displayName(for: item.chatUsername)) · \(item.owner.workspaceLabel)")
+                    Text("\(item.chatName) · \(item.owner.workspaceLabel)")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                Text(DiscussionPresentation.dueLabel(item.dueAt))
+                Text(DiscussionPresentation.dueLabel(item.dueAt, now: groupingAnchor))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Image(systemName: "chevron.right")
@@ -233,7 +248,7 @@ struct DiscussionWorkspaceView: View {
                 }
                 metaRow("归属", systemImage: "person", value: item.owner.workspaceLabel)
                 metaRow("截止时间", systemImage: "calendar", value: DiscussionPresentation.absoluteDueLabel(item.dueAt))
-                metaRow("来源", systemImage: "bubble.left", value: monitor.displayName(for: item.chatUsername))
+                metaRow("来源", systemImage: "bubble.left", value: item.chatName)
                 if let detail = item.detail, !detail.isEmpty {
                     Text(detail)
                         .font(.system(size: 13))
@@ -310,6 +325,15 @@ struct DiscussionWorkspaceView: View {
         .padding(.vertical, 10)
     }
 
+    private func refreshHistory() {
+        historyItems = monitor.loadDiscussionHistory()
+    }
+
+    private func reconcileSelection() {
+        if let selectedID, items.contains(where: { $0.id == selectedID }) { return }
+        selectedID = items.first?.id
+    }
+
     private func applyPendingScope() {
         if let value = panelState.pendingDiscussionScope {
             scope = value; showHistory = false; panelState.pendingDiscussionScope = nil
@@ -327,6 +351,7 @@ struct DiscussionWorkspaceView: View {
     private func update(id: Int64, to status: DiscussionItemStatus, previous: DiscussionItemStatus?, title: String?) {
         do {
             try monitor.setDiscussionItemStatus(id: id, status: status)
+            if showHistory { refreshHistory() }
             error = nil
             undo = previous.map { (id, $0) }
             if status == .done, let title {
@@ -422,6 +447,21 @@ enum DiscussionScope: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Pending-only live list. Completing a row drops it; restoring patches it back.
+enum DiscussionLiveList {
+    static func applying(_ items: [DiscussionItem], replacement: DiscussionItem) -> [DiscussionItem] {
+        if replacement.status == .pending {
+            if let index = items.firstIndex(where: { $0.id == replacement.id }) {
+                var next = items
+                next[index] = replacement
+                return next
+            }
+            return [replacement] + items
+        }
+        return items.filter { $0.id != replacement.id }
+    }
+}
+
 enum DiscussionPresentation {
     struct Group {
         let title: String
@@ -459,10 +499,11 @@ enum DiscussionPresentation {
 
     static func dueLabel(_ date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
         guard let date else { return "无期限" }
-        if calendar.isDateInToday(date) {
+        if calendar.isDate(date, inSameDayAs: now) {
             return "今天 " + date.formatted(date: .omitted, time: .shortened)
         }
-        if calendar.isDateInTomorrow(date) {
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) {
             return "明天 " + date.formatted(date: .omitted, time: .shortened)
         }
         return date.formatted(date: .abbreviated, time: .shortened)
@@ -475,9 +516,10 @@ enum DiscussionPresentation {
 
     private static func groupTitle(for date: Date?, now: Date, calendar: Calendar) -> String {
         guard let date else { return "无期限" }
-        if date < now && !calendar.isDateInToday(date) { return "已过期" }
-        if calendar.isDateInToday(date) { return "今天" }
-        if calendar.isDateInTomorrow(date) { return "明天" }
+        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已过期" }
+        if calendar.isDate(date, inSameDayAs: now) { return "今天" }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) { return "明天" }
         if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) { return "本周" }
         return "之后"
     }

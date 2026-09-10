@@ -11,6 +11,7 @@ struct DailyReportTabView: View {
     @State private var exportedReportURL: URL?
     @State private var exportFailed = false
     @State private var scope: ReportScope = .daily
+    @State private var weeklyCatalog: [DiscussionItem] = []
 
     private enum ReportScope: String, CaseIterable {
         case daily = "日报"
@@ -31,6 +32,12 @@ struct DailyReportTabView: View {
         }
         .foregroundStyle(.primary)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: monitor.dailyReportViewedDate) { _, _ in
+            if scope == .weekly { reloadWeeklyCatalog() }
+        }
+        .onChange(of: scope) { _, value in
+            if value == .weekly { reloadWeeklyCatalog() }
+        }
         .task {
             await monitor.loadDailyReport()
         }
@@ -45,6 +52,7 @@ struct DailyReportTabView: View {
             Divider().background(Color.secondary.opacity(0.2))
             if scope == .weekly {
                 weeklySummary
+                    .onAppear { reloadWeeklyCatalog() }
             } else {
                 DailyReportCommandCenterView(isWorkspace: true)
             }
@@ -126,7 +134,7 @@ struct DailyReportTabView: View {
 
     private var weeklySummary: some View {
         let interval = Calendar.current.dateInterval(of: .weekOfYear, for: monitor.dailyReportViewedDate)
-        let items = monitor.discussionItems.filter { item in
+        let items = weeklyCatalog.filter { item in
             guard let interval else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(item.sourceTimestamp))
             return interval.contains(date) || (item.dueAt.map { interval.contains($0) } ?? false)
@@ -152,7 +160,7 @@ struct DailyReportTabView: View {
                                     .background(CompanionPalette.jade, in: Circle())
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(item.content).font(.system(size: 15, weight: .semibold))
-                                    Text("来自：\(monitor.displayName(for: item.chatUsername))")
+                                    Text("来自：\(item.chatName)")
                                         .font(.system(size: 12)).foregroundStyle(.secondary)
                                 }
                             }
@@ -185,6 +193,10 @@ struct DailyReportTabView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func reloadWeeklyCatalog() {
+        weeklyCatalog = monitor.loadDiscussionCatalog()
     }
 
     private func weekRangeText(_ date: Date) -> String {

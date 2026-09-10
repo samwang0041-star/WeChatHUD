@@ -6,21 +6,22 @@ struct CompanionSetupCard: View {
     @EnvironmentObject var store: HUDStore
     let navigate: (SettingsView.Tab) -> Void
 
+    @State private var readinessLoaded = false
+    @State private var aiConfigured = false
+    @State private var aiConnectionTested = false
+    @State private var hasScope = false
+
     private var connected: Bool {
         guard monitor.stats.lastSyncAt != nil else { return false }
-        if case .ok = monitor.stats.syncStatus { return true }
-        return false
+        switch monitor.stats.syncStatus {
+        case .ok, .idle, .syncing: return true
+        default: return false
+        }
     }
-    private var aiConfigured: Bool {
-        AISettingsValidation.connectionError(store.loadAIConfig().provider, requireModel: true) == nil
-    }
-    private var aiConnectionTested: Bool {
-        AIConnectionEvidenceStore.isSuccessful(store.loadAIConfig(), store: store)
-    }
-    private var hasScope: Bool { !store.getWhitelist().isEmpty }
 
     var body: some View {
-        if !PreviewRuntime.isEnabled && (!connected || !aiConfigured || !aiConnectionTested || !hasScope) {
+        Group {
+        if readinessLoaded && !PreviewRuntime.isEnabled && (!connected || !aiConfigured || !aiConnectionTested || !hasScope) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     Label(FirstLaunchGuide.setupCardTitle, systemImage: "sparkles").font(.headline)
@@ -53,6 +54,16 @@ struct CompanionSetupCard: View {
             .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor.opacity(0.18)))
         }
+        }
+        .onAppear { refreshReadiness() }
+    }
+
+    private func refreshReadiness() {
+        let config = store.loadAIConfig()
+        aiConfigured = AISettingsValidation.connectionError(config.provider, requireModel: true) == nil
+        aiConnectionTested = AIConnectionEvidenceStore.isSuccessful(config, store: store)
+        hasScope = store.hasWhitelistEntries()
+        readinessLoaded = true
     }
 
     private func step(_ title: String, detail: String, icon: String, tab: SettingsView.Tab) -> some View {

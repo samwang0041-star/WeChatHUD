@@ -16,7 +16,6 @@ struct SizePreferenceKey: PreferenceKey {
 
 struct HUDRootView: View {
     @EnvironmentObject var panelState: PanelState
-    @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
         // Each pill state is rendered at its own fixed intrinsic width,
@@ -40,16 +39,8 @@ struct HUDRootView: View {
                 // bar honest when the display (and therefore the
                 // notch geometry) changes under us.
                 CompactInboxBar()
-            case .extended:
-                extendedContent
-            case .notification:
-                if let notif = monitor.latestNotification {
-                    StableNotificationBanner(notification: notif)
-                        .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
-                }
-            case .detail:
-                DetailPanelView()
-                    .padding(.top, islandNotchHeight)
+            case .extended, .notification, .detail:
+                HUDMonitorSurface()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,6 +66,74 @@ struct HUDRootView: View {
             // like "在微信中打开" not working. Sits on top of whatever
             // state the panel is in so the user sees it even from
             // compact mode.
+            HUDToastLayer()
+        }
+        .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
+        .transaction { $0.animation = nil }
+        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
+    }
+
+    private var islandNotchWidth: CGFloat {
+        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
+            return panel.notch.notchWidth
+        }
+        return 16
+    }
+
+    private var islandNotchHeight: CGFloat {
+        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
+            return panel.notch.notchHeight
+        }
+        return 32
+    }
+}
+
+private struct HUDMonitorSurface: View {
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
+
+    var body: some View {
+        switch panelState.currentState {
+        case .extended:
+            InboxView()
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: IslandChrome.expandedWidth)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .preference(key: SizePreferenceKey.self, value: proxy.size)
+                    }
+                )
+                .onPreferenceChange(SizePreferenceKey.self) { size in
+                    panelState.reportExtendedSize(size)
+                }
+        case .notification:
+            if let notif = monitor.latestNotification {
+                StableNotificationBanner(notification: notif)
+                    .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+            }
+        case .detail:
+            DetailPanelView()
+                .padding(.top, islandNotchHeight)
+        case .compact:
+            EmptyView()
+        }
+    }
+
+    private var islandNotchHeight: CGFloat {
+        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
+            return panel.notch.notchHeight
+        }
+        return 32
+    }
+}
+
+private struct HUDToastLayer: View {
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
+
+    var body: some View {
+        Group {
             if let message = panelState.toastMessage {
                 toastView(message)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -83,9 +142,6 @@ struct HUDRootView: View {
         .onReceive(monitor.$inboxActionError) { message in
             if let message { panelState.showToast(message) }
         }
-        .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
-        .transaction { $0.animation = nil }
-        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
     }
 
     private func toastView(_ message: String) -> some View {
@@ -135,41 +191,6 @@ struct HUDRootView: View {
         )
         .frame(maxWidth: 400)
         .padding(.top, 4)
-    }
-
-    /// Live notch width from the running panel — used to size the
-    /// cutout in the island silhouette.
-    private var islandNotchWidth: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchWidth
-        }
-        return 16
-    }
-
-    private var islandNotchHeight: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchHeight
-        }
-        return 32
-    }
-
-    /// Extended inbox with intrinsic-height layout + size reporting.
-    /// Extracted so the outer `switch` stays simple enough for Swift's
-    /// type checker (nested PreferenceKey / GeometryReader inside a
-    /// switch-case trips inference on the whole `Group`).
-    private var extendedContent: some View {
-        InboxView()
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(width: IslandChrome.expandedWidth)
-            .background(
-                GeometryReader { proxy in
-                    Color.clear
-                        .preference(key: SizePreferenceKey.self, value: proxy.size)
-                }
-            )
-            .onPreferenceChange(SizePreferenceKey.self) { size in
-                panelState.reportExtendedSize(size)
-            }
     }
 }
 

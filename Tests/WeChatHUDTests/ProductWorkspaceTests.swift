@@ -36,6 +36,7 @@ final class ProductWorkspaceTests: XCTestCase {
         try store.updateDraft(id: first.id, text: "修改后的回复")
         XCTAssertEqual(store.loadDrafts().first { $0.id == first.id }?.text, "修改后的回复")
         XCTAssertEqual(store.loadDrafts().count, 2)
+        XCTAssertEqual(store.draftCount(), 2)
     }
 
     func testContinuationUpdateRequiresOriginalIDAndChatIdentity() throws {
@@ -122,5 +123,174 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertTrue(ChatReviewFollowUps.items(chatUsername: "preview-colleague", discussion: pending.map {
             $0.id == 1 ? item(1, chat: "preview-colleague", status: .done) : $0
         }).isEmpty)
+    }
+
+    func testLiveListPatchesPendingRowsWithoutKeepingCompletedHistory() {
+        let now = Date()
+        func item(_ id: Int64, status: DiscussionItemStatus, content: String = "确认方案") -> DiscussionItem {
+            DiscussionItem(id: id, chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine, content: content, detail: nil, anchorMsgUID: "\(id)", sourceTimestamp: 100, dueAt: nil, status: status, confidence: 0.9, promptVersion: "test", createdAt: now, updatedAt: now)
+        }
+        let pending = [item(1, status: .pending), item(2, status: .pending)]
+        XCTAssertEqual(DiscussionLiveList.applying(pending, replacement: item(1, status: .done)).map(\.id), [2])
+        XCTAssertEqual(DiscussionLiveList.applying(pending, replacement: item(1, status: .pending, content: "改过的方案")).map(\.content), ["改过的方案", "确认方案"])
+        XCTAssertEqual(DiscussionLiveList.applying([item(2, status: .pending)], replacement: item(3, status: .pending)).map(\.id), [3, 2])
+        XCTAssertEqual(item(1, status: .pending), item(1, status: .pending))
+    }
+
+    func testDiscussionLoadKeepsPendingLiveListSeparateFromHistory() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "未完成", detail: nil, anchorMsgUID: "p1", sourceTimestamp: 200,
+            dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "已完成", detail: nil, anchorMsgUID: "d1", sourceTimestamp: 100,
+            dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        let doneID = try XCTUnwrap(store.loadDiscussionItems().first { $0.content == "已完成" }?.id)
+        try store.updateDiscussionItemStatus(id: doneID, status: .done)
+        XCTAssertEqual(store.loadDiscussionItems(status: .pending).map(\.content), ["未完成"])
+        XCTAssertEqual(store.loadDiscussionItems(excludingStatus: .pending).map(\.content), ["已完成"])
+        XCTAssertEqual(store.loadDiscussionItem(id: doneID)?.status, .done)
+    }
+
+    func testLiveWindowKeepsOpenItemsAndDropsStaleFinishedOnes() throws {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        func item(_ id: Int64, sourceOffset: Int, dueOffset: Int?) -> DiscussionItem {
+            DiscussionItem(
+                id: id, chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+                content: "事项\(id)", detail: nil, anchorMsgUID: "\(id)",
+                sourceTimestamp: cutoff + sourceOffset,
+                dueAt: dueOffset.map { Date(timeIntervalSince1970: TimeInterval(cutoff + $0)) },
+                status: .pending, confidence: 0.9, promptVersion: "test", createdAt: now, updatedAt: now
+            )
+        }
+        XCTAssertTrue(DiscussionLiveWindow.contains(item(1, sourceOffset: 3_600, dueOffset: nil), cutoff: cutoff))
+        XCTAssertTrue(DiscussionLiveWindow.contains(item(2, sourceOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
+        XCTAssertTrue(DiscussionLiveWindow.contains(item(3, sourceOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
+        var done = item(4, sourceOffset: -20 * 86_400, dueOffset: -15 * 86_400)
+        done.status = .done
+        XCTAssertFalse(DiscussionLiveWindow.contains(done, cutoff: cutoff))
+
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "旧的无期限", detail: nil, anchorMsgUID: "old",
+            sourceTimestamp: cutoff - 20 * 86_400, dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "旧的但未到期", detail: nil, anchorMsgUID: "due",
+            sourceTimestamp: cutoff - 20 * 86_400,
+            dueAt: Date(timeIntervalSince1970: TimeInterval(cutoff + 86_400)),
+            confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "刚出现", detail: nil, anchorMsgUID: "new",
+            sourceTimestamp: cutoff + 3_600, dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertEqual(
+            store.loadDiscussionItems(status: .pending, relevantSince: cutoff).map(\.content).sorted(),
+            ["刚出现", "旧的但未到期", "旧的无期限"]
+        )
+        let staleDone = try XCTUnwrap(store.loadDiscussionItems(status: .pending).first { $0.content == "旧的无期限" })
+        try store.updateDiscussionItemStatus(id: staleDone.id, status: .done)
+        XCTAssertFalse(
+            store.loadDiscussionItems(excludingStatus: .pending, relevantSince: cutoff)
+                .contains { $0.content == "旧的无期限" }
+        )
+    }
+
+    func testCommitmentLoadKeepsDueItemsInsideTheSameWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        try store.upsertCommitment(
+            msgUID: "old", chatUsername: "chat", chatName: "项目群",
+            content: "旧的无期限", commitTo: "林晓",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400))
+        )
+        try store.upsertCommitment(
+            msgUID: "due", chatUsername: "chat", chatName: "项目群",
+            content: "旧的但未到期", commitTo: "林晓",
+            deadlineAt: Date(timeIntervalSince1970: TimeInterval(cutoff + 86_400)),
+            confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400))
+        )
+        try store.upsertCommitment(
+            msgUID: "new", chatUsername: "chat", chatName: "项目群",
+            content: "刚答应", commitTo: "林晓",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff + 3_600))
+        )
+        try store.upsertCommitment(
+            msgUID: "overdue", chatUsername: "chat", chatName: "项目群",
+            content: "逾期很久", commitTo: "林晓",
+            deadlineAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 15 * 86_400)),
+            confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400))
+        )
+        try store.updateCommitmentStatus(msgUID: "overdue", status: .overdue)
+        try store.upsertCommitment(
+            msgUID: "done", chatUsername: "chat", chatName: "项目群",
+            content: "很久以前做完", commitTo: "林晓",
+            deadlineAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 15 * 86_400)),
+            confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400))
+        )
+        try store.updateCommitmentStatus(msgUID: "done", status: .fulfilled)
+        XCTAssertEqual(
+            store.loadCommitments(relevantSince: cutoff).map(\.content).sorted(),
+            ["刚答应", "旧的但未到期", "旧的无期限", "逾期很久"]
+        )
+    }
+
+    @MainActor
+    func testIslandPresentationIgnoresIdenticalLiveInput() {
+        let chrome = IslandPresentation()
+        let first = IslandLiveInput(sync: .ok, actions: [], noticeCount: 1, autopilotActive: false, vipGlowTier: .none)
+        chrome.publish(first)
+        XCTAssertEqual(chrome.live.noticeCount, 1)
+        chrome.publish(first)
+        XCTAssertEqual(chrome.live.noticeCount, 1)
+        chrome.publish(IslandLiveInput(sync: .ok, actions: [], noticeCount: 2, autopilotActive: false, vipGlowTier: .none))
+        XCTAssertEqual(chrome.live.noticeCount, 2)
+        chrome.publish(IslandLiveInput(sync: .syncing, actions: [], noticeCount: 2, autopilotActive: false, vipGlowTier: .none))
+        XCTAssertEqual(chrome.live.sync, .ok)
+        XCTAssertEqual(chrome.live.noticeCount, 2)
+    }
+
+    func testInboxItemEqualityIgnoresNotificationIdentityNoise() {
+        let now = Date(timeIntervalSince1970: 100)
+        func note() -> HUDNotification {
+            HUDNotification(
+                chatUsername: "chat", chatName: "林晓", senderUsername: "peer", senderName: "林晓",
+                attentionLevel: .vip, messageID: "m1", rawText: "确认一下", snippet: "确认一下",
+                isAtMention: false, timestamp: now, kind: .privateChat
+            )
+        }
+        func item(_ summary: String?) -> InboxItem {
+            InboxItem(
+                id: "chat", chatUsername: "chat", chatName: "林晓", senderName: "林晓",
+                preview: "确认一下", isGroup: false, timestamp: now, actionRequired: true,
+                priority: .p1, isVIP: true, isWhitelisted: true, unreadCount: 1,
+                isAtMention: false, askType: .none, reasons: [], suggestedReplyMinutes: 60,
+                status: .active, dismissedAtMsgId: nil, aiSummary: summary, moodEmoji: nil,
+                contextNotification: note()
+            )
+        }
+        XCTAssertEqual(item("摘要"), item("摘要"))
+        XCTAssertNotEqual(item("摘要"), item("另一份"))
     }
 }

@@ -78,6 +78,7 @@ extension ChatMonitor {
             break
         }
 
+        reloadAIData()
         Task {
             await loadDailyReport(for: dailyReportViewedDate, force: true)
         }

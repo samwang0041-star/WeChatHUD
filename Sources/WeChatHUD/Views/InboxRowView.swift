@@ -23,7 +23,7 @@ struct InboxRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 if islandCatalog {
-                    CompanionAvatar(name: monitor.displayName(for: item.chatUsername), size: 36)
+                    CompanionAvatar(name: item.chatName, size: 36)
                 } else {
                     priorityDot
                         .padding(.top, 4)
@@ -179,8 +179,8 @@ struct InboxRowView: View {
     private var firstLine: some View {
         HStack(spacing: 6) {
             Text(item.displayReason.isEmpty
-                 ? monitor.displayName(for: item.chatUsername)
-                 : "\(monitor.displayName(for: item.chatUsername)) · \(item.displayReason)")
+                 ? item.chatName
+                 : "\(item.chatName) · \(item.displayReason)")
                 .font(.system(size: islandCatalog ? 15 : 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.9))
                 .lineLimit(1)

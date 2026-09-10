@@ -12,6 +12,8 @@ struct DailyReportCommandCenterView: View {
     @State private var showDraft = false
     @State private var hoveredActionID: String?
     @State private var hoveredRiskID: String?
+    @State private var commandStates: [DailyReportCommandState] = []
+    @State private var loadedDateKey: String?
 
     init(isWorkspace: Bool = true) {
         self.isWorkspace = isWorkspace
@@ -28,19 +30,21 @@ struct DailyReportCommandCenterView: View {
     var body: some View {
         return VStack(alignment: .leading, spacing: 0) {
             if let report = monitor.dailyReport {
-                let states = monitor.store.loadDailyReportCommandStates(
-                    dateKey: report.date.dailyReportDateKey
-                )
-                let vm = DailyReportPresentationPolicy.buildViewModel(
-                    from: report,
-                    commandStates: states,
-                    insights: monitor.dailyReportActionInsights,
-                    sourceVerified: monitor.stats.lastSyncAt != nil
-                )
-                if vm.isSourceUnavailable {
-                    sourceUnavailableView
+                let key = report.date.dailyReportDateKey
+                if loadedDateKey != key {
+                    Color.clear.frame(height: 1)
                 } else {
-                    content(vm: vm, report: report)
+                    let vm = DailyReportPresentationPolicy.buildViewModel(
+                        from: report,
+                        commandStates: commandStates,
+                        insights: monitor.dailyReportActionInsights,
+                        sourceVerified: monitor.stats.lastSyncAt != nil
+                    )
+                    if vm.isSourceUnavailable {
+                        sourceUnavailableView
+                    } else {
+                        content(vm: vm, report: report)
+                    }
                 }
             } else if monitor.dailyReportIsLoading {
                 loadingView
@@ -52,6 +56,20 @@ struct DailyReportCommandCenterView: View {
         }
         .foregroundStyle(.primary)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { reloadCommandStates() }
+        .onChange(of: monitor.dailyReport?.date) { _, _ in reloadCommandStates() }
+        .onChange(of: monitor.dailyReportGeneratedAt) { _, _ in reloadCommandStates() }
+    }
+
+    private func reloadCommandStates() {
+        guard let report = monitor.dailyReport else {
+            commandStates = []
+            loadedDateKey = nil
+            return
+        }
+        let key = report.date.dailyReportDateKey
+        commandStates = monitor.store.loadDailyReportCommandStates(dateKey: key)
+        loadedDateKey = key
     }
 
     private func content(vm: DailyReportPresentationPolicy.CommandCenterViewModel, report: DailyReport) -> some View {

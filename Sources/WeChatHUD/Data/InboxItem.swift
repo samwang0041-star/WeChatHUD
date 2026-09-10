@@ -1,7 +1,7 @@
 import Foundation
 
 /// Unified inbox entry. One per chat (deduped by chatUsername).
-struct InboxItem: Identifiable {
+struct InboxItem: Identifiable, Equatable {
     let id: String                  // == chatUsername
     let chatUsername: String
     let chatName: String
@@ -47,7 +47,7 @@ struct InboxItem: Identifiable {
     }
 }
 
-enum InboxPriority: Int, Comparable {
+enum InboxPriority: Int, Comparable, Equatable {
     case p0 = 0
     case p1 = 1
     case p2 = 2
@@ -57,7 +57,7 @@ enum InboxPriority: Int, Comparable {
     }
 }
 
-enum InboxStatus {
+enum InboxStatus: Equatable {
     case active
     case dismissed
     case snoozed

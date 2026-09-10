@@ -600,6 +600,23 @@ final class HUDStore: ObservableObject {
 
     // MARK: - Whitelist
 
+    func hasWhitelistEntries() -> Bool {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM whitelist LIMIT 1", -1, &stmt, nil) == SQLITE_OK else {
+            return false
+        }
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    func whitelistCount() -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM whitelist", -1, &stmt, nil) == SQLITE_OK,
+              sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
     func getWhitelist() -> [WhitelistEntry] {
         var results: [WhitelistEntry] = []
         var stmt: OpaquePointer?
@@ -1966,7 +1983,7 @@ final class HUDStore: ObservableObject {
         ])
     }
 
-    func loadCommitments(status: CommitmentStatus? = nil) -> [Commitment] {
+    func loadCommitments(status: CommitmentStatus? = nil, relevantSince: Int? = nil) -> [Commitment] {
         var results: [Commitment] = []
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -1977,10 +1994,28 @@ final class HUDStore: ObservableObject {
                    capture_reason, next_step, deadline_label, commitment_kind
             FROM commitments
         """
+        var clauses: [String] = []
         var params: [String] = []
         if let status = status {
-            sql += " WHERE status=?"
+            clauses.append("status=?")
             params.append(status.rawValue)
+        }
+        if let relevantSince {
+            clauses.append("""
+                (status IN (?, ?)
+                 OR CAST(created_at AS INTEGER) >= ?
+                 OR (
+                    CAST(IFNULL(deadline_at, 0) AS INTEGER) > 0
+                    AND CAST(deadline_at AS INTEGER) >= ?
+                 ))
+                """)
+            params.append(CommitmentStatus.pending.rawValue)
+            params.append(CommitmentStatus.overdue.rawValue)
+            params.append("\(relevantSince)")
+            params.append("\(relevantSince)")
+        }
+        if !clauses.isEmpty {
+            sql += " WHERE " + clauses.joined(separator: " AND ")
         }
         sql += " ORDER BY COALESCE(deadline_at, 9999999999) ASC"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -2012,6 +2047,9 @@ final class HUDStore: ObservableObject {
                 deadlineLabel: Self.textColumn(stmt, 16),
                 commitmentKind: Self.textColumn(stmt, 17)
             ))
+        }
+        if let relevantSince {
+            return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
         }
         return results
     }
@@ -2086,12 +2124,18 @@ final class HUDStore: ObservableObject {
     /// - Parameters:
     ///   - chatUsername: if set, only items from that chat
     ///   - status: if set, only items in that status (default shows all)
+    ///   - excludingStatus: if set, drop that status (used for history)
+    ///   - id: if set, only that row
     ///   - sinceTimestamp: if set, only items with `source_timestamp >= this`
+    ///   - relevantSince: if set, keep pending rows plus history whose source or due date is on/after this
     ///   - limit: cap results (nil = no cap)
     func loadDiscussionItems(
         chatUsername: String? = nil,
         status: DiscussionItemStatus? = nil,
+        excludingStatus: DiscussionItemStatus? = nil,
+        id: Int64? = nil,
         sinceTimestamp: Int? = nil,
+        relevantSince: Int? = nil,
         limit: Int? = nil
     ) -> [DiscussionItem] {
         var results: [DiscussionItem] = []
@@ -2114,9 +2158,30 @@ final class HUDStore: ObservableObject {
             clauses.append("status=?")
             params.append(status.rawValue)
         }
+        if let excludingStatus {
+            clauses.append("status!=?")
+            params.append(excludingStatus.rawValue)
+        }
+        if let id {
+            clauses.append("id=?")
+            params.append("\(id)")
+        }
         if let since = sinceTimestamp {
             clauses.append("source_timestamp >= ?")
             params.append("\(since)")
+        }
+        if let relevantSince {
+            clauses.append("""
+                (status=?
+                 OR CAST(source_timestamp AS INTEGER) >= ?
+                 OR (
+                    CAST(IFNULL(due_at, 0) AS INTEGER) > 0
+                    AND CAST(due_at AS INTEGER) >= ?
+                 ))
+                """)
+            params.append(DiscussionItemStatus.pending.rawValue)
+            params.append("\(relevantSince)")
+            params.append("\(relevantSince)")
         }
         if !clauses.isEmpty {
             sql += " WHERE " + clauses.joined(separator: " AND ")
@@ -2152,7 +2217,14 @@ final class HUDStore: ObservableObject {
                 updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14)))
             ))
         }
+        if let relevantSince {
+            return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
+        }
         return results
+    }
+
+    func loadDiscussionItem(id: Int64) -> DiscussionItem? {
+        loadDiscussionItems(id: id, limit: 1).first
     }
 
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
@@ -2213,6 +2285,14 @@ final class HUDStore: ObservableObject {
             INSERT INTO reply_drafts(chat_username, chat_name, text, send_at, created_at)
             VALUES(?,?,?,?,?)
         """, params: [chatUsername, chatName, text, String(sendAtTs), String(now)])
+    }
+
+    func draftCount() -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM reply_drafts", -1, &stmt, nil) == SQLITE_OK,
+              sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
     }
 
     func loadDrafts() -> [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] {
