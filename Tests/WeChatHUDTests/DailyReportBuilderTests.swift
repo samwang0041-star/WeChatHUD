@@ -518,6 +518,14 @@ final class DailyReportBuilderTests: XCTestCase {
             confidence: 0.7, bucket: .review, status: .pending, promptVersion: "test",
             createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
         ))
+        let later = Calendar.current.date(byAdding: .day, value: 3, to: now)!
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-created-today-due-later", chatUsername: "wxid_later", chatName: "同事",
+            senderName: "同事", rawText: "下周见面", summary: "确认下周见面时间",
+            askType: .info, deadlineAt: later,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
         XCTAssertTrue(try store.insertDiscussionItem(
             chatUsername: "wxid_due", chatName: "同事", kind: .todo, owner: .mine,
             content: "过期仍要交的我要做", detail: nil, anchorMsgUID: "discussion-overdue",
@@ -531,8 +539,9 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-review-today" })
         XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-due-today" })
         XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-created-today-due-later" })
         XCTAssertTrue(report.actions.contains { $0.type == .todo && $0.content == "过期仍要交的我要做" })
-        XCTAssertEqual(report.metrics.pendingAskCount, 2)
+        XCTAssertEqual(report.metrics.pendingAskCount, 3)
         XCTAssertEqual(report.metrics.pendingTodoCount, 1)
     }
 
