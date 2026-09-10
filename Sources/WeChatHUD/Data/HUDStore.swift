@@ -2868,7 +2868,7 @@ final class HUDStore: ObservableObject {
         } else {
             sqlite3_bind_null(stmt, 13)
         }
-        sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+        sqlite3_bind_int64(stmt, 14, Int64(entry.createdAt.timeIntervalSince1970))
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
         }
@@ -2961,16 +2961,24 @@ final class HUDStore: ObservableObject {
     }
 
     /// Pending drafts from every session, including ones whose session already ended.
-    func loadOpenAutopilotPendingItems() -> [AutopilotLogEntry] {
+    func loadOpenAutopilotPendingItems(relevantSince: Int? = nil) -> [AutopilotLogEntry] {
         var results: [AutopilotLogEntry] = []
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        var sql = """
             SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
                    trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
                    action, ai_reasoning, sent_at, created_at
-            FROM autopilot_log WHERE action='pending' ORDER BY created_at DESC
-        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            FROM autopilot_log WHERE action='pending'
+        """
+        if relevantSince != nil {
+            sql += " AND created_at >= ?"
+        }
+        sql += " ORDER BY created_at DESC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        if let relevantSince {
+            sqlite3_bind_int64(stmt, 1, Int64(relevantSince))
+        }
         while sqlite3_step(stmt) == SQLITE_ROW {
             results.append(autopilotLogEntry(from: stmt!))
         }
@@ -2978,10 +2986,10 @@ final class HUDStore: ObservableObject {
     }
 
     /// Current-session log plus leftover pending rows from ended sessions.
-    func loadAutopilotDisplayLog(sessionId: Int64?, limit: Int = 50) -> [AutopilotLogEntry] {
+    func loadAutopilotDisplayLog(sessionId: Int64?, limit: Int = 50, relevantSince: Int? = nil) -> [AutopilotLogEntry] {
         var result: [AutopilotLogEntry] = []
         var seen = Set<Int64>()
-        for item in loadOpenAutopilotPendingItems() {
+        for item in loadOpenAutopilotPendingItems(relevantSince: relevantSince) {
             if seen.insert(item.id).inserted { result.append(item) }
         }
         if let sessionId {

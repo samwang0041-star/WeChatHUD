@@ -1283,9 +1283,16 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotManuallyPaused = manPaused
                     self.autopilotPaused = paused
                     if let session = self.store.currentAutopilotSession() {
-                        self.autopilotLog = self.store.loadAutopilotDisplayLog(sessionId: session.id, limit: 50)
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
+                            sessionId: session.id,
+                            limit: 50,
+                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+                        )
                     } else {
-                        self.autopilotLog = self.store.loadAutopilotDisplayLog(sessionId: nil)
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
+                            sessionId: nil,
+                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+                        )
                     }
                 }
                 if result.totalProcessed > 0 {
@@ -2946,7 +2953,10 @@ final class ChatMonitor: ObservableObject {
     }
 
     func reloadAutopilotDisplayLog() {
-        autopilotLog = store.loadAutopilotDisplayLog(sessionId: store.currentAutopilotSession()?.id)
+        autopilotLog = store.loadAutopilotDisplayLog(
+            sessionId: store.currentAutopilotSession()?.id,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
     }
 
     /// Refresh autopilot UI state from the DB (source of truth for counters).
