@@ -52,7 +52,7 @@ struct DetailPanelView: View {
                 panelState.collapse()
             }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 15))
+                    .font(.system(size: 14))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
@@ -61,17 +61,17 @@ struct DetailPanelView: View {
     }
 
     private func detailNotificationBar(_ item: InboxItem) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             Circle()
                 .fill(item.priority == .p0 ? Color.red : Color.yellow)
-                .frame(width: 7, height: 7)
+                .frame(width: 6, height: 6)
             Text(item.aiSummary ?? item.preview)
-                .font(.system(size: 11))
+                .islandMeta()
                 .foregroundColor(.primary)
                 .lineLimit(1)
             if item.isOverdue {
                 Text("超时\(item.overdueMinutes)分")
-                    .font(.system(size: 9))
+                    .islandMicro()
                     .foregroundColor(.red)
             }
             Spacer()
@@ -81,12 +81,13 @@ struct DetailPanelView: View {
                 // visible shrink-then-grow flicker.
                 panelState.goExtended()
             }
-            .font(.system(size: 10))
+            .islandMicro()
             .buttonStyle(.plain)
-            .foregroundColor(.blue)
+            .foregroundColor(CompanionPalette.islandMint)
+            .accessibilityLabel("查看这条消息")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, IslandMetrics.sectionInset)
+        .padding(.vertical, 7)
         .background(Color.red.opacity(0.08))
     }
 }

@@ -368,6 +368,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // immediately at launch and holds it, so the island's frame
             // and the banner's content can be captured side by side
             // without clicking anything.
+            // `--preview-tasks` / `--preview-empty` do the same for the
+            // inline task list and the empty inbox, so every island surface
+            // can be inspected from a repeatable launch.
+            if CommandLine.arguments.contains("--preview-tasks") {
+                panelState.islandSurface = .tasks
+                panelState.goExtended()
+            }
+            if CommandLine.arguments.contains("--preview-empty") {
+                PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState)
+            }
             if CommandLine.arguments.contains("--preview-notification") {
                 // Fire the banner after the launch-time work (workspace
                 // window first paint, preview data seeding) has settled — a
