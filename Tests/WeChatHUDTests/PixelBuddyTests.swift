@@ -6,9 +6,13 @@ final class PixelBuddyTests: XCTestCase {
 
     // MARK: - Compact mood derivation
 
-    func testCompactMood_syncing_returnScanning() {
+    /// 1.2.3 made the island still: a background scan tick must not repaint the
+    /// companion into a scanning state. This asserts the post-1.2.3 contract —
+    /// syncing alone leaves the buddy idle — superseding the earlier
+    /// expectation that .syncing surfaced as .scanning.
+    func testCompactMood_syncingStaysStill() {
         let mood = deriveCompactMood(syncStatus: .syncing, hasUrgent: false, hasPending: false, idleMinutes: 0)
-        XCTAssertEqual(mood, .scanning)
+        XCTAssertEqual(mood, .idle)
     }
 
     func testCompactMood_syncError_returnsError() {

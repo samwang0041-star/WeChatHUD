@@ -89,11 +89,16 @@ enum CompanionProductCopy {
     static func clockLabel(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        if calendar.isDateInToday(date) {
+        // Compare against the injected reference time, not the wall clock.
+        // isDateInToday reads Date() internally, which made the now parameter
+        // inert: a caller passing a reference time still got labels resolved
+        // against whenever the code happened to run.
+        if calendar.isDate(date, inSameDayAs: now) {
             formatter.dateFormat = "HH:mm"
             return "今天 \(formatter.string(from: date))"
         }
-        if calendar.isDateInTomorrow(date) {
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) {
             formatter.dateFormat = "HH:mm"
             return "明天 \(formatter.string(from: date))"
         }

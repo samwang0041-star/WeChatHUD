@@ -587,12 +587,17 @@ private struct IslandTaskPreview: View {
     @State private var sourceItem: DiscussionItem?
     @State private var receipt: String?
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
+    @State private var itemsCache = DiscussionItemsCache()
 
+    /// Resolved once per body evaluation; reading it from a row would re-sort
+    /// the whole pending corpus for every row drawn.
     private var items: [DiscussionItem] {
-        DiscussionPresentation.items(monitor.discussionItems, scope: scope, query: "", history: false)
+        itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false)
     }
 
     var body: some View {
+        let items = self.items
+
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Button {
@@ -620,7 +625,7 @@ private struct IslandTaskPreview: View {
                 ForEach([DiscussionScope.mine, .theirs], id: \.self) { value in
                     Button {
                         scope = value
-                        expandedID = items.first?.id
+                        expandedID = itemsCache.items(monitor.discussionItems, scope: value, query: "", history: false).first?.id
                     } label: {
                         Text(value.rawValue)
                             .font(.system(size: 12, weight: scope == value ? .semibold : .regular))
@@ -669,14 +674,12 @@ private struct IslandTaskPreview: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 12)
         .onAppear {
-            if items.isEmpty {
-                if !DiscussionPresentation.items(monitor.discussionItems, scope: .theirs, query: "", history: false).isEmpty {
-                    scope = .theirs
-                } else {
-                    scope = .all
-                }
+            // The cache keeps these lookups to one sort per distinct scope.
+            if itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).isEmpty {
+                let theirs = itemsCache.items(monitor.discussionItems, scope: .theirs, query: "", history: false)
+                scope = theirs.isEmpty ? .all : .theirs
             }
-            expandedID = items.first?.id
+            expandedID = itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).first?.id
         }
         .sheet(item: $sourceItem) { item in
             DiscussionSourceView(item: item, onClose: { sourceItem = nil })
