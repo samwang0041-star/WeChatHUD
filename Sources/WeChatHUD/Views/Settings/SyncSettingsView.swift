@@ -865,7 +865,9 @@ struct SyncSettingsView: View {
         case .recalls:
             recalledMessages = store.loadRecalledMessages(since: 0, limit: 50)
         case .commitments:
-            commitments = store.loadCommitments(status: .pending) + store.loadCommitments(status: .fulfilled)
+            commitments = store.loadCommitments(
+                relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+            )
         case .pendingAsks:
             let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
             let main = store.loadPendingAsks(bucket: .main, status: .pending, relevantSince: cutoff)

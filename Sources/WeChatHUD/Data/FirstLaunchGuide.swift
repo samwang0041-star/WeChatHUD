@@ -248,7 +248,8 @@ enum FirstLaunchGuide {
         hasTrackedConversations: Bool,
         aiConfigured: Bool,
         aiTested: Bool,
-        searching: Bool
+        searching: Bool,
+        hasOpenTasks: Bool = false
     ) -> EmptyCopy {
         if searching {
             return EmptyCopy(title: "没有匹配的消息", detail: "试试联系人姓名或消息里的关键词。")
@@ -263,6 +264,12 @@ enum FirstLaunchGuide {
             return EmptyCopy(
                 title: "还没有关注的对话",
                 detail: "先选一个联系人或群聊。助手只整理你选中的对话，不会查看全部微信。"
+            )
+        }
+        if hasOpenTasks {
+            return EmptyCopy(
+                title: "没有需要回复的消息",
+                detail: "待办还在「我要做」里。点过去处理，不必等新消息。"
             )
         }
         if !aiConfigured || !aiTested {

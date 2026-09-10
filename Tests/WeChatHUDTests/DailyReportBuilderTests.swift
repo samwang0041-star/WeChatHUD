@@ -345,6 +345,33 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("需要支持：暂无") == true)
     }
 
+    func testBuildSurfacesLiveDiscussionTodosAndDedupesTheSameAsk() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let now = Date()
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "wxid_boss", chatName: "林总", kind: .todo, owner: .mine,
+            content: "把预算单发过去", detail: nil, anchorMsgUID: "ask-local-2",
+            sourceTimestamp: Int(now.timeIntervalSince1970),
+            dueAt: now.addingTimeInterval(3_600), confidence: 0.9, promptVersion: "test"
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-local-2", chatUsername: "wxid_boss", chatName: "林总",
+            senderName: "林总", rawText: "把预算单发我", summary: "发送预算单",
+            askType: .sendFile, deadlineAt: now.addingTimeInterval(3_600),
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build()
+        XCTAssertEqual(report.metrics.pendingTodoCount, 1)
+        XCTAssertEqual(report.metrics.pendingAskCount, 0)
+        XCTAssertTrue(report.actions.contains { $0.type == .todo && $0.content == "把预算单发过去" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask })
+    }
+
     func testCommitmentFallbackDescribesRecordAndReviewWithoutClaimingCompletion() throws {
         let (store, path) = try makeTempStore()
         defer {

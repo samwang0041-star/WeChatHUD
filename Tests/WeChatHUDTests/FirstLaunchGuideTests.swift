@@ -110,6 +110,16 @@ final class FirstLaunchGuideTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: true), "现在没有需要你处理的事。")
     }
 
+    func testTodayEmptyDoesNotHideOpenTasksBehindNoWorkCopy() {
+        let empty = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: true, searching: false, hasOpenTasks: true
+        )
+        XCTAssertEqual(empty.title, "没有需要回复的消息")
+        XCTAssertTrue(empty.detail.contains("我要做"))
+        XCTAssertFalse(empty.title.contains("没有需要你处理的事"))
+    }
+
     func testSuggestedConversationsHideOfficialAccountsAndKeepRecentChats() {
         let sessions = [
             SessionInfo(username: "gh_official", isGroup: false, unreadCount: 3, lastTimestamp: 90),
