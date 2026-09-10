@@ -39,6 +39,26 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(store.draftCount(), 2)
     }
 
+    func testWorkspaceDraftsIncludeInProgressComposerText() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        try store.setSetting("composer_draft:wxid_dan", value: "来吧")
+        XCTAssertEqual(store.draftCount(), 0)
+        XCTAssertEqual(store.workspaceDraftCount(), 1)
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.text, "来吧")
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.isComposerOnly, true)
+
+        try store.saveDraft(chatUsername: "wxid_dan", chatName: "王丹", text: "来吧", sendAt: nil)
+        XCTAssertEqual(store.workspaceDraftCount(), 1)
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.isComposerOnly, false)
+
+        try store.setSetting("composer_draft:wxid_dan", value: "改过的")
+        XCTAssertEqual(store.workspaceDraftCount(), 2)
+        try store.clearComposerDraft(chatUsername: "wxid_dan")
+        XCTAssertEqual(store.workspaceDraftCount(), 1)
+    }
+
     func testContinuationUpdateRequiresOriginalIDAndChatIdentity() throws {
         let store = HUDStore(dbPath: ":memory:")
         try store.open()

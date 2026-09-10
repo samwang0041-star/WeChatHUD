@@ -2487,6 +2487,86 @@ final class HUDStore: ObservableObject {
         return Int(sqlite3_column_int(stmt, 0))
     }
 
+    /// Saved drafts plus in-progress composer text that is not already a saved row.
+    func workspaceDraftCount() -> Int {
+        loadWorkspaceDrafts().count
+    }
+
+    struct WorkspaceDraft: Equatable {
+        let id: Int64
+        let chatUsername: String
+        let chatName: String
+        let text: String
+        let createdAt: Date
+        let isComposerOnly: Bool
+    }
+
+    func loadWorkspaceDrafts() -> [WorkspaceDraft] {
+        let saved = loadDrafts()
+        var result = saved.map {
+            WorkspaceDraft(
+                id: $0.id,
+                chatUsername: $0.chatUsername,
+                chatName: $0.chatName,
+                text: $0.text,
+                createdAt: $0.createdAt,
+                isComposerOnly: false
+            )
+        }
+        let savedTextByChat = Dictionary(uniqueKeysWithValues: saved.map { ($0.chatUsername, $0.text) })
+        for composer in loadComposerDrafts() {
+            if savedTextByChat[composer.chatUsername] == composer.text { continue }
+            let name = getWhitelistEntry(username: composer.chatUsername)?.displayName
+                ?? getContact(username: composer.chatUsername)?.displayName
+                ?? composer.chatUsername
+            result.insert(
+                WorkspaceDraft(
+                    id: Self.composerDraftID(composer.chatUsername),
+                    chatUsername: composer.chatUsername,
+                    chatName: name,
+                    text: composer.text,
+                    createdAt: Date(),
+                    isComposerOnly: true
+                ),
+                at: 0
+            )
+        }
+        return result
+    }
+
+    func loadComposerDrafts() -> [(chatUsername: String, text: String)] {
+        var results: [(chatUsername: String, text: String)] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(
+            db,
+            "SELECT key, value FROM settings WHERE key LIKE 'composer_draft:%'",
+            -1, &stmt, nil
+        ) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let key = String(cString: sqlite3_column_text(stmt, 0))
+            let value = String(cString: sqlite3_column_text(stmt, 1))
+            let username = String(key.dropFirst("composer_draft:".count))
+            guard !username.isEmpty,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            results.append((username, value))
+        }
+        return results
+    }
+
+    func clearComposerDraft(chatUsername: String) throws {
+        try setSetting("composer_draft:\(chatUsername)", value: "")
+    }
+
+    static func composerDraftID(_ chatUsername: String) -> Int64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in chatUsername.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return Int64(bitPattern: hash | (1 << 63))
+    }
+
     func loadDrafts() -> [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] {
         var results: [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] = []
         var stmt: OpaquePointer?

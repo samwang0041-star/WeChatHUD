@@ -105,7 +105,7 @@ struct CompanionGuideView: View {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
             shortcutRow("Esc", "把不漏事收成一条（只在它是当前窗口时有效）")
-            Text("菜单栏可以打开或收起不漏事、查看新消息，以及退出。")
+            Text("菜单栏可以打开或收起头顶上的不漏事、查看新消息，以及退出。工作台从岛上的齿轮进入。")
                 .guideSecondary()
                 .textSelection(.enabled)
         }
