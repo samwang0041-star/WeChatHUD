@@ -151,19 +151,24 @@ struct DailyReportTabView: View {
                 } else {
                     if !done.isEmpty {
                         Text("已经推进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                        ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
-                            HStack(alignment: .top, spacing: 10) {
-                                Text("\(index + 1)")
-                                    .font(.system(size: 13, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(CompanionPalette.jade, in: Circle())
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.content).font(.system(size: 15, weight: .semibold))
-                                    Text("来自：\(item.chatName)")
-                                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                                }
-                            }
+                       ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
+                           HStack(alignment: .top, spacing: 10) {
+                               Text("\(index + 1)")
+                                   .font(.system(size: 13, weight: .bold))
+                                   .foregroundStyle(.white)
+                                   .frame(width: 24, height: 24)
+                                   .background(CompanionPalette.jade, in: Circle())
+                               VStack(alignment: .leading, spacing: 4) {
+                                   Text(item.content).font(.system(size: 15, weight: .semibold))
+                                   Text("来自：\(item.chatName)")
+                                       .font(.system(size: 12)).foregroundStyle(.secondary)
+                               }
+                           }
+                       }
+                        if done.count > 8 {
+                            Text("还有 \(done.count - 8) 件已完成，在待办的「看已处理的」里。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
                         }
                     }
                     if !pending.isEmpty {
@@ -182,7 +187,15 @@ struct DailyReportTabView: View {
                                 .buttonStyle(.plain)
                                 .foregroundStyle(CompanionPalette.jade)
                             }
-                            .font(.system(size: 14))
+                           .font(.system(size: 14))
+                       }
+                        if pending.count > 8 {
+                            Button("还有 \(pending.count - 8) 件在待办里") {
+                                panelState.pendingSettingsTab = "tasks"
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(CompanionPalette.jade)
+                            .font(.system(size: 13, weight: .medium))
                         }
                     }
                 }
