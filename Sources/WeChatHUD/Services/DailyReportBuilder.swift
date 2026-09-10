@@ -37,17 +37,19 @@ struct DailyReportBuilder {
                 if historical {
                     return ask.createdAt >= startOfDay && ask.createdAt < endOfRange
                 }
-                // 待办 keeps the 14-day backlog. 今日小结 is "还剩什么" for
-                // today: created today, or due/overdue today. Undated older
-                // asks stay on the 待办 page.
+                // 待办 keeps the 14-day backlog. 今日小结 is "今天还剩什么":
+                // confirmed asks created today, or due on this calendar day.
+                // Last week's overdue classifier asks and 待确认归属 stay off
+                // this page. Overdue 我要做 still arrives via liveDiscussions.
                 let live = DiscussionLiveWindow.contains(
                     ask,
                     cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
                 )
                 guard live else { return false }
+                guard ask.bucket == .main else { return false }
                 let createdToday = ask.createdAt >= startOfDay && ask.createdAt < endOfRange
-                let dueOrOverdue = ask.deadlineAt.map { $0 < endOfRange } ?? false
-                return createdToday || dueOrOverdue
+                let dueToday = ask.deadlineAt.map { calendar.isDate($0, inSameDayAs: date) } ?? false
+                return createdToday || dueToday
             }
         let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
             .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }
