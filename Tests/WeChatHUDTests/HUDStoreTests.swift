@@ -1097,6 +1097,25 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(store.loadOpenAutopilotPendingItems().first?.generatedReply, "改过的草稿")
     }
 
+    func testStaleAutopilotPendingIsHiddenFromLiveWindow() throws {
+        let sessionId = try store.startAutopilotSession()
+        let stale = Date(timeIntervalSince1970: 1_700_000_000) // 2023
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "c", chatName: "C",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "old", triggerText: "在吗",
+            generatedReply: "稍后", confidence: 0.6,
+            riskLevel: .medium, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: stale
+        ))
+        try store.endAutopilotSession(id: sessionId)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: Date(timeIntervalSince1970: 1_778_000_000))
+        XCTAssertTrue(store.loadOpenAutopilotPendingItems().contains { $0.triggerMsgUID == "old" })
+        XCTAssertFalse(store.loadOpenAutopilotPendingItems(relevantSince: cutoff).contains { $0.triggerMsgUID == "old" })
+        XCTAssertFalse(store.loadAutopilotDisplayLog(sessionId: nil, relevantSince: cutoff).contains { $0.triggerMsgUID == "old" })
+    }
+
     func testCompletingACommitmentClosesTheMatchingDiscussionRow() throws {
         try store.upsertCommitment(
             msgUID: "same-msg", chatUsername: "chat", chatName: "项目群",
