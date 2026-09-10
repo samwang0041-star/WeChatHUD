@@ -10,6 +10,11 @@ enum DailyReportPresentationPolicy {
 
     // MARK: - Grouped View Model
 
+    /// Matches DailyReportBuilder's today mix: live 我要做, main-bucket asks
+    /// created or due today, reply debt, and open promises. Not the 14-day
+    /// ask dump, and not "only things due today".
+    static let followUpCaption = "含我要做、今天新建或今天到期的请求、待回复，以及还没兑现的承诺"
+
     struct CommandCenterViewModel: Sendable {
         let progress: DailyReportProgressMetrics
         let urgentActions: [DailyReportAction]
@@ -168,6 +173,7 @@ enum DailyReportPresentationPolicy {
         // Progress
         let p = viewModel.progress
         lines.append("## 今日进度")
+        lines.append(followUpCaption)
         lines.append("- 完成: \(p.completedCount)/\(p.totalCount)")
         lines.append("- 待处理: \(p.activeCount)")
         if p.overdueCount > 0 {

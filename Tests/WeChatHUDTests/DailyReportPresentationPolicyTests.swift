@@ -123,6 +123,20 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         XCTAssertTrue(md.contains("Draft text"))
     }
 
+    func testFollowUpCaptionNamesCreatedOrDueTodayNotOnlyDueToday() {
+        XCTAssertTrue(DailyReportPresentationPolicy.followUpCaption.contains("今天新建或今天到期"))
+        XCTAssertFalse(DailyReportPresentationPolicy.followUpCaption.contains("今天到期的请求，以及"))
+        XCTAssertTrue(DailyReportPresentationPolicy.followUpCaption.contains("我要做"))
+        XCTAssertTrue(DailyReportPresentationPolicy.followUpCaption.contains("待回复"))
+        XCTAssertTrue(DailyReportPresentationPolicy.followUpCaption.contains("承诺"))
+        let report = makeReport(actions: [makeAction(content: "Send report", urgency: .high)], risks: [], highlights: [])
+        let md = DailyReportPresentationPolicy.markdown(
+            for: report,
+            viewModel: DailyReportPresentationPolicy.buildViewModel(from: report)
+        )
+        XCTAssertTrue(md.contains(DailyReportPresentationPolicy.followUpCaption))
+    }
+
     func testUnverifiedEmptySourceIsExplicitInViewModelAndMarkdown() {
         let report = makeReport(
             actions: [], risks: [], highlights: [],
