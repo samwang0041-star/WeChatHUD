@@ -45,6 +45,11 @@ struct DailyReportBuilder {
         let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
             .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }
 
+        let liveDiscussions = historical ? [] : store.loadDiscussionItems(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+        ).filter { $0.kind != .info && $0.owner == .mine }
+
         // 3. Commitments
         let allCommitments = store.loadCommitments()
         let scopedCommitments = allCommitments.filter {
@@ -62,8 +67,10 @@ struct DailyReportBuilder {
         // 5. Build metrics
         let metrics = DailyReportMetrics(
             unreadMessageCount: historical ? 0 : stats.unreadCount,
-            pendingTodoCount: historical ? 0 : runTodos.count,
-            pendingAskCount: historical ? 0 : pendingAsks.count,
+            pendingTodoCount: historical ? 0 : runTodos.count + liveDiscussions.count,
+            pendingAskCount: historical ? 0 : pendingAsks.filter { ask in
+                !liveDiscussions.contains { $0.anchorMsgUID == ask.msgUID }
+            }.count,
             pendingCommitmentCount: pendingCommitments.count,
             overdueCommitmentCount: overdueCommitments.count,
             replyDebtCount: historical ? 0 : replyDebtItems.filter { $0.timestamp < endOfRange }.count,
@@ -120,6 +127,19 @@ struct DailyReportBuilder {
             ))
         }
 
+        let discussionAnchors = Set(liveDiscussions.map(\.anchorMsgUID))
+        for item in liveDiscussions {
+            actions.append(DailyReportAction(
+                content: item.content,
+                type: .todo,
+                urgency: urgencyFor(deadline: item.dueAt),
+                deadline: item.dueAt,
+                sourceChatName: item.chatName,
+                sourceChatUsername: item.chatUsername,
+                relatedID: "discussion-\(item.id)"
+            ))
+        }
+
         // Commitments (pending + overdue)
         for c in pendingCommitments + overdueCommitments {
             actions.append(DailyReportAction(
@@ -147,7 +167,7 @@ struct DailyReportBuilder {
         }
 
         // Pending asks
-        for ask in historical ? [] : pendingAsks {
+        for ask in historical ? [] : pendingAsks where !discussionAnchors.contains(ask.msgUID) {
             actions.append(DailyReportAction(
                 content: ask.summary,
                 type: .ask,

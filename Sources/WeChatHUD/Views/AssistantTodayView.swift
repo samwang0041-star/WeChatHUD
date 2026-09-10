@@ -123,7 +123,8 @@ struct AssistantTodayView: View {
                         hasTrackedConversations: store.hasWhitelistEntries(),
                         aiConfigured: aiConfigured,
                         aiTested: aiTested,
-                        searching: !query.isEmpty
+                        searching: !query.isEmpty,
+                        hasOpenTasks: pending.contains { $0.owner == .mine } || !upcoming.isEmpty
                     )
                     ContentUnavailableView(empty.title, systemImage: query.isEmpty ? "tray" : "magnifyingglass", description: Text(empty.detail))
                         .frame(maxWidth: .infinity).padding(.vertical, 28).companionSurface()
