@@ -263,7 +263,7 @@ struct ChatInsightDetailView: View {
 
         if !followUps.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("当前待办")
+                Text(ChatReviewFollowUps.heading(selectedDate: selectedDate))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 ForEach(Array(followUps.enumerated()), id: \.offset) { _, item in

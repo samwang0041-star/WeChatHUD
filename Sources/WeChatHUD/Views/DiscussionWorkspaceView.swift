@@ -696,6 +696,15 @@ enum ChatReviewFollowUps {
         let chatUsername: String
     }
 
+    /// Live todos are not filtered by the review date. The heading must
+    /// say so when the user is looking at another day.
+    static func heading(selectedDate: Date, now: Date = Date()) -> String {
+        if Calendar.current.isDate(selectedDate, inSameDayAs: now) {
+            return "当前待办"
+        }
+        return "现在的待办（与所选日期无关）"
+    }
+
     static func items(chatUsername: String, discussion: [DiscussionItem]) -> [Item] {
         let ranked = DiscussionPresentation.items(
             discussion.filter { $0.chatUsername == chatUsername },
