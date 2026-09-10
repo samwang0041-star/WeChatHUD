@@ -63,9 +63,6 @@ struct InboxView: View {
 
         VStack(alignment: .leading, spacing: 0) {
             if panelState.islandSurface != .firstLaunch {
-                if panelState.showSmartDigest {
-                    smartDigestBanner
-                }
                 header
             }
             if panelState.islandSurface == .inbox {
@@ -560,34 +557,6 @@ struct InboxView: View {
                 hasTrackedConversations: !monitor.store.getWhitelist().isEmpty
             )
         }
-    }
-
-    // MARK: - Smart Digest Banner
-
-    private var smartDigestBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock.badge.exclamationmark")
-                .font(.system(size: 11))
-                .foregroundColor(CompanionPalette.islandMint)
-            Text("离开期间有更新")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
-            Spacer()
-            Button("查看待办") {
-                panelState.showSmartDigest = false
-                panelState.islandSurface = .tasks
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-            Button("知道了") {
-                panelState.showSmartDigest = false
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.06))
     }
 
     // MARK: - Helpers
