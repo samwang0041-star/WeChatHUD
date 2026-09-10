@@ -1100,9 +1100,9 @@ enum AdmissionMode: String, Codable, CaseIterable {
     var detail: String {
         switch self {
         case .whitelistOnly:
-            return "只有「关注的人」和群里的重点成员会进来。其余对话不提醒、也不做 AI 分析。"
+            return "只有关注的人、群里 @你、以及你点名的成员会进来。关注一个群不会把每一条闲聊都拿来分析。"
         case .all:
-            return "微信里有未读的对话都会进来。AI 用量会明显增加，也更容易被打扰。"
+            return "微信里有未读的对话都会进收件箱。摘要和待办仍只整理你关注的人和群。"
         }
     }
 }
