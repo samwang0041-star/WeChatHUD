@@ -702,7 +702,7 @@ struct SyncSettingsView: View {
     private var pendingAsksList: some View {
         Group {
             if pendingAsks.isEmpty {
-                emptyRow("暂无待决事项")
+                emptyRow("近两周没有未处理的提问")
             } else {
                 ForEach(pendingAsks.filter { matchesDataSearch($0.senderName, $0.chatName, $0.summary) }) { ask in
                     SettingsRowDivider()
@@ -867,9 +867,10 @@ struct SyncSettingsView: View {
         case .commitments:
             commitments = store.loadCommitments(status: .pending) + store.loadCommitments(status: .fulfilled)
         case .pendingAsks:
-            let main = store.loadPendingAsks(bucket: .main, status: .pending)
-            let review = store.loadPendingAsks(bucket: .review, status: .pending)
-            let done = store.loadPendingAsks(bucket: .main, status: .done)
+            let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+            let main = store.loadPendingAsks(bucket: .main, status: .pending, relevantSince: cutoff)
+            let review = store.loadPendingAsks(bucket: .review, status: .pending, relevantSince: cutoff)
+            let done = store.loadPendingAsks(bucket: .main, status: .done, relevantSince: cutoff)
             pendingAsks = main + review + done.prefix(10)
         }
     }

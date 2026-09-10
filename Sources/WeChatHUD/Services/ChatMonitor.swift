@@ -304,6 +304,7 @@ final class ChatMonitor: ObservableObject {
 
     private var safetyTimer: Timer?
     private var safetyTickCount = 0
+    private var lastSafetyScanAt: Date?
     private var scanInProgress = false
 
     /// Set when an FSEvent or timer tick requests a scan while one is
@@ -409,7 +410,8 @@ final class ChatMonitor: ObservableObject {
         // Safety fallback: cheap mtime-only check at configurable interval.
         // If FSEvents delivers in time, this is a no-op.
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let scanEveryNTicks = max(1, syncCfg.intervalSeconds / 10)
+        let scanInterval = TimeInterval(max(10, syncCfg.intervalSeconds))
+        lastSafetyScanAt = Date()
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -444,7 +446,8 @@ final class ChatMonitor: ObservableObject {
 
                 // Full scan every Nth tick (interval from sync settings)
                 self.safetyTickCount += 1
-                if self.safetyTickCount % scanEveryNTicks == 0 {
+                if Date().timeIntervalSince(self.lastSafetyScanAt ?? .distantPast) >= scanInterval {
+                    self.lastSafetyScanAt = Date()
                     await self.scan()
                 }
                 // Proactive outreach every 60th tick (~10 min)
@@ -1372,6 +1375,7 @@ final class ChatMonitor: ObservableObject {
         if archived > 0 {
             discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
         }
+        _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
         let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
         refreshWorkspaceChrome()
@@ -2115,13 +2119,19 @@ final class ChatMonitor: ObservableObject {
 
     /// Load pending asks for a specific chat. Used by Person Profile card.
     func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
-        Array(store.loadPendingAsks(status: .pending)
+        Array(store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .filter { $0.chatUsername == chatUsername }
             .prefix(3))
     }
 
     func pendingAsks() -> [PendingAsk] {
-        store.loadPendingAsks(status: .pending)
+        store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
     }
 
     /// Refresh the reply suggester's config from the settings DB.
@@ -2283,7 +2293,10 @@ final class ChatMonitor: ObservableObject {
         // Fetch style profile to make suggestions match user's writing style
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
         let profile = store.getRelationshipProfile(username: item.chatUsername)
-        let pendingAsk = store.loadPendingAsks(status: .pending)
+        let pendingAsk = store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .first { $0.chatUsername == item.chatUsername }
         let context = buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
 

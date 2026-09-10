@@ -117,7 +117,10 @@ enum InboxContextBuilder {
         let trend: InteractionTrend = .stable
 
         // Related data
-        let asks = store.loadPendingAsks(status: .pending)
+        let asks = store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .filter { $0.chatUsername == chatUsername }
 
         // Commitments — loadCommitments has no chatUsername filter, so filter locally
