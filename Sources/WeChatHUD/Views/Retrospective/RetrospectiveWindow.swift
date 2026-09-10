@@ -9,11 +9,11 @@ struct RetrospectiveWindow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("复盘")
+                Text(CompanionProductCopy.timeReview)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundColor(.white.opacity(0.92))
                 Spacer()
-                Text("WeChatHUD")
+                Text(CompanionProductCopy.brandName)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white.opacity(0.35))
             }

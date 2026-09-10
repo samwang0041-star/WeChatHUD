@@ -6,6 +6,9 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.brandName, "不漏事")
         XCTAssertTrue(CompanionProductCopy.brandPromise.contains("记住"))
         XCTAssertEqual(CompanionProductCopy.openCompanion, "打开不漏事")
+        XCTAssertEqual(CompanionProductCopy.collapseCompanion, "收起不漏事")
+        XCTAssertEqual(CompanionProductCopy.checkNewMessages, "查看新消息")
+        XCTAssertEqual(CompanionProductCopy.quitCompanion, "退出不漏事")
         XCTAssertEqual(CompanionProductCopy.sidebarFooter, "本机资料 · 按需使用 AI")
         for word in CompanionProductCopy.forbiddenChrome {
             XCTAssertFalse(CompanionProductCopy.brandName.contains(word))

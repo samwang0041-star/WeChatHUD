@@ -17,6 +17,21 @@ enum CompanionProductCopy {
     static let brandPromise = "安静地替你记住，需要你时把事情说清楚。"
     static let sidebarFooter = "本机资料 · 按需使用 AI"
     static let openCompanion = "打开不漏事"
+    static let collapseCompanion = "收起不漏事"
+    static let checkNewMessages = "查看新消息"
+    static let timeReview = "按时间回顾"
+    static let howToUse = "怎么用"
+    static let checkUpdates = "检查更新…"
+    static let quitCompanion = "退出不漏事"
+
+    static func companionToggleTitle(isOpen: Bool) -> String {
+        isOpen ? collapseCompanion : openCompanion
+    }
+
+    static func viewUpdate(_ version: String) -> String {
+        "查看更新 \(version)…"
+    }
+
     static let sectionHandle = "处理"
     static let sectionReview = "回顾"
     static let sectionReply = "代回复"

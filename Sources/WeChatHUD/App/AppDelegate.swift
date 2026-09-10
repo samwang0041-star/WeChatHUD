@@ -11,7 +11,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var aiService: AIService!
     var fsWatcher: FSEventsWatcher?
     private var statusItem: NSStatusItem?
-    private var updateMenuItem: NSMenuItem?
     private var cancellables = Set<AnyCancellable>()
     private var wechatYieldRestoreWorkItem: DispatchWorkItem?
     private var relaunchWaitTask: Task<Void, Never>?
@@ -473,12 +472,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureMainMenu() {
         let main = NSMenu()
         let applicationItem = NSMenuItem()
-        let application = NSMenu(title: "WeChatHUD")
-        application.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(openSettings), keyEquivalent: "1"))
+        let application = NSMenu(title: CompanionProductCopy.brandName)
+        application.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(toggleCompanionFromMenu), keyEquivalent: "1"))
         application.addItem(NSMenuItem(title: "设置…", action: #selector(openPreferences), keyEquivalent: ","))
-        application.addItem(NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: ""))
+        application.addItem(NSMenuItem(title: CompanionProductCopy.checkUpdates, action: #selector(checkForUpdates), keyEquivalent: ""))
         application.addItem(.separator())
-        let quit = NSMenuItem(title: "退出 WeChatHUD", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: CompanionProductCopy.quitCompanion, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.target = NSApp
         application.addItem(quit)
         applicationItem.submenu = application
@@ -498,7 +497,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         main.addItem(windowItem)
         let helpItem = NSMenuItem()
         let help = NSMenu(title: "帮助")
-        help.addItem(NSMenuItem(title: "WeChatHUD 使用指南", action: #selector(openGuide), keyEquivalent: "?"))
+        help.addItem(NSMenuItem(title: CompanionProductCopy.howToUse, action: #selector(openGuide), keyEquivalent: "?"))
         helpItem.submenu = help
         main.addItem(helpItem)
         NSApp.mainMenu = main
@@ -506,7 +505,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.helpMenu = help
     }
 
-    @objc private func openGuide() {
+    @objc func openGuide() {
         MainActor.assumeIsolated {
             panelState.pendingSettingsTab = "guide"
             panelState.showDetail()
@@ -525,30 +524,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBarItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateMenuBarIcon()
-
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "显示/隐藏浮窗", action: #selector(toggleHUD), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "使用指南…", action: #selector(openGuide), keyEquivalent: "?"))
-        menu.addItem(NSMenuItem(title: "刷新", action: #selector(refreshNow), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "打开复盘…", action: #selector(openRetrospective), keyEquivalent: "R"))
-        menu.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(openSettings), keyEquivalent: ","))
-        let updateItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
-        updateMenuItem = updateItem
-        menu.addItem(updateItem)
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(quitApp), keyEquivalent: "q"))
-        statusItem?.menu = menu
+        if let statusItem {
+            MenuBarController.shared.isCompanionOpen = { [weak self] in
+                self?.panelState.currentState == .detail
+            }
+            MenuBarController.shared.installMenu(on: statusItem, target: self)
+        }
 
         AppUpdateController.shared.$offer
             .combineLatest(AppUpdateController.shared.$phase)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] offer, _ in
-                if let offer {
-                    self?.updateMenuItem?.title = "查看更新 \(offer.version)…"
-                } else {
-                    self?.updateMenuItem?.title = "检查更新…"
-                }
+            .sink { offer, _ in
+                MenuBarController.shared.setUpdateVersion(offer.map { $0.version.description })
             }
             .store(in: &cancellables)
 
@@ -562,7 +549,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // retrospective jobs), we feed the computed string into
         // MenuBarController.shared.badgeText. The controller renders it
         // when no job is running and replaces it with a spinner otherwise.
-        if let statusItem { MenuBarController.shared.attach(statusItem) }
         monitor.$inboxItems
             .combineLatest(monitor.$vipAlertTiers)
             .sink { items, tiers in
@@ -625,29 +611,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateMenuBarIcon() {
         guard let button = statusItem?.button else { return }
         button.title = ""
-        button.image = NSImage(systemSymbolName: "message.badge.fill", accessibilityDescription: "WeChatHUD")
+        button.image = NSImage(systemSymbolName: "message.badge.fill", accessibilityDescription: CompanionProductCopy.brandName)
         button.image?.size = NSSize(width: 18, height: 18)
     }
 
-    @objc private func toggleHUD() {
+    @objc func toggleCompanionFromMenu() {
         MainActor.assumeIsolated {
             if panelState.currentState == .detail {
                 panelState.collapse()
             } else {
+                panelState.pendingSettingsTab = "today"
                 panelState.showDetail()
             }
         }
     }
 
-    @objc private func refreshNow() {
+    @objc func refreshNow() {
         MainActor.assumeIsolated { monitor.refreshNow() }
     }
 
-    @objc private func openSettings() {
-        MainActor.assumeIsolated { panelState.showDetail() }
-    }
-
-    @objc private func checkForUpdates() {
+    @objc func checkForUpdates() {
         MainActor.assumeIsolated {
             panelState.pendingSettingsTab = "preferences"
             panelState.showDetail()
@@ -658,13 +641,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    @objc private func openRetrospective() {
+    @objc func openRetrospective() {
         MainActor.assumeIsolated {
             RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
         }
     }
 
-    @objc private func quitApp() {
+    @objc func quitApp() {
         NSApp.terminate(nil)
     }
 
