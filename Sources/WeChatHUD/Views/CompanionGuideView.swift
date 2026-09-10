@@ -104,8 +104,8 @@ struct CompanionGuideView: View {
         GuideCard(icon: "command", tint: .gray, title: "键盘快捷键") {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
-            shortcutRow("Esc", "把浮窗收成一条（只在浮窗是当前窗口时有效）")
-            Text("菜单栏还可以显示或隐藏浮窗、立刻查看新消息，以及退出。")
+            shortcutRow("Esc", "把不漏事收成一条（只在它是当前窗口时有效）")
+            Text("菜单栏可以打开或收起不漏事、查看新消息，以及退出。")
                 .guideSecondary()
                 .textSelection(.enabled)
         }

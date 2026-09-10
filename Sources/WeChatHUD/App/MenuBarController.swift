@@ -7,9 +7,12 @@ import Combine
 /// p0p1/worstTier semantics; this controller only handles the spinner
 /// overlay during long retrospective jobs.
 @MainActor
-final class MenuBarController: ObservableObject {
+final class MenuBarController: NSObject, ObservableObject {
 
     static let shared = MenuBarController()
+
+    var isCompanionOpen: () -> Bool = { false }
+    var updateVersion: String?
 
     /// String fed in by AppDelegate's existing combineLatest sink.
     /// Preserves all p0/p1 / VIP worst-tier `agingLabel` semantics.
@@ -23,12 +26,31 @@ final class MenuBarController: ObservableObject {
     }
 
     private weak var statusItem: NSStatusItem?
+    private weak var openItem: NSMenuItem?
+    private weak var updateItem: NSMenuItem?
     private var spinTimer: Timer?
     private var spinFrames: [NSImage] = []
     private var spinIndex = 0
     private var savedImage: NSImage?
 
-    private init() {}
+    private override init() {
+        super.init()
+    }
+
+    func installMenu(on item: NSStatusItem, target: AnyObject) {
+        let menu = StatusBarMenuBuilder.makeMenu(target: target)
+        menu.delegate = self
+        openItem = menu.items.first
+        updateItem = menu.items.first { $0.action == #selector(AppDelegate.checkForUpdates) }
+        item.menu = menu
+        attach(item)
+        refreshMenuTitles()
+    }
+
+    func setUpdateVersion(_ version: String?) {
+        updateVersion = version
+        refreshMenuTitles()
+    }
 
     /// AppDelegate calls once after creating the status item. The
     /// image may not be set yet at attach time (depends on init order
@@ -38,6 +60,11 @@ final class MenuBarController: ObservableObject {
         self.statusItem = item
         savedImage = item.button?.image
         render()
+    }
+
+    private func refreshMenuTitles() {
+        openItem?.title = CompanionProductCopy.companionToggleTitle(isOpen: isCompanionOpen())
+        updateItem?.title = StatusBarMenuSpec.updateTitle(updateVersion)
     }
 
     private func renderIfIdle() {
@@ -72,7 +99,7 @@ final class MenuBarController: ObservableObject {
             let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
             guard let base = NSImage(
                 systemSymbolName: "arrow.triangle.2.circlepath",
-                accessibilityDescription: "复盘进行中"
+                accessibilityDescription: "\(CompanionProductCopy.timeReview)进行中"
             )?.withSymbolConfiguration(cfg) else { return }
             spinFrames = (0..<8).map { i in
                 MenuBarController.rotated(base, byDegrees: Double(i) * 45)
@@ -103,5 +130,11 @@ final class MenuBarController: ObservableObject {
         rotated.unlockFocus()
         rotated.isTemplate = image.isTemplate
         return rotated
+    }
+}
+
+extension MenuBarController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        refreshMenuTitles()
     }
 }

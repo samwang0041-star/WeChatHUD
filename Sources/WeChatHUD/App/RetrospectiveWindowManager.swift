@@ -29,7 +29,7 @@ final class RetrospectiveWindowManager {
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered, defer: false
         )
-        w.title = "复盘"
+        w.title = CompanionProductCopy.timeReview
         w.minSize = NSSize(width: 600, height: 500)
         w.isReleasedWhenClosed = false
         w.collectionBehavior = [.moveToActiveSpace]
