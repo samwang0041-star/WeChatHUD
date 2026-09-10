@@ -57,6 +57,7 @@ struct ChatInsightView: View {
             insightStore: insightStore,
             insightCoordinator: insightCoordinator,
             store: store,
+            reader: reader,
             selectedChat: $selectedChat,
             searchText: $searchText,
             onAnalyzeChat: { chatUsername in
