@@ -10,13 +10,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.2.10-0B5960?style=for-the-badge" alt="下载 1.2.10"></a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.2.11-0B5960?style=for-the-badge" alt="下载 1.2.11"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-66D4B7?style=for-the-badge" alt="macOS 14+">
   <img src="https://img.shields.io/badge/芯片-Apple%20Silicon-074E55?style=for-the-badge" alt="Apple Silicon">
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.10-macOS14-arm64.zip">下载正式版安装包</a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.11-macOS14-arm64.zip">下载正式版安装包</a>
   ·
   <a href="docs/user-guide.md">使用指南</a>
   ·
@@ -73,7 +73,7 @@
 ## 下载与安装
 
 1. 从 [Releases](https://github.com/samwang0041-star/WeChatHUD/releases/latest) 下载  
-   [`WeChatHUD-1.2.10-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.10-macOS14-arm64.zip)
+   [`WeChatHUD-1.2.11-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.11-macOS14-arm64.zip)
 2. 解压后，把 **WeChatHUD** 拖进「应用程序」
 3. 打开应用。菜单栏会出现不漏事
 
@@ -142,6 +142,6 @@ open ".build/WeChatHUD Preview.app"
 
 ## 版本
 
-当前正式版是 **1.2.10**。应用内可以检查 GitHub Releases 上的更新。
+当前正式版是 **1.2.11**。应用内可以检查 GitHub Releases 上的更新。
 
 源码与安装包都在这个仓库。欢迎先读使用指南，再决定要不要从源码自己编一份。
