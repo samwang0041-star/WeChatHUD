@@ -53,6 +53,7 @@ final class HUDStore: ObservableObject {
 
         // One-time migration: copy legacy whitelist entries into contacts.
         migrateWhitelistToContacts()
+        repairVIPTrackingAlignment()
 
         // Best-effort housekeeping. Failures are non-fatal — the app
         // still starts, we just leave old audit rows around.
@@ -3246,6 +3247,23 @@ final class HUDStore: ObservableObject {
                     role: defaultContactRole(for: entry.category)
                 )
             }
+        }
+    }
+
+    /// Contacts settings is the product VIP list; the scan still reads whitelist.
+    /// A contact marked 重点关注 must be scanned as VIP even if an older writer
+    /// left whitelist on watch or omitted the row.
+    func repairVIPTrackingAlignment() {
+        for contact in loadContacts() where contact.attentionLevel == .vip {
+            let existing = getWhitelistEntry(username: contact.username)
+            guard existing?.attentionLevel != .vip else { continue }
+            try? upsertWhitelistTracking(
+                username: contact.username,
+                displayName: existing?.displayName ?? contact.displayName,
+                isGroup: existing?.isGroup ?? contact.username.contains("@chatroom"),
+                category: existing?.category ?? .other,
+                attentionLevel: .vip
+            )
         }
     }
 

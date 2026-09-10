@@ -182,8 +182,7 @@ struct NotificationBannerView: View {
     }
 
     private func snooze(_ date: Date) {
-        let item = monitor.inboxItems.first(where: { $0.chatUsername == notification.chatUsername })
-            ?? notification.actionInboxItem()
+        let item = notification.actionInboxItem()
         if monitor.snoozeInboxItem(item, until: date) {
             panelState.islandSnoozeUndo = (item, date)
             panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))

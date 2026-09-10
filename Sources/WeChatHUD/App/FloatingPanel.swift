@@ -51,6 +51,9 @@ final class PillContainerView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        if let window, IslandHitTest.contains(frame: window.frame, point: NSEvent.mouseLocation) {
+            return
+        }
         onExited?()
     }
 }
