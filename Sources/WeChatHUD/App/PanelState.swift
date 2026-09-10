@@ -56,8 +56,6 @@ final class PanelState: ObservableObject {
     /// kinds and consumed by `ConversationDetailView` so we don't have
     /// to re-look it up from the whitelist.
     @Published var selectedChatName: String?
-    /// Set when returning from > 30 min idle — triggers digest banner.
-    @Published var showSmartDigest = false
 
     /// Back-compat convenience — the chat username when the detail
     /// panel is hosting a `.conversation`, otherwise `nil`. Lets
@@ -85,9 +83,6 @@ final class PanelState: ObservableObject {
     /// `ConversationDetailView` after routing, including when that view is
     /// already showing the same chat.
     @Published private(set) var pendingReplyDraftContinuation: ReplyDraftContinuation?
-
-    /// Last time the user actively interacted (mouse entered extended).
-    private var lastActiveAt = Date()
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
@@ -237,13 +232,6 @@ final class PanelState: ObservableObject {
         if let until = reexpandSuppressedUntil, Date() < until {
             return
         }
-
-        // Smart Digest: if > 30 min since last active, flag for digest
-        let idleMinutes = Date().timeIntervalSince(lastActiveAt) / 60
-        if idleMinutes >= 30 && currentState == .compact {
-            showSmartDigest = true
-        }
-        lastActiveAt = Date()
 
         // Don't override .detail — the user is inside the full settings view.
         // Keep the banner under the pointer. Replacing it with the inbox
@@ -434,7 +422,6 @@ final class PanelState: ObservableObject {
         if currentState != .extended {
             currentState = .extended
         }
-        lastActiveAt = Date()
     }
 
     /// Called by HUDRootView's SwiftUI preference-key callback with the

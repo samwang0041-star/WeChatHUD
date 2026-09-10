@@ -249,25 +249,9 @@ enum PreviewRuntime {
             seed(store: monitor.store, monitor: monitor)
         }
         monitor.stats.syncStatus = .ok
-        panelState.showSmartDigest = false
         panelState.islandSurface = .inbox
         panelState.popoverOpen = false
         panelState.collapse()
-    }
-
-    @MainActor static func simulateReturnDigest(monitor: ChatMonitor, panelState: PanelState) {
-        guard isEnabled else { return }
-        if monitor.inboxItems.isEmpty {
-            seed(store: monitor.store, monitor: monitor)
-        }
-        monitor.stats.syncStatus = .ok
-        monitor.stats.lastSyncAt = Date()
-        panelState.islandSnoozeUndo = nil
-        panelState.toastMessage = nil
-        panelState.showSmartDigest = true
-        panelState.clearDetail()
-        panelState.islandSurface = .inbox
-        panelState.goExtended()
     }
 
     @MainActor static func simulateEmptyIsland(monitor: ChatMonitor, panelState: PanelState) {
@@ -276,7 +260,6 @@ enum PreviewRuntime {
         monitor.inboxItems = []
         monitor.stats.syncStatus = .ok
         monitor.stats.lastSyncAt = Date()
-        panelState.showSmartDigest = false
         panelState.islandSnoozeUndo = nil
         panelState.toastMessage = nil
         panelState.clearDetail()

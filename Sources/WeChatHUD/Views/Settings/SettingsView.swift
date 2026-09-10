@@ -157,9 +157,6 @@ struct SettingsView: View {
                             panelState.islandSurface = .inbox
                             panelState.goExtended()
                         }
-                        Button("模拟离开回来") {
-                            PreviewRuntime.simulateReturnDigest(monitor: monitor, panelState: panelState)
-                        }
                         Button("打开引导") { NotificationCenter.default.post(name: .hudShowOnboarding, object: nil) }
                         Button("模拟发送成功") { PreviewRuntime.simulateSendSuccess(monitor: monitor, panelState: panelState) }
                         Button("模拟发送待核对") { PreviewRuntime.simulateSendUncertain(monitor: monitor, panelState: panelState) }
