@@ -104,7 +104,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.onFrameAnimationEnded = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self = self else { return }
-                self.panelState.frameAnimationEnded(mouseInside: self.panel.frame.contains(NSEvent.mouseLocation))
+                // Tolerance-inset test: a cursor parked on the display's top
+                // scanline sits exactly on our frame's `maxY`, which plain
+                // `contains` rejects — that made the panel collapse by
+                // itself right after expanding under a pointer that never
+                // moved.
+                let inside = self.panel.containsMouse()
+                AnimationDebugger.logEvent("frameAnimationEnded mouseInside=\(inside) state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(x:\(String(format: "%.1f", self.panel.frame.minX))…\(String(format: "%.1f", self.panel.frame.maxX)) y:\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                self.panelState.frameAnimationEnded(mouseInside: inside)
             }
         }
         panel.orderFrontRegardless()
@@ -113,10 +120,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // NSTrackingArea dispatch on the main thread — assumeIsolated is
         // safe because AppKit delivers mouse events on main.
         panel.pillContainer.onEntered = { [weak self] in
-            MainActor.assumeIsolated { self?.panelState.mouseEntered() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                AnimationDebugger.logEvent("mouseEntered state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                self.panelState.mouseEntered()
+            }
         }
         panel.pillContainer.onExited = { [weak self] in
-            MainActor.assumeIsolated { self?.panelState.mouseExited() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                AnimationDebugger.logEvent("mouseExited state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                self.panelState.mouseExited()
+            }
         }
 
         // Resize panel when state changes.
@@ -276,22 +291,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // in willSet, so use the sink parameter (the new value) instead
         // of reading panelState.briefingExpanded, which still holds the
         // old value inside the sink.
+        panelState.$measuredNotificationSize
+            .dropFirst()
+            .filter { [weak self] _ in self?.panelState.isReady == true }
+            .removeDuplicates()
+            .sink { [weak self] size in
+                guard let self else { return }
+                guard self.panelState.currentState == .notification, size.height > 1 else { return }
+                // The banner grew or shrank (long message, expanded
+                // briefing card, snooze menu): keep the window hugging it.
+                // @Published fires in willSet, so pass the sink parameter —
+                // reading `measuredNotificationSize` here still yields the
+                // previous height.
+                self.resizeNotificationPanel(caller: "AppDelegate.measuredNotificationSize",
+                                             measuredHeight: size.height)
+            }
+            .store(in: &cancellables)
+
+        // Toggling the in-place briefing card or the snooze menu changes the
+        // banner's height without the state machine changing; the banner's
+        // own measurement above does the resizing. These sinks just make
+        // sure the panel re-reads its target on the same tick.
         panelState.$briefingExpanded
             .dropFirst()
             .filter { [weak self] _ in self?.panelState.isReady == true }
             .removeDuplicates()
-            .sink { [weak self] expanded in
-                guard let self = self else { return }
-                guard self.panelState.currentState == .notification else { return }
-                let (w, h) = self.panelSize(for: .notification, briefingExpanded: expanded)
-                AnimationDebugger.logEvent("briefingExpanded -> \(expanded) target=(\(String(format: "%.1f", w))×\(String(format: "%.1f", h)))")
-                let curr = self.panel.frame
-                // Same tolerance as the measurement sink: skip only
-                // when both dimensions already match (width never
-                // changes between collapsed and expanded, so this must
-                // not require a width delta).
-                guard abs(h - curr.height) >= 2 || abs(w - curr.width) >= 2 else { return }
-                self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.briefingExpanded")
+            .sink { [weak self] _ in
+                self?.resizeNotificationPanel(caller: "AppDelegate.briefingExpanded")
             }
             .store(in: &cancellables)
 
@@ -338,6 +364,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showOnboarding()
         } else if PreviewRuntime.isEnabled {
             panelState.showDetail()
+            // `--preview-notification` renders the notification banner
+            // immediately at launch and holds it, so the island's frame
+            // and the banner's content can be captured side by side
+            // without clicking anything.
+            if CommandLine.arguments.contains("--preview-notification") {
+                // Fire the banner after the launch-time work (workspace
+                // window first paint, preview data seeding) has settled — a
+                // real notification never races the app's own launch, and
+                // animating into that window is what made the measurement
+                // log look like the motion itself was stuttering.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    guard let self else { return }
+                    // Hold the banner long enough to inspect it, then put
+                    // the stored (consumer-facing) duration back so this
+                    // launch flag leaves no trace in the preview settings.
+                    var cfg = self.store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
+                    let savedDuration = cfg.durationSeconds
+                    cfg.durationSeconds = 900
+                    try? self.store.setSettingJSON("notification", value: cfg)
+                    PreviewRuntime.simulateNotification(monitor: self.monitor, panelState: self.panelState, longForm: true)
+                    cfg.durationSeconds = savedDuration
+                    try? self.store.setSettingJSON("notification", value: cfg)
+                    // `--preview-briefing` performs the banner's own
+                    // "看看什么事" action afterwards, so the expanded
+                    // in-place card can be captured in the real panel too.
+                    if CommandLine.arguments.contains("--preview-briefing") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                            guard let self, let notif = self.monitor.latestNotification else { return }
+                            withMotion(CompanionMotion.spring) { self.panelState.setBriefingExpanded(true) }
+                            self.monitor.loadGroupContextBriefing(for: notif)
+                        }
+                    }
+                }
+            }
         }
 
         // Forward whitelist-message previews to the banner. Any non-nil
@@ -417,7 +477,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .sink { [weak self] _ in
                 guard let self = self,
                       self.panelState.currentState == .extended,
-                      self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                      self.panel.containsMouse() else { return }
                 self.panelState.menuTrackingOpen = true
             }
             .store(in: &cancellables)
@@ -426,7 +486,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                self.panelState.updateMouseInside(self.panel.frame.contains(NSEvent.mouseLocation))
+                self.panelState.updateMouseInside(self.panel.containsMouse())
                 self.panelState.menuTrackingOpen = false
             }
             .store(in: &cancellables)
@@ -744,16 +804,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// is measured as `notchWidth + 2*wingWidth` where wing width
     /// scales with content (longer AI summary = wider left wing).
     @MainActor
-    private func resizeNotificationPanel(caller: String) {
+    private func resizeNotificationPanel(caller: String, measuredHeight: CGFloat? = nil) {
         guard panelState.isReady, panelState.currentState == .notification else { return }
-        let (w, h) = panelSize(for: .notification)
+        let (w, h) = panelSize(for: .notification, notificationMeasuredHeight: measuredHeight)
         let curr = panel.frame
         guard abs(h - curr.height) >= 2 || abs(w - curr.width) >= 2 else { return }
         panel.animateHeight(to: h, width: w, caller: caller)
     }
 
     @MainActor
-    private func panelSize(for state: HUDState, briefingExpanded: Bool? = nil) -> (CGFloat, CGFloat) {
+    private func panelSize(for state: HUDState, notificationMeasuredHeight: CGFloat? = nil) -> (CGFloat, CGFloat) {
         // Ensure we read the freshest notch geometry — the cached
         // `panel.notch` may be stale (initial placeholder or from a
         // previous screen) and using it produces a width/height
@@ -776,13 +836,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Minimal-mode preview drops out of the island: narrow
             // width (notch + some wings) with enough height for a
             // two-line preview directly below the notch.
-            // An expanded in-place briefing card adds roughly its
-            // rendered height; the briefingExpanded sink animates the
-            // frame when the card toggles.
-            let expanded = briefingExpanded ?? panelState.briefingExpanded
-            let snoozeExtra: CGFloat = panelState.snoozeMenuExpanded ? IslandChrome.snoozeExtra : 0
-            let height = notch.notchHeight + IslandChrome.notificationBaseBelowNotch
-                + (expanded ? IslandChrome.briefingExtra : 0) + snoozeExtra
+            //
+            // Height comes from the banner's own rendered size (reported
+            // through `SizePreferenceKey`), so long messages, the expanded
+            // briefing card and the snooze menu all fit without being
+            // clipped. The static estimate is only the fallback used
+            // before the first measurement of a new banner arrives.
+            // `notificationMeasuredHeight` lets a `@Published` sink pass the
+            // value it just received (willSet timing) instead of re-reading
+            // the still-stale property.
+            let measured = notificationMeasuredHeight ?? panelState.measuredNotificationSize.height
+            let height = IslandNotificationLayout.panelHeight(
+                measuredContentHeight: measured,
+                notchHeight: notch.notchHeight,
+                fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
+            )
             return (max(IslandChrome.notificationMinWidth, notch.notchWidth + 240), height)
         case .detail:
             return (PanelState.width(for: state), PanelState.height(for: state))

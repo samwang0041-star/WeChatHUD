@@ -111,6 +111,9 @@ private struct HUDMonitorSurface: View {
             if let notif = monitor.latestNotification {
                 StableNotificationBanner(notification: notif)
                     .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+                    .onPreferenceChange(SizePreferenceKey.self) { size in
+                        panelState.reportNotificationSize(size)
+                    }
             }
         case .detail:
             DetailPanelView()

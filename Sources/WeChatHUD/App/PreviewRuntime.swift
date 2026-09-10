@@ -65,26 +65,50 @@ enum PreviewRuntime {
         NotificationCenter.default.post(name: .hudPreviewAutoSendConfirm, object: nil)
     }
 
-    @MainActor static func simulateNotification(monitor: ChatMonitor, panelState: PanelState) {
+    /// Notification fixtures. The `long` form mirrors the reported
+    /// real-world case — a long group name plus a multi-line message —
+    /// so the banner's height budget can be exercised without reading
+    /// or touching any real chat.
+    private struct NotificationPreviewFixture {
+        let chatUsername: String
+        let chatName: String
+        let senderName: String
+        let text: String
+        let summary: String
+
+        static let short = NotificationPreviewFixture(
+            chatUsername: "preview-project", chatName: "项目协作群", senderName: "林晓",
+            text: "@我 明天下午评审，能否确认待办责任人的展示方案？",
+            summary: "评审前需要你确认待办责任人的展示方案。")
+
+        static let long = NotificationPreviewFixture(
+            chatUsername: "preview-industry", chatName: "行业合作-小程序业务交流群", senderName: "周然",
+            text: "@我 老师您好，我们这边正在做公众号年审，之前登记的行业是金融类-银行，现在后台的行业选项里找不到这个类型，麻烦看下应该选哪一个，我先把年审材料整理好等您的回复。",
+            summary: "年审行业类型待确认，对方在等回复。")
+    }
+
+    @MainActor static func simulateNotification(monitor: ChatMonitor, panelState: PanelState,
+                                                longForm: Bool = false) {
         guard isEnabled else { return }
         panelState.islandSnoozeUndo = nil
         panelState.toastMessage = nil
         panelState.popoverOpen = false
         panelState.collapse()
-        let text = "@我 明天下午评审，能否确认待办责任人的展示方案？"
-        let notification = HUDNotification(chatUsername: "preview-project", chatName: "项目协作群",
-            senderUsername: "preview-peer", senderName: "林晓", attentionLevel: .vip,
+        let fixture = longForm ? NotificationPreviewFixture.long : NotificationPreviewFixture.short
+        let text = fixture.text
+        let notification = HUDNotification(chatUsername: fixture.chatUsername, chatName: fixture.chatName,
+            senderUsername: "preview-peer", senderName: fixture.senderName, attentionLevel: .vip,
             messageID: "preview-notification-\(UUID().uuidString)", rawText: text, snippet: text,
             isAtMention: true, timestamp: Date(), kind: .groupAt)
         monitor.latestNotification = notification
         monitor.recentNotifications = [notification]
-        if !monitor.inboxItems.contains(where: { $0.chatUsername == "preview-project" }) {
+        if !monitor.inboxItems.contains(where: { $0.chatUsername == fixture.chatUsername }) {
             monitor.inboxItems.insert(
-                InboxItem(id: "preview-project", chatUsername: "preview-project", chatName: "项目协作群",
-                    senderName: "林晓", preview: text, isGroup: true, timestamp: Date(),
+                InboxItem(id: fixture.chatUsername, chatUsername: fixture.chatUsername, chatName: fixture.chatName,
+                    senderName: fixture.senderName, preview: text, isGroup: true, timestamp: Date(),
                     actionRequired: true, priority: .p1, isVIP: false, isWhitelisted: true,
                     unreadCount: 1, isAtMention: true, askType: .yesNo, reasons: [], suggestedReplyMinutes: 60,
-                    status: .active, aiSummary: "评审前需要你确认待办责任人的展示方案。", moodEmoji: nil),
+                    status: .active, aiSummary: fixture.summary, moodEmoji: nil),
                 at: 0)
         }
         monitor.groupContextStates[notification.briefingKey] = GroupContextBriefingLoadState(
@@ -93,7 +117,7 @@ enum PreviewRuntime {
                 whyMentioned: "林晓需要你确认待办责任人的展示方案。",
                 currentStatus: "还在等你回复。",
                 nextStep: "确认时间后，在群里回复。",
-                participants: ["林晓"],
+                participants: [fixture.senderName],
                 confidence: 0.9,
                 source: .ai,
                 generatedAt: Date()
