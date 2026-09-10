@@ -64,7 +64,7 @@ struct SettingsView: View {
             case .commitments: return "答应过的话，带着原文和截止时间留在这里。"
             case .insight: return "一段聊天里发生了什么。"
             case .dailyReport: return "今天处理了什么、还剩什么。"
-            case .contacts: return "只帮你看这些人和群。"
+            case .contacts: return "只整理你选的人，以及群里点名的消息。"
             case .aiButler: return "决定助手帮你读什么、写什么。不设也能看原文。"
             case .notifications: return "谁来的消息要弹出，停留多久。"
             case .aiService: return "摘要和草稿用哪家服务。未测试也能先保存。"
@@ -72,7 +72,7 @@ struct SettingsView: View {
             case .autopilotDashboard: return "助理写好的回复，确认后再发。"
             case .system: return "让重要的聊天及时出现在这里。"
             case .preferences: return "按你的习惯，安静地陪在。"
-            case .localData: return "整理过的事情，随时能找回来。"
+            case .localData: return "近两周整理过的事情，还可以找回来。"
             case .guide: return "不漏事，从这里开始。"
             }
         }

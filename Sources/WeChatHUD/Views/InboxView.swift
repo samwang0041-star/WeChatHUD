@@ -630,7 +630,7 @@ private struct IslandTaskPreview: View {
                 }
             }
             if items.isEmpty {
-                Text("现在没有需要你处理的事。")
+                Text(scope == .mine ? "没有我要做的事。" : (scope == .theirs ? "没有在等对方的事。" : "这一栏暂时是空的。"))
                     .islandRowBody()
                     .foregroundStyle(IslandInk.tertiary)
                     .padding(.vertical, 8)

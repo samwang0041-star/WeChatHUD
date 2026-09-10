@@ -29,7 +29,10 @@ struct DailyReportBuilder {
             .map { store.todos(for: $0.id, statuses: historical ? nil : [.pending])
                 .filter { !historical || ($0.createdAt >= startOfDay && $0.createdAt < endOfRange) } } ?? []
 
-        let pendingAsks = store.loadPendingAsks(status: historical ? nil : .pending)
+        let pendingAsks = store.loadPendingAsks(
+            status: historical ? nil : .pending,
+            relevantSince: historical ? nil : DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+        )
             .filter { ask in
                 if historical {
                     return ask.createdAt >= startOfDay && ask.createdAt < endOfRange
