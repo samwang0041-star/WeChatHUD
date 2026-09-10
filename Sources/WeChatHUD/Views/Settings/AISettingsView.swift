@@ -516,7 +516,7 @@ struct AISettingsView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                     }
-                    Text("配置并测试一个服务后，消息摘要和回复建议才会开始工作。")
+                    Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
