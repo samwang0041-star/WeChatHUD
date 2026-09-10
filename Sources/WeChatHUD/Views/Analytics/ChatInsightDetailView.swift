@@ -138,11 +138,11 @@ struct ChatInsightDetailView: View {
     private var headerSummary: String {
         var parts = [dateLabel]
         if let stats {
-            if stats.participantCount > 0 {
-                parts.append("\(stats.participantCount) 位成员")
+            if isGroup, stats.participantCount > 0 {
+                parts.append("当天 \(stats.participantCount) 人发过言")
             }
             if stats.messageCount > 0 {
-                parts.append("\(stats.messageCount) 条对话")
+                parts.append("\(stats.messageCount) 条消息")
             }
         }
         return parts.joined(separator: " · ")
@@ -403,7 +403,7 @@ struct ChatInsightDetailView: View {
                 VStack(spacing: 2) {
                     Spacer(minLength: 0)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.blue.opacity(hour >= 9 && hour <= 18 ? 0.7 : 0.4))
+                        .fill(Color.blue.opacity(hour >= 9 && hour < 18 ? 0.7 : 0.4))
                         .frame(width: 12, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
                     if hour % 3 == 0 {
                         Text("\(hour)")
