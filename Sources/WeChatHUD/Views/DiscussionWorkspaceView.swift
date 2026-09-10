@@ -515,22 +515,28 @@ final class DiscussionItemsCache {
     private var history = false
     private var result: [DiscussionItem] = []
     private var primed = false
+    private var dayStart: Date = .distantPast
 
     func items(
         _ source: [DiscussionItem],
         scope: DiscussionScope,
         query: String,
-        history: Bool
+        history: Bool,
+        now: Date = Date(),
+        calendar: Calendar = .current
     ) -> [DiscussionItem] {
-        if primed, self.scope == scope, self.query == query, self.history == history, self.source == source {
+        let day = calendar.startOfDay(for: now)
+        if primed, self.scope == scope, self.query == query, self.history == history,
+           self.source == source, dayStart == day {
             return result
         }
-        let next = DiscussionPresentation.items(source, scope: scope, query: query, history: history)
+        let next = DiscussionPresentation.items(source, scope: scope, query: query, history: history, now: now, calendar: calendar)
         primed = true
         self.source = source
         self.scope = scope
         self.query = query
         self.history = history
+        dayStart = day
         result = next
         return next
     }
@@ -543,7 +549,19 @@ enum DiscussionPresentation {
     }
 
     static func items(_ items: [DiscussionItem], scope: DiscussionScope, query: String, history: Bool) -> [DiscussionItem] {
+        Self.items(items, scope: scope, query: query, history: history, now: Date(), calendar: .current)
+    }
+
+    static func items(
+        _ items: [DiscussionItem],
+        scope: DiscussionScope,
+        query: String,
+        history: Bool,
+        now: Date,
+        calendar: Calendar
+    ) -> [DiscussionItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startOfToday = calendar.startOfDay(for: now)
         return items.filter { item in
             guard history ? item.status != .pending : item.status == .pending else { return false }
             let matches: Bool
@@ -557,10 +575,33 @@ enum DiscussionPresentation {
             return matches && (query.isEmpty || [item.content, item.detail ?? "", item.chatName].contains { $0.localizedCaseInsensitiveContains(query) })
         }.sorted {
             if history { return $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.id > $1.id }
-            let lhs = $0.dueAt ?? .distantFuture, rhs = $1.dueAt ?? .distantFuture
-            if lhs != rhs { return lhs < rhs }
-            return $0.sourceTimestamp != $1.sourceTimestamp ? $0.sourceTimestamp > $1.sourceTimestamp : $0.id > $1.id
+            let left = liveRank($0, startOfToday: startOfToday)
+            let right = liveRank($1, startOfToday: startOfToday)
+            if left.bucket != right.bucket { return left.bucket < right.bucket }
+            if left.time != right.time {
+                return left.ascending ? left.time < right.time : left.time > right.time
+            }
+            if $0.sourceTimestamp != $1.sourceTimestamp { return $0.sourceTimestamp > $1.sourceTimestamp }
+            return $0.id > $1.id
         }
+    }
+
+    /// Live ranking: upcoming (soonest due) → overdue (newest source) → undated (newest source).
+    /// Ancient overdue used to sort first by due date and occupy the HUD's four slots.
+    private struct LiveRank {
+        let bucket: Int
+        let time: TimeInterval
+        let ascending: Bool
+    }
+
+    private static func liveRank(_ item: DiscussionItem, startOfToday: Date) -> LiveRank {
+        guard let due = item.dueAt else {
+            return LiveRank(bucket: 2, time: TimeInterval(item.sourceTimestamp), ascending: false)
+        }
+        if due < startOfToday {
+            return LiveRank(bucket: 1, time: TimeInterval(item.sourceTimestamp), ascending: false)
+        }
+        return LiveRank(bucket: 0, time: due.timeIntervalSince1970, ascending: true)
     }
 
     static func groups(_ items: [DiscussionItem], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
@@ -609,9 +650,13 @@ enum ChatReviewFollowUps {
     }
 
     static func items(chatUsername: String, discussion: [DiscussionItem]) -> [Item] {
-        discussion
-            .filter { $0.chatUsername == chatUsername && $0.status == .pending && $0.kind != .info }
-            .prefix(3)
+        let ranked = DiscussionPresentation.items(
+            discussion.filter { $0.chatUsername == chatUsername },
+            scope: .all,
+            query: "",
+            history: false
+        ).filter { $0.kind != .info }
+        return ranked.prefix(3)
             .map {
                 Item(
                     title: $0.content,

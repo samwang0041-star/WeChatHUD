@@ -2271,7 +2271,8 @@ final class HUDStore: ObservableObject {
     ///   - excludingStatus: if set, drop that status (used for history)
     ///   - id: if set, only that row
     ///   - sinceTimestamp: if set, only items with `source_timestamp >= this`
-    ///   - relevantSince: if set, keep pending rows plus history whose source or due date is on/after this
+    ///   - relevantSince: if set, keep rows whose source or due date is on/after this;
+    ///     completed/archived rows also stay if they were updated on/after this
     ///   - limit: cap results (nil = no cap)
     func loadDiscussionItems(
         chatUsername: String? = nil,
@@ -2316,15 +2317,21 @@ final class HUDStore: ObservableObject {
         }
         if let relevantSince {
             clauses.append("""
-                (status=?
-                 OR CAST(source_timestamp AS INTEGER) >= ?
-                 OR (
-                    CAST(IFNULL(due_at, 0) AS INTEGER) > 0
-                    AND CAST(due_at AS INTEGER) >= ?
-                 ))
+                (
+                    CAST(source_timestamp AS INTEGER) >= ?
+                    OR (
+                        CAST(IFNULL(due_at, 0) AS INTEGER) > 0
+                        AND CAST(due_at AS INTEGER) >= ?
+                    )
+                    OR (
+                        status != ?
+                        AND CAST(updated_at AS INTEGER) >= ?
+                    )
+                )
                 """)
-            params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
+            params.append("\(relevantSince)")
+            params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
         }
         if !clauses.isEmpty {
@@ -2369,6 +2376,33 @@ final class HUDStore: ObservableObject {
 
     func loadDiscussionItem(id: Int64) -> DiscussionItem? {
         loadDiscussionItems(id: id, limit: 1).first
+    }
+
+    /// Fold stale pending rows into `archived` so they leave the live HUD/workspace
+    /// list but remain reachable from history for 14 days via `updated_at`.
+    /// A pending row is stale when both its source message and its due date (if any)
+    /// are older than `cutoff`.
+    @discardableResult
+    func archiveStalePendingDiscussionItems(cutoff: Int, now: Date = Date()) throws -> Int {
+        let ts = String(Int(now.timeIntervalSince1970))
+        try exec("""
+            UPDATE discussion_items
+            SET status=?, updated_at=?
+            WHERE status=?
+              AND CAST(source_timestamp AS INTEGER) < ?
+              AND (
+                    due_at IS NULL
+                    OR CAST(IFNULL(due_at, 0) AS INTEGER) <= 0
+                    OR CAST(due_at AS INTEGER) < ?
+                  )
+        """, params: [
+            DiscussionItemStatus.archived.rawValue,
+            ts,
+            DiscussionItemStatus.pending.rawValue,
+            "\(cutoff)",
+            "\(cutoff)"
+        ])
+        return Int(sqlite3_changes(db))
     }
 
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
