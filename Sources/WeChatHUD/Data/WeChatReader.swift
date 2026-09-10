@@ -48,6 +48,28 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// Cleared on each refreshIfChanged so new tables are discovered.
     private var chatDBNegativeCache: Set<String> = []
 
+    /// Reusable read-only handles, keyed by decrypted file path.
+    ///
+    /// Opening a decrypted DB is not cheap: SQLite parses the whole
+    /// `sqlite_master` schema the first time a connection touches a file, and
+    /// the largest message DB here holds 340 tables — one observed parse spent
+    /// 4.6 s of CPU inside `sqlite3InitOne`. The old code opened a throwaway
+    /// connection for the table probe and a second one for the query, so every
+    /// `getMessages` paid that schema parse twice.
+    private struct CachedHandle {
+        let db: OpaquePointer
+        var lastUsed: UInt64
+    }
+    private var handleCache: [String: CachedHandle] = [:]
+    private var handleTick: UInt64 = 0
+    /// Bounds resident page caches. The message corpus is a dozen files, so a
+    /// smaller limit would evict and re-parse during every full scan.
+    private static let handleCacheLimit = 16
+    /// Number of times a fresh connection was actually opened. Exposed so tests
+    /// can assert the hot path reuses one handle instead of re-parsing the
+    /// schema per query, which is a timing-independent signal.
+    private(set) var readHandleOpenCount = 0
+
     init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent,
          persistLearnedAliases: Bool = true, userDefaults: UserDefaults = .standard) {
         let home = NSHomeDirectory()
@@ -75,6 +97,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        for (_, stale) in handleCache { sqlite3_close(stale.db) }
         if cacheStrategy == .memory { try? FileManager.default.removeItem(atPath: cacheDir) }
     }
 
@@ -255,10 +278,19 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
             }
 
-            // A previously absent chat table may have been created in this update.
+            // Both the re-decrypt and the WAL apply rewrite the file in place,
+            // so a cached handle would now read a superseded snapshot.
+            invalidateHandles(path: decPath)
+
+            // Only the negative cache is dropped here. A positive mapping
+            // records which DB holds a chat's table, and rewriting that DB does
+            // not move the table out of it — clearing every mapping forced a
+            // full O(N_dbs) re-probe of the whole whitelist on every WeChat
+            // write, which is what kept the scan permanently behind. The
+            // positive path still rescans when a table really has moved:
+            // `getMessages` drops the single stale mapping and retries.
             if normalized.hasPrefix("message/") {
                 chatDBNegativeCache.removeAll()
-                chatDBCache.removeAll()
             }
             mainMtimes[normalized] = mainMtime
             walMtimes[normalized] = walMtime
@@ -287,7 +319,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 throw ReaderError.dbNotFound(encPath)
             }
 
-            let hash = md5Hex(normalized)
+            let hash = Self.md5Hex(normalized)
             let decPath = "\(cacheDir)/\(hash).db"
 
             let staging = decPath + ".decrypt-" + UUID().uuidString
@@ -302,6 +334,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 throw ReaderError.sqlError("Cannot publish decrypted snapshot")
             }
 
+            // The snapshot at this path was just replaced; drop any handle
+            // still pointing at the previous contents.
+            invalidateHandles(path: decPath)
             decryptedCache[normalized] = decPath
             return decPath
         }
@@ -367,17 +402,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     func loadContacts() throws {
         let decPath = try getDecryptedDB(relativePath: "contact/contact.db")
-        var db: OpaquePointer?
-        // immutable=1 tells SQLite to treat the file as a read-only snapshot
-        // and skip WAL/SHM aux-file machinery — prevents SQLITE_CANTOPEN on
-        // decrypted WAL-mode databases that don't have matching -wal/-shm.
-        let uri = "file:\(decPath)?immutable=1"
-        let openRc = sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
-        guard openRc == SQLITE_OK else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "rc=\(openRc)"
-            throw ReaderError.sqlError("Cannot open contact.db: \(msg)")
-        }
-        defer { sqlite3_close(db) }
+        // Cached handle, for the same reason as getMessages: contact.db carries
+        // the whole contact schema and this runs on every scan.
+        lock.lock()
+        defer { lock.unlock() }
+        let db = try acquireReadonly(path: decPath)
 
         var stmt: OpaquePointer?
         let prepRc = sqlite3_prepare_v2(db, "SELECT username, nick_name, remark FROM contact", -1, &stmt, nil)
@@ -570,11 +599,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         guard keys[rel] != nil else { return [] }
         _ = try? refreshIfChanged(relPath: rel)
         let decPath = try getDecryptedDB(relativePath: rel)
-        var db: OpaquePointer?
-        guard Self.openReadonly(path: decPath, db: &db) else {
-            throw ReaderError.sqlError("Cannot open session.db")
-        }
-        defer { sqlite3_close(db) }
+        // Reuse the cached handle: a throwaway connection re-parsed session.db's
+        // whole schema on every scan, twice per scan here.
+        lock.lock()
+        defer { lock.unlock() }
+        let db = try acquireReadonly(path: decPath)
 
         var stmt: OpaquePointer?
         let sql = "SELECT username, unread_count, last_timestamp FROM SessionTable"
@@ -613,29 +642,27 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             .sorted()
     }
 
-    func findMsgTable(chatUsername: String, dbPath: String) throws -> String? {
+    /// Probe for a chat's `Msg_<md5>` table on an already-open handle.
+    static func msgTableName(chatUsername: String, db: OpaquePointer) -> String? {
         let hash = md5Hex(chatUsername)
         let tableName = "Msg_\(hash)"
-
-        var db: OpaquePointer?
-        guard Self.openReadonly(path: dbPath, db: &db) else {
-            throw ReaderError.sqlError("Cannot open \(dbPath)")
-        }
-        defer { sqlite3_close(db) }
 
         var stmt: OpaquePointer?
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw ReaderError.sqlError("Cannot locate message table")
+            return nil
         }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, tableName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
 
         let result = sqlite3_step(stmt)
-        guard result == SQLITE_ROW || result == SQLITE_DONE else {
-            throw ReaderError.sqlError("Message table lookup interrupted")
-        }
         return result == SQLITE_ROW ? tableName : nil
+    }
+
+    func findMsgTable(chatUsername: String, dbPath: String) throws -> String? {
+        try withReadonlyDB(path: dbPath) { db in
+            Self.msgTableName(chatUsername: chatUsername, db: db)
+        }
     }
 
     // MARK: - Message Queries
@@ -671,18 +698,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         for relPath in dbsToSearch {
             let decPath = try getDecryptedDB(relativePath: relPath)
-            guard let tableName = try findMsgTable(chatUsername: chatUsername, dbPath: decPath) else {
+            // One handle serves both the table probe and the query, and stays
+            // cached for later calls. This method already holds `lock`, so the
+            // handle cannot be invalidated mid-query.
+            let db = try acquireReadonly(path: decPath)
+            guard let tableName = Self.msgTableName(chatUsername: chatUsername, db: db) else {
                 continue
             }
             foundTable = true
             // Remember this mapping for future calls.
             chatDBCache[chatUsername] = relPath
-
-            var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else {
-                throw ReaderError.sqlError("Cannot open message database")
-            }
-            defer { sqlite3_close(db) }
 
             var sql = """
                 SELECT local_id, local_type, create_time, real_sender_id,
@@ -856,7 +881,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     ) -> [String: BulkChatStats] {
         // Build chatUsername → (tableName, chatUsername) map
         let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
-            ($0, "Msg_\(md5Hex($0))")
+            ($0, "Msg_\(Self.md5Hex($0))")
         }
         // Group by table name for O(1) lookup
         let tableToChat = Dictionary(uniqueKeysWithValues: chatToTable.map { ($0.tableName, $0.chatUsername) })
@@ -947,9 +972,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     func countNewMessages(relPath: String, tableName: String, sinceLocalId: Int) throws -> Int {
         let decPath = try getDecryptedDB(relativePath: relPath)
-        var db: OpaquePointer?
-        guard Self.openReadonly(path: decPath, db: &db) else { return 0 }
-        defer { sqlite3_close(db) }
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db = try? acquireReadonly(path: decPath) else { return 0 }
 
         let sql = "SELECT COUNT(*) FROM [\(tableName)] WHERE local_id > \(sinceLocalId)"
         var stmt: OpaquePointer?
@@ -961,9 +986,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     func maxLocalId(relPath: String, tableName: String) throws -> Int {
         let decPath = try getDecryptedDB(relativePath: relPath)
-        var db: OpaquePointer?
-        guard Self.openReadonly(path: decPath, db: &db) else { return 0 }
-        defer { sqlite3_close(db) }
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db = try? acquireReadonly(path: decPath) else { return 0 }
 
         let sql = "SELECT MAX(local_id) FROM [\(tableName)]"
         var stmt: OpaquePointer?
@@ -1059,7 +1084,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         var hashToUsername: [String: String] = [:]
         hashToUsername.reserveCapacity(eligible.count)
-        for u in eligible { hashToUsername[md5Hex(u)] = u }
+        for u in eligible { hashToUsername[Self.md5Hex(u)] = u }
 
         // ---- 2. Pass 1: sqlite_sequence → total + table location ------
         struct TableRef { let relPath: String; let tableName: String }
@@ -1205,19 +1230,18 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         for relPath in msgDBs {
             let decPath = try getDecryptedDB(relativePath: relPath)
-            var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else { continue }
-            defer { sqlite3_close(db) }
-
-            var stmt: OpaquePointer?
-            let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
-            defer { sqlite3_finalize(stmt) }
-
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let tableName = columnText(stmt, 0)
-                results.append((relPath, tableName, ""))
+            let tableNames = try withReadonlyDB(path: decPath) { db -> [String] in
+                var stmt: OpaquePointer?
+                let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+                defer { sqlite3_finalize(stmt) }
+                var names: [String] = []
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    names.append(columnText(stmt, 0))
+                }
+                return names
             }
+            for tableName in tableNames { results.append((relPath, tableName, "")) }
         }
 
         return results
@@ -1231,6 +1255,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         lock.withLock {
             guard cacheStrategy == .memory else { return }
             let fm = FileManager.default
+            invalidateHandles()
             for (rel, path) in decryptedCache {
                 try? fm.removeItem(atPath: path)
                 _ = rel
@@ -1332,12 +1357,66 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         return sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK
     }
 
+    // MARK: - Reusable read handles
+
+    /// Open (or reuse) a read-only handle for a decrypted DB.
+    ///
+    /// Callers must hold `lock` for as long as they use the handle: a
+    /// concurrent `refreshIfChanged` rewrites decrypted files in place, and a
+    /// handle is only guaranteed to match the snapshot that was current when it
+    /// was opened. `withReadonlyDB` is the safe wrapper.
+    private func acquireReadonly(path: String) throws -> OpaquePointer {
+        handleTick &+= 1
+        if let cached = handleCache[path] {
+            handleCache[path]?.lastUsed = handleTick
+            return cached.db
+        }
+        var db: OpaquePointer?
+        guard Self.openReadonly(path: path, db: &db), let opened = db else {
+            throw ReaderError.sqlError("Cannot open \(path)")
+        }
+        evictStaleHandles()
+        readHandleOpenCount += 1
+        handleCache[path] = CachedHandle(db: opened, lastUsed: handleTick)
+        return opened
+    }
+
+    /// Least-recently-used eviction, so a large corpus cannot pin an unbounded
+    /// number of SQLite page caches.
+    private func evictStaleHandles() {
+        while handleCache.count >= Self.handleCacheLimit,
+              let victim = handleCache.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
+            if let stale = handleCache.removeValue(forKey: victim) { sqlite3_close(stale.db) }
+        }
+    }
+
+    /// Close cached handles whose file has been rewritten. `immutable=1`
+    /// disables SQLite's own change detection, so a handle left open across a
+    /// re-decrypt would keep serving the superseded snapshot.
+    private func invalidateHandles(path: String? = nil) {
+        if let path {
+            if let stale = handleCache.removeValue(forKey: path) { sqlite3_close(stale.db) }
+            return
+        }
+        for (_, stale) in handleCache { sqlite3_close(stale.db) }
+        handleCache.removeAll(keepingCapacity: true)
+    }
+
+    /// Run `body` against a reusable read-only handle, holding `lock` so the
+    /// decrypted file cannot be rewritten underneath it.
+    func withReadonlyDB<T>(path: String, _ body: (OpaquePointer) throws -> T) throws -> T {
+        try lock.withLock {
+            let db = try acquireReadonly(path: path)
+            return try body(db)
+        }
+    }
+
     private func columnText(_ stmt: OpaquePointer?, _ col: Int32) -> String {
         guard let ptr = sqlite3_column_text(stmt, col) else { return "" }
         return String(cString: ptr)
     }
 
-    private func md5Hex(_ input: String) -> String {
+    static func md5Hex(_ input: String) -> String {
         let data = Data(input.utf8)
         let digest = Insecure.MD5.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()

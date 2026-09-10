@@ -754,34 +754,32 @@ enum ScanEngine {
             } catch {
                 continue
             }
-            var db: OpaquePointer?
-            guard WeChatReader.openReadonly(path: decPath, db: &db) else { continue }
-            defer { sqlite3_close(db) }
+            try reader.withReadonlyDB(path: decPath) { db in
+                var stmt: OpaquePointer?
+                let sql = "SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'Msg_%'"
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+                defer { sqlite3_finalize(stmt) }
 
-            var stmt: OpaquePointer?
-            let sql = "SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'Msg_%'"
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { continue }
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let namePtr = sqlite3_column_text(stmt, 0) else { continue }
+                    let tableName = String(cString: namePtr)
+                    let maxId = Int(sqlite3_column_int64(stmt, 1))
+                    totalScanned += 1
 
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                guard let namePtr = sqlite3_column_text(stmt, 0) else { continue }
-                let tableName = String(cString: namePtr)
-                let maxId = Int(sqlite3_column_int64(stmt, 1))
-                totalScanned += 1
+                    let sourceKey = "debug/\(relPath)/\(tableName)"
+                    let lastState = store.getSyncState(sourceKey)
+                    let sinceId = lastState?.lastLocalId ?? 0
 
-                let sourceKey = "debug/\(relPath)/\(tableName)"
-                let lastState = store.getSyncState(sourceKey)
-                let sinceId = lastState?.lastLocalId ?? 0
-
-                if sinceId == 0 {
-                    if maxId > 0 {
+                    if sinceId == 0 {
+                        if maxId > 0 {
+                            try? store.updateSyncState(sourceKey, lastLocalId: maxId)
+                        }
+                    } else if maxId > sinceId {
+                        totalNew += (maxId - sinceId)
                         try? store.updateSyncState(sourceKey, lastLocalId: maxId)
                     }
-                } else if maxId > sinceId {
-                    totalNew += (maxId - sinceId)
-                    try? store.updateSyncState(sourceKey, lastLocalId: maxId)
                 }
             }
-            sqlite3_finalize(stmt)
         }
         return (totalNew, totalScanned)
     }

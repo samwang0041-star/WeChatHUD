@@ -15,20 +15,30 @@ struct DiscussionWorkspaceView: View {
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
+    /// Keeps the filter+sort to one pass per changed input instead of one pass
+    /// per read. See `DiscussionItemsCache`.
+    @State private var itemsCache = DiscussionItemsCache()
 
     private var sourceItems: [DiscussionItem] {
         showHistory ? historyItems : monitor.discussionItems
     }
 
+    /// Resolved once per body evaluation. Never read this from a row: rows
+    /// receive the resolved value, otherwise every row re-sorts the corpus.
     private var items: [DiscussionItem] {
-        DiscussionPresentation.items(sourceItems, scope: scope, query: query, history: showHistory)
+        itemsCache.items(sourceItems, scope: scope, query: query, history: showHistory)
     }
 
-    private var selected: DiscussionItem? {
+    private func selection(in items: [DiscussionItem]) -> DiscussionItem? {
         items.first(where: { $0.id == selectedID }) ?? items.first
     }
 
     var body: some View {
+        // Resolve the list and the selection exactly once, then hand the values
+        // down. Reading these from deeper views re-runs the whole filter+sort.
+        let items = self.items
+        let selected = selection(in: items)
+
         VStack(spacing: 0) {
             filters
             Divider()
@@ -36,8 +46,10 @@ struct DiscussionWorkspaceView: View {
                 emptyState
             } else {
                 HSplitView {
-                    listPane.frame(minWidth: 320, idealWidth: 420)
-                    detailPane.frame(minWidth: 300, idealWidth: 380)
+                    listPane(items: items, selectedID: selected?.id)
+                        .frame(minWidth: 320, idealWidth: 420)
+                    detailPane(selected: selected)
+                        .frame(minWidth: 300, idealWidth: 380)
                 }
             }
             if let receipt {
@@ -50,17 +62,17 @@ struct DiscussionWorkspaceView: View {
         .frame(maxWidth: .infinity)
         .onAppear {
             applyPendingScope()
-            reconcileSelection()
+            reconcileSelection(in: items)
         }
         .onChange(of: monitor.discussionItems) { _, _ in
-            reconcileSelection()
+            reconcileSelection(in: self.items)
         }
         .onChange(of: showHistory) { _, on in
             if on { refreshHistory() }
-            reconcileSelection()
+            reconcileSelection(in: self.items)
         }
-        .onChange(of: scope) { _, _ in reconcileSelection() }
-        .onChange(of: query) { _, _ in reconcileSelection() }
+        .onChange(of: scope) { _, _ in reconcileSelection(in: self.items) }
+        .onChange(of: query) { _, _ in reconcileSelection(in: self.items) }
         .onReceive(panelState.$pendingDiscussionScope) { value in
             if let value { scope = value; showHistory = false; panelState.pendingDiscussionScope = nil }
         }
@@ -154,7 +166,7 @@ struct DiscussionWorkspaceView: View {
         }
     }
 
-    private var listPane: some View {
+    private func listPane(items: [DiscussionItem], selectedID: Int64?) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 ForEach(DiscussionPresentation.groups(items, now: groupingAnchor), id: \.title) { group in
@@ -163,7 +175,17 @@ struct DiscussionWorkspaceView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
                         ForEach(group.items) { item in
-                            listRow(item)
+                            DiscussionRow(
+                                item: item,
+                                isSelected: selectedID == item.id,
+                                now: groupingAnchor
+                            ) {
+                                withMotion(CompanionMotion.rowExpand()) {
+                                    self.selectedID = item.id
+                                    self.showingSource = false
+                                }
+                            }
+                            .equatable()
                         }
                     }
                 }
@@ -173,60 +195,17 @@ struct DiscussionWorkspaceView: View {
         }
     }
 
-    private func listRow(_ item: DiscussionItem) -> some View {
-        Button {
-            withMotion(CompanionMotion.rowExpand()) {
-                selectedID = item.id
-                showingSource = false
-            }
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: item.status == .done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(item.status == .done ? CompanionPalette.jade : .secondary)
-                    .frame(width: 22)
-                    .accessibilityLabel(item.status == .done ? "已完成" : "未完成")
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.content)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                    Text("\(item.chatName) · \(item.owner.workspaceLabel)")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+    private func detailPane(selected: DiscussionItem?) -> some View {
+        Group {
+            if showingSource, let item = selected {
+                DiscussionSourceView(item: item, embedded: true, onClose: { showingSource = false }) {
+                    correcting = item
                 }
-                Spacer(minLength: 8)
-                Text(DiscussionPresentation.dueLabel(item.dueAt, now: groupingAnchor))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+            } else if let item = selected {
+                taskDetail(item)
+            } else {
+                ContentUnavailableView("选择一条待办", systemImage: "checklist", description: Text("看清谁来做、截止时间和原文。"))
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                selected?.id == item.id ? CompanionPalette.selectedFill : CompanionPalette.surface,
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(selected?.id == item.id ? CompanionPalette.jade.opacity(0.35) : CompanionPalette.border)
-            )
-        }
-        .buttonStyle(CompanionPressStyle())
-        .accessibilityLabel(item.content)
-    }
-
-    @ViewBuilder private var detailPane: some View {
-        if showingSource, let item = selected {
-            DiscussionSourceView(item: item, embedded: true, onClose: { showingSource = false }) {
-                correcting = item
-            }
-        } else if let item = selected {
-            taskDetail(item)
-        } else {
-            ContentUnavailableView("选择一条待办", systemImage: "checklist", description: Text("看清谁来做、截止时间和原文。"))
         }
     }
 
@@ -329,7 +308,7 @@ struct DiscussionWorkspaceView: View {
         historyItems = monitor.loadDiscussionHistory()
     }
 
-    private func reconcileSelection() {
+    private func reconcileSelection(in items: [DiscussionItem]) {
         if let selectedID, items.contains(where: { $0.id == selectedID }) { return }
         selectedID = items.first?.id
     }
@@ -365,6 +344,63 @@ struct DiscussionWorkspaceView: View {
             self.error = "保存失败，事项状态未更改。请重试。"
             receipt = nil
         }
+    }
+}
+
+/// One row of the 待办 list.
+///
+/// Extracted from the workspace so SwiftUI can diff rows independently: as a
+/// method on the parent it was rebuilt whenever the parent's body re-ran, which
+/// is what made a long list expensive to scroll. `Equatable` lets the list skip
+/// rows whose inputs did not change.
+private struct DiscussionRow: View, Equatable {
+    let item: DiscussionItem
+    let isSelected: Bool
+    let now: Date
+    let onTap: () -> Void
+
+    static func == (lhs: DiscussionRow, rhs: DiscussionRow) -> Bool {
+        lhs.item == rhs.item && lhs.isSelected == rhs.isSelected && lhs.now == rhs.now
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: item.status == .done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(item.status == .done ? CompanionPalette.jade : .secondary)
+                    .frame(width: 22)
+                    .accessibilityLabel(item.status == .done ? "已完成" : "未完成")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.content)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                    Text("\(item.chatName) · \(item.owner.workspaceLabel)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(DiscussionPresentation.dueLabel(item.dueAt, now: now))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? CompanionPalette.selectedFill : CompanionPalette.surface,
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isSelected ? CompanionPalette.jade.opacity(0.35) : CompanionPalette.border)
+            )
+        }
+        .buttonStyle(CompanionPressStyle())
+        .accessibilityLabel(item.content)
     }
 }
 
@@ -459,6 +495,44 @@ enum DiscussionLiveList {
             return [replacement] + items
         }
         return items.filter { $0.id != replacement.id }
+    }
+}
+
+/// Memoizes one `DiscussionPresentation.items` pass.
+///
+/// The live pending corpus is unbounded (it grows past a few thousand rows), so
+/// a single filter+sort is far too expensive to repeat. SwiftUI re-evaluates a
+/// body many times per interaction — and a row that reads the resolved list
+/// itself multiplies that by the row count — so the result is cached against the
+/// exact inputs and only recomputed when one of them actually changes.
+///
+/// The input comparison is a plain array equality: cheap pointer-level compares,
+/// versus a full sort that copies every `DiscussionItem`.
+final class DiscussionItemsCache {
+    private var source: [DiscussionItem] = []
+    private var scope: DiscussionScope = .all
+    private var query = ""
+    private var history = false
+    private var result: [DiscussionItem] = []
+    private var primed = false
+
+    func items(
+        _ source: [DiscussionItem],
+        scope: DiscussionScope,
+        query: String,
+        history: Bool
+    ) -> [DiscussionItem] {
+        if primed, self.scope == scope, self.query == query, self.history == history, self.source == source {
+            return result
+        }
+        let next = DiscussionPresentation.items(source, scope: scope, query: query, history: history)
+        primed = true
+        self.source = source
+        self.scope = scope
+        self.query = query
+        self.history = history
+        result = next
+        return next
     }
 }
 
