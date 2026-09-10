@@ -190,17 +190,21 @@ enum CompactIslandPolicy {
             return "微信还连不上。移入查看，平时不打扰。"
         case .urgent(let priority, let count):
             let what = priority == .p0 ? "有需要尽快处理的事" : "有待回复的消息"
-            return "\(what)，共 \(count) 项。移入查看，平时不打扰。"
+            return "\(what)，共 \(spokenCount(count)) 项。移入查看，平时不打扰。"
         case .working(.analyzing):
             return "AI 正在整理。移入查看，平时不打扰。"
         case .working(.syncing):
             return "正在同步微信。移入查看，平时不打扰。"
         case .waiting(let count):
-            return "收起 · \(count) 项待处理。移入查看，平时不打扰。"
+            return "收起 · \(spokenCount(count)) 项待处理。移入查看，平时不打扰。"
         case .notices(let count):
-            return "有 \(count) 条群里的新消息。移入查看，平时不打扰。"
+            return "有 \(spokenCount(count)) 条群里的新消息。移入查看，平时不打扰。"
         case .quiet:
             return "暂无待处理。移入查看，平时不打扰。"
         }
+    }
+
+    private static func spokenCount(_ count: Int) -> String {
+        count > 9 ? "9+" : "\(count)"
     }
 }

@@ -43,7 +43,9 @@ final class InsightDataLoader {
         let bulkStats = reader.bulkMessageStats(
             chatUsernames: filteredSessions.map(\.username),
             selfNames: selfNames,
-            sinceTsEpoch: cutoff
+            sinceTsEpoch: cutoff,
+            myUsername: reader.myUsername(),
+            myDisplayName: reader.displayName(for: reader.myUsername())
         )
 
         var stats: [String: ChatStatsData] = [:]

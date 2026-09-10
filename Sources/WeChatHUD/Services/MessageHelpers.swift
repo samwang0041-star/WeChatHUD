@@ -143,6 +143,24 @@ enum MessageHelpers {
         return false
     }
 
+    /// Bulk-stats counterpart to isFromSelf when only the name2id key and sender id are available.
+    static func isSelfSender(
+        senderKey: String,
+        senderId: Int,
+        chatUsername: String,
+        selfNames: Set<String>,
+        myUsername: String = "",
+        myDisplayName: String = ""
+    ) -> Bool {
+        if senderId == 0 { return true }
+        if !myUsername.isEmpty && senderKey == myUsername { return true }
+        if !senderKey.isEmpty && selfNames.contains(senderKey) { return true }
+        if !myDisplayName.isEmpty && senderKey == myDisplayName { return true }
+        if chatUsername.contains("@chatroom") { return false }
+        if !senderKey.isEmpty && senderKey != chatUsername { return true }
+        return false
+    }
+
     /// Derive the unread status from raw signals.
     static func unreadStatus(
         replied: Bool,
