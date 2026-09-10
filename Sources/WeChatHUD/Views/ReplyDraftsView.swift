@@ -23,6 +23,11 @@ struct ReplyDraftsView: View {
         var text: String
         let createdAt: Date
         let isComposerOnly: Bool
+
+        /// Composer-only rows are settings text, not a reply_drafts row.
+        /// Passing their hashed id into 「继续回复」 makes 存为草稿 claim the
+        /// draft was deleted.
+        var continuationSavedDraftID: Int64? { isComposerOnly ? nil : id }
     }
 
     private var filteredDrafts: [Draft] {
@@ -213,6 +218,7 @@ struct ReplyDraftsView: View {
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
                         .accessibilityLabel("草稿正文")
+                        .id(selected.id)
                         .onChange(of: drafts[index].text) { _, text in
                             persist(drafts[index], text: text)
                         }
@@ -266,14 +272,20 @@ struct ReplyDraftsView: View {
     private func persist(_ draft: Draft, text: String) {
         do {
             if draft.isComposerOnly {
-                try store.setSetting("composer_draft:\(draft.chatUsername)", value: text)
-                monitor.composerDraftEdits[draft.chatUsername] = text
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    try store.clearComposerDraft(chatUsername: draft.chatUsername)
+                    monitor.composerDraftEdits[draft.chatUsername] = ""
+                } else {
+                    try store.setSetting("composer_draft:\(draft.chatUsername)", value: text)
+                    monitor.composerDraftEdits[draft.chatUsername] = text
+                }
             } else {
                 try store.updateDraft(id: draft.id, text: text)
                 monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
             }
             savedAt = Date()
             feedback = nil
+            reloadWorkspaceDraftsIfMembershipChanged(keeping: draft.id)
         } catch {
             if draft.isComposerOnly {
                 monitor.composerDraftEdits[draft.chatUsername] = text
@@ -300,9 +312,15 @@ struct ReplyDraftsView: View {
         do {
             try store.setSetting("composer_draft:\(draft.chatUsername)", value: draft.text)
             monitor.composerDraftEdits[draft.chatUsername] = draft.text
-            panelState.requestReplyDraftContinuation(chatUsername: draft.chatUsername, text: draft.text, savedDraftID: draft.id)
+            panelState.requestReplyDraftContinuation(
+                chatUsername: draft.chatUsername,
+                text: draft.text,
+                savedDraftID: draft.continuationSavedDraftID
+            )
             feedback = "草稿已带入回复框，请核对后发送。"
             panelState.showChatDetail(chatUsername: draft.chatUsername, chatName: draft.chatName)
+            monitor.refreshWorkspaceChrome()
+            load()
         } catch {
             feedback = "无法带入回复框，原有内容已保留，请重试。"
         }
@@ -317,9 +335,8 @@ struct ReplyDraftsView: View {
                 try store.deleteDraft(id: draft.id)
                 monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
             }
-            drafts.removeAll { $0.id == draft.id }
-            if selectedID == draft.id { selectedID = drafts.first?.id }
             monitor.refreshWorkspaceChrome()
+            load()
             feedback = "草稿已删除。"
         } catch {
             feedback = "草稿删除失败，原草稿仍保留，请重试。"
@@ -329,6 +346,18 @@ struct ReplyDraftsView: View {
     private func reconcileSelection() {
         if let selectedID, filteredDrafts.contains(where: { $0.id == selectedID }) { return }
         selectedID = filteredDrafts.first?.id
+    }
+
+    private func reloadWorkspaceDraftsIfMembershipChanged(keeping selected: Int64) {
+        let next = store.loadWorkspaceDrafts()
+        let nextIDs = Set(next.map(\.id))
+        let currentIDs = Set(drafts.map(\.id))
+        guard next.count != workspaceBadges.counts.drafts || nextIDs != currentIDs else { return }
+        monitor.refreshWorkspaceChrome()
+        load()
+        if drafts.contains(where: { $0.id == selected }) {
+            selectedID = selected
+        }
     }
 
     private func load() {

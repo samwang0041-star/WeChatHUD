@@ -59,6 +59,86 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(store.workspaceDraftCount(), 1)
     }
 
+    func testWorkspaceDraftsIgnoreEmptyComposerText() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+
+        try store.setSetting("composer_draft:wxid_empty", value: "")
+        try store.setSetting("composer_draft:wxid_space", value: "  \n\t")
+        XCTAssertEqual(store.workspaceDraftCount(), 0)
+        XCTAssertTrue(store.loadWorkspaceDrafts().isEmpty)
+
+        try store.saveDraft(chatUsername: "wxid_dan", chatName: "王丹", text: "来吧", sendAt: nil)
+        try store.setSetting("composer_draft:wxid_dan", value: "")
+        XCTAssertEqual(store.workspaceDraftCount(), 1)
+        XCTAssertEqual(store.loadWorkspaceDrafts().map(\.isComposerOnly), [false])
+    }
+
+    func testWorkspaceDraftsKeepSeparateRowsWhenSavedAndComposerTextDiffer() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+
+        try store.saveDraft(chatUsername: "wxid_dan", chatName: "王丹", text: "存好的", sendAt: nil)
+        try store.setSetting("composer_draft:wxid_dan", value: "正在写")
+        let rows = store.loadWorkspaceDrafts()
+        XCTAssertEqual(store.workspaceDraftCount(), 2)
+        XCTAssertEqual(rows.filter { $0.chatUsername == "wxid_dan" }.count, 2)
+        XCTAssertEqual(Set(rows.map(\.text)), ["存好的", "正在写"])
+        XCTAssertEqual(rows.filter(\.isComposerOnly).map(\.text), ["正在写"])
+        XCTAssertEqual(rows.filter { !$0.isComposerOnly }.map(\.text), ["存好的"])
+
+        try store.clearComposerDraft(chatUsername: "wxid_dan")
+        XCTAssertEqual(store.workspaceDraftCount(), 1)
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.isComposerOnly, false)
+    }
+
+    func testWorkspaceDraftsSurviveMultipleSavedRowsForSameChat() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+
+        try store.saveDraft(chatUsername: "wxid_dan", chatName: "王丹", text: "第一版", sendAt: nil)
+        try store.saveDraft(chatUsername: "wxid_dan", chatName: "王丹", text: "第二版", sendAt: nil)
+        XCTAssertEqual(store.workspaceDraftCount(), 2)
+        XCTAssertEqual(Set(store.loadWorkspaceDrafts().map(\.text)), ["第一版", "第二版"])
+
+        try store.setSetting("composer_draft:wxid_dan", value: "第一版")
+        XCTAssertEqual(store.workspaceDraftCount(), 2)
+        XCTAssertFalse(store.loadWorkspaceDrafts().contains(where: \.isComposerOnly))
+
+        try store.setSetting("composer_draft:wxid_dan", value: "正在写的")
+        let rows = store.loadWorkspaceDrafts()
+        XCTAssertEqual(store.workspaceDraftCount(), 3)
+        XCTAssertEqual(rows.filter(\.isComposerOnly).count, 1)
+        XCTAssertEqual(rows.filter(\.isComposerOnly).first?.text, "正在写的")
+    }
+
+    func testComposerOnlyContinuationDoesNotClaimASavedDraftRow() {
+        let composerID = HUDStore.composerDraftID("wxid_dan")
+        XCTAssertLessThan(composerID, 0)
+        let composer = ReplyDraftsView.Draft(
+            id: composerID,
+            chatUsername: "wxid_dan",
+            chatName: "王丹",
+            text: "来吧",
+            createdAt: Date(),
+            isComposerOnly: true
+        )
+        XCTAssertNil(composer.continuationSavedDraftID)
+
+        let saved = ReplyDraftsView.Draft(
+            id: 7,
+            chatUsername: "wxid_dan",
+            chatName: "王丹",
+            text: "存好的",
+            createdAt: Date(),
+            isComposerOnly: false
+        )
+        XCTAssertEqual(saved.continuationSavedDraftID, 7)
+    }
+
     func testContinuationUpdateRequiresOriginalIDAndChatIdentity() throws {
         let store = HUDStore(dbPath: ":memory:")
         try store.open()
@@ -461,6 +541,164 @@ final class ProductWorkspaceTests: XCTestCase {
         )
         XCTAssertEqual(CommitmentPresentation.sectionTitle(for: cancelled, now: now, calendar: calendar), "已取消")
         XCTAssertEqual(CommitmentPresentation.groups([cancelled], now: now, calendar: calendar).map(\.title), ["已取消"])
+        XCTAssertFalse(CommitmentPresentation.isOverdue(cancelled, now: now))
+        XCTAssertFalse(CommitmentPresentation.matches(cancelled, filter: .active))
+        XCTAssertFalse(CommitmentPresentation.matches(cancelled, filter: .overdue, now: now))
+        XCTAssertEqual(CommitmentPresentation.overdueCount([cancelled], now: now), 0)
+    }
+
+    func testCommitmentActiveCountMatchesPendingOrOverdueStatusNotDoubleCounted() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 16))!
+        let past = calendar.date(byAdding: .day, value: -1, to: now)!
+        let later = calendar.date(byAdding: .day, value: 1, to: now)!
+        let pendingFuture = workspaceCommitment(id: 1, deadline: later, created: now)
+        let pendingPast = workspaceCommitment(id: 2, deadline: past, created: now)
+        let overdueStatus = workspaceCommitment(id: 3, deadline: past, status: .overdue, created: now)
+        let fulfilled = workspaceCommitment(id: 4, deadline: past, status: .fulfilled, created: now)
+        let cancelled = workspaceCommitment(id: 5, deadline: past, status: .cancelled, created: now)
+        let items = [pendingFuture, pendingPast, overdueStatus, fulfilled, cancelled]
+
+        XCTAssertEqual(CommitmentPresentation.activeCount(items), 3)
+        XCTAssertEqual(
+            CommitmentPresentation.activeCount(items),
+            items.filter { $0.status == .pending || $0.status == .overdue }.count
+        )
+        XCTAssertEqual(CommitmentPresentation.overdueCount(items, now: now), 2)
+        XCTAssertNotEqual(
+            CommitmentPresentation.activeCount(items),
+            items.filter { $0.status == .pending }.count + CommitmentPresentation.overdueCount(items, now: now)
+        )
+        XCTAssertTrue(CommitmentPresentation.matches(pendingPast, filter: .active))
+        XCTAssertTrue(CommitmentPresentation.matches(pendingPast, filter: .overdue, now: now))
+        XCTAssertTrue(CommitmentPresentation.matches(overdueStatus, filter: .active))
+        XCTAssertFalse(CommitmentPresentation.matches(fulfilled, filter: .active))
+        XCTAssertEqual(CommitmentPresentation.emptyTitle(for: .all), "没有正在跟进的承诺")
+        XCTAssertTrue(CommitmentPresentation.emptyDescription(for: .all).contains("还在本地"))
+    }
+
+    func testCommitmentDeadlineTextUsesStoredLabelWhenDateIsMissing() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 19))!
+        let dated = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 18))!
+        XCTAssertEqual(
+            CommitmentPresentation.deadlineText(
+                for: workspaceCommitment(id: 1, label: "临时通知，尽快", created: now),
+                now: now,
+                calendar: calendar
+            ),
+            "临时通知，尽快"
+        )
+        XCTAssertEqual(
+            CommitmentPresentation.deadlineText(
+                for: workspaceCommitment(id: 2, label: "无明确时间", source: "写 ppt", created: now),
+                now: now,
+                calendar: calendar
+            ),
+            "无明确时间"
+        )
+        XCTAssertEqual(
+            CommitmentPresentation.deadlineText(for: workspaceCommitment(id: 3, created: now), now: now, calendar: calendar),
+            "无期限"
+        )
+        XCTAssertEqual(
+            CommitmentPresentation.deadlineText(
+                for: workspaceCommitment(id: 4, deadline: dated, label: "今天下午", created: now),
+                now: now,
+                calendar: calendar
+            ),
+            CommitmentPresentation.timeLabel(dated, now: now, calendar: calendar)
+        )
+        XCTAssertEqual(
+            CommitmentPresentation.deadlineText(
+                for: workspaceCommitment(id: 5, label: "vague_soon", created: now),
+                now: now,
+                calendar: calendar
+            ),
+            "无期限"
+        )
+    }
+
+    func testLiveWindowKeepsTodaysPendingCommitmentsWithoutDeadline() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 19, minute: 30))!
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        try store.upsertCommitment(
+            msgUID: "ponge-ppt", chatUsername: "wxid_ponge", chatName: "ponge",
+            content: "写汇报用的PPT，把哆啦提供的内容整理进去", commitTo: "哆啦",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "test",
+            sourceText: "写 ppt", deadlineLabel: "无明确时间",
+            createdAt: now
+        )
+        try store.upsertCommitment(
+            msgUID: "ponge-report", chatUsername: "wxid_ponge", chatName: "ponge",
+            content: "把自己那份内容加进对方的工作汇报里", commitTo: "哆啦（分行汇报相关方）",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "test",
+            sourceText: "然后呢，临时说要我把我这份内容加到他的工作汇报里去",
+            deadlineLabel: "临时通知，尽快",
+            createdAt: now.addingTimeInterval(-160)
+        )
+        let loaded = store.loadCommitments(relevantSince: cutoff)
+        XCTAssertEqual(loaded.map(\.msgUID).sorted(), ["ponge-ppt", "ponge-report"])
+        XCTAssertTrue(loaded.allSatisfy { DiscussionLiveWindow.contains($0, cutoff: cutoff) })
+        XCTAssertEqual(CommitmentPresentation.activeCount(loaded), 2)
+        XCTAssertEqual(CommitmentPresentation.overdueCount(loaded, now: now), 0)
+        XCTAssertEqual(
+            loaded.map { CommitmentPresentation.deadlineText(for: $0, now: now, calendar: calendar) }.sorted(),
+            ["临时通知，尽快", "无明确时间"]
+        )
+        XCTAssertEqual(loaded.first { $0.msgUID == "ponge-ppt" }?.sourceText, "写 ppt")
+        XCTAssertEqual(
+            loaded.first { $0.msgUID == "ponge-report" }?.sourceText,
+            "然后呢，临时说要我把我这份内容加到他的工作汇报里去"
+        )
+        XCTAssertNotEqual(CommitmentPresentation.emptyTitle(for: .active), "还没有记下你答应过的事")
+    }
+
+    func testCompletingOrCancellingACommitmentLeavesTheActiveFilterAndUndoRestoresIt() throws {
+        let now = Date()
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        try store.upsertCommitment(
+            msgUID: "keep", chatUsername: "chat", chatName: "ponge",
+            content: "留下的", commitTo: "哆啦", deadlineAt: nil, confidence: 0.9,
+            promptVersion: "test", createdAt: now
+        )
+        try store.upsertCommitment(
+            msgUID: "done", chatUsername: "chat", chatName: "ponge",
+            content: "做完的", commitTo: "哆啦", deadlineAt: nil, confidence: 0.9,
+            promptVersion: "test", createdAt: now
+        )
+        try store.upsertCommitment(
+            msgUID: "cancel", chatUsername: "chat", chatName: "ponge",
+            content: "取消的", commitTo: "哆啦",
+            deadlineAt: now.addingTimeInterval(-86_400), confidence: 0.9,
+            promptVersion: "test", createdAt: now
+        )
+
+        try store.updateCommitmentStatus(msgUID: "done", status: .fulfilled)
+        try store.updateCommitmentStatus(msgUID: "cancel", status: .cancelled)
+        let after = store.loadCommitments(relevantSince: cutoff)
+        let active = after.filter { CommitmentPresentation.matches($0, filter: .active) }
+        XCTAssertEqual(active.map(\.msgUID), ["keep"])
+        XCTAssertEqual(after.first { $0.msgUID == "done" }?.status, .fulfilled)
+        XCTAssertTrue(CommitmentPresentation.matches(after.first { $0.msgUID == "done" }!, filter: .fulfilled))
+        let cancelled = try XCTUnwrap(after.first { $0.msgUID == "cancel" })
+        XCTAssertFalse(CommitmentPresentation.isOverdue(cancelled, now: now))
+        XCTAssertFalse(CommitmentPresentation.matches(cancelled, filter: .overdue, now: now))
+
+        try store.updateCommitmentStatus(msgUID: "done", status: .pending)
+        try store.updateCommitmentStatus(msgUID: "cancel", status: .pending)
+        let undone = store.loadCommitments(relevantSince: cutoff)
+        XCTAssertEqual(
+            undone.filter { CommitmentPresentation.matches($0, filter: .active) }.map(\.msgUID).sorted(),
+            ["cancel", "done", "keep"]
+        )
     }
 
     func testPendingAskLiveWindowMatchesDiscussionSourceOrDue() {
@@ -533,5 +771,32 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(TodayFeed.mineTasks(discussions).count, WorkspaceBadgeCounts.taskCount(discussions))
         XCTAssertTrue(TodayFeed.hasOpenWork(mine: [], waiting: TodayFeed.waitingTasks(discussions), upcoming: []))
         XCTAssertFalse(TodayFeed.hasOpenWork(mine: [], waiting: [], upcoming: []))
+    }
+
+    private func workspaceCommitment(
+        id: Int64,
+        content: String = "确认时间",
+        deadline: Date? = nil,
+        status: CommitmentStatus = .pending,
+        label: String = "",
+        source: String = "",
+        created: Date
+    ) -> Commitment {
+        Commitment(
+            id: id,
+            msgUID: "\(id)",
+            chatUsername: "chat",
+            chatName: "ponge",
+            content: content,
+            commitTo: "哆啦",
+            deadlineAt: deadline,
+            confidence: 0.9,
+            status: status,
+            promptVersion: "t",
+            createdAt: created,
+            updatedAt: created,
+            sourceText: source,
+            deadlineLabel: label
+        )
     }
 }

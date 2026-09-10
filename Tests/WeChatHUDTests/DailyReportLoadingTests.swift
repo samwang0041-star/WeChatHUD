@@ -44,6 +44,42 @@ final class DailyReportLoadingTests: XCTestCase {
     }
 
     @MainActor
+    func testCacheDoesNotHideReplyDebtThatArrivedAfterTheReport() async throws {
+        let (store, monitor, root) = try harness()
+        defer { cleanup(store, root) }
+
+        await monitor.loadDailyReport(force: true)
+        let stampBefore = monitor.currentDailyReportFactsStamp()
+        XCTAssertEqual(monitor.dailyReportCacheStamp[Date().dailyReportDateKey], stampBefore)
+
+        monitor.replyDebtItems = [
+            ReplyDebtItem(
+                id: "wxid_new",
+                chatUsername: "wxid_new",
+                chatName: "同事",
+                senderName: "同事",
+                preview: "请确认",
+                latestOutboundPreview: nil,
+                timestamp: Date(),
+                priority: .p1,
+                score: 6,
+                unreadCount: 1,
+                isGroup: false,
+                isWhitelisted: true,
+                isVIP: false,
+                isAtMention: false,
+                inboundCountSinceLastOutbound: 1,
+                reasons: [],
+                suggestedReplyMinutes: 30
+            )
+        ]
+        XCTAssertNotEqual(monitor.currentDailyReportFactsStamp(), stampBefore)
+
+        await monitor.loadDailyReport(force: false)
+        XCTAssertTrue(monitor.dailyReport?.actions.contains { $0.type == .replyDebt && $0.relatedID == "wxid_new" } == true)
+    }
+
+    @MainActor
     func testOlderAsyncRequestCannotReplaceNewerDateRequest() async throws {
         let (store, monitor, root) = try harness()
         defer { cleanup(store, root) }

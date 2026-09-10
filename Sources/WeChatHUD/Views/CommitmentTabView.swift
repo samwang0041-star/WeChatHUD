@@ -5,7 +5,7 @@ import AppKit
 struct CommitmentTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
-    @State private var filter: CommitmentFilter = .active
+    @State private var filter: CommitmentPresentation.Filter = .active
     @State private var query = ""
     @State private var expandedID: Int64?
     @State private var pendingCancel: Commitment?
@@ -13,32 +13,13 @@ struct CommitmentTabView: View {
     @State private var undo: (msgUID: String, status: CommitmentStatus)?
     @State private var actionError: String?
 
-    enum CommitmentFilter: String, CaseIterable {
-        case active = "进行中"
-        case overdue = "已超期"
-        case fulfilled = "已完成"
-        case all = "全部"
-    }
-
-    private var summary: CommitmentSummary {
-        CommitmentSummary(commitments: monitor.commitments)
-    }
+    private var activeCount: Int { CommitmentPresentation.activeCount(monitor.commitments) }
+    private var overdueCount: Int { CommitmentPresentation.overdueCount(monitor.commitments) }
 
     private var filteredCommitments: [Commitment] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return monitor.commitments
-            .filter { commitment in
-                switch filter {
-                case .active:
-                    return commitment.status == .pending || commitment.status == .overdue
-                case .overdue:
-                    return CommitmentPresentation.isOverdue(commitment)
-                case .fulfilled:
-                    return commitment.status == .fulfilled
-                case .all:
-                    return true
-                }
-            }
+            .filter { CommitmentPresentation.matches($0, filter: filter) }
             .filter { commitment in
                 guard !normalizedQuery.isEmpty else { return true }
                 return [
@@ -107,16 +88,16 @@ struct CommitmentTabView: View {
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                CompanionFilterPill(title: "进行中 \(summary.active)", selected: filter == .active) { filter = .active }
-                CompanionFilterPill(title: "已超期 \(summary.overdue)", selected: filter == .overdue) { filter = .overdue }
+                CompanionFilterPill(title: "进行中 \(activeCount)", selected: filter == .active) { filter = .active }
+                CompanionFilterPill(title: "已超期 \(overdueCount)", selected: filter == .overdue) { filter = .overdue }
                 CompanionFilterPill(title: "已完成", selected: filter == .fulfilled) { filter = .fulfilled }
                 CompanionFilterPill(title: "全部", selected: filter == .all) { filter = .all }
                 Spacer()
-                if summary.overdue > 0 {
+                if overdueCount > 0 {
                     Button {
                         filter = .overdue
                     } label: {
-                        Label("有 \(summary.overdue) 项已超期，去查看", systemImage: "exclamationmark.triangle")
+                        Label("有 \(overdueCount) 项已超期，去查看", systemImage: "exclamationmark.triangle")
                             .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.bordered)
@@ -146,9 +127,9 @@ struct CommitmentTabView: View {
 
     private var emptyState: some View {
         ContentUnavailableView(
-            query.isEmpty ? emptyTitle : "没有匹配的承诺",
+            query.isEmpty ? CommitmentPresentation.emptyTitle(for: filter) : "没有匹配的承诺",
             systemImage: query.isEmpty ? emptyIcon : "magnifyingglass",
-            description: Text(query.isEmpty ? emptyDescription : "当前搜索：\(query)")
+            description: Text(query.isEmpty ? CommitmentPresentation.emptyDescription(for: filter) : "当前搜索：\(query)")
         )
         .frame(maxWidth: .infinity, minHeight: 280)
         .overlay(alignment: .bottom) {
@@ -165,24 +146,6 @@ struct CommitmentTabView: View {
         case .active: return "checkmark.seal"
         case .overdue: return "clock.badge.exclamationmark"
         case .fulfilled, .all: return "tray"
-        }
-    }
-
-    private var emptyTitle: String {
-        switch filter {
-        case .active: return "没有进行中的承诺"
-        case .overdue: return "没有已超期的承诺"
-        case .fulfilled: return "近两周没有已完成的承诺"
-        case .all: return "还没有记下你答应过的事"
-        }
-    }
-
-    private var emptyDescription: String {
-        switch filter {
-        case .fulfilled:
-            return "更早完成的记录还在本地，不会堆在这一栏。"
-        default:
-            return "答应过别人的话会留在这里，带着原话和截止时间。"
         }
     }
 
@@ -203,7 +166,7 @@ struct CommitmentTabView: View {
                         .accessibilityLabel(commitment.status == .fulfilled ? "已完成" : "未完成")
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(CommitmentPresentation.timeLabel(commitment.deadlineAt))
+                            Text(CommitmentPresentation.deadlineText(for: commitment))
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             Text(commitment.content.isEmpty ? "未命名承诺" : commitment.content)
@@ -362,6 +325,13 @@ enum CommitmentPresentation {
         let items: [Commitment]
     }
 
+    enum Filter: String, CaseIterable {
+        case active = "进行中"
+        case overdue = "已超期"
+        case fulfilled = "已完成"
+        case all = "全部"
+    }
+
     static func groups(_ items: [Commitment], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
         let mapped = Dictionary(grouping: items) { sectionTitle(for: $0, now: now, calendar: calendar) }
         let titles = mapped.keys.sorted { lhs, rhs in
@@ -370,6 +340,27 @@ enum CommitmentPresentation {
         return titles.compactMap { title in
             mapped[title].map { Group(title: title, items: $0) }
         }
+    }
+
+    static func matches(_ commitment: Commitment, filter: Filter, now: Date = Date()) -> Bool {
+        switch filter {
+        case .active:
+            return commitment.status == .pending || commitment.status == .overdue
+        case .overdue:
+            return isOverdue(commitment, now: now)
+        case .fulfilled:
+            return commitment.status == .fulfilled
+        case .all:
+            return true
+        }
+    }
+
+    static func activeCount(_ items: [Commitment]) -> Int {
+        items.filter { matches($0, filter: .active) }.count
+    }
+
+    static func overdueCount(_ items: [Commitment], now: Date = Date()) -> Int {
+        items.filter { matches($0, filter: .overdue, now: now) }.count
     }
 
     static func isOverdue(_ commitment: Commitment, now: Date = Date()) -> Bool {
@@ -388,6 +379,33 @@ enum CommitmentPresentation {
             return date.formatted(date: .omitted, time: .shortened)
         }
         return date.formatted(.dateTime.month().day().hour().minute())
+    }
+
+    static func deadlineText(for commitment: Commitment, now: Date = Date(), calendar: Calendar = .current) -> String {
+        if let date = commitment.deadlineAt {
+            return timeLabel(date, now: now, calendar: calendar)
+        }
+        return visibleDeadlineLabel(commitment.deadlineLabel) ?? "无期限"
+    }
+
+    static func emptyTitle(for filter: Filter) -> String {
+        switch filter {
+        case .active: return "没有进行中的承诺"
+        case .overdue: return "没有已超期的承诺"
+        case .fulfilled: return "近两周没有已完成的承诺"
+        case .all: return "没有正在跟进的承诺"
+        }
+    }
+
+    static func emptyDescription(for filter: Filter) -> String {
+        switch filter {
+        case .fulfilled:
+            return "更早完成的记录还在本地，不会堆在这一栏。"
+        case .all:
+            return "更早完成或取消的记录还在本地，不会堆在这一栏。"
+        default:
+            return "答应过别人的话会留在这里，带着原话和截止时间。"
+        }
     }
 
     static func sectionTitle(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
@@ -418,36 +436,11 @@ enum CommitmentPresentation {
         if title == "已取消" { return 6 }
         return 3
     }
-}
 
-private struct CommitmentSummary {
-    let total: Int
-    let pending: Int
-    let overdue: Int
-    let fulfilled: Int
-    let cancelled: Int
-    let dueToday: Int
-    let noDeadline: Int
-
-    var active: Int { pending + overdue }
-
-    init(commitments: [Commitment]) {
-        total = commitments.count
-        pending = commitments.filter { $0.status == .pending }.count
-        overdue = commitments.filter { CommitmentPresentation.isOverdue($0) }.count
-        fulfilled = commitments.filter { $0.status == .fulfilled }.count
-        cancelled = commitments.filter { $0.status == .cancelled }.count
-
-        let now = Date()
-        let endOfDay = Calendar.current.dateInterval(of: .day, for: now)?.end ?? now.addingTimeInterval(24 * 3600)
-        dueToday = commitments.filter {
-            guard ($0.status == .pending || $0.status == .overdue), let deadline = $0.deadlineAt else {
-                return false
-            }
-            return deadline <= endOfDay
-        }.count
-        noDeadline = commitments.filter {
-            ($0.status == .pending || $0.status == .overdue) && $0.deadlineAt == nil
-        }.count
+    private static func visibleDeadlineLabel(_ raw: String) -> String? {
+        let label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let placeholders: Set<String> = ["", "none", "vague_soon", "inherit", "无期限"]
+        if placeholders.contains(label.lowercased()) { return nil }
+        return label
     }
 }

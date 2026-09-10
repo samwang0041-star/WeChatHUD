@@ -2545,9 +2545,14 @@ final class HUDStore: ObservableObject {
                 isComposerOnly: false
             )
         }
-        let savedTextByChat = Dictionary(uniqueKeysWithValues: saved.map { ($0.chatUsername, $0.text) })
+        // Multiple saved rows can share a chat. Never use uniqueKeysWithValues
+        // here: duplicate keys trap, and the drafts page would fail to open.
+        var savedTextsByChat: [String: Set<String>] = [:]
+        for row in saved {
+            savedTextsByChat[row.chatUsername, default: []].insert(row.text)
+        }
         for composer in loadComposerDrafts() {
-            if savedTextByChat[composer.chatUsername] == composer.text { continue }
+            if savedTextsByChat[composer.chatUsername]?.contains(composer.text) == true { continue }
             let name = getWhitelistEntry(username: composer.chatUsername)?.displayName
                 ?? getContact(username: composer.chatUsername)?.displayName
                 ?? composer.chatUsername
