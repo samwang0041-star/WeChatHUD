@@ -75,13 +75,48 @@ extension ChatMonitor {
         case .commitment:
             try? store.updateCommitmentStatus(msgUID: action.relatedID, status: .fulfilled)
         case .replyDebt:
-            break
+            dismissReplyDebtFromLiveInbox(action)
         }
 
         reloadAIData()
         Task {
             await loadDailyReport(for: dailyReportViewedDate, force: true)
         }
+    }
+
+    /// 「今日小结」标记完成 for reply debt must use the same watermark as
+    /// inbox 「标记完成」. Command-state alone is not enough: reply debt is
+    /// recomputed from unread WeChat messages and would otherwise return
+    /// to 今天 / 收件箱.
+    private func dismissReplyDebtFromLiveInbox(_ action: DailyReportAction) {
+        if let item = inboxItems.first(where: {
+            $0.chatUsername == action.relatedID || $0.chatUsername == action.sourceChatUsername
+        }) {
+            _ = dismissInboxItem(item)
+            return
+        }
+
+        let chatUsername = DailyReportCompletion.replyDebtChatUsername(for: action)
+        guard !chatUsername.isEmpty else { return }
+
+        if let debt = replyDebtItems.first(where: {
+            $0.chatUsername == chatUsername || $0.chatUsername == action.sourceChatUsername
+        }), let item = InboxBuilder.build(
+            replyDebtItems: [debt],
+            notifications: [],
+            dismissed: [:]
+        ).active.first {
+            _ = dismissInboxItem(item)
+            return
+        }
+
+        let ts = DailyReportCompletion.replyDebtDismissTimestamp(debtTimestamp: nil, now: Date())
+        _ = dismissInboxItem(
+            DailyReportCompletion.syntheticInboxItem(
+                chatUsername: chatUsername,
+                timestamp: Date(timeIntervalSince1970: TimeInterval(ts))
+            )
+        )
     }
 
     func dismissDailyReportRisk(_ risk: DailyReportRisk) {
@@ -201,4 +236,45 @@ extension ChatMonitor {
     }
 
 
+}
+
+/// Watermark helpers for daily-report reply-debt completion.
+/// Kept tiny and side-effect free so the inbox dismiss rule can be tested
+/// without constructing ChatMonitor.
+enum DailyReportCompletion {
+    /// `relatedID` is the chat username for `.replyDebt` actions.
+    static func replyDebtChatUsername(for action: DailyReportAction) -> String {
+        action.relatedID.isEmpty ? action.sourceChatUsername : action.relatedID
+    }
+
+    /// Prefer the live debt's own timestamp so a newer inbound can still
+    /// resurface — the same rule InboxBuilder uses for dismissed watermarks.
+    static func replyDebtDismissTimestamp(debtTimestamp: Date?, now: Date) -> Int {
+        Int((debtTimestamp ?? now).timeIntervalSince1970)
+    }
+
+    /// Fallback inbox row so `dismissInboxItem` can persist the watermark
+    /// when the chat is not currently in `inboxItems`.
+    static func syntheticInboxItem(chatUsername: String, timestamp: Date) -> InboxItem {
+        InboxItem(
+            id: chatUsername,
+            chatUsername: chatUsername,
+            chatName: chatUsername,
+            senderName: "",
+            preview: "",
+            isGroup: chatUsername.contains("@chatroom"),
+            timestamp: timestamp,
+            actionRequired: true,
+            priority: .p2,
+            isVIP: false,
+            isWhitelisted: true,
+            unreadCount: 0,
+            isAtMention: false,
+            askType: .none,
+            reasons: [],
+            suggestedReplyMinutes: 0,
+            status: .active,
+            dismissedAtMsgId: nil
+        )
+    }
 }

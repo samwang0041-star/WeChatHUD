@@ -126,6 +126,16 @@ final class CompactIslandPolicyTests: XCTestCase {
         XCTAssertTrue(CompactIslandPolicy.snapshot(input()).spoken.contains("暂无"))
     }
 
+    func testSpokenCountCapsAtNinePlusLikeTheBadge() {
+        let snap = CompactIslandPolicy.snapshot(input(
+            actions: Array(repeating: item(priority: .p0), count: 21)
+        ))
+        XCTAssertEqual(snap.badge, "9+")
+        XCTAssertTrue(snap.spoken.contains("9+"))
+        XCTAssertFalse(snap.spoken.contains("10"))
+        XCTAssertFalse(snap.spoken.contains("21"))
+    }
+
     private func input(
         sync: SyncStatus = .ok,
         actions: [CompactIslandAction] = [],

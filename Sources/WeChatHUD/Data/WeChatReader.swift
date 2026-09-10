@@ -877,7 +877,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     func bulkMessageStats(
         chatUsernames: [String],
         selfNames: Set<String>,
-        sinceTsEpoch: Int = 0
+        sinceTsEpoch: Int = 0,
+        myUsername: String = "",
+        myDisplayName: String = ""
     ) -> [String: BulkChatStats] {
         // Build chatUsername → (tableName, chatUsername) map
         let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
@@ -937,7 +939,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     let baseType = localType & 0xFFFFFFFF
 
                     let senderKey = name2id[senderId] ?? "id_\(senderId)"
-                    let isSelf = selfNames.contains(senderKey) || senderId == 0
+                    let isSelf = MessageHelpers.isSelfSender(
+                        senderKey: senderKey,
+                        senderId: senderId,
+                        chatUsername: chatUsername,
+                        selfNames: selfNames,
+                        myUsername: myUsername,
+                        myDisplayName: myDisplayName
+                    )
                     senderCounts[senderKey, default: 0] += 1
                     if isSelf { selfCount += 1 }
                     if total == 0 { firstSenderIsSelf = isSelf }

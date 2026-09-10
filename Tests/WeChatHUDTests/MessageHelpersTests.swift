@@ -152,6 +152,17 @@ final class MessageHelpersTests: XCTestCase {
             mySelfNames: ["老王"]))
     }
 
+    func testIsSelfSenderMatchesBulkName2IdRules() {
+        XCTAssertTrue(MessageHelpers.isSelfSender(senderKey: "id_0", senderId: 0, chatUsername: "peer", selfNames: []))
+        XCTAssertTrue(MessageHelpers.isSelfSender(senderKey: "wxid_me", senderId: 2, chatUsername: "peer", selfNames: ["wxid_me"]))
+        XCTAssertTrue(MessageHelpers.isSelfSender(senderKey: "老王", senderId: 3, chatUsername: "room@chatroom", selfNames: [], myDisplayName: "老王"))
+        XCTAssertFalse(MessageHelpers.isSelfSender(senderKey: "wxid_other", senderId: 4, chatUsername: "room@chatroom", selfNames: ["wxid_me"]))
+        XCTAssertTrue(MessageHelpers.isSelfSender(senderKey: "wxid_me", senderId: 5, chatUsername: "peer", selfNames: []))
+        XCTAssertFalse(MessageHelpers.isSelfSender(senderKey: "peer", senderId: 6, chatUsername: "peer", selfNames: []))
+        XCTAssertTrue(MessageHelpers.isSelfSender(senderKey: "wxid_me", senderId: 7, chatUsername: "room@chatroom", selfNames: [], myUsername: "wxid_me"))
+        XCTAssertFalse(MessageHelpers.isSelfSender(senderKey: "wxid_other", senderId: 8, chatUsername: "room@chatroom", selfNames: [], myUsername: "wxid_me"))
+    }
+
     // MARK: - unreadStatus
 
     func testUnreadStatusAnswered() {
