@@ -232,6 +232,21 @@ final class ProductWorkspaceTests: XCTestCase {
         }).isEmpty)
     }
 
+    func testReviewFollowUpHeadingDoesNotClaimTheSelectedDay() {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        XCTAssertEqual(ChatReviewFollowUps.heading(selectedDate: now, now: now), "当前待办")
+        let yesterday = now.addingTimeInterval(-86_400)
+        XCTAssertEqual(ChatReviewFollowUps.heading(selectedDate: yesterday, now: now), "现在的待办（与所选日期无关）")
+    }
+
+    func testLocalDataRetrospectionUsesFourteenDayWindow() {
+        XCTAssertEqual(LocalDataRetrospection.windowDays, 14)
+        XCTAssertTrue(LocalDataRetrospection.exportCaption.contains("不是聊天原文"))
+        XCTAssertTrue(LocalDataRetrospection.windowCaption.contains("14"))
+        XCTAssertTrue(LocalDataRetrospection.emptyPendingAsks.contains("近两周"))
+        XCTAssertTrue(LocalDataRetrospection.emptyRecalls.contains("近两周"))
+    }
+
     func testLiveListPatchesPendingRowsWithoutKeepingCompletedHistory() {
         let now = Date()
         func item(_ id: Int64, status: DiscussionItemStatus, content: String = "确认方案") -> DiscussionItem {

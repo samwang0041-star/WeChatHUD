@@ -525,7 +525,7 @@ struct SyncSettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                Text("导出一份状态报告到桌面：未读、待回复、承诺等统计。不是聊天原文。")
+                Text(LocalDataRetrospection.exportCaption)
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -561,7 +561,7 @@ struct SyncSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("记录回溯")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("这些是不漏事为你整理过的内容。")
+                            Text(LocalDataRetrospection.windowCaption)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -608,7 +608,7 @@ struct SyncSettingsView: View {
     private var recallsList: some View {
         Group {
             if recalledMessages.isEmpty {
-                emptyRow("暂无撤回记录")
+                emptyRow(LocalDataRetrospection.emptyRecalls)
             } else {
                 ForEach(recalledMessages.filter { matchesDataSearch($0.senderName, $0.chatName, $0.originalText) }) { msg in
                     SettingsRowDivider()
@@ -652,7 +652,7 @@ struct SyncSettingsView: View {
     private var commitmentsList: some View {
         Group {
             if commitments.isEmpty {
-                emptyRow("暂无承诺记录")
+                emptyRow(LocalDataRetrospection.emptyCommitments)
             } else {
                 ForEach(commitments.filter { matchesDataSearch($0.content, $0.commitTo) }) { item in
                     SettingsRowDivider()
@@ -705,7 +705,7 @@ struct SyncSettingsView: View {
     private var pendingAsksList: some View {
         Group {
             if pendingAsks.isEmpty {
-                emptyRow("近两周没有未处理的提问")
+                emptyRow(LocalDataRetrospection.emptyPendingAsks)
             } else {
                 ForEach(pendingAsks.filter { matchesDataSearch($0.senderName, $0.chatName, $0.summary) }) { ask in
                     SettingsRowDivider()
@@ -864,19 +864,44 @@ struct SyncSettingsView: View {
     }
 
     private func reloadData() {
+        let snapshot = LocalDataRetrospection.load(store: store)
         switch selectedSection {
-        case .recalls:
-            recalledMessages = store.loadRecalledMessages(since: 0, limit: 50)
-        case .commitments:
-            commitments = store.loadCommitments(
-                relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-            )
-        case .pendingAsks:
-            let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-            let main = store.loadPendingAsks(bucket: .main, status: .pending, relevantSince: cutoff)
-            let review = store.loadPendingAsks(bucket: .review, status: .pending, relevantSince: cutoff)
-            let done = store.loadPendingAsks(bucket: .main, status: .done, relevantSince: cutoff)
-            pendingAsks = main + review + done.prefix(10)
+        case .recalls:     recalledMessages = snapshot.recalls
+        case .commitments: commitments = snapshot.commitments
+        case .pendingAsks: pendingAsks = snapshot.pendingAsks
         }
+    }
+}
+
+/// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
+/// use the same 14-day cutoff as 待办, not the whole sqlite history.
+enum LocalDataRetrospection {
+    static let windowDays = DiscussionLiveWindow.pendingDays
+    static let exportCaption = "导出一份状态报告到桌面：未读、待回复、承诺等统计。不是聊天原文。"
+    static let windowCaption = "只看近 \(windowDays) 天整理过的记录。更早的已收起。"
+    static let emptyRecalls = "近两周没有撤回记录"
+    static let emptyCommitments = "近两周没有记下的承诺"
+    static let emptyPendingAsks = "近两周没有未处理的提问"
+
+    struct Snapshot {
+        var recalls: [RecalledMessage]
+        var commitments: [Commitment]
+        var pendingAsks: [PendingAsk]
+    }
+
+    static func cutoff(now: Date = Date()) -> Int {
+        DiscussionLiveWindow.cutoff(days: windowDays, now: now)
+    }
+
+    static func load(store: HUDStore, now: Date = Date()) -> Snapshot {
+        let since = cutoff(now: now)
+        let main = store.loadPendingAsks(bucket: .main, status: .pending, relevantSince: since)
+        let review = store.loadPendingAsks(bucket: .review, status: .pending, relevantSince: since)
+        let done = store.loadPendingAsks(bucket: .main, status: .done, relevantSince: since)
+        return Snapshot(
+            recalls: store.loadRecalledMessages(since: since, limit: 50),
+            commitments: store.loadCommitments(relevantSince: since),
+            pendingAsks: main + review + Array(done.prefix(10))
+        )
     }
 }
