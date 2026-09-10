@@ -43,7 +43,6 @@ enum ScanEngine {
             try reader.refreshContactsIfChanged()
 
             let chatActions = store.loadChatActions()
-            let ignoredSenderMap = store.loadIgnoredSenderMap()
             let nowEpoch = Int(Date().timeIntervalSince1970)
 
             let sessions: [SessionInfo]
@@ -58,6 +57,9 @@ enum ScanEngine {
             let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
+            // One snapshot of every admission input, so the per-message decision
+            // stays a pure function with no query on the hot path.
+            let admissionRules = AdmissionRules.load(store: store)
             let allContacts = store.loadContacts()
             let contactMap = Dictionary(uniqueKeysWithValues: allContacts.map { ($0.username, $0) })
 
@@ -83,7 +85,7 @@ enum ScanEngine {
                 sessions: sessions,
                 reader: reader,
                 chatActions: chatActions,
-                ignoredSenderMap: ignoredSenderMap,
+                admissionRules: admissionRules,
                 myUsername: myUname,
                 myDisplayName: myDisplayName,
                 mySelfNames: selfNames,
@@ -96,6 +98,7 @@ enum ScanEngine {
 
             var privateUnreadChats = 0
             var groupAtCount = 0
+            var groupMemberCount = 0
             var unreadCollected: [UnreadItem] = []
             var suppressedCollected: [UnreadItem] = []
 
@@ -119,7 +122,13 @@ enum ScanEngine {
                 func makeItem(_ msg: MessageInfo, kind: HUDNotificationKind) -> UnreadItem {
                     let ts = Date(timeIntervalSince1970: Double(msg.createTime))
                     let replied = latestSelfTime > msg.createTime
-                    let isIgnored = MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap)
+                    // Report the full mute state (this chat and everywhere) so
+                    // the row can explain itself.
+                    let isIgnored = admissionRules.isMuted(
+                        chatUsername: session.username,
+                        senderUsername: msg.senderUsername,
+                        senderName: msg.senderName
+                    )
                     return UnreadItem(
                         chatUsername: session.username,
                         chatName: msg.chatName,
@@ -146,21 +155,43 @@ enum ScanEngine {
                         !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
                     }) else { continue }
                     let item = makeItem(msg, kind: .privateChat)
-                    if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
+                    let decision = admissionRules.decide(
+                        chatUsername: session.username,
+                        isGroup: false,
+                        senderUsername: msg.senderUsername,
+                        senderName: msg.senderName,
+                        isAtMention: false
+                    )
+                    if !decision.isAdmitted || isSnoozed || msg.createTime <= silencedAt {
                         suppressedCollected.append(item)
                     } else {
                         privateUnreadChats += 1
                         unreadCollected.append(item)
                     }
                 } else {
-                    for msg in recentMsgs where MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) {
-                        let item = makeItem(msg, kind: .groupAt)
-                        if item.isIgnored || isSnoozed || msg.createTime <= silencedAt {
-                            suppressedCollected.append(item)
-                        } else {
-                            groupAtCount += 1
-                            unreadCollected.append(item)
+                    // A room is followed because of the handful of people in
+                    // it. Surface @s and the members the user singled out;
+                    // let the rest of the traffic stay in WeChat.
+                    for msg in recentMsgs {
+                        if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) {
+                            continue
                         }
+                        let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
+                        let decision = admissionRules.decide(
+                            chatUsername: session.username,
+                            isGroup: true,
+                            senderUsername: msg.senderUsername,
+                            senderName: msg.senderName,
+                            isAtMention: isAt
+                        )
+                        guard decision.isAdmitted else { continue }
+                        let item = makeItem(msg, kind: isAt ? .groupAt : .groupMessage)
+                        if isSnoozed || msg.createTime <= silencedAt {
+                            suppressedCollected.append(item)
+                            continue
+                        }
+                        if isAt { groupAtCount += 1 } else { groupMemberCount += 1 }
+                        unreadCollected.append(item)
                     }
                 }
             }
@@ -178,7 +209,7 @@ enum ScanEngine {
                 return a.timestamp > b.timestamp
             }
             let sortedSuppressed = suppressedCollected.sorted { $0.timestamp > $1.timestamp }
-            let totalUnread = privateUnreadChats + groupAtCount
+            let totalUnread = privateUnreadChats + groupAtCount + groupMemberCount
             let debugUnreadExtra: Int
             if whitelist.isEmpty {
                 debugUnreadExtra = (try? debugScanAllTables(
@@ -285,7 +316,14 @@ enum ScanEngine {
                         ))
                         continue  // still skip for notification purposes
                     }
-                    if MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: ignoredSenderMap) {
+                    // Admission owns muting now, so a person muted in every
+                    // conversation is honoured here too — not only rules that
+                    // were created inside this particular chat.
+                    if admissionRules.isMuted(
+                        chatUsername: entry.id,
+                        senderUsername: msg.senderUsername,
+                        senderName: msg.senderName
+                    ) {
                         continue
                     }
                     let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
@@ -336,7 +374,23 @@ enum ScanEngine {
                         kind: kind
                     )
 
-                    if notificationConfig.shouldPresent(notif.presentationSemanticState),
+                    // Someone the user singled out inside this group, or a VIP
+                    // speaking here, is worth interrupting for even without an
+                    // @. A group muted for @s still reaches the inbox; it just
+                    // does not pop up.
+                    let isWatchedMember = admissionRules.watchedMembers[entry.id]?
+                        .contains(msg.senderUsername) == true
+                    let worthInterrupting = isAt || isCrossGroupVIP || isWatchedMember
+                    let shouldPresent = notificationConfig.shouldPresent(notif.presentationSemanticState)
+                        || (worthInterrupting && notificationConfig.important)
+                    let bannerAllowed = AdmissionPolicy.shouldRaiseBanner(
+                        decision: .admit(.followed),
+                        chatUsername: msg.chatUsername,
+                        isAtMention: isAt,
+                        atMutedGroups: admissionRules.config.atMutedGroups
+                    )
+                    if shouldPresent,
+                       bannerAllowed,
                        (latestPreview == nil || msgTime > latestPreview!.timestamp) {
                         latestPreview = notif
                     }
@@ -664,7 +718,7 @@ enum ScanEngine {
         sessions: [SessionInfo],
         reader: WeChatReader,
         chatActions: [String: HUDStore.ChatActionState],
-        ignoredSenderMap: [String: Set<String>],
+        admissionRules: AdmissionRules,
         myUsername: String,
         myDisplayName: String = "",
         mySelfNames: Set<String> = [],
@@ -686,7 +740,11 @@ enum ScanEngine {
 
             let latestInbound = recentMsgs.first {
                 !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
-                    && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                    && !admissionRules.isMuted(
+                        chatUsername: session.username,
+                        senderUsername: $0.senderUsername,
+                        senderName: $0.senderName
+                    )
             }
             guard let inbound = latestInbound else { return nil }
 
@@ -697,15 +755,35 @@ enum ScanEngine {
             if let outbound = latestOutbound {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
                     !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
-                        && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                        && !admissionRules.isMuted(
+                            chatUsername: session.username,
+                            senderUsername: $0.senderUsername,
+                            senderName: $0.senderName
+                        )
                         && MessageHelpers.isAfter($0, outbound)
                 }.count
             } else {
                 inboundCountSinceLastOutbound = recentMsgs.filter {
                     !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
-                        && !MessageHelpers.isIgnoredSender($0, ignoredSenderMap: ignoredSenderMap)
+                        && !admissionRules.isMuted(
+                            chatUsername: session.username,
+                            senderUsername: $0.senderUsername,
+                            senderName: $0.senderName
+                        )
                 }.count
             }
+
+            let admission = admissionRules.decision(
+                chatUsername: session.username,
+                isGroup: session.isGroup,
+                messages: recentMsgs,
+                isFromSelf: {
+                    MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+                },
+                isAtMe: {
+                    MessageHelpers.isAtMe($0.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+                }
+            )
 
             return ReplyDebtScorer.Seed(
                 session: session,
@@ -718,7 +796,8 @@ enum ScanEngine {
                 isAtMention: MessageHelpers.isAtMe(inbound.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames),
                 chatAction: chatActions[session.username],
                 now: now,
-                contactReplyWindowMinutes: contactMap[session.username]?.replyWindowMinutes
+                contactReplyWindowMinutes: contactMap[session.username]?.replyWindowMinutes,
+                admission: admission
             )
         }
 

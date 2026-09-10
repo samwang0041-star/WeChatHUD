@@ -11,6 +11,7 @@ private func attentionLevelTitle(_ level: AttentionLevel) -> String {
 
 struct ContactsSettingsView: View {
     enum SubTab: String, CaseIterable {
+        case rules = "什么会提醒我"
         case contacts = "关注的人"
         case aiScan = "推荐关注"
         case blockRules = "不看谁"
@@ -22,6 +23,9 @@ struct ContactsSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             switch selectedSubTab {
+            case .rules:
+                organizeBack
+                AdmissionSettingsView()
             case .contacts:
                 ContactsListSubView(organizeTab: $selectedSubTab)
             case .aiScan:
@@ -128,6 +132,8 @@ private struct ContactsListSubView: View {
                 }
 
                 Menu("更多") {
+                    Button("什么会提醒我") { organizeTab = .rules }
+                    Divider()
                     Button("批量整理关系") { monitor.startContactInference(contacts: contacts) }
                     Button("推荐关注") { organizeTab = .aiScan }
                     Button("不看谁") { organizeTab = .blockRules }
@@ -744,13 +750,18 @@ private struct BlockRulesSubView: View {
             if ignoredSenders.isEmpty {
                 emptyState(icon: "person.slash", text: "没有忽略的发送人", hint: "通过消息右键菜单添加忽略规则")
             } else {
-                Text("被忽略的发送人不计入未读统计")
+                Text("被忽略的发送人不计入未读统计。要按人全局设置，用「什么会提醒我」。")
                     .font(.system(size: 11)).foregroundColor(.secondary)
 
                 SettingsSection {
                     ForEach(Array(ignoredSenders.enumerated()), id: \.element.id) { idx, rule in
                         if idx > 0 { SettingsRowDivider() }
-                        SettingsRow(rule.senderName, subtitle: rule.chatName) {
+                        SettingsRow(
+                            rule.senderName,
+                            // A global rule has no single conversation to name,
+                            // so saying "所有对话" is the honest subtitle.
+                            subtitle: rule.scope == .global ? "所有对话都不提醒" : rule.chatName
+                        ) {
                             Button("恢复") {
                                 monitor.unignoreSender(
                                     chatUsername: rule.chatUsername,

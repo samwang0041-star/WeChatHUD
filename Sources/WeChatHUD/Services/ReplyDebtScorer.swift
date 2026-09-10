@@ -13,6 +13,14 @@ enum ReplyDebtScorer {
         let chatAction: HUDStore.ChatActionState?
         let now: Date
         let contactReplyWindowMinutes: Int?  // NEW: from contacts table, nil = use global
+        /// Whether this conversation is allowed to surface at all.
+        ///
+        /// Admission used to be implied right here by an ad-hoc
+        /// whitelist-or-group-@ rule. It now arrives decided, so the inbox, the
+        /// banners and the analysis queues all answer "who may reach me" the
+        /// same way. Defaults to admitted so a seed built without the new field
+        /// keeps its previous behaviour.
+        var admission: AdmissionPolicy.Decision = .admit(.followed)
     }
 
     private static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
@@ -64,17 +72,11 @@ enum ReplyDebtScorer {
     }
 
     private static func buildItem(seed: Seed, config: ReplyDebtConfig) -> ReplyDebtItem? {
-        // Whitelist gate — with an exception for group @mentions.
-        // When someone calls you out by name in a group you haven't
-        // explicitly whitelisted, that's still a clear request that
-        // deserves to surface in the HUD; forcing the user to
-        // pre-whitelist every ad-hoc group they get pulled into
-        // defeats the point of "@ 我 → 提醒". Private chats still
-        // require whitelisting so random strangers can't spam the
-        // inbox.
-        if !seed.isWhitelisted {
-            guard seed.session.isGroup && seed.isAtMention else { return nil }
-        }
+        // The gate is admission. It still covers the old rule — an @ in a group
+        // you never added is a clear request that deserves to surface, while a
+        // stranger's private message does not — but it is now decided in one
+        // place so the settings can actually change it.
+        guard seed.admission.isAdmitted else { return nil }
         guard let latestInbound = seed.latestInbound else { return nil }
         if let latestOutbound = seed.latestOutbound,
            MessageHelpers.isSameOrAfter(latestOutbound, latestInbound) {

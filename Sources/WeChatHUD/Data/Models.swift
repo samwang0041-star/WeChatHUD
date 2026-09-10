@@ -429,8 +429,37 @@ struct IgnoredSenderRule: Identifiable, Equatable {
     let senderUsername: String
     let senderName: String
     let createdAt: Date
+    /// Where this rule applies. `chat` matches only inside one conversation;
+    /// `global` follows the person everywhere.
+    let scope: IgnoredSenderScope
 
     var id: String { "\(chatUsername)|\(senderIdentifier)" }
+}
+
+enum IgnoredSenderScope: String, Codable, CaseIterable {
+    case chat
+    case global
+
+    var label: String {
+        switch self {
+        case .chat: return "仅这个对话"
+        case .global: return "所有对话"
+        }
+    }
+}
+
+/// A member the user wants to hear from inside one group, even without an @.
+///
+/// Groups are noisy by design: the room is worth following, but only because
+/// of two or three people in it. This records exactly that.
+struct GroupMemberRule: Identifiable, Equatable {
+    let chatUsername: String
+    let chatName: String
+    let senderUsername: String
+    let senderName: String
+    let createdAt: Date
+
+    var id: String { "\(chatUsername)|\(senderUsername)" }
 }
 
 struct GroupContextBriefing: Codable, Equatable {
@@ -1048,6 +1077,58 @@ struct NotificationConfig: Codable {
         case .privateInfoOnly, .groupInfoOnly: return allWhitelist
         default: return false
         }
+    }
+}
+
+// MARK: - Message admission
+
+/// How wide the net is cast when deciding what reaches the user.
+enum AdmissionMode: String, Codable, CaseIterable {
+    /// Only conversations the user explicitly follows, plus VIP people, @s and
+    /// watched group members.
+    case whitelistOnly = "whitelist_only"
+    /// Every conversation with unread messages, as WeChat reports them.
+    case all = "all"
+
+    var label: String {
+        switch self {
+        case .whitelistOnly: return "只提醒我关注的人"
+        case .all: return "全部未读都提醒"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .whitelistOnly:
+            return "只有「关注的人」和群里的重点成员会进来。其余对话不提醒、也不做 AI 分析。"
+        case .all:
+            return "微信里有未读的对话都会进来。AI 用量会明显增加，也更容易被打扰。"
+        }
+    }
+}
+
+/// Who is allowed to reach the user, and how.
+///
+/// This is deliberately one setting rather than scattered flags: the question
+/// "why did this message show up" has to have a single answer, or the user
+/// cannot predict the app.
+struct AdmissionConfig: Codable, Equatable {
+    var mode: AdmissionMode = .whitelistOnly
+    /// Groups where an @ still reaches the inbox but must not raise a banner.
+    /// Muting outright would silently drop the one message the user was
+    /// probably waiting for; this keeps it, quietly.
+    var atMutedGroups: Set<String> = []
+
+    init(mode: AdmissionMode = .whitelistOnly, atMutedGroups: Set<String> = []) {
+        self.mode = mode
+        self.atMutedGroups = atMutedGroups
+    }
+
+    // Tolerate configs written by an earlier build.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(AdmissionMode.self, forKey: .mode) ?? .whitelistOnly
+        atMutedGroups = try container.decodeIfPresent(Set<String>.self, forKey: .atMutedGroups) ?? []
     }
 }
 
