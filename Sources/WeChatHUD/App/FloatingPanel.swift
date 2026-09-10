@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 /// NSView subclass that owns a single persistent mouse tracking area and
@@ -258,13 +259,46 @@ class FloatingPanel: NSPanel {
     }
 
     private var animationTimer: Timer?
+    private var animationDisplayLink: CADisplayLink?
+    private var animationRun: FrameAnimationRun?
     var onFrameAnimationStarted: (() -> Void)?
     var onFrameAnimationEnded: (() -> Void)?
 
+    /// One frame-animation pass. Kept as a value so both the display-link
+    /// and the timer fallback step it identically.
+    private struct FrameAnimationRun {
+        let startFrame: NSRect
+        let target: NSRect
+        let duration: TimeInterval
+        let expanding: Bool
+        let startTimestamp: CFTimeInterval
+        let startedWallClock: Date
+    }
+
+    /// Is `point` (global Cocoa coordinates) inside the panel?
+    ///
+    /// `NSRect.contains` treats the `maxY` edge as exclusive, and the
+    /// whole point of this panel is to sit *on* the top edge of the
+    /// display. A cursor pushed against the top of the screen therefore
+    /// reports as outside, which used to make the expand animation settle
+    /// with "mouse outside" and trigger a spurious auto-collapse while the
+    /// user's pointer never moved. Inset the rect instead of testing the
+    /// raw frame.
+    func containsMouse(_ point: NSPoint = NSEvent.mouseLocation, tolerance: CGFloat = 2) -> Bool {
+        IslandHitTest.contains(frame: frame, point: point, tolerance: tolerance)
+    }
+
+    /// True while a frame animation is in flight (display link or the
+    /// timer fallback).
+    var isFrameAnimationRunning: Bool { animationDisplayLink != nil || animationTimer != nil }
+
     private func cancelFrameAnimation(notify: Bool = true) {
-        guard animationTimer != nil else { return }
+        guard isFrameAnimationRunning else { return }
         animationTimer?.invalidate()
         animationTimer = nil
+        animationDisplayLink?.invalidate()
+        animationDisplayLink = nil
+        animationRun = nil
         if notify {
             onFrameAnimationEnded?()
         }
@@ -290,6 +324,19 @@ class FloatingPanel: NSPanel {
             ? AnimationDebugger.slowDuration
             : (expanding ? IslandMotion.expandDuration : IslandMotion.collapseDuration)
 
+        // Already heading exactly there? Keep the motion in flight instead
+        // of retargeting. SwiftUI reports the banner's height on every
+        // layout pass, and restarting the ease for an unchanged target
+        // would re-anchor the curve dozens of times per second — visible
+        // as a leaden, stuttering expansion.
+        if let run = animationRun,
+           abs(run.target.height - target.height) < 1,
+           abs(run.target.width - target.width) < 1,
+           abs(run.target.origin.x - target.origin.x) < 1,
+           abs(run.target.origin.y - target.origin.y) < 1 {
+            return
+        }
+
         AnimationDebugger.logStart(from: self.frame, to: target, caller: caller, duration: duration)
 
         // Cancel any in-flight animation before starting the new one. This is
@@ -305,39 +352,102 @@ class FloatingPanel: NSPanel {
             return
         }
 
-        let startFrame = self.frame
-        let startTime = Date()
-        let monotonicStart = ProcessInfo.processInfo.systemUptime
+        animationRun = FrameAnimationRun(
+            startFrame: self.frame,
+            target: target,
+            duration: duration,
+            expanding: expanding,
+            startTimestamp: CACurrentMediaTime(),
+            startedWallClock: Date()
+        )
         IslandFrameTiming.begin()
 
-        let timer = Timer(timeInterval: 1.0/60.0, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-            let elapsed = ProcessInfo.processInfo.systemUptime - monotonicStart
-            IslandFrameTiming.tick(uptime: ProcessInfo.processInfo.systemUptime)
-            let rawT = min(elapsed / duration, 1.0)
-            let progress = expanding
-                ? IslandMotion.expandProgress(rawT)
-                : IslandMotion.collapseProgress(rawT)
-
-            let ix = startFrame.origin.x + (target.origin.x - startFrame.origin.x) * progress
-            let iy = startFrame.origin.y + (target.origin.y - startFrame.origin.y) * progress
-            let iw = startFrame.size.width + (target.size.width - startFrame.size.width) * progress
-            let ih = startFrame.size.height + (target.size.height - startFrame.size.height) * progress
-            self.setFrame(NSRect(x: ix, y: iy, width: iw, height: ih), display: true)
-
-            AnimationDebugger.logSample(window: self, startTime: startTime, elapsed: elapsed)
-
-            if rawT >= 1.0 {
-                timer.invalidate()
-                self.animationTimer = nil
-                self.onFrameAnimationEnded?()
-                AnimationDebugger.logEnd(frame: self.frame)
-                IslandFrameTiming.finish(duration: duration)
+        // Drive the interpolation from the display's own refresh signal.
+        // A repeating `Timer` fires on the runloop clock, so a busy frame
+        // (SwiftUI re-laying out the panel as it resizes) leaves it behind
+        // — the timer then bursts to catch up or skips a beat, which is the
+        // stutter that was visible on the expand/collapse. `CADisplayLink`
+        // fires once per vsync and hands us `targetTimestamp`, the moment
+        // the frame we are about to draw will be shown, so each frame is
+        // positioned for its own presentation time and never drifts.
+        if let contentView, contentView.window != nil {
+            let link = contentView.displayLink(target: self, selector: #selector(stepFrameAnimation(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
+            link.add(to: .main, forMode: .common)
+            animationDisplayLink = link
+        } else {
+            // Fallback when the view is not in a window yet.
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+                guard let self, let start = self.animationRun?.startTimestamp else {
+                    timer.invalidate()
+                    return
+                }
+                self.stepFrameAnimation(at: CACurrentMediaTime(), elapsedOverride: CACurrentMediaTime() - start)
             }
+            animationTimer = timer
+            // Continue animating during mouse tracking and menu interactions.
+            RunLoop.main.add(timer, forMode: .common)
         }
-        animationTimer = timer
-        // Continue animating during mouse tracking and menu interactions.
-        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @objc private func stepFrameAnimation(_ link: CADisplayLink) {
+        // `targetTimestamp` is the presentation time of the frame being
+        // drawn right now — one refresh ahead of `timestamp` — so the
+        // position lands exactly where it should appear on screen.
+        stepFrameAnimation(at: link.targetTimestamp, elapsedOverride: nil)
+    }
+
+    private func stepFrameAnimation(at mediaTime: CFTimeInterval, elapsedOverride: TimeInterval?) {
+        guard let run = animationRun else { return }
+        let stepStart = CACurrentMediaTime()
+        let now = ProcessInfo.processInfo.systemUptime
+        IslandFrameTiming.tick(uptime: now)
+        let elapsed = elapsedOverride ?? (mediaTime - run.startTimestamp)
+        let rawT = min(max(elapsed, 0) / run.duration, 1.0)
+        let progress = run.expanding
+            ? IslandMotion.expandProgress(rawT)
+            : IslandMotion.collapseProgress(rawT)
+
+        let startFrame = run.startFrame
+        let target = run.target
+        let ix = startFrame.origin.x + (target.origin.x - startFrame.origin.x) * progress
+        let iy = startFrame.origin.y + (target.origin.y - startFrame.origin.y) * progress
+        let iw = startFrame.size.width + (target.size.width - startFrame.size.width) * progress
+        let ih = startFrame.size.height + (target.size.height - startFrame.size.height) * progress
+        // `display: false` — the window server composites the resized
+        // window at its own display cycle. Forcing a synchronous redraw
+        // here re-laid-out the whole SwiftUI tree inside the tick, which is
+        // what starved the next frames.
+        setFrame(NSRect(x: ix, y: iy, width: iw, height: ih), display: false)
+
+        AnimationDebugger.logSample(window: self, startTime: run.startedWallClock, elapsed: elapsed)
+
+        // Anything slow here is our own main-thread work (window resize +
+        // SwiftUI re-render) rather than the display's cadence, so surface
+        // it separately when hunting stutter.
+        let cost = CACurrentMediaTime() - stepStart
+        if cost > 0.008 {
+            AnimationDebugger.logEvent(String(format: "slowStep %.1fms w=%.0f h=%.0f", cost * 1000, iw, ih))
+        }
+
+        if rawT >= 1.0 {
+            finishFrameAnimation()
+        }
+    }
+
+    private func finishFrameAnimation() {
+        guard let run = animationRun else { return }
+        animationRun = nil
+        animationTimer?.invalidate()
+        animationTimer = nil
+        animationDisplayLink?.invalidate()
+        animationDisplayLink = nil
+        // Land exactly on the target and paint once, so the final frame is
+        // never left to a deferred composite of the previous step.
+        setFrame(run.target, display: true)
+        onFrameAnimationEnded?()
+        AnimationDebugger.logEnd(frame: frame)
+        IslandFrameTiming.finish(duration: run.duration)
     }
 
     /// Snap the panel to the target size with NO animation. Used on
@@ -345,14 +455,14 @@ class FloatingPanel: NSPanel {
     /// doesn't animate down to the real compact size — that's the
     /// "first animation is wrong" artifact on launch.
     func setFrameInstantly(height: CGFloat, width: CGFloat? = nil) {
-        let wasAnimating = animationTimer != nil
+        let wasAnimating = isFrameAnimationRunning
         cancelFrameAnimation(notify: false)
         setFrame(targetFrame(height: height, width: width), display: true)
         if wasAnimating { onFrameAnimationEnded?() }
     }
 
     func setFrameInstantlyCentered(height newHeight: CGFloat, width newWidth: CGFloat) {
-        let wasAnimating = animationTimer != nil
+        let wasAnimating = isFrameAnimationRunning
         cancelFrameAnimation(notify: false)
         let centerX = frame.midX
         let x = centerX - newWidth / 2
@@ -498,6 +608,20 @@ enum IslandFrameTiming {
         return lastIntervals.reduce(0, +) / Double(lastIntervals.count)
     }
 
+    /// Worst single interval of the last animation. The average can look
+    /// perfect while one 80 ms stall is exactly what the eye notices, so
+    /// the acceptance report carries the tail too.
+    static var worstInterval: TimeInterval {
+        lastIntervals.max() ?? 0
+    }
+
+    /// 95th-percentile interval of the last animation.
+    static var p95Interval: TimeInterval {
+        guard !lastIntervals.isEmpty else { return 0 }
+        let sorted = lastIntervals.sorted()
+        return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+    }
+
     static var reportPath: URL {
         URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wechathud-island-fps.json")
     }
@@ -508,7 +632,9 @@ enum IslandFrameTiming {
             "duration": lastDuration,
             "samples": lastIntervals.count,
             "fps": estimatedFPS,
-            "averageMs": (averageInterval ?? 0) * 1000
+            "averageMs": (averageInterval ?? 0) * 1000,
+            "p95Ms": p95Interval * 1000,
+            "worstMs": worstInterval * 1000
         ]
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted]) {
             try? data.write(to: reportPath)

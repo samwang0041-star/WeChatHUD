@@ -11,6 +11,16 @@ struct NotificationBannerView: View {
         (NSApp.delegate as? AppDelegate)?.panel?.notch.notchHeight ?? 32
     }
 
+    /// Width the panel gives this banner (`AppDelegate.panelSize(for:)`).
+    /// The content is laid out at this width from the very first frame so
+    /// the text does not re-wrap at every intermediate window width while
+    /// the panel grows out of the notch — re-wrapping three lines of 19 pt
+    /// text on each resize step was the stutter in the banner transition.
+    private var bannerWidth: CGFloat {
+        let notchWidth = (NSApp.delegate as? AppDelegate)?.panel?.notch.notchWidth ?? 200
+        return max(IslandChrome.notificationMinWidth, notchWidth + 240)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if panelState.briefingExpanded, notification.canExplainContext {
@@ -23,6 +33,21 @@ struct NotificationBannerView: View {
         .padding(.horizontal, 20)
         .padding(.top, notchHeight + 12)
         .padding(.bottom, 16)
+        // Fixed layout width: the panel animates its width around this
+        // content, and a width-stable subtree re-renders without
+        // re-running text layout.
+        .frame(width: bannerWidth)
+        // Report the height this content actually needs, BEFORE the
+        // infinite-height frame below stretches the view to the window.
+        // AppDelegate sizes the panel from this measurement, so a long
+        // group name or a three-line snippet can no longer be clipped by
+        // the window's bottom edge.
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: SizePreferenceKey.self, value: proxy.size)
+            }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // No parent tap gesture: a quick-action click must have exactly one
         // effect, and closing a banner must not also open a conversation.

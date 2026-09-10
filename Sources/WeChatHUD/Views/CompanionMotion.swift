@@ -106,8 +106,41 @@ enum IslandChrome {
     static let expandedWidth: CGFloat = 560
     static let notificationMinWidth: CGFloat = 580
     static let notificationBaseBelowNotch: CGFloat = 168
-    static let briefingExtra: CGFloat = 360
-    static let snoozeExtra: CGFloat = 176
+}
+
+/// Height budget for the `.notification` banner.
+///
+/// The panel used to be sized from a static estimate
+/// (`notchHeight + notificationBaseBelowNotch`), which is only correct for
+/// the shortest possible banner: a long group name plus a three-line
+/// snippet lays out taller than that, so the action row was cut off by the
+/// window's bottom edge. The banner now reports its rendered height through
+/// `SizePreferenceKey`, the same pipe the extended inbox uses, and the
+/// panel hugs that measurement. The static constants below survive only as
+/// the floor / pre-measurement fallback.
+enum IslandNotificationLayout {
+    /// Smallest useful distance below the notch. Matches the historical
+    /// static budget, so the measured path can only ever grow the panel —
+    /// a bogus short measurement can never produce a sliver window.
+    static let minBelowNotch: CGFloat = 168
+
+    /// Ceiling for the hung banner, below the notch. The tallest real
+    /// content is the expanded briefing card (measured ~534 pt total),
+    /// which fits comfortably inside this.
+    static let maxBelowNotch: CGFloat = 560
+
+    /// Panel height for a banner whose content measured `contentHeight`
+    /// (the banner's own rendered height, notch padding included).
+    /// `contentHeight <= 1` means "no measurement yet" — fall back to the
+    /// historical static estimate.
+    static func panelHeight(measuredContentHeight contentHeight: CGFloat,
+                            notchHeight: CGFloat,
+                            fallbackBelowNotch: CGFloat) -> CGFloat {
+        guard contentHeight > 1 else { return notchHeight + fallbackBelowNotch }
+        let floor = notchHeight + minBelowNotch
+        let ceiling = notchHeight + maxBelowNotch
+        return min(max(contentHeight, floor), ceiling)
+    }
 }
 
 /// Frame curves for "grows out of the Dynamic Island / sucks back in".

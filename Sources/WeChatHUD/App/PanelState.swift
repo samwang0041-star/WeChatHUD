@@ -105,6 +105,12 @@ final class PanelState: ObservableObject {
     /// `.zero` means "not yet measured" — AppDelegate should ignore it.
     @Published var measuredExtendedSize: CGSize = .zero
 
+    /// SwiftUI-measured rendered height of the notification banner
+    /// content (notch padding included). Published so AppDelegate can
+    /// size the NSPanel to the banner's real height instead of the
+    /// static estimate that used to clip long messages.
+    @Published var measuredNotificationSize: CGSize = .zero
+
     /// Set to `true` after `applicationDidFinishLaunching` has fully
     /// configured the panel (screen, notch geometry, sinks). Until then
     /// the measurement sink ignores any sizes reported by SwiftUI to
@@ -298,6 +304,7 @@ final class PanelState: ObservableObject {
 
     private func scheduleExitCollapse() {
         guard collapsesWhenMouseOutside else { return }
+        AnimationDebugger.logEvent("scheduleExitCollapse state=\(currentState) mouseInside=\(isMouseInside) exitRequestedDuringAnimation=\(exitRequestedDuringFrameAnimation)")
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         let generation = exitGeneration
@@ -307,6 +314,7 @@ final class PanelState: ObservableObject {
                 // Only collapse if the mouse actually stayed outside AND
                 // no popover re-opened during the debounce window.
                 if !self.isMouseInside && !self.popoverOpen && !self.menuTrackingOpen && !self.islandTextInputActive && self.collapsesWhenMouseOutside && self.islandSurface == .inbox {
+                    AnimationDebugger.logEvent("exitDebounce FIRED -> compact")
                     self.currentState = .compact
                 }
                 self.exitDebounceTimer = nil
@@ -449,6 +457,31 @@ final class PanelState: ObservableObject {
         measuredExtendedSize = .zero
     }
 
+    /// Rendered height of the notification banner's own content, reported
+    /// by `NotificationBannerView` through `SizePreferenceKey`. The panel
+    /// hugs this instead of a static estimate so a long message can never
+    /// be clipped by the window's bottom edge. `AppDelegate` observes it to
+    /// animate the NSPanel frame.
+    func reportNotificationSize(_ size: CGSize) {
+        guard size.height > 1 else { return }
+        // Ignore measurements taken while the panel is still widening out
+        // of compact: the banner re-wraps in the narrow window and reports
+        // an inflated height, which would make the window overshoot and
+        // then shrink back. The banner is never narrower than the minimum
+        // notification width, so anything below it is mid-animation.
+        guard size.width >= IslandChrome.notificationMinWidth - 2 else { return }
+        guard size != measuredNotificationSize else { return }
+        AnimationDebugger.logEvent("reportNotificationSize state=\(currentState) size=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) ready=\(isReady)")
+        measuredNotificationSize = size
+    }
+
+    /// Forget the banner measurement (no measurement yet). Called when a
+    /// new notification is presented so the previous banner's height is
+    /// never reused as this one's starting frame.
+    func invalidateNotificationSize() {
+        measuredNotificationSize = .zero
+    }
+
     /// Collapse immediately and ignore any `mouseEntered` that fires in
     /// the next `duration` seconds. Use when we're handing focus to
     /// another app (WeChat) — without this, the cursor still hovering
@@ -477,6 +510,12 @@ final class PanelState: ObservableObject {
         guard currentState != .detail, currentState != .extended, !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
         islandSnoozeUndo = nil
         toastMessage = nil
+        // A new banner may be much shorter or taller than the previous one
+        // (short snippet vs. long group message vs. expanded briefing), so
+        // drop the stale measurement and let the fresh render drive the
+        // panel height. Until it arrives the panel uses the static
+        // fallback instead of the previous banner's size.
+        invalidateNotificationSize()
         notificationDuration = max(0.1, duration)
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
