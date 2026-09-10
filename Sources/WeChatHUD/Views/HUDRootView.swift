@@ -145,6 +145,13 @@ private struct HUDToastLayer: View {
         .onReceive(monitor.$inboxActionError) { message in
             if let message { panelState.showToast(message) }
         }
+        .onReceive(monitor.$discussionArchiveNotice) { message in
+            if let message {
+                panelState.showToast(message, duration: 8)
+                monitor.discussionArchiveNotice = nil
+            }
+        }
+
     }
 
     private func toastView(_ message: String) -> some View {

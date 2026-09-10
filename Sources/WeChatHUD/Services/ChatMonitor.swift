@@ -213,6 +213,9 @@ final class ChatMonitor: ObservableObject {
     }()
     /// Live pending items only. History is loaded on demand by the 待办 surface.
     @Published var discussionItems: [DiscussionItem] = []
+    /// One-shot copy after stale pending rows are archived. The HUD toast layer
+    /// consumes it so a 2000-row fold is not silent.
+    @Published var discussionArchiveNotice: String?
     let islandPresentation = IslandPresentation()
     let workspaceBadges = WorkspaceBadges()
     /// Per-chat labels resolved for the current process. `displayName(for:)`
@@ -1362,7 +1365,10 @@ final class ChatMonitor: ObservableObject {
 
     private func reloadPendingDiscussionItems() {
         let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-        _ = try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)
+        let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
+        if archived > 0 {
+            discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+        }
         let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
         refreshWorkspaceChrome()

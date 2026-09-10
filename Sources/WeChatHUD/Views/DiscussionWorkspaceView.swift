@@ -15,6 +15,7 @@ struct DiscussionWorkspaceView: View {
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
+    @State private var expandArchived = false
     /// Keeps the filter+sort to one pass per changed input instead of one pass
     /// per read. See `DiscussionItemsCache`.
     @State private var itemsCache = DiscussionItemsCache()
@@ -69,6 +70,7 @@ struct DiscussionWorkspaceView: View {
         }
         .onChange(of: showHistory) { _, on in
             if on { refreshHistory() }
+            if !on { expandArchived = false }
             reconcileSelection(in: self.items)
         }
         .onChange(of: scope) { _, _ in reconcileSelection(in: self.items) }
@@ -117,7 +119,7 @@ struct DiscussionWorkspaceView: View {
                     .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
                 Spacer()
-                Toggle("看已完成的", isOn: $showHistory)
+                Toggle("看已处理的", isOn: $showHistory)
                     .font(.system(size: 12))
                     .toggleStyle(.switch)
                     .controlSize(.small)
@@ -138,7 +140,9 @@ struct DiscussionWorkspaceView: View {
             .padding(10)
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
-            Text("未完成的都会留下。已结束的只留近 \(DiscussionLiveWindow.historyDays) 天。")
+            Text(showHistory
+                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
+                 : "当前只显示还没做完的。过期太久的会收起，不占这个列表。")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
             if let error {
@@ -153,7 +157,9 @@ struct DiscussionWorkspaceView: View {
             query.isEmpty ? "还没有待办" : "没有匹配的待办",
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
             description: Text(query.isEmpty
-                ? (showHistory ? "近 \(DiscussionLiveWindow.historyDays) 天做完或忽略的事情会留在这里，可以再打开。" : "连上微信并选好对话后，还没做完的事会出现在这里。")
+                ? (showHistory
+                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。过期太久自动收起的在「较早收起」里。"
+                    : "连上微信并选好对话后，还没做完的事会出现在这里。")
                 : "当前搜索：\(query)")
         )
         .frame(maxWidth: .infinity, minHeight: 280)
@@ -169,23 +175,41 @@ struct DiscussionWorkspaceView: View {
     private func listPane(items: [DiscussionItem], selectedID: Int64?) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(DiscussionPresentation.groups(items, now: groupingAnchor), id: \.title) { group in
+                ForEach(DiscussionPresentation.groups(items, now: Date(), history: showHistory), id: \.title) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.secondary)
-                        ForEach(group.items) { item in
-                            DiscussionRow(
-                                item: item,
-                                isSelected: selectedID == item.id,
-                                now: groupingAnchor
-                            ) {
-                                withMotion(CompanionMotion.rowExpand()) {
-                                    self.selectedID = item.id
-                                    self.showingSource = false
-                                }
+                        if group.title == DiscussionPresentation.archivedGroupTitle, !expandArchived {
+                            Button {
+                                expandArchived = true
+                            } label: {
+                                Text("\(group.items.count) 件过期未处理，点开查看")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(CompanionPalette.jade)
                             }
-                            .equatable()
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("展开较早收起的 \(group.items.count) 件待办")
+                        } else {
+                            ForEach(group.items) { item in
+                                DiscussionRow(
+                                    item: item,
+                                    isSelected: selectedID == item.id,
+                                    now: groupingAnchor
+                                ) {
+                                    withMotion(CompanionMotion.rowExpand()) {
+                                        self.selectedID = item.id
+                                        self.showingSource = false
+                                    }
+                                }
+                                .equatable()
+                            }
+                            if group.title == DiscussionPresentation.archivedGroupTitle {
+                                Button("收起") { expandArchived = false }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -320,9 +344,11 @@ struct DiscussionWorkspaceView: View {
         if let chat = panelState.pendingDiscussionChatUsername {
             query = monitor.displayName(for: chat)
             showHistory = false
-            if let match = monitor.discussionItems.first(where: { $0.chatUsername == chat && $0.status == .pending }) {
-                selectedID = match.id
-            }
+            let ranked = DiscussionPresentation.items(
+                monitor.discussionItems.filter { $0.chatUsername == chat },
+                scope: .all, query: "", history: false
+            )
+            selectedID = ranked.first(where: { $0.kind != .info })?.id ?? ranked.first?.id
             panelState.pendingDiscussionChatUsername = nil
         }
     }
@@ -516,6 +542,7 @@ final class DiscussionItemsCache {
     private var result: [DiscussionItem] = []
     private var primed = false
     private var dayStart: Date = .distantPast
+    private var rankMinute: Int = 0
 
     func items(
         _ source: [DiscussionItem],
@@ -526,8 +553,9 @@ final class DiscussionItemsCache {
         calendar: Calendar = .current
     ) -> [DiscussionItem] {
         let day = calendar.startOfDay(for: now)
+        let minute = Int(now.timeIntervalSince1970 / 60)
         if primed, self.scope == scope, self.query == query, self.history == history,
-           self.source == source, dayStart == day {
+           self.source == source, dayStart == day, rankMinute == minute {
             return result
         }
         let next = DiscussionPresentation.items(source, scope: scope, query: query, history: history, now: now, calendar: calendar)
@@ -537,6 +565,7 @@ final class DiscussionItemsCache {
         self.query = query
         self.history = history
         dayStart = day
+        rankMinute = minute
         result = next
         return next
     }
@@ -561,7 +590,6 @@ enum DiscussionPresentation {
         calendar: Calendar
     ) -> [DiscussionItem] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let startOfToday = calendar.startOfDay(for: now)
         return items.filter { item in
             guard history ? item.status != .pending : item.status == .pending else { return false }
             let matches: Bool
@@ -575,8 +603,8 @@ enum DiscussionPresentation {
             return matches && (query.isEmpty || [item.content, item.detail ?? "", item.chatName].contains { $0.localizedCaseInsensitiveContains(query) })
         }.sorted {
             if history { return $0.updatedAt != $1.updatedAt ? $0.updatedAt > $1.updatedAt : $0.id > $1.id }
-            let left = liveRank($0, startOfToday: startOfToday)
-            let right = liveRank($1, startOfToday: startOfToday)
+            let left = liveRank($0, now: now)
+            let right = liveRank($1, now: now)
             if left.bucket != right.bucket { return left.bucket < right.bucket }
             if left.time != right.time {
                 return left.ascending ? left.time < right.time : left.time > right.time
@@ -586,29 +614,48 @@ enum DiscussionPresentation {
         }
     }
 
-    /// Live ranking: upcoming (soonest due) → overdue (newest source) → undated (newest source).
-    /// Ancient overdue used to sort first by due date and occupy the HUD's four slots.
+    /// Live ranking: still-open due dates (soonest first) → already-past due
+    /// (newest source) → undated (newest source). A due time that has already
+    /// passed today ranks with overdue, not with tonight's remaining work.
     private struct LiveRank {
         let bucket: Int
         let time: TimeInterval
         let ascending: Bool
     }
 
-    private static func liveRank(_ item: DiscussionItem, startOfToday: Date) -> LiveRank {
+    private static func liveRank(_ item: DiscussionItem, now: Date) -> LiveRank {
         guard let due = item.dueAt else {
             return LiveRank(bucket: 2, time: TimeInterval(item.sourceTimestamp), ascending: false)
         }
-        if due < startOfToday {
+        if due < now {
             return LiveRank(bucket: 1, time: TimeInterval(item.sourceTimestamp), ascending: false)
         }
         return LiveRank(bucket: 0, time: due.timeIntervalSince1970, ascending: true)
     }
 
-    static func groups(_ items: [DiscussionItem], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
-        let order = ["已过期", "今天", "明天", "本周", "之后", "无期限"]
+    static let archivedGroupTitle = "较早收起"
+
+    static func groups(_ items: [DiscussionItem], now: Date = Date(), calendar: Calendar = .current, history: Bool = false) -> [Group] {
+        if history {
+            let order = ["已完成", "已忽略", archivedGroupTitle]
+            let mapped = Dictionary(grouping: items) { historyTitle(for: $0.status) }
+            return order.compactMap { title in
+                mapped[title].map { Group(title: title, items: $0) }
+            }
+        }
+        let order = ["今天", "明天", "本周", "之后", "已过期", "无期限"]
         let mapped = Dictionary(grouping: items) { groupTitle(for: $0.dueAt, now: now, calendar: calendar) }
         return order.compactMap { title in
             mapped[title].map { Group(title: title, items: $0) }
+        }
+    }
+
+    private static func historyTitle(for status: DiscussionItemStatus) -> String {
+        switch status {
+        case .done: return "已完成"
+        case .dismissed: return "已忽略"
+        case .archived: return archivedGroupTitle
+        case .pending: return "未完成"
         }
     }
 
