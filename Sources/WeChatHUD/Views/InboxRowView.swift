@@ -23,7 +23,7 @@ struct InboxRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 if islandCatalog {
-                    CompanionAvatar(name: item.chatName, size: 36)
+                    CompanionAvatar(name: item.chatName, size: IslandMetrics.avatar)
                 } else {
                     priorityDot
                         .padding(.top, 4)
@@ -45,9 +45,9 @@ struct InboxRowView: View {
                         .transition(.opacity)
                 }
             }
-            .padding(.horizontal, islandCatalog ? 18 : 14)
-            .padding(.vertical, islandCatalog ? 10 : 6)
-            .background(hovered || showSnoozeMenu ? Color.white.opacity(0.06) : Color.clear)
+            .padding(.horizontal, IslandMetrics.rowInset)
+            .padding(.vertical, IslandMetrics.rowPadding)
+            .background(hovered || showSnoozeMenu ? IslandInk.hover : Color.clear)
             .contentShape(Rectangle())
             .onTapGesture {
                 withMotion(CompanionMotion.ease(0.2)) {
@@ -74,8 +74,8 @@ struct InboxRowView: View {
                     panelState.setSnoozeMenuExpanded(false)
                     onSnooze?(date)
                 }
-                .padding(.horizontal, islandCatalog ? 18 : 14)
-                .padding(.bottom, 10)
+                .padding(.horizontal, IslandMetrics.rowInset)
+                .padding(.bottom, IslandMetrics.rowPadding)
             }
 
             if expanded {
@@ -180,33 +180,33 @@ struct InboxRowView: View {
         HStack(spacing: 6) {
             Text(item.displayReason.isEmpty
                  ? item.chatName
-                 : "\(item.chatName) · \(item.displayReason)")
-                .font(.system(size: islandCatalog ? 15 : 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.9))
+                : "\(item.chatName) · \(item.displayReason)")
+                .islandRowTitle()
+                .foregroundColor(IslandInk.primary)
                 .lineLimit(1)
 
             if item.isVIP, let mood = item.moodEmoji, !mood.isEmpty {
                 Text(mood)
-                    .font(.system(size: 11))
+                    .islandMeta()
             }
 
             Spacer()
 
             Text(relativeTime(item.timestamp))
-                .font(.system(size: islandCatalog ? 12 : 10))
-                .foregroundColor(.white.opacity(0.35))
+                .islandMeta()
+                .foregroundColor(IslandInk.tertiary)
             if islandCatalog {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.28))
+                    .companionFont(size: 12, weight: .semibold)
+                    .foregroundColor(IslandInk.quaternary)
             }
         }
     }
 
     private var catalogTitle: some View {
         Text(item.aiSummary?.isEmpty == false ? item.aiSummary! : item.preview)
-            .font(.system(size: 14))
-            .foregroundColor(.white.opacity(0.7))
+            .islandRowBody()
+            .foregroundColor(IslandInk.secondary)
             .lineLimit(2)
     }
 
@@ -219,7 +219,7 @@ struct InboxRowView: View {
         case .groupMentionFYI:
             return .blue
         default:
-            return .white.opacity(0.5)
+            return IslandInk.secondary
         }
     }
 
@@ -231,12 +231,12 @@ struct InboxRowView: View {
             HStack(spacing: 0) {
                 if item.isGroup, !item.senderName.isEmpty {
                     Text(item.senderName + ": ")
-                        .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.5))
+                        .islandMeta()
+                        .foregroundColor(IslandInk.tertiary)
                 }
                 Text(item.preview)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.65))
+                    .islandRowBody()
+                    .foregroundColor(IslandInk.secondary)
                     .lineLimit(1)
             }
 
@@ -244,11 +244,11 @@ struct InboxRowView: View {
             if let summary = item.aiSummary, !summary.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                        .islandMicro()
                         .foregroundColor(.orange.opacity(0.7))
                     Text(summary)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.5))
+                        .islandMeta()
+                        .foregroundColor(IslandInk.secondary)
                         .lineLimit(1)
                 }
             }
@@ -280,11 +280,11 @@ struct InboxRowView: View {
             if state.isLoading && state.briefing == nil {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                        .islandMicro()
                         .foregroundColor(.orange.opacity(0.7))
                     Text("分析中…")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .islandMeta()
+                        .foregroundColor(IslandInk.tertiary)
                 }
             } else if let briefing = state.briefing {
                 // Only true action rows get the actionable line. FYI
@@ -300,11 +300,11 @@ struct InboxRowView: View {
                 }()
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 9))
+                        .islandMicro()
                         .foregroundColor(.orange.opacity(0.85))
                     Text(summaryText)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.72))
+                        .islandMeta()
+                        .foregroundColor(IslandInk.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -346,7 +346,7 @@ struct InboxRowView: View {
                     showSnoozeMenu.toggle()
                 }) {
                     Text("\u{23F0}")
-                        .font(.system(size: 12))
+                        .islandButton()
                 }
                 .buttonStyle(.plain)
                 .help("稍后提醒")
@@ -355,8 +355,8 @@ struct InboxRowView: View {
 
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.4))
+                    .islandMicro()
+                    .foregroundColor(IslandInk.tertiary)
             }
             .buttonStyle(.plain)
             .help(item.actionRequired ? "标为已处理" : "隐藏这条更新")
@@ -407,22 +407,22 @@ struct IslandSnoozeMenu: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(CompanionProductCopy.snoozeChoices().enumerated()), id: \.element.id) { index, choice in
                 if index > 0 {
-                    Divider().background(Color.white.opacity(0.08))
+                    Divider().background(IslandInk.divider)
                 }
                 Button {
                     onSelect(choice.until)
                 } label: {
                     HStack {
                         Text(choice.label)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.white)
+                            .islandRowTitle()
+                            .foregroundStyle(IslandInk.primary)
                         Spacer(minLength: 12)
                         Text(choice.whenLabel)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .islandMeta()
+                            .foregroundStyle(IslandInk.tertiary)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, IslandMetrics.rowInset)
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -454,7 +454,7 @@ struct SnoozePopoverContent: View {
     private func snoozeButton(label: String, date: Date, name: String) -> some View {
         Button(action: { onSelect(date) }) {
             Text(label)
-                .font(.system(size: 12))
+                .islandButton()
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)

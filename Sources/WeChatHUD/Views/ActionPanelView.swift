@@ -43,9 +43,9 @@ struct ActionPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Divider().background(Color.white.opacity(0.08))
+            Divider().background(IslandInk.divider)
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 // One headline card — condenses everything the old
                 // panel used to scatter across 4-5 separate blocks
                 // (intent + urgency + mood + context + reasoning)
@@ -70,9 +70,9 @@ struct ActionPanelView: View {
 
                 EmptyView()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Color.white.opacity(0.03))
+            .padding(.horizontal, IslandMetrics.rowInset)
+            .padding(.vertical, 10)
+            .background(IslandInk.bar)
         }
         .onAppear { prepareForCurrentItem(reset: generationKey != itemGenerationKey) }
         .onChange(of: itemGenerationKey) { _, _ in
@@ -100,8 +100,8 @@ struct ActionPanelView: View {
             HStack(spacing: 8) {
                 ProgressView().scaleEffect(0.55).frame(width: 14, height: 14)
                 Text("AI 正在整理重点…")
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.5))
+                    .islandMeta()
+                    .foregroundColor(IslandInk.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -135,14 +135,14 @@ struct ActionPanelView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11))
+                    .islandMeta()
                     .foregroundColor(.accentColor)
                 Text(title)
-                    .font(.system(size: 10, weight: .bold))
+                    .islandSection()
                     .foregroundColor(.accentColor.opacity(0.85))
                 if let vibe = vibe, !vibe.isEmpty {
                     Text(vibe)
-                        .font(.system(size: 9, weight: .semibold))
+                        .islandMicro()
                         .foregroundColor(.orange.opacity(0.9))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -153,19 +153,19 @@ struct ActionPanelView: View {
             }
 
             Text(primary)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white.opacity(0.95))
+                .islandRowTitle()
+                .foregroundColor(IslandInk.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let context = context, !context.isEmpty {
                 Text(context)
-                    .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.6))
+                    .islandMeta()
+                    .foregroundColor(IslandInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(10)
         .background(Color.accentColor.opacity(0.08))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -175,21 +175,21 @@ struct ActionPanelView: View {
     }
 
     private func groupHeadlineCard(_ result: ChatAnalyzer.GroupAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11))
+                    .islandMeta()
                     .foregroundColor(.accentColor)
                 Text(item.actionPanelTitle)
-                    .font(.system(size: 10, weight: .bold))
+                    .islandSection()
                     .foregroundColor(.accentColor.opacity(0.9))
                 Spacer(minLength: 0)
                 statusPill(for: result.status)
             }
 
             Text(groupPrimary(result))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white.opacity(0.96))
+                .islandRowTitle()
+                .foregroundColor(IslandInk.primary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -206,7 +206,7 @@ struct ActionPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(10)
         .background(Color.accentColor.opacity(0.08))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -230,7 +230,7 @@ struct ActionPanelView: View {
             color = .blue
         }
         return Text(text)
-            .font(.system(size: 9, weight: .semibold))
+            .islandMicro()
             .foregroundColor(color.opacity(0.95))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -241,16 +241,16 @@ struct ActionPanelView: View {
     private func compactInfoLine(icon: String, label: String, text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.white.opacity(0.42))
+                .islandMicro()
+                .foregroundColor(IslandInk.tertiary)
                 .frame(width: 12, height: 14)
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.52))
+                .islandMicro()
+                .foregroundColor(IslandInk.tertiary)
                 .frame(width: 28, alignment: .leading)
             Text(text)
-                .font(.system(size: 11))
-                .foregroundColor(.white.opacity(0.72))
+                .islandRowBody()
+                .foregroundColor(IslandInk.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -393,13 +393,13 @@ struct ActionPanelView: View {
             }) {
                 HStack(spacing: 5) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 11))
+                        .islandMeta()
                     Text(item.primaryCTATitle)
-                        .font(.system(size: 12, weight: .semibold))
+                        .islandButton()
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                .padding(.vertical, 7)
                 .background(Color.accentColor)
                 .cornerRadius(6)
             }
@@ -413,14 +413,14 @@ struct ActionPanelView: View {
                             ProgressView().scaleEffect(0.55).frame(width: 10, height: 10)
                         } else {
                             Image(systemName: "lightbulb.fill")
-                                .font(.system(size: 11))
+                                .islandMeta()
                         }
                         Text(item.replySuggestionButtonTitle)
-                            .font(.system(size: 12, weight: .semibold))
+                            .islandButton()
                     }
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(IslandInk.primary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 7)
                     .background(Color.white.opacity(0.1))
                     .cornerRadius(6)
                 }
@@ -436,11 +436,11 @@ struct ActionPanelView: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 9))
+                    .islandMicro()
                     .foregroundColor(.yellow.opacity(0.8))
                 Text("回复建议")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.5))
+                    .islandSection()
+                    .foregroundColor(IslandInk.secondary)
             }
             ForEach(replies) { suggestion in
                 suggestionRow(suggestion)
@@ -457,22 +457,22 @@ struct ActionPanelView: View {
                     HStack(alignment: .top, spacing: 6) {
                         toneBadge(suggestion.tone)
                         Text(suggestion.text)
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.88))
+                            .islandRowBody()
+                            .foregroundColor(IslandInk.primary)
                             .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let rationale = suggestion.rationale, !rationale.isEmpty {
                         Text(rationale)
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.42))
+                            .islandMicro()
+                            .foregroundColor(IslandInk.tertiary)
                             .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.up.right")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.3))
+                    .islandMicro()
+                    .foregroundColor(IslandInk.quaternary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -623,14 +623,14 @@ struct ActionPanelView: View {
     private func loadingRow(label: String) -> some View {
         HStack(spacing: 6) {
             ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
-            Text(label).font(.system(size: 10)).foregroundColor(.white.opacity(0.4))
+            Text(label).islandMeta().foregroundColor(IslandInk.tertiary)
         }
         .padding(.vertical, 2)
     }
 
     private func errorRow(label: String) -> some View {
         Text(label)
-            .font(.system(size: 10))
+            .islandMeta()
             .foregroundColor(.red.opacity(0.6))
             .padding(.vertical, 2)
     }
@@ -638,14 +638,14 @@ struct ActionPanelView: View {
     private func errorRowWithRetry(label: String, retry: @escaping () -> Void) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .font(.system(size: 10))
+                .islandMeta()
                 .foregroundColor(.red.opacity(0.6))
             Button(action: retry) {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 8, weight: .semibold))
+                        .islandMicro()
                     Text("重试")
-                        .font(.system(size: 9, weight: .medium))
+                        .islandMicro()
                 }
                 .foregroundColor(.accentColor)
             }
@@ -676,7 +676,7 @@ struct ActionPanelView: View {
             }
         }()
         return Text(label)
-            .font(.system(size: 9, weight: .semibold))
+            .islandMicro()
             .foregroundColor(color)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
