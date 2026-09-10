@@ -7,6 +7,7 @@ struct AutopilotSettingsView: View {
 
     @State private var confidenceThreshold: Double = 0.8
     @State private var autoSendEnabled: Bool = false
+    @State private var handleGroupAt: Bool = false
     @State private var maxRepliesPerHour: Int = 20
     @State private var batchWindowSeconds: Int = 10
     @State private var replyStyle: AutopilotReplyStyle = .auto
@@ -56,6 +57,17 @@ struct AutopilotSettingsView: View {
                                 save()
                             }
                         }
+                    )
+                )
+                SettingsRowDivider()
+                SettingsToggleRow(
+                    "群里 @我 时也准备回复",
+                    subtitle: handleGroupAt
+                        ? "群 @ 会写成待确认草稿。转账和红包仍不会自动回。"
+                        : "群消息默认只记录，不写回复。",
+                    isOn: Binding(
+                        get: { handleGroupAt },
+                        set: { handleGroupAt = $0; save() }
                     )
                 )
                 SettingsRowDivider()
@@ -351,6 +363,7 @@ struct AutopilotSettingsView: View {
     private func load() {
         let cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
         autoSendEnabled = cfg.autoSendEnabled
+        handleGroupAt = cfg.handleGroupAt
         confidenceThreshold = cfg.confidenceThreshold
         maxRepliesPerHour = cfg.maxRepliesPerHour
         batchWindowSeconds = cfg.batchWindowSeconds
@@ -370,6 +383,7 @@ struct AutopilotSettingsView: View {
         // we rebuilt from scratch).
         var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
         cfg.autoSendEnabled = autoSendEnabled
+        cfg.handleGroupAt = handleGroupAt
         cfg.confidenceThreshold = confidenceThreshold
         cfg.maxRepliesPerHour = maxRepliesPerHour
         cfg.batchWindowSeconds = batchWindowSeconds
