@@ -2151,10 +2151,12 @@ final class HUDStore: ObservableObject {
                  OR (
                     CAST(IFNULL(deadline_at, 0) AS INTEGER) > 0
                     AND CAST(deadline_at AS INTEGER) >= ?
-                 ))
+                 )
+                 OR CAST(updated_at AS INTEGER) >= ?)
                 """)
             params.append(CommitmentStatus.pending.rawValue)
             params.append(CommitmentStatus.overdue.rawValue)
+            params.append("\(relevantSince)")
             params.append("\(relevantSince)")
             params.append("\(relevantSince)")
         }
@@ -2410,6 +2412,17 @@ final class HUDStore: ObservableObject {
         try exec("""
             UPDATE discussion_items SET status=?, updated_at=? WHERE id=?
         """, params: [status.rawValue, "\(now)", "\(id)"])
+    }
+
+    /// Completing/cancelling a commitment closes the extracted todo with the same source message.
+    @discardableResult
+    func updatePendingDiscussionItems(matchingAnchorMsgUID uid: String, status: DiscussionItemStatus) throws -> Int {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec(
+            "UPDATE discussion_items SET status=?, updated_at=? WHERE anchor_msg_uid=? AND status=?",
+            params: [status.rawValue, "\(now)", uid, DiscussionItemStatus.pending.rawValue]
+        )
+        return Int(sqlite3_changes(db))
     }
 
     /// Corrects AI-assigned responsibility without changing the item's status.
@@ -2827,6 +2840,67 @@ final class HUDStore: ObservableObject {
     func markAutopilotLogSent(id: Int64) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])
+    }
+
+    /// Pending drafts from every session, including ones whose session already ended.
+    func loadOpenAutopilotPendingItems() -> [AutopilotLogEntry] {
+        var results: [AutopilotLogEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
+                   trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
+                   action, ai_reasoning, sent_at, created_at
+            FROM autopilot_log WHERE action='pending' ORDER BY created_at DESC
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(autopilotLogEntry(from: stmt!))
+        }
+        return results
+    }
+
+    /// Current-session log plus leftover pending rows from ended sessions.
+    func loadAutopilotDisplayLog(sessionId: Int64?, limit: Int = 50) -> [AutopilotLogEntry] {
+        var result: [AutopilotLogEntry] = []
+        var seen = Set<Int64>()
+        for item in loadOpenAutopilotPendingItems() {
+            if seen.insert(item.id).inserted { result.append(item) }
+        }
+        if let sessionId {
+            for item in loadAutopilotLog(sessionId: sessionId, limit: limit) {
+                if seen.insert(item.id).inserted { result.append(item) }
+            }
+        }
+        return result
+    }
+
+    func updateAutopilotLogReply(id: Int64, reply: String) throws {
+        try exec("UPDATE autopilot_log SET generated_reply=? WHERE id=?", params: [reply, String(id)])
+    }
+
+    private func autopilotLogEntry(from stmt: OpaquePointer) -> AutopilotLogEntry {
+        let genReply = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+        let reasoning = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 12)) : nil
+        let sentAt = sqlite3_column_type(stmt, 13) != SQLITE_NULL
+            ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 13)))
+            : nil
+        return AutopilotLogEntry(
+            id: sqlite3_column_int64(stmt, 0),
+            sessionId: sqlite3_column_int64(stmt, 1),
+            chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+            chatName: String(cString: sqlite3_column_text(stmt, 3)),
+            senderUsername: String(cString: sqlite3_column_text(stmt, 4)),
+            senderName: String(cString: sqlite3_column_text(stmt, 5)),
+            triggerMsgUID: String(cString: sqlite3_column_text(stmt, 6)),
+            triggerText: String(cString: sqlite3_column_text(stmt, 7)),
+            generatedReply: genReply,
+            confidence: sqlite3_column_double(stmt, 9),
+            riskLevel: AutopilotRisk(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .low,
+            action: AutopilotAction(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .skipped,
+            aiReasoning: reasoning,
+            sentAt: sentAt,
+            createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 14)))
+        )
     }
 
     func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {

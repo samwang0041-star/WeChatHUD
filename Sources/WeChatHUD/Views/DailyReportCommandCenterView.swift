@@ -253,7 +253,7 @@ struct DailyReportCommandCenterView: View {
                 Image(systemName: "target")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.green.opacity(0.85))
-                Text("AI 小结")
+                Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "今日进度")
                     .font(.system(size: isWorkspace ? 15 : 11, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()

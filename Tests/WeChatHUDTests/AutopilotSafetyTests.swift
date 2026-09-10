@@ -17,6 +17,19 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertFalse(config.enabled)
     }
 
+    func testGroupAtSettingIsTheQueueGate() {
+        var off = AutopilotConfig()
+        off.handleGroupAt = false
+        XCTAssertTrue(off.shouldQueue(isGroup: false, isAtMention: false))
+        XCTAssertFalse(off.shouldQueue(isGroup: true, isAtMention: true))
+        XCTAssertFalse(off.shouldQueue(isGroup: true, isAtMention: false))
+
+        var on = AutopilotConfig()
+        on.handleGroupAt = true
+        XCTAssertTrue(on.shouldQueue(isGroup: true, isAtMention: true))
+        XCTAssertFalse(on.shouldQueue(isGroup: true, isAtMention: false))
+    }
+
     func testDefaultSensitiveKeywordsContainFinancialTerms() {
         let config = AutopilotConfig()
         XCTAssertTrue(config.sensitiveKeywords.contains("转账"))

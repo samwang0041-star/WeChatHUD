@@ -87,7 +87,7 @@ enum DailyReportPresentationPolicy {
         var bucketWeek: [DailyReportAction] = []
         var bucketLater: [DailyReportAction] = []
         for a in active {
-            guard let d = a.deadline else { bucketLater.append(a); continue }
+            guard let d = a.deadline else { bucketToday.append(a); continue }
             if d <= endOfToday { bucketToday.append(a) }
             else if d <= endOfWeek { bucketWeek.append(a) }
             else { bucketLater.append(a) }

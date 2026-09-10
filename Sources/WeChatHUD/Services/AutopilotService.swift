@@ -328,7 +328,7 @@ actor AutopilotService {
             }
 
             // Group messages and non-text messages are handled immediately (no batching needed)
-            if msg.isGroup {
+            if !config.shouldQueue(isGroup: msg.isGroup, isAtMention: msg.isAtMention) {
                 let entry = makeLogEntry(
                     sessionId: sid, msg: msg, action: .groupLogged,
                     reply: nil, confidence: 0, risk: .low, reasoning: "群消息仅记录"

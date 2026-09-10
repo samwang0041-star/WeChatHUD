@@ -1497,6 +1497,14 @@ enum DiscussionLiveWindow {
         if item.status == .pending || item.status == .overdue { return true }
         if Int(item.createdAt.timeIntervalSince1970) >= cutoff { return true }
         if let due = item.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        if Int(item.updatedAt.timeIntervalSince1970) >= cutoff { return true }
+        return false
+    }
+
+    /// Classifier asks use the same 14-day source/due window as discussion.
+    static func contains(_ ask: PendingAsk, cutoff: Int) -> Bool {
+        if Int(ask.createdAt.timeIntervalSince1970) >= cutoff { return true }
+        if let due = ask.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
         return false
     }
 }
@@ -1748,6 +1756,26 @@ struct AutopilotLogEntry: Identifiable {
     let aiReasoning: String?
     let sentAt: Date?
     let createdAt: Date
+
+    func replacingReply(_ reply: String) -> AutopilotLogEntry {
+        AutopilotLogEntry(
+            id: id,
+            sessionId: sessionId,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            senderUsername: senderUsername,
+            senderName: senderName,
+            triggerMsgUID: triggerMsgUID,
+            triggerText: triggerText,
+            generatedReply: reply,
+            confidence: confidence,
+            riskLevel: riskLevel,
+            action: action,
+            aiReasoning: aiReasoning,
+            sentAt: sentAt,
+            createdAt: createdAt
+        )
+    }
 }
 
 /// An autopilot session — one contiguous period of autopilot mode.
@@ -1872,6 +1900,11 @@ struct AutopilotConfig: Codable {
     var maxRepliesPerHour: Int = 20
     /// Whether to handle group @mentions (currently false per user request).
     var handleGroupAt: Bool = false
+
+    /// Group traffic is logged-only unless the user turned on @-mention handling.
+    func shouldQueue(isGroup: Bool, isAtMention: Bool) -> Bool {
+        !isGroup || (handleGroupAt && isAtMention)
+    }
     /// Whether VIP contacts get the "busy" auto-notification.
     var vipAutoNotify: Bool = true
     /// The "busy" message template for VIP contacts.

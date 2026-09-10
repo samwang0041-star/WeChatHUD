@@ -15,11 +15,19 @@ enum InsightTimeWindow: String, CaseIterable {
 
     var seconds: Int? {
         switch self {
-        case .today: return 24 * 86400
-        case .week: return 7 * 86400
-        case .month: return 30 * 86400
-        case .quarter: return 90 * 86400
         case .all: return nil
+        default: return dayCount * 86400
+        }
+    }
+
+    /// Calendar-day span used for density / averages. ".today" is 1 day.
+    var dayCount: Int {
+        switch self {
+        case .today: return 1
+        case .week: return 7
+        case .month: return 30
+        case .quarter: return 90
+        case .all: return 365
         }
     }
 

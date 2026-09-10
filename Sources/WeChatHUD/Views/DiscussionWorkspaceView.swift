@@ -4,7 +4,7 @@ import SwiftUI
 struct DiscussionWorkspaceView: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
-    @State private var scope: DiscussionScope = .all
+    @State private var scope: DiscussionScope = .mine
     @State private var query = ""
     @State private var showHistory = false
     @State private var selectedID: Int64?

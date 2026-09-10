@@ -239,9 +239,9 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         let report = makeReport(actions: actions, risks: [], highlights: [])
         let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
 
-        XCTAssertEqual(vm.activeToday.map(\.content),    ["Today"])
+        XCTAssertEqual(vm.activeToday.map(\.content),    ["Today", "NoDate"])
         XCTAssertEqual(vm.activeThisWeek.map(\.content), ["AfterToday", "ThisWeek", "BoundaryWeek"])
-        XCTAssertEqual(Set(vm.activeLater.map(\.content)), ["Later", "NoDate"])
+        XCTAssertEqual(Set(vm.activeLater.map(\.content)), ["Later"])
     }
 
     func testActiveActionsBackwardCompatField() {

@@ -75,6 +75,8 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(DiscussionPresentation.items(items, scope: .notes, query: "", history: false).map(\.id), [3])
         XCTAssertEqual(DiscussionPresentation.items(items, scope: .mine, query: "", history: true).map(\.id), [4])
         XCTAssertTrue(DiscussionPresentation.items(items, scope: .all, query: "不存在", history: false).isEmpty)
+        XCTAssertEqual(WorkspaceBadgeCounts.taskCount(items), 1,
+                       "sidebar 待办 badge is 我要做, not every pending row")
     }
 
     func testTaskGroupsAndDueLabelsStayCalendarHonest() {
@@ -365,7 +367,7 @@ final class ProductWorkspaceTests: XCTestCase {
         try store.updateCommitmentStatus(msgUID: "done", status: .fulfilled)
         XCTAssertEqual(
             store.loadCommitments(relevantSince: cutoff).map(\.content).sorted(),
-            ["刚答应", "旧的但未到期", "旧的无期限", "逾期很久"]
+            ["刚答应", "很久以前做完", "旧的但未到期", "旧的无期限", "逾期很久"]
         )
     }
 
@@ -405,5 +407,57 @@ final class ProductWorkspaceTests: XCTestCase {
         }
         XCTAssertEqual(item("摘要"), item("摘要"))
         XCTAssertNotEqual(item("摘要"), item("另一份"))
+    }
+
+    func testInsightTodayWindowIsOneDayNotTwentyFour() {
+        XCTAssertEqual(InsightTimeWindow.today.dayCount, 1)
+        XCTAssertEqual(InsightTimeWindow.today.seconds, 86400)
+        XCTAssertEqual(InsightTimeWindow.week.dayCount, 7)
+        XCTAssertNil(InsightTimeWindow.all.seconds)
+    }
+
+    func testCommitmentTimeLabelKeepsTheDateWhenItIsNotToday() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 16))!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 9, minute: 30))!
+        let yesterday = calendar.date(from: DateComponents(year: 2026, month: 9, day: 9, hour: 15, minute: 0))!
+        XCTAssertEqual(CommitmentPresentation.timeLabel(nil), "无期限")
+        XCTAssertEqual(
+            CommitmentPresentation.timeLabel(today, now: now, calendar: calendar),
+            today.formatted(date: .omitted, time: .shortened)
+        )
+        let pastLabel = CommitmentPresentation.timeLabel(yesterday, now: now, calendar: calendar)
+        XCTAssertNotEqual(pastLabel, yesterday.formatted(date: .omitted, time: .shortened))
+    }
+
+    func testCancelledCommitmentsDoNotSitInTheOverdueGroup() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 16))!
+        let past = calendar.date(byAdding: .day, value: -2, to: now)!
+        let cancelled = Commitment(
+            id: 1, msgUID: "1", chatUsername: "chat", chatName: "林晓",
+            content: "吃饭", commitTo: "林晓", deadlineAt: past, confidence: 0.9,
+            status: .cancelled, promptVersion: "t", createdAt: now, updatedAt: now
+        )
+        XCTAssertEqual(CommitmentPresentation.sectionTitle(for: cancelled, now: now, calendar: calendar), "已取消")
+        XCTAssertEqual(CommitmentPresentation.groups([cancelled], now: now, calendar: calendar).map(\.title), ["已取消"])
+    }
+
+    func testPendingAskLiveWindowMatchesDiscussionSourceOrDue() {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        func ask(createdOffset: Int, dueOffset: Int?) -> PendingAsk {
+            PendingAsk(
+                id: 0, msgUID: "a", chatUsername: "c", chatName: "C", senderName: "S",
+                rawText: "x", summary: "x", askType: .none,
+                deadlineAt: dueOffset.map { Date(timeIntervalSince1970: TimeInterval(cutoff + $0)) },
+                confidence: 0.9, bucket: .main, status: .pending, promptVersion: "t",
+                createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff + createdOffset)),
+                updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+            )
+        }
+        XCTAssertTrue(DiscussionLiveWindow.contains(ask(createdOffset: 3600, dueOffset: nil), cutoff: cutoff))
+        XCTAssertFalse(DiscussionLiveWindow.contains(ask(createdOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
+        XCTAssertTrue(DiscussionLiveWindow.contains(ask(createdOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
     }
 }

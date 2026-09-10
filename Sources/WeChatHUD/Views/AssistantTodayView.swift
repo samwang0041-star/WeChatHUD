@@ -15,11 +15,13 @@ struct AssistantTodayView: View {
     @State private var aiConfigured = false
     @State private var aiTested = false
 
-    private var actions: [InboxItem] { monitor.inboxItems.filter(\.participatesInActionQueue) }
     private var visible: [InboxItem] {
-        let items = showUpdates ? monitor.inboxItems : monitor.inboxItems.filter { $0.participatesInActionQueue || $0.isAtMention }
+        let items = showUpdates ? monitor.inboxItems : needsReply
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.filter { text.isEmpty || [$0.chatName, $0.preview, $0.aiSummary ?? ""].contains { $0.localizedCaseInsensitiveContains(text) } }
+    }
+    private var needsReply: [InboxItem] {
+        monitor.inboxItems.filter { $0.participatesInActionQueue || $0.isAtMention }
     }
     private var pending: [DiscussionItem] { monitor.discussionItems.filter { $0.kind != .info } }
 
@@ -42,14 +44,14 @@ struct AssistantTodayView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     CompanionSetupCard(navigate: navigate)
                     HStack(spacing: 8) {
-                        filterPill("需要回复", count: actions.count, selected: !showUpdates) {
+                        filterPill("需要回复", count: needsReply.count, selected: !showUpdates) {
                             showUpdates = false
                         }
-                        filterPill("我要做", count: pending.filter { $0.owner == .mine }.count, selected: false) {
+                        jumpPill("我要做", count: pending.filter { $0.owner == .mine }.count) {
                             panelState.pendingDiscussionScope = .mine
                             navigate(.tasks)
                         }
-                        filterPill("等对方", count: pending.filter { $0.owner == .theirs }.count, selected: false) {
+                        jumpPill("等对方", count: pending.filter { $0.owner == .theirs }.count) {
                             panelState.pendingDiscussionScope = .theirs
                             navigate(.tasks)
                         }
@@ -303,6 +305,24 @@ struct AssistantTodayView: View {
         .buttonStyle(CompanionPressStyle())
         .accessibilityLabel("\(title)，\(count) 项")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func jumpPill(_ title: String, count: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("\(title) \(count)")
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(CompanionPalette.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(CompanionPalette.border))
+        }
+        .buttonStyle(CompanionPressStyle())
+        .accessibilityLabel("\(title)，\(count) 项")
+        .accessibilityHint("打开待办")
     }
 
     private func messageCard(_ item: InboxItem, expanded: Bool) -> some View {

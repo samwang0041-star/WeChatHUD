@@ -15,7 +15,7 @@ struct ApprovalWorkspaceView: View {
     }
 
     @State private var filter: Filter = .pending
-    @State private var selectedUID: String?
+    @State private var selectedID: Int64?
     @State private var editedReply: String = ""
     @State private var receipt: String?
     @State private var showSendConfirm = false
@@ -31,7 +31,7 @@ struct ApprovalWorkspaceView: View {
     }
 
     private var selected: AutopilotLogEntry? {
-        entries.first(where: { $0.triggerMsgUID == selectedUID }) ?? entries.first
+        entries.first(where: { $0.id == selectedID }) ?? entries.first
     }
 
     private var pendingCount: Int {
@@ -61,8 +61,8 @@ struct ApprovalWorkspaceView: View {
                     .padding(.top, 10)
             }
         }
-        .onAppear { selectedUID = selected?.triggerMsgUID; syncEditor() }
-        .onChange(of: selected?.triggerMsgUID) { _, _ in syncEditor() }
+        .onAppear { selectedID = selected?.id; syncEditor() }
+        .onChange(of: selected?.id) { _, _ in syncEditor() }
         .onChange(of: entries.count) { _, _ in reconcileSelection() }
         .onChange(of: filter) { _, _ in reconcileSelection() }
         .companionDialogBackdrop(showSendConfirm) {
@@ -143,9 +143,9 @@ struct ApprovalWorkspaceView: View {
     private var listPane: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                ForEach(entries, id: \.triggerMsgUID) { entry in
+                ForEach(entries) { entry in
                     Button {
-                        selectedUID = entry.triggerMsgUID
+                        selectedID = entry.id
                     } label: {
                         HStack(alignment: .top, spacing: 10) {
                             CompanionAvatar(name: entry.senderName, size: 32)
@@ -153,7 +153,7 @@ struct ApprovalWorkspaceView: View {
                                 HStack {
                                     Text(entry.senderName).font(.system(size: 13, weight: .semibold))
                                     Spacer()
-                                    Text(entry.createdAt, format: .dateTime.hour().minute())
+                                    Text(CommitmentPresentation.timeLabel(entry.createdAt))
                                         .font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
                                 statusLabel(entry)
@@ -165,7 +165,7 @@ struct ApprovalWorkspaceView: View {
                             }
                         }
                         .padding(10)
-                        .background(selected?.triggerMsgUID == entry.triggerMsgUID ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(selected?.id == entry.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -219,7 +219,7 @@ struct ApprovalWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(selected.triggerText)
                         .font(.system(size: 14))
-                    Text(selected.createdAt, format: .dateTime.hour().minute())
+                    Text(CommitmentPresentation.timeLabel(selected.createdAt))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -257,7 +257,12 @@ struct ApprovalWorkspaceView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                         Button("保存修改") {
-                            receipt = "已保存草稿"
+                            do {
+                                try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
+                                receipt = "已保存草稿"
+                            } catch {
+                                receipt = "草稿没有保存，请重试。"
+                            }
                         }
                         .buttonStyle(.bordered)
                         Button("取消本条") {
@@ -274,8 +279,8 @@ struct ApprovalWorkspaceView: View {
     }
 
     private func reconcileSelection() {
-        if let selectedUID, entries.contains(where: { $0.triggerMsgUID == selectedUID }) { return }
-        selectedUID = entries.first?.triggerMsgUID
+        if let selectedID, entries.contains(where: { $0.id == selectedID }) { return }
+        selectedID = entries.first?.id
     }
 
     private func syncEditor() {
