@@ -467,7 +467,7 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("没有历史快照") == true)
     }
 
-    func testTodayIncludesLivePendingAskFromYesterdayWithoutDeadline() throws {
+    func testTodayReportKeepsDueAsksAndDropsUndatedBacklog() throws {
         let (store, path) = try makeTempStore()
         defer {
             store.close()
@@ -490,10 +490,26 @@ final class DailyReportBuilderTests: XCTestCase {
             confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
             createdAt: twentyDaysAgo, updatedAt: twentyDaysAgo, senderLevel: nil, senderRole: nil, urgency: nil
         ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-overdue", chatUsername: "wxid_due", chatName: "同事",
+            senderName: "同事", rawText: "昨天截止", summary: "过期仍要交",
+            askType: .sendFile, deadlineAt: yesterday,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-today", chatUsername: "wxid_new", chatName: "同事",
+            senderName: "同事", rawText: "今天新建", summary: "今天的请求",
+            askType: .info, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
         let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build(for: now, now: now)
-        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-yesterday" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-yesterday" })
         XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-stale" })
-        XCTAssertEqual(report.metrics.pendingAskCount, 1)
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-overdue" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-today" })
+        XCTAssertEqual(report.metrics.pendingAskCount, 2)
     }
 
     private func makeTempStore() throws -> (HUDStore, String) {
