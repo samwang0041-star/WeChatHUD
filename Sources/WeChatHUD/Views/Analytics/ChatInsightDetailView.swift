@@ -289,8 +289,37 @@ struct ChatInsightDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(CompanionPalette.jade.opacity(0.28), lineWidth: 1)
-                    )
+                          .stroke(CompanionPalette.jade.opacity(0.28), lineWidth: 1)
+                   )
+               }
+                if livePendingCount > followUps.count {
+                    Button("还有 \(livePendingCount - followUps.count) 件在待办里") {
+                        panelState.pendingDiscussionChatUsername = chatUsername
+                        panelState.pendingSettingsTab = "tasks"
+                        panelState.showDetail()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CompanionPalette.jade)
+                    .font(.system(size: 13, weight: .medium))
+                }
+           }
+       }
+
+        if let result {
+            let aiWait = result.waitingForMe.map(\.what).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let aiActions = result.actionItems.map(\.what).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !aiWait.isEmpty || !aiActions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI 读到的待办")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array((aiActions + aiWait).prefix(5).enumerated()), id: \.offset) { _, text in
+                        Text(text)
+                            .font(.system(size: 14))
+                    }
+                    Text("这是模型从这一天的聊天里抽的，不是待办页的权威列表。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -357,6 +386,12 @@ struct ChatInsightDetailView: View {
     private var followUps: [FollowUpItem] {
         ChatReviewFollowUps.items(chatUsername: chatUsername, discussion: monitor.discussionItems)
             .map { FollowUpItem(title: $0.title, owner: $0.owner, due: $0.due) }
+    }
+
+    private var livePendingCount: Int {
+        monitor.discussionItems.filter {
+            $0.chatUsername == chatUsername && $0.status == .pending && $0.kind != .info
+        }.count
     }
 
     // MARK: - Chart Components
