@@ -161,10 +161,13 @@ sign_nested() {
     if [[ -n "${SIGN_KEYCHAIN:-}" ]]; then
         keychain_args=(--keychain "$SIGN_KEYCHAIN")
     fi
+    local key_tool_bin="$resources_dir/keytools/find_all_keys_macos.arm64"
     if [[ "$sign_identity" == "-" ]]; then
+        codesign --force --sign - "$key_tool_bin"
         codesign --force --sign - "$bundled_dylib"
         codesign --force --sign - "$app_path"
     elif [[ "$sign_identity" == "Developer ID Application:"* ]]; then
+        codesign --force --timestamp --options runtime "${keychain_args[@]}" --sign "$sign_identity" "$key_tool_bin"
         codesign --force --timestamp --options runtime "${keychain_args[@]}" --sign "$sign_identity" "$bundled_dylib"
         codesign --force --timestamp --options runtime "${keychain_args[@]}" --sign "$sign_identity" "$app_path"
     else
@@ -172,6 +175,7 @@ sign_nested() {
         # nested dylib and app outside hardened runtime and avoid timestamps;
         # mixing runtime-signed containers with a no-Team-ID dylib fails at
         # dyld load time.
+        codesign --force --sign "$sign_identity" "$key_tool_bin"
         codesign --force --sign "$sign_identity" "$bundled_dylib"
         codesign --force --sign "$sign_identity" "$app_path"
     fi
