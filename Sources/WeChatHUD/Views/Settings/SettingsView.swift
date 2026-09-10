@@ -71,7 +71,7 @@ struct SettingsView: View {
             case .autopilot: return "忙的时候，先替你准备好回复。"
             case .autopilotDashboard: return "助理写好的回复，确认后再发。"
             case .system: return "让重要的聊天及时出现在这里。"
-            case .preferences: return "按你的习惯，安静地陪在。"
+            case .preferences: return "登录启动、权限和减少动态效果。"
             case .localData: return "近两周整理过的事情，还可以找回来。"
             case .guide: return "不漏事，从这里开始。"
             }
