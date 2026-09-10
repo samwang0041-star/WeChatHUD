@@ -11,19 +11,19 @@ struct AssistantTodayView: View {
     @State private var dismissed: InboxItem?
     @State private var expandedID: String?
     @State private var snoozeReceipt: String?
+    @State private var revealedOriginalIDs: Set<String> = []
     @State private var aiReadinessLoaded = false
     @State private var aiConfigured = false
     @State private var aiTested = false
 
     private var visible: [InboxItem] {
-        let items = showUpdates ? monitor.inboxItems : needsReply
+        let items = showUpdates ? monitor.inboxItems : TodayFeed.needsReply(monitor.inboxItems)
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.filter { text.isEmpty || [$0.chatName, $0.preview, $0.aiSummary ?? ""].contains { $0.localizedCaseInsensitiveContains(text) } }
     }
-    private var needsReply: [InboxItem] {
-        monitor.inboxItems.filter { $0.participatesInActionQueue || $0.isAtMention }
-    }
-    private var pending: [DiscussionItem] { monitor.discussionItems.filter { $0.kind != .info } }
+    private var needsReply: [InboxItem] { TodayFeed.needsReply(monitor.inboxItems) }
+    private var mineTasks: [DiscussionItem] { TodayFeed.mineTasks(monitor.discussionItems) }
+    private var waitingTasks: [DiscussionItem] { TodayFeed.waitingTasks(monitor.discussionItems) }
 
     private var upcoming: [Commitment] {
         monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }
@@ -33,7 +33,7 @@ struct AssistantTodayView: View {
     private var wechatConnected: Bool {
         guard monitor.stats.lastSyncAt != nil else { return false }
         switch monitor.stats.syncStatus {
-        case .ok, .idle, .syncing: return true
+        case .ok, .idle, .syncing, .stale: return true
         default: return false
         }
     }
@@ -47,11 +47,11 @@ struct AssistantTodayView: View {
                         filterPill("需要回复", count: needsReply.count, selected: !showUpdates) {
                             showUpdates = false
                         }
-                        jumpPill("我要做", count: pending.filter { $0.owner == .mine }.count) {
+                        jumpPill("我要做", count: mineTasks.count) {
                             panelState.pendingDiscussionScope = .mine
                             navigate(.tasks)
                         }
-                        jumpPill("等对方", count: pending.filter { $0.owner == .theirs }.count) {
+                        jumpPill("等对方", count: waitingTasks.count) {
                             panelState.pendingDiscussionScope = .theirs
                             navigate(.tasks)
                         }
@@ -84,11 +84,11 @@ struct AssistantTodayView: View {
     private var messageFeed: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center) {
-                Text("先处理这些事").font(.system(size: 16, weight: .semibold))
+                Text(showUpdates ? "这些对话有更新" : "先处理这些事").font(.system(size: 16, weight: .semibold))
                 Spacer()
                 Button { showUpdates.toggle() } label: {
                     HStack(spacing: 4) {
-                        Text(showUpdates ? "只看需要回复的" : "全部 \(monitor.inboxItems.count) 条")
+                        Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
                         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                     }
                     .font(.system(size: 12, weight: .medium))
@@ -124,7 +124,8 @@ struct AssistantTodayView: View {
                         aiConfigured: aiConfigured,
                         aiTested: aiTested,
                         searching: !query.isEmpty,
-                        hasOpenTasks: pending.contains { $0.owner == .mine } || !upcoming.isEmpty
+                        hasOpenTasks: TodayFeed.hasOpenWork(mine: mineTasks, waiting: waitingTasks, upcoming: upcoming),
+                        hasOtherInboxItems: !showUpdates && TodayFeed.hasNonReplyUpdates(monitor.inboxItems)
                     )
                     ContentUnavailableView(empty.title, systemImage: query.isEmpty ? "tray" : "magnifyingglass", description: Text(empty.detail))
                         .frame(maxWidth: .infinity).padding(.vertical, 28).companionSurface()
@@ -358,16 +359,26 @@ struct AssistantTodayView: View {
                             Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
                         }
                         Spacer(minLength: 8)
-                        Button("查看原文") { expandedID = item.id }
+                        Button(revealedOriginalIDs.contains(item.id) ? "原文已展开" : "查看原文") {
+                            revealedOriginalIDs.insert(item.id)
+                        }
                             .buttonStyle(.plain)
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(CompanionPalette.jade)
                     }
                     .padding(12)
                     .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    DisclosureGroup("消息原文") {
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { revealedOriginalIDs.contains(item.id) },
+                        set: { isOn in
+                            if isOn { revealedOriginalIDs.insert(item.id) }
+                            else { revealedOriginalIDs.remove(item.id) }
+                        }
+                    )) {
                         Text(item.preview).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+                    } label: {
+                        Text("消息原文")
                     }
                 }
                 HStack {
@@ -391,5 +402,34 @@ struct AssistantTodayView: View {
             }
         }
         .companionSurface()
+    }
+}
+
+/// Testable 今天 feed rules. The page labels must match these arrays, not a
+/// looser mix of FYI @mentions, handled rows, or info memos.
+enum TodayFeed {
+    static func needsReply(_ items: [InboxItem]) -> [InboxItem] {
+        items.filter { item in item.participatesInActionQueue }
+    }
+
+    /// Active inbox only. Handled and still-snoozed chats are not in `inboxItems`.
+    static func allUpdatesCount(_ items: [InboxItem]) -> Int {
+        items.count
+    }
+
+    static func hasNonReplyUpdates(_ items: [InboxItem]) -> Bool {
+        items.contains { item in !item.participatesInActionQueue }
+    }
+
+    static func mineTasks(_ items: [DiscussionItem]) -> [DiscussionItem] {
+        items.filter { item in item.status == .pending && item.kind != .info && item.owner == .mine }
+    }
+
+    static func waitingTasks(_ items: [DiscussionItem]) -> [DiscussionItem] {
+        items.filter { item in item.status == .pending && item.kind != .info && item.owner == .theirs }
+    }
+
+    static func hasOpenWork(mine: [DiscussionItem], waiting: [DiscussionItem], upcoming: [Commitment]) -> Bool {
+        !mine.isEmpty || !waiting.isEmpty || !upcoming.isEmpty
     }
 }

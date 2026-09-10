@@ -478,6 +478,60 @@ final class ProductWorkspaceTests: XCTestCase {
         }
         XCTAssertTrue(DiscussionLiveWindow.contains(ask(createdOffset: 3600, dueOffset: nil), cutoff: cutoff))
         XCTAssertFalse(DiscussionLiveWindow.contains(ask(createdOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
-        XCTAssertTrue(DiscussionLiveWindow.contains(ask(createdOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
+       XCTAssertTrue(DiscussionLiveWindow.contains(ask(createdOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
+   }
+    func testTodayFeedCountsMatchReplyQueueAndLiveTodosNotFYIOrHandled() {
+        func inbox(
+            _ id: String,
+            actionRequired: Bool,
+            isGroup: Bool = false,
+            isAtMention: Bool = false,
+            isVIP: Bool = false,
+            status: InboxStatus = .active
+        ) -> InboxItem {
+            var item = InboxItem(
+                id: id, chatUsername: id, chatName: id, senderName: "对方",
+                preview: "请确认", isGroup: isGroup, timestamp: Date(),
+                actionRequired: actionRequired, priority: .p1, isVIP: isVIP,
+                isWhitelisted: true, unreadCount: 1, isAtMention: isAtMention,
+                askType: .none, reasons: [], suggestedReplyMinutes: 60,
+                status: status, dismissedAtMsgId: nil
+            )
+            if status != .active { item.replied = status == .dismissed }
+            return item
+        }
+        let action = inbox("alice", actionRequired: true)
+        let fyi = inbox("room@chatroom", actionRequired: false, isGroup: true, isAtMention: true)
+        let passive = inbox("bob", actionRequired: false)
+        var handled = inbox("done", actionRequired: true, status: .dismissed)
+        handled.status = .dismissed
+        handled.silenced = true
+        var snoozed = inbox("later", actionRequired: true, status: .snoozed)
+        snoozed.status = .snoozed
+
+        XCTAssertEqual(fyi.messageType, .groupMentionFYI)
+        XCTAssertFalse(fyi.participatesInActionQueue)
+        XCTAssertEqual(TodayFeed.needsReply([action, fyi, passive, handled, snoozed]).map(\.id), ["alice"])
+        XCTAssertEqual(TodayFeed.allUpdatesCount([action, fyi, passive]), 3)
+        XCTAssertTrue(TodayFeed.hasNonReplyUpdates([action, fyi, passive]))
+        XCTAssertFalse(TodayFeed.hasNonReplyUpdates([action]))
+
+        let now = Date()
+        func task(_ id: Int64, owner: DiscussionItemOwner, kind: DiscussionItemKind = .todo, status: DiscussionItemStatus = .pending) -> DiscussionItem {
+            DiscussionItem(id: id, chatUsername: "chat", chatName: "项目群", kind: kind, owner: owner, content: "验收", detail: nil, anchorMsgUID: "\(id)", sourceTimestamp: 100, dueAt: nil, status: status, confidence: 0.9, promptVersion: "test", createdAt: now, updatedAt: now)
+        }
+        let discussions = [
+            task(1, owner: .mine),
+            task(2, owner: .theirs),
+            task(3, owner: .shared),
+            task(4, owner: .mine, kind: .info),
+            task(5, owner: .mine, status: .done),
+            task(6, owner: .theirs, status: .archived)
+        ]
+        XCTAssertEqual(TodayFeed.mineTasks(discussions).map(\.id), [1])
+        XCTAssertEqual(TodayFeed.waitingTasks(discussions).map(\.id), [2])
+        XCTAssertEqual(TodayFeed.mineTasks(discussions).count, WorkspaceBadgeCounts.taskCount(discussions))
+        XCTAssertTrue(TodayFeed.hasOpenWork(mine: [], waiting: TodayFeed.waitingTasks(discussions), upcoming: []))
+        XCTAssertFalse(TodayFeed.hasOpenWork(mine: [], waiting: [], upcoming: []))
     }
 }

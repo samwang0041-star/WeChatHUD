@@ -56,7 +56,7 @@ struct AutopilotTabView: View {
                 let pending = monitor.autopilotLog.filter { $0.action == .pending }
                 if !pending.isEmpty {
                     sectionHeader("待审核", icon: "exclamationmark.circle.fill", color: .orange, count: pending.count)
-                    ForEach(pending, id: \.triggerMsgUID) { entry in
+                    ForEach(pending) { entry in
                         PendingReviewRow(entry: entry)
                     }
                     Divider().padding(.horizontal, 12).padding(.vertical, 4)
@@ -402,7 +402,7 @@ struct AutopilotTabView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             } else {
-                ForEach(filtered, id: \.triggerMsgUID) { entry in
+                ForEach(filtered) { entry in
                     ActivityRow(entry: entry)
                 }
             }

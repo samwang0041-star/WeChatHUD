@@ -467,6 +467,35 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("没有历史快照") == true)
     }
 
+    func testTodayIncludesLivePendingAskFromYesterdayWithoutDeadline() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let now = Date()
+        let yesterday = now.addingTimeInterval(-86_400)
+        let twentyDaysAgo = now.addingTimeInterval(-20 * 86_400)
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-yesterday", chatUsername: "wxid_live", chatName: "同事",
+            senderName: "同事", rawText: "昨天那份还没给", summary: "补发昨天的材料",
+            askType: .sendFile, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-stale", chatUsername: "wxid_old", chatName: "旧事",
+            senderName: "旧事", rawText: "二十天前", summary: "过期请求",
+            askType: .info, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: twentyDaysAgo, updatedAt: twentyDaysAgo, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build(for: now, now: now)
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-yesterday" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-stale" })
+        XCTAssertEqual(report.metrics.pendingAskCount, 1)
+    }
+
     private func makeTempStore() throws -> (HUDStore, String) {
         let path = NSTemporaryDirectory() + "daily_report_builder_\(UUID().uuidString).sqlite3"
         let store = HUDStore(dbPath: path)

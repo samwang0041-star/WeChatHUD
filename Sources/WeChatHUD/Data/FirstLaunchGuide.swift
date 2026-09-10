@@ -249,7 +249,8 @@ enum FirstLaunchGuide {
         aiConfigured: Bool,
         aiTested: Bool,
         searching: Bool,
-        hasOpenTasks: Bool = false
+        hasOpenTasks: Bool = false,
+        hasOtherInboxItems: Bool = false
     ) -> EmptyCopy {
         if searching {
             return EmptyCopy(title: "没有匹配的消息", detail: "试试联系人姓名或消息里的关键词。")
@@ -266,16 +267,31 @@ enum FirstLaunchGuide {
                 detail: "先选一个联系人或群聊。助手只整理你选中的对话，不会查看全部微信。"
             )
         }
-        if hasOpenTasks {
+        if hasOpenTasks || hasOtherInboxItems {
+            var sentences: [String] = []
+            if hasOpenTasks {
+                sentences.append("待办还在「我要做」和「等对方」里，答应过的事在右侧。")
+            }
+            if hasOtherInboxItems {
+                sentences.append("点「全部」可查看普通更新；知会类消息不算必须回复。")
+            } else {
+                sentences.append("点过去处理，不必等新消息。")
+            }
             return EmptyCopy(
                 title: "没有需要回复的消息",
-                detail: "待办还在「我要做」里。点过去处理，不必等新消息。"
+                detail: sentences.joined()
             )
         }
-        if !aiConfigured || !aiTested {
+        if !aiConfigured {
             return EmptyCopy(
-                title: "暂时没有需要处理的消息",
-                detail: "原文已经可以查看。设置并测试 AI 后，才会出现摘要和回复草稿。"
+                title: "摘要和草稿还没准备好",
+                detail: "没有 AI 也能看微信原文。选一个服务并测试连接后，今天才会出现摘要和回复建议。"
+            )
+        }
+        if !aiTested {
+            return EmptyCopy(
+                title: "还差一次 AI 连接测试",
+                detail: "配置已填写。测通后才会出现摘要和回复草稿。"
             )
         }
         return EmptyCopy(

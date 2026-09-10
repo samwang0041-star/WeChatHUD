@@ -102,6 +102,8 @@ final class FirstLaunchGuideTests: XCTestCase {
             wechatConnected: true, hasTrackedConversations: true,
             aiConfigured: false, aiTested: false, searching: false
         )
+        XCTAssertEqual(noAI.title, "摘要和草稿还没准备好")
+        XCTAssertFalse(noAI.title.contains("暂时没有需要处理"))
         XCTAssertTrue(noAI.detail.contains("原文"))
         XCTAssertTrue(noAI.detail.contains("AI"))
 
@@ -117,6 +119,30 @@ final class FirstLaunchGuideTests: XCTestCase {
         )
         XCTAssertEqual(empty.title, "没有需要回复的消息")
         XCTAssertTrue(empty.detail.contains("我要做"))
+        XCTAssertTrue(empty.detail.contains("等对方"))
+        XCTAssertFalse(empty.title.contains("没有需要你处理的事"))
+    }
+
+    func testTodayEmptyDoesNotPretendAIIsWorkingWhenOnlyConfigured() {
+        let untested = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: false, searching: false
+        )
+        XCTAssertEqual(untested.title, "还差一次 AI 连接测试")
+        XCTAssertTrue(untested.detail.contains("测通"))
+        XCTAssertFalse(untested.title.contains("暂时没有需要处理"))
+        XCTAssertFalse(untested.detail.contains("原文已经可以查看"))
+    }
+
+    func testTodayEmptyPointsAtAllUpdatesWhenReplyQueueIsEmpty() {
+        let empty = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: true, searching: false,
+            hasOpenTasks: false, hasOtherInboxItems: true
+        )
+        XCTAssertEqual(empty.title, "没有需要回复的消息")
+        XCTAssertTrue(empty.detail.contains("全部"))
+        XCTAssertTrue(empty.detail.contains("知会"))
         XCTAssertFalse(empty.title.contains("没有需要你处理的事"))
     }
 
