@@ -326,10 +326,17 @@ struct ChatInsightDetailView: View {
 
         if let result, !result.insight.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
+                let split = ChatInsightService.splitCoverageNotice(result.insight)
+                if let notice = split.notice {
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 Text("AI 解读")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text(result.insight)
+                Text(split.body)
                     .font(.system(size: 13))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
