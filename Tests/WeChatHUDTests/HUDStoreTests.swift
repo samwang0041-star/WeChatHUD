@@ -1113,4 +1113,31 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(store.loadDiscussionItems(status: .pending).count, 0)
         XCTAssertEqual(store.loadDiscussionItems(excludingStatus: .pending).first?.status, .done)
     }
+
+    func testVIPContactRepairPromotesOrCreatesWhitelistTracking() throws {
+        try store.upsertContact(
+            username: "wxid_vip_missing",
+            displayName: "测试号",
+            attentionLevel: .vip,
+            role: .colleague
+        )
+        try store.addToWhitelist(
+            username: "wxid_vip_watch",
+            displayName: "赖豪",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.upsertContact(
+            username: "wxid_vip_watch",
+            displayName: "赖豪",
+            attentionLevel: .vip,
+            role: .colleague
+        )
+
+        store.repairVIPTrackingAlignment()
+
+        XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_missing")?.attentionLevel, .vip)
+        XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_watch")?.attentionLevel, .vip)
+    }
 }

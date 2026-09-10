@@ -273,9 +273,8 @@ struct InboxView: View {
     // MARK: - Header
 
     private var extendedBuddyMood: BuddyMood {
-        let activeCount = monitor.inboxItems.count
-        let isProcessing = { if case .syncing = monitor.stats.syncStatus { return true }; return false }()
-        return deriveExtendedMood(actionItemCount: activeCount, isAIProcessing: isProcessing)
+        let activeCount = monitor.inboxItems.filter(\.participatesInActionQueue).count
+        return deriveExtendedMood(actionItemCount: activeCount, isAIProcessing: false)
     }
 
     /// Top row of the extended panel — lives in the notch-height
@@ -289,15 +288,6 @@ struct InboxView: View {
         return HStack(spacing: 0) {
             // Left wing — priority status
             HStack(spacing: 6) {
-                let compactCount = monitor.inboxItems.filter(\.surfacesInCompact).count
-                if compactCount > 0 {
-                    Circle()
-                        .fill(CompanionPalette.islandMint)
-                        .frame(width: 6, height: 6)
-                    Text("\(compactCount) 项待处理")
-                        .islandMicro()
-                        .foregroundColor(IslandInk.secondary)
-                } else {
                 switch inboxHeaderState(monitor.inboxItems) {
                 case .urgent(let count):
                     Circle()
@@ -334,7 +324,6 @@ struct InboxView: View {
                     Text("一切正常")
                         .islandMicro()
                         .foregroundColor(IslandInk.quaternary)
-                }
                 }
             }
             .padding(.leading, IslandMetrics.sectionInset)

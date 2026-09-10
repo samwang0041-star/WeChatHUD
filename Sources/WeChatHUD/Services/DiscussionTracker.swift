@@ -155,8 +155,29 @@ actor DiscussionTracker {
 
         let ordered = messages.sorted { SourceCursor($0).precedes(SourceCursor($1)) }
         let cursor = store.getSettingJSON(Self.cursorKey(chatUsername), as: SourceCursor.self)
-        let fresh = ordered.filter { message in
+        let unfiltered = ordered.filter { message in
             cursor.map { $0.precedes(SourceCursor(message)) } ?? true
+        }
+        let admissionRules = AdmissionRules.load(store: store)
+        let isGroup = chatUsername.contains("@chatroom")
+        let fresh = unfiltered.filter { msg in
+            if MessageHelpers.isFromSelf(
+                msg, chatUsername: chatUsername,
+                myUsername: myUsername, myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames
+            ) {
+                return !isGroup || admissionRules.vipChats.contains(chatUsername)
+            }
+            return admissionRules.decide(
+                chatUsername: chatUsername,
+                isGroup: isGroup,
+                senderUsername: msg.senderUsername,
+                senderName: msg.senderName,
+                isAtMention: MessageHelpers.isAtMe(
+                    msg.text, myUsername: myUsername,
+                    myDisplayName: myDisplayName, mySelfNames: mySelfNames
+                )
+            ).isAdmitted
         }
         guard let newest = fresh.last else { return (0, true) }
         let watermark = cursor?.timestamp ?? 0

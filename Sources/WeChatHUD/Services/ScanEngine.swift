@@ -305,6 +305,8 @@ enum ScanEngine {
                 classificationMessages.reserveCapacity(newMessages.count)
                 var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
                 autopilotMessagesToQueue.reserveCapacity(newMessages.count)
+                var discussionMessages: [MessageInfo] = []
+                discussionMessages.reserveCapacity(newMessages.count)
 
                 for msg in newMessages {
                     // Collect self messages for commitment tracking BEFORE skipping
@@ -314,7 +316,14 @@ enum ScanEngine {
                             msg: msg, chatUsername: entry.id,
                             chatName: msg.chatName, recipientName: recipientName
                         ))
-                        continue  // still skip for notification purposes
+                        // Private / VIP-room self lines stay in discussion so
+                        // bidirectional extraction can see both sides. Ordinary
+                        // followed groups do not dump every self line into todos.
+                        let isGroupChat = entry.id.contains("@chatroom")
+                        if !isGroupChat || admissionRules.vipChats.contains(entry.id) {
+                            discussionMessages.append(msg)
+                        }
+                        continue
                     }
                     // Admission owns muting now, so a person muted in every
                     // conversation is honoured here too — not only rules that
@@ -383,27 +392,37 @@ enum ScanEngine {
                     let worthInterrupting = isAt || isCrossGroupVIP || isWatchedMember
                     let shouldPresent = notificationConfig.shouldPresent(notif.presentationSemanticState)
                         || (worthInterrupting && notificationConfig.important)
+                    let decision = admissionRules.decide(
+                        chatUsername: msg.chatUsername,
+                        isGroup: kind != .privateChat,
+                        senderUsername: msg.senderUsername,
+                        senderName: msg.senderName,
+                        isAtMention: isAt
+                    )
                     let bannerAllowed = AdmissionPolicy.shouldRaiseBanner(
-                        decision: .admit(.followed),
+                        decision: decision,
                         chatUsername: msg.chatUsername,
                         isAtMention: isAt,
                         atMutedGroups: admissionRules.config.atMutedGroups
                     )
-                    if shouldPresent,
+                    if decision.isAdmitted,
+                       shouldPresent,
                        bannerAllowed,
                        (latestPreview == nil || msgTime > latestPreview!.timestamp) {
                         latestPreview = notif
                     }
 
-                    if let existing = perChatLatest[msg.chatUsername],
-                       existing.timestamp >= msgTime {
-                        // keep existing
-                    } else {
-                        perChatLatest[msg.chatUsername] = notif
+                    if decision.isAdmitted {
+                        if let existing = perChatLatest[msg.chatUsername],
+                           existing.timestamp >= msgTime {
+                            // keep existing
+                        } else {
+                            perChatLatest[msg.chatUsername] = notif
+                        }
                     }
 
                     // Collect for autopilot: private chats + group @mentions.
-                    if kind == .privateChat || kind == .groupAt {
+                    if decision.isAdmitted, kind == .privateChat || kind == .groupAt {
                         let contact = store.getContact(username: msg.senderUsername)
                         let level: AttentionLevel
                         if entry.attentionLevel == .vip {
@@ -436,7 +455,7 @@ enum ScanEngine {
                     }
 
                     // Collect VIP traces for VIPAggregator
-                    if entry.attentionLevel == .vip {
+                    if decision.isAdmitted, entry.attentionLevel == .vip {
                         vipTraceMessages.append((
                             vipUsername: msg.senderUsername,
                             vipName: msg.senderName,
@@ -458,7 +477,7 @@ enum ScanEngine {
                         entryLevel: entry.attentionLevel,
                         senderUsername: msg.senderUsername,
                         vipPersonUsernames: vipPersonUsernames
-                    ) {
+                    ), decision.isAdmitted {
                         vipTraceMessages.append((
                             vipUsername: msg.senderUsername,
                             vipName: msg.senderName,
@@ -471,12 +490,15 @@ enum ScanEngine {
                     }
 
                     // Collect for AI classifier (non-self inbound messages)
-                    newInboundForClassifier.append((
-                        msg: msg,
-                        chatUsername: entry.id,
-                        isVIP: entry.attentionLevel == .vip
-                    ))
-                    classificationMessages.append(msg)
+                    if decision.isAdmitted {
+                        newInboundForClassifier.append((
+                            msg: msg,
+                            chatUsername: entry.id,
+                            isVIP: entry.attentionLevel == .vip
+                        ))
+                        classificationMessages.append(msg)
+                        discussionMessages.append(msg)
+                    }
                 }
 
                 if currentCursor.0 > baseline.lastCreateTime
@@ -486,8 +508,8 @@ enum ScanEngine {
                             // Discussion extraction includes both sides of the
                             // conversation, while classification receives only
                             // non-self, non-ignored inbound messages above.
-                            if !newMessages.isEmpty {
-                                try store.enqueueDiscussionMessages(newMessages)
+                            if !discussionMessages.isEmpty {
+                                try store.enqueueDiscussionMessages(discussionMessages)
                             }
                             if !classificationMessages.isEmpty {
                                 try store.enqueueClassificationMessages(classificationMessages)
