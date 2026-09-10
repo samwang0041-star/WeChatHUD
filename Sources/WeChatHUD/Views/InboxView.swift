@@ -612,7 +612,7 @@ private struct IslandTaskPreview: View {
                 .islandRowTitle()
                 .foregroundStyle(IslandInk.primary)
                 Spacer()
-                Text("还有 \(items.count) 件事")
+                Text(items.count > 4 ? "共 \(items.count) 件" : "\(items.count) 件")
                     .islandMeta()
                     .foregroundStyle(CompanionPalette.islandMint)
                 Button {
@@ -680,7 +680,12 @@ private struct IslandTaskPreview: View {
             // The cache keeps these lookups to one sort per distinct scope.
             if itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).isEmpty {
                 let theirs = itemsCache.items(monitor.discussionItems, scope: .theirs, query: "", history: false)
-                scope = theirs.isEmpty ? .all : .theirs
+                if !theirs.isEmpty {
+                    scope = .theirs
+                } else {
+                    let shared = itemsCache.items(monitor.discussionItems, scope: .shared, query: "", history: false)
+                    if !shared.isEmpty { scope = .shared }
+                }
             }
             expandedID = itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).first?.id
         }

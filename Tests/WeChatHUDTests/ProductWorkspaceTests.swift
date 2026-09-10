@@ -88,6 +88,11 @@ final class ProductWorkspaceTests: XCTestCase {
         }
         let groups = DiscussionPresentation.groups([item(1, due: today), item(2, due: tomorrow), item(3, due: later), item(4, due: nil)], now: now, calendar: calendar)
         XCTAssertEqual(groups.map(\.title), ["今天", "明天", "之后", "无期限"])
+        let overdue = item(5, due: calendar.date(byAdding: .day, value: -2, to: now))
+        XCTAssertEqual(
+            DiscussionPresentation.groups([overdue, item(1, due: today), item(4, due: nil)], now: now, calendar: calendar).map(\.title),
+            ["今天", "已过期", "无期限"]
+        )
         XCTAssertTrue(DiscussionPresentation.dueLabel(today, now: now, calendar: calendar).contains("今天"))
         XCTAssertTrue(DiscussionPresentation.dueLabel(tomorrow, now: now, calendar: calendar).contains("明天"))
         XCTAssertEqual(DiscussionPresentation.dueLabel(nil), "无期限")
@@ -248,13 +253,73 @@ final class ProductWorkspaceTests: XCTestCase {
         let nextWeek = item(4, sourceOffset: -7200, dueOffset: 6 * 86_400)
         let undatedRecent = item(5, sourceOffset: -1800, dueOffset: nil)
         let undatedOld = item(6, sourceOffset: -10 * 86_400, dueOffset: nil)
+        let todayMissed = item(7, sourceOffset: -900, dueOffset: -3600)
         let ranked = DiscussionPresentation.items(
-            [ancientOverdue, recentOverdue, tomorrow, nextWeek, undatedRecent, undatedOld],
+            [ancientOverdue, recentOverdue, tomorrow, nextWeek, undatedRecent, undatedOld, todayMissed],
             scope: .mine, query: "", history: false, now: now, calendar: calendar
         )
-        XCTAssertEqual(ranked.map(\.id), [3, 4, 2, 1, 5, 6])
-        XCTAssertEqual(Array(ranked.prefix(4)).map(\.id), [3, 4, 2, 1],
-                       "HUD four slots must not be the oldest overdue pile")
+        XCTAssertEqual(ranked.map(\.id), [3, 4, 7, 2, 1, 5, 6])
+        XCTAssertEqual(Array(ranked.prefix(4)).map(\.id), [3, 4, 7, 2])
+    }
+
+    func testHistoryGroupsKeepAutoArchiveOutOfCompleted() {
+        let now = Date()
+        func item(_ id: Int64, status: DiscussionItemStatus) -> DiscussionItem {
+            DiscussionItem(
+                id: id, chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+                content: "事项\(id)", detail: nil, anchorMsgUID: "\(id)", sourceTimestamp: 1,
+                dueAt: nil, status: status, confidence: 0.9, promptVersion: "test",
+                createdAt: now, updatedAt: now
+            )
+        }
+        let groups = DiscussionPresentation.groups(
+            [item(1, status: .archived), item(2, status: .done), item(3, status: .dismissed)],
+            now: now, history: true
+        )
+        XCTAssertEqual(groups.map(\.title), ["已完成", "已忽略", DiscussionPresentation.archivedGroupTitle])
+        XCTAssertEqual(groups[0].items.map(\.id), [2])
+        XCTAssertEqual(groups[2].items.map(\.id), [1])
+    }
+
+    func testLivePipelineArchivesStaleThenFillsHUDFromUpcoming() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 16))!
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "拉群询问接口对接事宜", detail: nil, anchorMsgUID: "old",
+            sourceTimestamp: cutoff - 150 * 86_400,
+            dueAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 145 * 86_400)),
+            confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "填写课后服务自主作业报名收集表", detail: nil, anchorMsgUID: "soon",
+            sourceTimestamp: Int(now.timeIntervalSince1970),
+            dueAt: now.addingTimeInterval(18 * 3600),
+            confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "补订硬皮本", detail: nil, anchorMsgUID: "undated",
+            sourceTimestamp: Int(now.timeIntervalSince1970),
+            dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertEqual(try store.archiveStalePendingDiscussionItems(cutoff: cutoff, now: now), 1)
+        let live = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
+        let ranked = DiscussionPresentation.items(live, scope: .mine, query: "", history: false, now: now, calendar: calendar)
+        XCTAssertEqual(ranked.map(\.content), ["填写课后服务自主作业报名收集表", "补订硬皮本"])
+        XCTAssertEqual(Array(ranked.prefix(4)).map(\.content).first, "填写课后服务自主作业报名收集表")
+        let history = store.loadDiscussionItems(excludingStatus: .pending, relevantSince: cutoff)
+        XCTAssertEqual(history.map(\.content), ["拉群询问接口对接事宜"])
+        XCTAssertEqual(history.first?.status, .archived)
+        XCTAssertEqual(
+            DiscussionPresentation.groups(history, now: now, calendar: calendar, history: true).map(\.title),
+            [DiscussionPresentation.archivedGroupTitle]
+        )
     }
 
     func testCommitmentLoadKeepsDueItemsInsideTheSameWindow() throws {
