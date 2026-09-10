@@ -273,7 +273,7 @@ struct CommitmentTabView: View {
     }
 
     private func sourceLine(_ commitment: Commitment) -> String {
-        let name = monitor.displayName(for: commitment.chatUsername)
+        let name = commitment.chatName.isEmpty ? monitor.displayName(for: commitment.chatUsername) : commitment.chatName
         let when = commitment.createdAt.formatted(date: .abbreviated, time: .shortened)
         return "\(when)  ·  \(name)"
     }
@@ -380,11 +380,12 @@ enum CommitmentPresentation {
 
     static func sectionTitle(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
         guard let date else { return "无期限" }
-        if date < now && !calendar.isDateInToday(date) { return "已过期" }
-        if calendar.isDateInToday(date) {
+        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已过期" }
+        if calendar.isDate(date, inSameDayAs: now) {
             return "今天 " + date.formatted(.dateTime.month().day().weekday(.wide))
         }
-        if calendar.isDateInTomorrow(date) { return "明天" }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) { return "明天" }
         if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
             return date.formatted(.dateTime.weekday(.wide))
         }

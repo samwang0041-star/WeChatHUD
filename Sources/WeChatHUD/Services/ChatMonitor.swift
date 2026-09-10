@@ -211,7 +211,13 @@ final class ChatMonitor: ObservableObject {
     private lazy var discussionTracker: DiscussionTracker = {
         DiscussionTracker(store: store, aiService: aiService)
     }()
+    /// Live pending items only. History is loaded on demand by the 待办 surface.
     @Published var discussionItems: [DiscussionItem] = []
+    let islandPresentation = IslandPresentation()
+    let workspaceBadges = WorkspaceBadges()
+    /// Per-chat labels resolved for the current process. `displayName(for:)`
+    /// is called from list rows on every SwiftUI refresh.
+    var displayNameCache: [String: String] = [:]
     private lazy var vipAggregator: VIPAggregator = {
         VIPAggregator(store: store, aiService: aiService)
     }()
@@ -233,6 +239,7 @@ final class ChatMonitor: ObservableObject {
         // observing ChatMonitor re-render when a VIP escalates.
         engine.onTiersChanged = { [weak self] tiers in
             self?.vipAlertTiers = tiers
+            self?.refreshWorkspaceChrome()
         }
         // A tier advance (e.g. T3: "已等 2 小时") also pops an in-panel
         // toast so the user sees it even if they dismissed the OS
@@ -401,6 +408,9 @@ final class ChatMonitor: ObservableObject {
         // Initial scan — either red (no WeChat) or green (scanned clean).
         Task { @MainActor in
             print("[WCHUD] initial scan Task starting")
+            // Pending todos and promises live in SQLite. Show them even
+            // when WeChat is closed and this scan is gated.
+            self.reloadAIData()
             await self.scan()
         }
 
@@ -418,8 +428,9 @@ final class ChatMonitor: ObservableObject {
                 // gated because WeChat is closed or its DB is unavailable.
                 // Read only active commitments from durable storage so a
                 // stale published snapshot cannot resurrect completed work.
-                let activeCommitments = self.store.loadCommitments(status: .pending)
-                    + self.store.loadCommitments(status: .overdue)
+                let liveCutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+                let activeCommitments = self.store.loadCommitments(status: .pending, relevantSince: liveCutoff)
+                    + self.store.loadCommitments(status: .overdue, relevantSince: liveCutoff)
                 self.alertEngine.evaluateCommitmentDeadlines(commitments: activeCommitments)
 
                 // Process pending send queue every 10s (fast enough for UI countdown accuracy)
@@ -1123,6 +1134,7 @@ final class ChatMonitor: ObservableObject {
                 syncStatus: .waitingForWeChat,
                 lastSyncAt: stats.lastSyncAt
             )
+            refreshWorkspaceChrome()
             return
         }
 
@@ -1137,6 +1149,7 @@ final class ChatMonitor: ObservableObject {
                 syncStatus: .accountSwitched,
                 lastSyncAt: stats.lastSyncAt
             )
+            refreshWorkspaceChrome()
             return
         }
 
@@ -1184,6 +1197,7 @@ final class ChatMonitor: ObservableObject {
                 syncStatus: .error("scan failed"),
                 lastSyncAt: stats.lastSyncAt
             )
+            refreshWorkspaceChrome()
             return
         }
 
@@ -1291,38 +1305,52 @@ final class ChatMonitor: ObservableObject {
 
     /// Reload commitments and recalled messages from store.
     func reloadAIData() {
-        commitments = store.loadCommitments()
+        reloadLiveCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
-        discussionItems = store.loadDiscussionItems()
+        reloadPendingDiscussionItems()
+        refreshWorkspaceChrome()
+    }
+
+    /// Completed / dismissed / archived rows. Loaded only when 待办 asks for history.
+    func loadDiscussionHistory() -> [DiscussionItem] {
+        store.loadDiscussionItems(
+            excludingStatus: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.historyDays)
+        )
+    }
+
+    /// Recent catalog for weekly review. Not published onto the live HUD list.
+    func loadDiscussionCatalog() -> [DiscussionItem] {
+        store.loadDiscussionItems(relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.catalogDays))
     }
 
     /// Update a discussion item's status (done / dismissed / archived).
-    /// UI calls this from the 工作台 tab — reloads the published list
-    /// so the row vanishes from the active view immediately.
+    /// Completing a row drops it from the live pending list without a full reload.
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) {
         try? store.updateDiscussionItemStatus(id: id, status: status)
-        discussionItems = store.loadDiscussionItems()
+        publishDiscussionItem(id: id)
     }
 
     /// Native workspace write path: only publish after durable storage succeeds.
     func setDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
+        let existing = discussionItem(id: id)
         try store.updateDiscussionItemStatus(id: id, status: status)
-        if let item = discussionItems.first(where: { $0.id == id }),
+        if let item = existing,
            let feedback = DiscussionCorrection.feedback(for: item, status: status) {
             try store.writeAIFeedback(feedback)
         }
-        discussionItems = store.loadDiscussionItems()
+        publishDiscussionItem(id: id)
     }
 
     /// Corrects an AI responsibility label and records that correction for
     /// later prompt/evaluation work.
     func setDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws {
-        guard let item = discussionItems.first(where: { $0.id == id }) else { return }
+        guard let item = discussionItem(id: id) else { return }
         guard try store.updateDiscussionItemOwner(id: id, owner: owner) else { return }
         if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
             try store.writeAIFeedback(feedback)
         }
-        discussionItems = store.loadDiscussionItems()
+        publishDiscussionItem(id: id)
     }
 
     func setDiscussionItemCorrection(
@@ -1331,12 +1359,57 @@ final class ChatMonitor: ObservableObject {
         owner: DiscussionItemOwner,
         dueAt: Date?
     ) throws {
-        guard let item = discussionItems.first(where: { $0.id == id }) else { return }
+        guard let item = discussionItem(id: id) else { return }
         guard try store.updateDiscussionItemCorrection(id: id, content: content, owner: owner, dueAt: dueAt) else { return }
         if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
             try store.writeAIFeedback(feedback)
         }
-        discussionItems = store.loadDiscussionItems()
+        publishDiscussionItem(id: id)
+    }
+
+    private func discussionItem(id: Int64) -> DiscussionItem? {
+        discussionItems.first(where: { $0.id == id }) ?? store.loadDiscussionItem(id: id)
+    }
+
+    private func reloadPendingDiscussionItems() {
+        let next = store.loadDiscussionItems(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
+        if next != discussionItems { discussionItems = next }
+        refreshWorkspaceChrome()
+    }
+
+    private func publishDiscussionItem(id: Int64) {
+        if let item = store.loadDiscussionItem(id: id) {
+            let next = DiscussionLiveList.applying(discussionItems, replacement: item)
+            if next != discussionItems { discussionItems = next }
+        } else if discussionItems.contains(where: { $0.id == id }) {
+            discussionItems.removeAll { $0.id == id }
+        }
+        refreshWorkspaceChrome()
+    }
+
+    private func reloadLiveCommitments() {
+        let next = store.loadCommitments(
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
+        if next != commitments { commitments = next }
+    }
+
+    func refreshWorkspaceChrome() {
+        islandPresentation.publish(IslandPresentation.liveInput(
+            items: inboxItems,
+            sync: stats.syncStatus,
+            autopilotActive: autopilotActive,
+            vipTiers: vipAlertTiers
+        ))
+        workspaceBadges.publish(WorkspaceBadgeCounts(
+            tasks: discussionItems.filter { $0.kind != .info }.count,
+            commitments: commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
+            drafts: store.draftCount(),
+            pendingReplies: autopilotLog.filter { $0.action == .pending }.count
+        ))
     }
 
     /// Fire-and-forget AI processing for new scan data.
@@ -1527,7 +1600,8 @@ final class ChatMonitor: ObservableObject {
                 }
                 // Refresh published commitments after processing
                 await MainActor.run {
-                    self.commitments = storeRef.loadCommitments()
+                    self.reloadLiveCommitments()
+                    self.refreshWorkspaceChrome()
                 }
             }
         }
@@ -1638,7 +1712,8 @@ final class ChatMonitor: ObservableObject {
                     }
                 }
                 if changed, let self = self {
-                    self.commitments = storeForFulfillment.loadCommitments()
+                    self.reloadLiveCommitments()
+                    self.refreshWorkspaceChrome()
                 }
             }
         }
@@ -1869,6 +1944,7 @@ final class ChatMonitor: ObservableObject {
         } else {
             try store.saveDraft(chatUsername: chatUsername, chatName: chatName, text: text, sendAt: nil)
         }
+        refreshWorkspaceChrome()
     }
 
     /// Record AI reply feedback (adopted/ignored) for the learning loop.
@@ -1965,7 +2041,8 @@ final class ChatMonitor: ObservableObject {
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
-        commitments = store.loadCommitments()
+        reloadLiveCommitments()
+        refreshWorkspaceChrome()
     }
 
     private static func commitmentContextSnapshot(_ messages: [AnnotatedMessage], targetID: String) -> String {
@@ -2025,7 +2102,7 @@ final class ChatMonitor: ObservableObject {
             self.discussionWorker = nil
             self.discussionProcessing = false
             if let count = try? self.store.discussionQueueCount() { self.discussionPendingCount = count }
-            if inserted > 0 { self.discussionItems = self.store.loadDiscussionItems() }
+            if inserted > 0 { self.reloadPendingDiscussionItems() }
         }
     }
 
@@ -2164,17 +2241,18 @@ final class ChatMonitor: ObservableObject {
             snoozed: snoozedInbox,
             silenced: silencedInbox
         )
-        inboxItems = result.active
-        handledItems = result.handled
-
-        // Apply cached AI summaries. This reads both the in-memory
-        // hot cache and the persistent analysis cache, so ordinary
-        // updates don't fall back to raw previews after app restart.
-        applyCachedInboxSummaries(to: &inboxItems)
-        applyCachedInboxSummaries(to: &handledItems)
+        var nextActive = result.active
+        var nextHandled = result.handled
+        // Apply cached AI summaries before compare so an unchanged
+        // inbox does not republish through the inout setter.
+        applyCachedInboxSummaries(to: &nextActive)
+        applyCachedInboxSummaries(to: &nextHandled)
+        if nextActive != inboxItems { inboxItems = nextActive }
+        if nextHandled != handledItems { handledItems = nextHandled }
 
         // Prune stale cache entries
         cleanSummaryCache()
+        refreshWorkspaceChrome()
     }
 
     /// Re-evaluate time-based snoozes independently of message scans. This
@@ -2707,6 +2785,7 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotPendingSendQueue = recoveredQueue
                     self.autopilotSessionStats = recoveredStats
                     self.autopilotLog = []
+                    self.refreshWorkspaceChrome()
                 }
                 print("[WCHUD] Autopilot: ON")
             } catch {
@@ -2725,6 +2804,7 @@ final class ChatMonitor: ObservableObject {
             }
         }
         autopilotActive = false
+        refreshWorkspaceChrome()
         // Drop ledger entries after marking inactive — anything accumulated
         // while autopilot was off-by-a-hair shouldn't leak into the next
         // session.
@@ -2783,10 +2863,10 @@ final class ChatMonitor: ObservableObject {
 
     /// Reject a pending autopilot item.
     func rejectAutopilotItem(logId: Int64) {
-        Task {
+        Task { @MainActor in
             await autopilotService?.rejectPending(logId: logId)
+            refreshAutopilotSessionState()
         }
-        refreshAutopilotSessionState()
     }
 
     /// Refresh autopilot UI state from the DB (source of truth for counters).
@@ -2796,6 +2876,7 @@ final class ChatMonitor: ObservableObject {
             autopilotSessionSent = session.totalSent
             autopilotSessionPending = session.totalPending
         }
+        refreshWorkspaceChrome()
     }
 
     // performScan, buildReplyDebtItems, debugScanAllTables extracted to ScanEngine.swift.

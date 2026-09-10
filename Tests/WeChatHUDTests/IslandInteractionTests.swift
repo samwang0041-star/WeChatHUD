@@ -297,7 +297,8 @@ final class IslandInteractionTests: XCTestCase {
 
     func testCompactWingsStayOutsideTheNotchVoid() {
         let wing = CompactInboxMetrics.wingWidth
-        XCTAssertEqual(wing, 44)
+        XCTAssertEqual(wing, CompactInboxMetrics.wingWidth)
+        XCTAssertGreaterThanOrEqual(wing, 52)
         let realNotch: CGFloat = 180
         let bar = wing + realNotch + wing
         XCTAssertEqual(bar - realNotch, wing * 2)

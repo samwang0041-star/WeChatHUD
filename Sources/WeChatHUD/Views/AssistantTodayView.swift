@@ -11,6 +11,9 @@ struct AssistantTodayView: View {
     @State private var dismissed: InboxItem?
     @State private var expandedID: String?
     @State private var snoozeReceipt: String?
+    @State private var aiReadinessLoaded = false
+    @State private var aiConfigured = false
+    @State private var aiTested = false
 
     private var actions: [InboxItem] { monitor.inboxItems.filter(\.participatesInActionQueue) }
     private var visible: [InboxItem] {
@@ -18,7 +21,7 @@ struct AssistantTodayView: View {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.filter { text.isEmpty || [$0.chatName, $0.preview, $0.aiSummary ?? ""].contains { $0.localizedCaseInsensitiveContains(text) } }
     }
-    private var pending: [DiscussionItem] { monitor.discussionItems.filter { $0.status == .pending && $0.kind != .info } }
+    private var pending: [DiscussionItem] { monitor.discussionItems.filter { $0.kind != .info } }
 
     private var upcoming: [Commitment] {
         monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }
@@ -27,8 +30,10 @@ struct AssistantTodayView: View {
 
     private var wechatConnected: Bool {
         guard monitor.stats.lastSyncAt != nil else { return false }
-        if case .ok = monitor.stats.syncStatus { return true }
-        return false
+        switch monitor.stats.syncStatus {
+        case .ok, .idle, .syncing: return true
+        default: return false
+        }
     }
 
     var body: some View {
@@ -64,6 +69,14 @@ struct AssistantTodayView: View {
                 .frame(maxWidth: .infinity)
             }
         }
+        .onAppear { refreshAIReadiness() }
+    }
+
+    private func refreshAIReadiness() {
+        let config = store.loadAIConfig()
+        aiConfigured = AISettingsValidation.connectionError(config.provider, requireModel: true) == nil
+        aiTested = AIConnectionEvidenceStore.isSuccessful(config, store: store)
+        aiReadinessLoaded = true
     }
 
     private var messageFeed: some View {
@@ -102,15 +115,17 @@ struct AssistantTodayView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(searchFocused ? CompanionPalette.accent.opacity(0.5) : CompanionPalette.border))
 
             if visible.isEmpty {
-                let empty = FirstLaunchGuide.todayEmpty(
-                    wechatConnected: wechatConnected,
-                    hasTrackedConversations: !store.getWhitelist().isEmpty,
-                    aiConfigured: AISettingsValidation.connectionError(store.loadAIConfig().provider, requireModel: true) == nil,
-                    aiTested: AIConnectionEvidenceStore.isSuccessful(store.loadAIConfig(), store: store),
-                    searching: !query.isEmpty
-                )
-                ContentUnavailableView(empty.title, systemImage: query.isEmpty ? "tray" : "magnifyingglass", description: Text(empty.detail))
-                    .frame(maxWidth: .infinity).padding(.vertical, 28).companionSurface()
+                if aiReadinessLoaded {
+                    let empty = FirstLaunchGuide.todayEmpty(
+                        wechatConnected: wechatConnected,
+                        hasTrackedConversations: store.hasWhitelistEntries(),
+                        aiConfigured: aiConfigured,
+                        aiTested: aiTested,
+                        searching: !query.isEmpty
+                    )
+                    ContentUnavailableView(empty.title, systemImage: query.isEmpty ? "tray" : "magnifyingglass", description: Text(empty.detail))
+                        .frame(maxWidth: .infinity).padding(.vertical, 28).companionSurface()
+                }
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(visible) { item in
@@ -162,7 +177,7 @@ struct AssistantTodayView: View {
                             VStack(alignment: .leading, spacing: 7) {
                                 Text(commitment.content).font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading)
-                                Text(monitor.displayName(for: commitment.chatUsername)).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(commitment.chatName).font(.system(size: 11)).foregroundStyle(.secondary)
                                 if let deadline = commitment.deadlineAt {
                                     Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
                                         .font(.system(size: 11, weight: .medium))
@@ -245,7 +260,7 @@ struct AssistantTodayView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 10) {
-                Label("关注 \(store.getWhitelist().count) 个对话", systemImage: "person.2")
+                Label("关注 \(store.whitelistCount()) 个对话", systemImage: "person.2")
                     .foregroundStyle(.secondary)
                 HStack(spacing: 14) {
                     Button("关注谁") { navigate(.contacts) }.buttonStyle(.link)
@@ -298,9 +313,9 @@ struct AssistantTodayView: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    CompanionAvatar(name: monitor.displayName(for: item.chatUsername), size: 36)
+                    CompanionAvatar(name: item.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(monitor.displayName(for: item.chatUsername)).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
+                        Text(item.chatName).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
                         Text(item.timestamp, format: .dateTime.hour().minute()).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)

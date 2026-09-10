@@ -12,17 +12,22 @@ import AppKit
 /// that the user cannot see behind the physical notch. Message content
 /// belongs in the hover-expanded inbox.
 enum CompactInboxMetrics {
-    static let wingWidth: CGFloat = 44
+    static let wingWidth: CGFloat = 56
+    static let markSize: CGFloat = 9
+    static let quietMarkSize: CGFloat = 7
+    static let badgeSize: CGFloat = 12
 }
 
 struct CompactInboxBar: View {
     @EnvironmentObject var panelState: PanelState
-    @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var islandPresentation: IslandPresentation
     @ObservedObject private var aiTracker = AIActivityTracker.shared
 
     @State private var idleSince: Date? = nil
     @State private var idleMinutes: Int = 0
     @State private var idleTimer: Timer? = nil
+    @State private var heldAIActive = false
+    @State private var aiHoldTask: Task<Void, Never>? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -34,7 +39,7 @@ struct CompactInboxBar: View {
             .accessibilityLabel("打开聊天收件箱")
             .accessibilityValue(accessibilityStatus)
             .help(accessibilityStatus + " · 点击打开收件箱")
-            .padding(.trailing, 8)
+            .padding(.trailing, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
             // Middle void — EXACTLY notch width. Because the two
@@ -55,7 +60,7 @@ struct CompactInboxBar: View {
             .buttonStyle(.plain)
             .accessibilityLabel("打开今天")
             .help("打开今天")
-            .padding(.leading, 8)
+            .padding(.leading, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
         }
         // Horizontal: natural content width (drives panel width via
@@ -82,31 +87,33 @@ struct CompactInboxBar: View {
         }
         .onAppear {
             idleSince = Date()
+            heldAIActive = aiTracker.isActive
             startIdleTimer()
+        }
+        .onChange(of: aiTracker.isActive) { _, active in
+            holdAIActivity(active)
         }
         .onDisappear {
             idleTimer?.invalidate()
             idleTimer = nil
+            aiHoldTask?.cancel()
         }
     }
 
-    private var accessibilityStatus: String {
-        let count = monitor.inboxItems.filter(\.surfacesInCompact).count
-        let sync: String
-        switch monitor.stats.syncStatus {
-        case .ok: sync = "微信连接正常"
-        case .idle: sync = "等待同步"
-        case .syncing: sync = "正在同步"
-        case .waitingForWeChat: sync = "等待微信运行"
-        case .accountSwitched: sync = "当前数据目录已失效"
-        case .stale: sync = "同步已延迟"
-        case .error: sync = "同步失败"
-        }
-        return CompanionProductCopy.compactStatus(
-            count: count,
-            sync: sync + (aiTracker.isActive ? "，AI 正在分析" : "")
-        )
+    private var island: CompactIslandSnapshot {
+        let live = islandPresentation.live
+        return CompactIslandPolicy.snapshot(CompactIslandInput(
+            sync: live.sync,
+            actions: live.actions,
+            noticeCount: live.noticeCount,
+            aiActive: heldAIActive,
+            autopilotActive: live.autopilotActive,
+            idleMinutes: idleMinutes,
+            worstVIPTier: live.vipGlowTier
+        ))
     }
+
+    private var accessibilityStatus: String { island.spoken }
 
     // MARK: - Notch width lookup
 
@@ -127,24 +134,13 @@ struct CompactInboxBar: View {
         return 32
     }
 
-    /// Subtle VIP escalation affordance. It is intentionally tied to a
-    /// visible urgent action item, not just `vipAlertTiers`, because the
-    /// compact bar's idle dot otherwise says "normal" while the whole pill
-    /// turns red.
+    /// Static rim only. A repeating pulse made the whole island look like it was blinking.
     private var escalationGlow: some View {
-        let worstTier = monitor.inboxItems.compactMap { item -> VIPAlertTier? in
-            guard item.surfacesInCompact,
-                  item.participatesInActionQueue,
-                  item.isVIP,
-                  item.priority == .p0 || item.isOverdue else { return nil }
-            return monitor.vipAlertTiers[item.chatUsername]
-        }.max() ?? .none
-        let active = worstTier >= .t2
+        let glow = island.glow
         return ZStack {
-            if active {
+            if glow != .none {
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.red.opacity(worstTier >= .t3 ? 0.55 : 0.35), lineWidth: 1)
-                    .modifier(PulsingOpacity(active: active))
+                    .strokeBorder(Color.red.opacity(glow == .critical ? 0.45 : 0.28), lineWidth: 1)
                     .allowsHitTesting(false)
             }
         }
@@ -153,145 +149,69 @@ struct CompactInboxBar: View {
     // MARK: - Left wing
 
     private var leftWing: some View {
-        let status = compactStatus
-        let aiCount = aiTracker.activeTasks.count
-        return HStack(spacing: 4) {
-            if status.isError {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.yellow)
-            } else {
-                Circle()
-                    .fill(status.color)
-                    .frame(width: 7, height: 7)
-                    .companionAnimation(CompanionMotion.ease(0.3), value: status.color)
-            }
-
-            if let badge = status.badge {
+        let snap = island
+        return HStack(spacing: 5) {
+            leftMark(snap.mark)
+            if let badge = snap.badge {
                 Text(badge)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .bold))
                     .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.78))
+                    .foregroundColor(.white.opacity(0.88))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-
-            if aiCount > 0 {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(.orange.opacity(0.9))
             }
         }
     }
 
-    private struct CompactStatus {
-        let color: Color
-        let badge: String?
-        let isError: Bool
+    @ViewBuilder
+    private func leftMark(_ mark: CompactIslandMark) -> some View {
+        switch mark {
+        case .warning:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: CompactInboxMetrics.markSize, weight: .semibold))
+                .foregroundStyle(Color.yellow)
+        case .dot(let kind):
+            Circle()
+                .fill(dotColor(kind))
+                .frame(width: dotSize(kind), height: dotSize(kind))
+        }
     }
 
-    private var compactStatus: CompactStatus {
-        let surfacedItems = monitor.inboxItems.filter { $0.surfacesInCompact }
-        let actionItems = surfacedItems.filter { $0.participatesInActionQueue }
-        let fyiItems = surfacedItems.filter { !$0.participatesInActionQueue }
-        let p0p1Items = actionItems.filter { $0.priority != .p2 }
-        let hasUrgent = !p0p1Items.isEmpty
-
-        let pendingCount = surfacedItems.count
-        if hasUrgent {
-            let topPriority = p0p1Items.sorted(by: compactPrioritySort).first?.priority ?? .p1
-            return CompactStatus(
-                color: topPriority == .p0 ? .red : .yellow,
-                badge: compactCountBadge(pendingCount),
-                isError: false
-            )
-        }
-        if !actionItems.isEmpty {
-            return CompactStatus(
-                color: .white.opacity(0.42),
-                badge: compactCountBadge(pendingCount),
-                isError: false
-            )
-        }
-        if !fyiItems.isEmpty {
-            return CompactStatus(
-                color: .blue.opacity(0.78),
-                badge: compactCountBadge(pendingCount),
-                isError: false
-            )
-        }
-        if !syncIsOK {
-            return CompactStatus(color: .yellow, badge: nil, isError: true)
-        }
-        return CompactStatus(color: .green.opacity(0.72), badge: nil, isError: false)
+    private func dotSize(_ kind: CompactIslandMark.Kind) -> CGFloat {
+        kind == .quiet ? CompactInboxMetrics.quietMarkSize : CompactInboxMetrics.markSize
     }
 
-    private func compactCountBadge(_ count: Int) -> String? {
-        guard count > 1 else { return nil }
-        return count > 9 ? "9+" : "\(count)"
+    private func dotColor(_ kind: CompactIslandMark.Kind) -> Color {
+        switch kind {
+        case .urgentP0: return Color.red.opacity(0.92)
+        case .urgentP1: return Color.yellow.opacity(0.88)
+        case .working: return CompanionPalette.islandMint
+        case .waiting: return Color.white.opacity(0.62)
+        case .notices: return Color.blue.opacity(0.72)
+        case .quiet: return CompanionPalette.islandMint.opacity(0.4)
+        }
     }
 
     // MARK: - Right wing
 
     private var rightWing: some View {
-        PixelBuddyView(mood: buddyMood)
-    }
-
-    // MARK: - Sync state helpers
-
-    private var syncIsOK: Bool {
-        switch monitor.stats.syncStatus {
-        case .ok, .idle, .syncing: return true
-        default: return false
-        }
-    }
-
-    private func compactPrioritySort(_ lhs: InboxItem, _ rhs: InboxItem) -> Bool {
-        if lhs.priority != rhs.priority {
-            return lhs.priority < rhs.priority
-        }
-        if lhs.isVIP != rhs.isVIP {
-            return lhs.isVIP
-        }
-        return lhs.timestamp > rhs.timestamp
-    }
-
-    private var buddyMood: BuddyMood {
-        let surfacedItems = monitor.inboxItems.filter { $0.surfacesInCompact }
-        let actionItems = surfacedItems.filter { $0.participatesInActionQueue }
-        let hasUrgent = actionItems.contains { $0.priority == .p0 }
-        let hasPending = !actionItems.isEmpty
-        let base = deriveCompactMood(
-            syncStatus: monitor.stats.syncStatus,
-            hasUrgent: hasUrgent,
-            hasPending: hasPending,
-            idleMinutes: idleMinutes
-        )
-        // Autopilot is a persistent background signal that shouldn't
-        // mask urgent/error states (which demand immediate attention),
-        // but should win over idle/pending/sleepy (quiescent moods).
-        if monitor.autopilotActive {
-            switch base {
-            case .idle, .pending, .sleepy, .browsing, .celebrating:
-                return .autopiloting
-            case .scanning, .urgent, .error, .analyzing, .autopiloting:
-                return base
-            }
-        }
-        return base
+        PixelBuddyView(mood: island.buddy)
     }
 
     private func startIdleTimer() {
         idleTimer?.invalidate()
         idleTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             DispatchQueue.main.async {
-                let baseMood = deriveCompactMood(
-                    syncStatus: monitor.stats.syncStatus,
-                    hasUrgent: monitor.inboxItems.contains { $0.surfacesInCompact && $0.participatesInActionQueue && $0.priority == .p0 },
-                    hasPending: monitor.inboxItems.contains { $0.surfacesInCompact && $0.participatesInActionQueue },
-                    idleMinutes: 0
-                )
-                if baseMood == .idle {
+                let live = islandPresentation.live
+                let snap = CompactIslandPolicy.snapshot(CompactIslandInput(
+                    sync: live.sync,
+                    actions: live.actions,
+                    noticeCount: live.noticeCount,
+                    aiActive: heldAIActive,
+                    autopilotActive: live.autopilotActive,
+                    idleMinutes: 0,
+                    worstVIPTier: live.vipGlowTier
+                ))
+                if case .quiet = snap.phase {
                     if let since = idleSince {
                         idleMinutes = Int(Date().timeIntervalSince(since) / 60)
                     }
@@ -302,23 +222,23 @@ struct CompactInboxBar: View {
             }
         }
     }
-}
 
-/// Slow auto-reverse pulsing opacity. Used for the escalation glow —
-/// 1.2 s period is fast enough to draw the eye but slow enough not to
-/// feel like a disco.
-private struct PulsingOpacity: ViewModifier {
-    let active: Bool
-    @State private var lit = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(active && !CompanionMotion.reduceMotion ? (lit ? 1.0 : 0.45) : 1.0)
-            .onAppear {
-                guard active else { return }
-                withMotion(CompanionMotion.ease(1.2).map { $0.repeatForever(autoreverses: true) }) {
-                    lit = true
-                }
+    /// Classifier hops are short. Hold the flag so the left mark does not
+    /// jump between working and waiting on every task.
+    private func holdAIActivity(_ live: Bool) {
+        aiHoldTask?.cancel()
+        if live {
+            aiHoldTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                guard !Task.isCancelled, aiTracker.isActive else { return }
+                heldAIActive = true
             }
+        } else {
+            aiHoldTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                guard !Task.isCancelled, !aiTracker.isActive else { return }
+                heldAIActive = false
+            }
+        }
     }
 }

@@ -382,7 +382,7 @@ struct InboxView: View {
 
     private func undoBar(item: InboxItem, action: String) -> some View {
         HStack(spacing: 8) {
-            Text("\(monitor.displayName(for: item.chatUsername)) \(action)")
+            Text("\(item.chatName) \(action)")
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.6))
                 .lineLimit(1)
@@ -447,7 +447,7 @@ struct InboxView: View {
                 .fill(Color.white.opacity(0.1))
                 .frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(monitor.displayName(for: item.chatUsername))
+                Text(item.chatName)
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.45))
                     .lineLimit(1)
@@ -530,7 +530,7 @@ struct InboxView: View {
         default:
             return FirstLaunchGuide.todayEmpty(
                 wechatConnected: monitor.stats.lastSyncAt != nil,
-                hasTrackedConversations: !monitor.store.getWhitelist().isEmpty,
+                hasTrackedConversations: monitor.store.hasWhitelistEntries(),
                 aiConfigured: true,
                 aiTested: true,
                 searching: false
@@ -554,7 +554,7 @@ struct InboxView: View {
         default:
             return FirstLaunchGuide.compactEmpty(
                 wechatConnected: monitor.stats.lastSyncAt != nil,
-                hasTrackedConversations: !monitor.store.getWhitelist().isEmpty
+                hasTrackedConversations: monitor.store.hasWhitelistEntries()
             )
         }
     }
@@ -701,7 +701,7 @@ private struct IslandTaskPreview: View {
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(DiscussionPresentation.dueLabel(item.dueAt)) \(item.content) · \(monitor.displayName(for: item.chatUsername))")
+                        Text("\(DiscussionPresentation.dueLabel(item.dueAt)) \(item.content) · \(item.chatName)")
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white)
                             .lineLimit(2)

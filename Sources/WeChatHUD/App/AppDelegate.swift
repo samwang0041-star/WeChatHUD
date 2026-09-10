@@ -82,6 +82,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rootView = HUDRootView()
             .environmentObject(panelState)
             .environmentObject(monitor)
+            .environmentObject(monitor.islandPresentation)
+            .environmentObject(monitor.workspaceBadges)
             .environmentObject(store)
             .environmentObject(reader)
 

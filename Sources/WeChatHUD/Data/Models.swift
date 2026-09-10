@@ -72,7 +72,7 @@ enum VIPAlertTier: Int, Comparable, Codable {
     }
 }
 
-enum SyncStatus {
+enum SyncStatus: Equatable {
     case idle
     case syncing
     case ok
@@ -312,7 +312,7 @@ struct ReplyDebtConfig: Codable {
 
 // MARK: - Notification
 
-enum HUDNotificationKind {
+enum HUDNotificationKind: Equatable {
     /// 1-on-1 private chat.
     case privateChat
     /// Group chat where the user was explicitly @-mentioned (or @All/@所有人).
@@ -321,7 +321,7 @@ enum HUDNotificationKind {
     case groupMessage
 }
 
-struct HUDNotification: Identifiable {
+struct HUDNotification: Identifiable, Equatable {
     let id = UUID()
     let chatUsername: String   // wxid / room id, used as dedup key
     let chatName: String
@@ -400,6 +400,18 @@ struct HUDNotification: Identifiable {
             aiSummary: nil,
             moodEmoji: nil
         )
+    }
+
+    static func == (lhs: HUDNotification, rhs: HUDNotification) -> Bool {
+        lhs.chatUsername == rhs.chatUsername
+            && lhs.messageID == rhs.messageID
+            && lhs.snippet == rhs.snippet
+            && lhs.rawText == rhs.rawText
+            && lhs.timestamp == rhs.timestamp
+            && lhs.kind == rhs.kind
+            && lhs.isAtMention == rhs.isAtMention
+            && lhs.senderUsername == rhs.senderUsername
+            && lhs.attentionLevel == rhs.attentionLevel
     }
 }
 
@@ -1043,7 +1055,7 @@ struct NotificationConfig: Codable {
 
 /// Categories the classifier emits for what kind of action a message is
 /// asking the recipient to perform. `none` is the negative case.
-enum AskType: String, Codable {
+enum AskType: String, Codable, Equatable {
     case yesNo    = "yes_no"
     case sendFile = "send_file"
     case review
@@ -1253,7 +1265,7 @@ enum CommitmentStatus: String, Codable {
     case cancelled
 }
 
-struct Commitment: Identifiable {
+struct Commitment: Identifiable, Equatable {
     let id: Int64
     let msgUID: String
     let chatUsername: String
@@ -1379,7 +1391,32 @@ enum DiscussionItemStatus: String, Codable {
     case archived   // 老了，折叠
 }
 
-struct DiscussionItem: Identifiable {
+/// Bounded HUD window so old discussion rows stay out of the live list.
+enum DiscussionLiveWindow {
+    static let pendingDays = 14
+    static let historyDays = 14
+    static let catalogDays = 30
+
+    static func cutoff(days: Int, now: Date = Date()) -> Int {
+        Int(now.timeIntervalSince1970) - days * 86_400
+    }
+
+    static func contains(_ item: DiscussionItem, cutoff: Int) -> Bool {
+        if item.status == .pending { return true }
+        if item.sourceTimestamp >= cutoff { return true }
+        if let due = item.dueAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        return false
+    }
+
+    static func contains(_ item: Commitment, cutoff: Int) -> Bool {
+        if item.status == .pending || item.status == .overdue { return true }
+        if Int(item.createdAt.timeIntervalSince1970) >= cutoff { return true }
+        if let due = item.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        return false
+    }
+}
+
+struct DiscussionItem: Identifiable, Equatable {
     let id: Int64
     let chatUsername: String
     let chatName: String

@@ -6,6 +6,7 @@ struct ReplyDraftsView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var workspaceBadges: WorkspaceBadges
     @FocusState private var editorFocused: Bool
     @State private var drafts: [Draft] = []
     @State private var selectedID: Int64?
@@ -15,7 +16,7 @@ struct ReplyDraftsView: View {
     @State private var pendingDeleteDraft: Draft?
     @State private var savedAt: Date?
 
-    struct Draft: Identifiable {
+    struct Draft: Identifiable, Equatable {
         let id: Int64
         let chatUsername: String
         let chatName: String
@@ -67,10 +68,9 @@ struct ReplyDraftsView: View {
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
         .onAppear { load() }
-        .onChange(of: filteredDrafts.map(\.id)) { _, ids in
-            if let selectedID, ids.contains(selectedID) { return }
-            selectedID = ids.first
-        }
+        .onChange(of: workspaceBadges.counts.drafts) { _, _ in load() }
+        .onChange(of: drafts) { _, _ in reconcileSelection() }
+        .onChange(of: query) { _, _ in reconcileSelection() }
         .onChange(of: pendingContinueDraft != nil || pendingDeleteDraft != nil) { _, open in
             if open { editorFocused = false }
         }
@@ -301,10 +301,16 @@ struct ReplyDraftsView: View {
             monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
             drafts.removeAll { $0.id == draft.id }
             if selectedID == draft.id { selectedID = drafts.first?.id }
+            monitor.refreshWorkspaceChrome()
             feedback = "草稿已删除。"
         } catch {
             feedback = "草稿删除失败，原草稿仍保留，请重试。"
         }
+    }
+
+    private func reconcileSelection() {
+        if let selectedID, filteredDrafts.contains(where: { $0.id == selectedID }) { return }
+        selectedID = filteredDrafts.first?.id
     }
 
     private func load() {

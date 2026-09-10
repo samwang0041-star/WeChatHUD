@@ -136,6 +136,8 @@ final class HUDStoreTests: XCTestCase {
         )
         XCTAssertTrue(store.isWhitelisted("user1"))
         XCTAssertFalse(store.isWhitelisted("user2"))
+        XCTAssertTrue(store.hasWhitelistEntries())
+        XCTAssertEqual(store.whitelistCount(), 1)
 
         let list = store.getWhitelist()
         XCTAssertEqual(list.count, 1)
@@ -147,6 +149,8 @@ final class HUDStoreTests: XCTestCase {
 
         try store.removeFromWhitelist(username: "user1")
         XCTAssertFalse(store.isWhitelisted("user1"))
+        XCTAssertFalse(store.hasWhitelistEntries())
+        XCTAssertEqual(store.whitelistCount(), 0)
         XCTAssertNil(store.getContact(username: "user1"))
     }
 

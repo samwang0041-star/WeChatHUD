@@ -15,6 +15,13 @@ extension ChatMonitor {
 
     /// Display name for a chat, honouring a user-chosen alias first.
     func displayName(for chatUsername: String) -> String {
+        if let cached = displayNameCache[chatUsername] { return cached }
+        let resolved = resolveDisplayName(for: chatUsername)
+        displayNameCache[chatUsername] = resolved
+        return resolved
+    }
+
+    private func resolveDisplayName(for chatUsername: String) -> String {
         if let alias = store.chatAlias(for: chatUsername), !alias.isEmpty {
             return alias
         }
@@ -82,6 +89,7 @@ extension ChatMonitor {
     /// Drop a user-chosen name and fall back to WeChat's own label.
     func clearChatAlias(chatUsername: String) throws {
         try store.removeChatAlias(username: chatUsername)
+        displayNameCache.removeValue(forKey: chatUsername)
         let resolved = displayName(for: chatUsername)
         store.propagateChatName(username: chatUsername, displayName: resolved)
         refreshNamesAfterRename()
@@ -89,6 +97,7 @@ extension ChatMonitor {
 
     /// Re-publish every list that displays a conversation name.
     func refreshNamesAfterRename() {
+        displayNameCache.removeAll()
         reloadAIData()
         rebuildInbox()
     }
