@@ -30,7 +30,18 @@ struct DailyReportBuilder {
                 .filter { !historical || ($0.createdAt >= startOfDay && $0.createdAt < endOfRange) } } ?? []
 
         let pendingAsks = store.loadPendingAsks(status: historical ? nil : .pending)
-            .filter { $0.createdAt >= startOfDay && $0.createdAt < endOfRange }
+            .filter { ask in
+                if historical {
+                    return ask.createdAt >= startOfDay && ask.createdAt < endOfRange
+                }
+                let createdToday = ask.createdAt >= startOfDay && ask.createdAt < endOfRange
+                let dueOrOverdue = ask.deadlineAt.map { $0 < endOfRange } ?? false
+                let live = DiscussionLiveWindow.contains(
+                    ask,
+                    cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+                )
+                return createdToday || (dueOrOverdue && live)
+            }
         let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
             .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }
 

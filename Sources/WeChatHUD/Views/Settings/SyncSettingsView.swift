@@ -522,7 +522,7 @@ struct SyncSettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                Text("将整理过的聊天内容导出为 Markdown 文件，便于保存和查阅。")
+                Text("导出一份状态报告到桌面：未读、待回复、承诺等统计。不是聊天原文。")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

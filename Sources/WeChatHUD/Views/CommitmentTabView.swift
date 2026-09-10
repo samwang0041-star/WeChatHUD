@@ -172,13 +172,18 @@ struct CommitmentTabView: View {
         switch filter {
         case .active: return "没有进行中的承诺"
         case .overdue: return "没有已超期的承诺"
-        case .fulfilled: return "还没有已完成记录"
+        case .fulfilled: return "近两周没有已完成的承诺"
         case .all: return "还没有记下你答应过的事"
         }
     }
 
     private var emptyDescription: String {
-        "答应过别人的话会留在这里，带着原话和截止时间。"
+        switch filter {
+        case .fulfilled:
+            return "更早完成的记录还在本地，不会堆在这一栏。"
+        default:
+            return "答应过别人的话会留在这里，带着原话和截止时间。"
+        }
     }
 
     private func card(_ commitment: Commitment) -> some View {
@@ -221,7 +226,7 @@ struct CommitmentTabView: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
-                    contextBlock("原话", commitment.sourceText.isEmpty ? "这条记录缺少当时原话。" : "“ \(commitment.sourceText)")
+                    contextBlock("原话", commitment.sourceText.isEmpty ? "这条记录缺少当时原话。" : "“\(commitment.sourceText)”")
                     HStack(alignment: .top, spacing: 16) {
                         contextBlock("来源", sourceLine(commitment))
                         if !bestNextStep(commitment).isEmpty {
@@ -358,7 +363,7 @@ enum CommitmentPresentation {
     }
 
     static func groups(_ items: [Commitment], now: Date = Date(), calendar: Calendar = .current) -> [Group] {
-        let mapped = Dictionary(grouping: items) { sectionTitle(for: $0.deadlineAt, now: now, calendar: calendar) }
+        let mapped = Dictionary(grouping: items) { sectionTitle(for: $0, now: now, calendar: calendar) }
         let titles = mapped.keys.sorted { lhs, rhs in
             sectionRank(lhs) < sectionRank(rhs)
         }
@@ -375,7 +380,14 @@ enum CommitmentPresentation {
 
     static func timeLabel(_ date: Date?) -> String {
         guard let date else { return "无期限" }
-        return date.formatted(date: .omitted, time: .shortened)
+        return timeLabel(date, now: Date(), calendar: .current)
+    }
+
+    static func timeLabel(_ date: Date, now: Date, calendar: Calendar) -> String {
+        if calendar.isDate(date, inSameDayAs: now) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        return date.formatted(.dateTime.month().day().hour().minute())
     }
 
     static func sectionTitle(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
@@ -392,12 +404,18 @@ enum CommitmentPresentation {
         return "之后"
     }
 
+    static func sectionTitle(for commitment: Commitment, now: Date = Date(), calendar: Calendar = .current) -> String {
+        if commitment.status == .cancelled { return "已取消" }
+        return sectionTitle(for: commitment.deadlineAt, now: now, calendar: calendar)
+    }
+
     private static func sectionRank(_ title: String) -> Int {
         if title == "已过期" { return 0 }
         if title.hasPrefix("今天") { return 1 }
         if title == "明天" { return 2 }
         if title == "之后" { return 4 }
         if title == "无期限" { return 5 }
+        if title == "已取消" { return 6 }
         return 3
     }
 }

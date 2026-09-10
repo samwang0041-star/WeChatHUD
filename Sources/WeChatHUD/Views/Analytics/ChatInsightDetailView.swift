@@ -263,7 +263,7 @@ struct ChatInsightDetailView: View {
 
         if !followUps.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("仍需跟进")
+                Text("当前待办")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 ForEach(Array(followUps.enumerated()), id: \.offset) { _, item in
@@ -297,7 +297,7 @@ struct ChatInsightDetailView: View {
 
         if let result, !result.insight.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("原文")
+                Text("AI 解读")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Text(result.insight)

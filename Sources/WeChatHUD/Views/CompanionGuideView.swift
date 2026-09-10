@@ -79,7 +79,7 @@ struct CompanionGuideView: View {
             guideTopic("我答应的事", "答应过别人的话会留在这里，带着原话和截止时间。真正做完了再点完成，不要只靠自动整理。", icon: "checkmark.bubble.fill")
             guideTopic("草稿", "在对话里写好回复后选「存为草稿」，之后可以在「草稿」里接着改、复制或回到原对话。草稿不会自己发出去。", icon: "square.and.pencil")
             guideTopic("头顶上的提醒", "可以分别决定：群里 @你、重点联系人、普通更新要不要弹出。鼠标移上去就能继续看。到期提醒走系统通知。", icon: "bell.badge.fill")
-            guideTopic("发送和自动回复", "点「发送」会先让你看清发给谁、发什么。自动回复默认关着；打开后，写好的内容先出现在「待确认回复」。群聊不会自动发。", icon: "paperplane.fill")
+            guideTopic("发送和自动回复", "点「发送」会先让你看清发给谁、发什么。自动回复默认关着；打开后草稿先出现在「待确认回复」。只有再打开「自动发出去」，符合条件的回复才会自己发出。群聊默认只记录。", icon: "paperplane.fill")
         }
     }
 
@@ -87,14 +87,14 @@ struct CompanionGuideView: View {
         GuideCard(icon: "lock.shield.fill", tint: .orange, title: "数据与隐私") {
             privacyRow("本机聊天资料", "连接时只读取聊天原文，不修改微信里的记录。助手整理出的事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
             privacyRow("发给 AI 的内容", "打开 AI 后，相关聊天片段会发给你选的服务，用来写摘要和草稿。请只用你信任的服务。", icon: "arrow.up.right")
-            privacyRow("发送和自动回复", "每次发送都要你点一下确认。自动回复默认关着。钱、红包这类消息不会自动回。打开前先用一两个人试。", icon: "hand.raised")
+            privacyRow("发送和自动回复", "默认每次发送都要你确认。自动回复默认关着；若打开「自动发出去」，符合条件的回复会自己发出。钱、红包这类消息仍不会自动回。", icon: "hand.raised")
         }
     }
 
     private var troubleshootingCard: some View {
         GuideCard(icon: "wrench.and.screwdriver.fill", tint: .purple, title: "遇到问题时") {
             troubleshootingRow("看不到新消息", "先确认这台 Mac 上的微信已经登录，再打开「微信连接」。页面会告诉你还差哪一步。连上之后点「查看新消息」。", buttonTitle: "检查连接", tab: .system)
-            troubleshootingRow("摘要或草稿写不出来", "打开「AI」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiButler)
+            troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
             troubleshootingRow("跳转或发送没反应", "确认微信正在运行并已登录，并在系统设置的「隐私与安全性 → 辅助功能」里允许聊天伴侣控制微信。发送失败时回到微信核对当前对话，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
             troubleshootingRow("关注错了人", "到「关注谁」里拿掉或改级别。要换微信账号，用连接页的「更换微信账号」；不同账号的资料分开保存。", buttonTitle: "关注谁", tab: .contacts)
         }

@@ -607,17 +607,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         monitor.$inboxItems
             .combineLatest(monitor.$vipAlertTiers)
             .sink { items, tiers in
-                let p0p1 = items.filter { $0.priority != .p2 }.count
-                let total = items.count
+                let compactCount = items.filter(\.surfacesInCompact).count
                 let escalated = tiers.values.filter { $0 >= .t2 }
                 let worstTier = escalated.max() ?? .none
                 let text: String
                 if worstTier >= .t2 {
                     text = " ! \(worstTier.agingLabel)"
-                } else if p0p1 > 0 {
-                    text = " \(p0p1)"
-                } else if total > 0 {
-                    text = " \(total)"
+                } else if compactCount > 9 {
+                    text = " 9+"
+                } else if compactCount > 0 {
+                    text = " \(compactCount)"
                 } else {
                     text = ""
                 }

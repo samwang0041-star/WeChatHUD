@@ -699,8 +699,8 @@ struct AISettingsView: View {
                 SettingsRowDivider()
                 SettingsToggleRow("回复建议", subtitle: "先替你起草，由你决定怎么回。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
-                SettingsRow("整理待办", subtitle: "从聊天中找出需要跟进的事。未设 AI 时仍可查看原文。") {
-                    Text("已开启").font(.system(size: 12)).foregroundStyle(.secondary)
+                SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
+                    Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             originalExampleCard

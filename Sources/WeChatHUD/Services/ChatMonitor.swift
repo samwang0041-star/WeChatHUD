@@ -1277,7 +1277,9 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotManuallyPaused = manPaused
                     self.autopilotPaused = paused
                     if let session = self.store.currentAutopilotSession() {
-                        self.autopilotLog = self.store.loadAutopilotLog(sessionId: session.id, limit: 50)
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(sessionId: session.id, limit: 50)
+                    } else {
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(sessionId: nil)
                     }
                 }
                 if result.totalProcessed > 0 {
@@ -1300,6 +1302,7 @@ final class ChatMonitor: ObservableObject {
         reloadLiveCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
         reloadPendingDiscussionItems()
+        reloadAutopilotDisplayLog()
         refreshWorkspaceChrome()
     }
 
@@ -1399,7 +1402,7 @@ final class ChatMonitor: ObservableObject {
             vipTiers: vipAlertTiers
         ))
         workspaceBadges.publish(WorkspaceBadgeCounts(
-            tasks: discussionItems.filter { $0.kind != .info }.count,
+            tasks: WorkspaceBadgeCounts.taskCount(discussionItems),
             commitments: commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
             drafts: store.draftCount(),
             pendingReplies: autopilotLog.filter { $0.action == .pending }.count
@@ -2035,6 +2038,16 @@ final class ChatMonitor: ObservableObject {
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
+        switch status {
+        case .fulfilled:
+            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .done)
+            reloadPendingDiscussionItems()
+        case .cancelled:
+            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .dismissed)
+            reloadPendingDiscussionItems()
+        case .pending, .overdue:
+            break
+        }
         reloadLiveCommitments()
         refreshWorkspaceChrome()
     }
@@ -2778,7 +2791,7 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotSessionPending = recoveredStats.totalPending
                     self.autopilotPendingSendQueue = recoveredQueue
                     self.autopilotSessionStats = recoveredStats
-                    self.autopilotLog = []
+                    self.reloadAutopilotDisplayLog()
                     self.refreshWorkspaceChrome()
                 }
                 print("[WCHUD] Autopilot: ON")
@@ -2863,10 +2876,22 @@ final class ChatMonitor: ObservableObject {
         }
     }
 
+    func saveAutopilotDraft(logId: Int64, reply: String) throws {
+        try store.updateAutopilotLogReply(id: logId, reply: reply)
+        if let index = autopilotLog.firstIndex(where: { $0.id == logId }) {
+            autopilotLog[index] = autopilotLog[index].replacingReply(reply)
+        }
+    }
+
+    func reloadAutopilotDisplayLog() {
+        autopilotLog = store.loadAutopilotDisplayLog(sessionId: store.currentAutopilotSession()?.id)
+    }
+
     /// Refresh autopilot UI state from the DB (source of truth for counters).
     private func refreshAutopilotSessionState() {
-        if let session = store.currentAutopilotSession() {
-            autopilotLog = store.loadAutopilotLog(sessionId: session.id, limit: 50)
+        let session = store.currentAutopilotSession()
+        reloadAutopilotDisplayLog()
+        if let session {
             autopilotSessionSent = session.totalSent
             autopilotSessionPending = session.totalPending
         }

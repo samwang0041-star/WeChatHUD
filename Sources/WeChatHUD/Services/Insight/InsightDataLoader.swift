@@ -107,8 +107,9 @@ final class InsightDataLoader {
         }
 
         let pendingAsks = store.loadPendingAsks(bucket: nil, status: .pending)
+            .filter { DiscussionLiveWindow.contains($0, cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)) }
         let recalledMessages = store.loadRecalledMessages(since: cutoff, limit: 1000)
-        let days = window.seconds.map { max($0 / 86400, 1) } ?? 365
+        let days = window.dayCount
 
         let overview = ChatStatsEngine.computeGlobalOverview(
             allStats: stats,

@@ -1072,4 +1072,45 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(all.count, 1)
         XCTAssertEqual(all[0].displayName, "Alice Updated")
     }
+
+    func testOpenAutopilotPendingSurvivesEndedSessionAndSavesReply() throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "c", chatName: "C",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "proactive", triggerText: "在吗",
+            generatedReply: "稍后", confidence: 0.6,
+            riskLevel: .medium, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        try store.endAutopilotSession(id: sessionId)
+        XCTAssertNil(store.currentAutopilotSession())
+
+        let open = store.loadOpenAutopilotPendingItems()
+        XCTAssertEqual(open.count, 1)
+        XCTAssertEqual(open[0].triggerMsgUID, "proactive")
+        let display = store.loadAutopilotDisplayLog(sessionId: nil)
+        XCTAssertEqual(display.map(\.id), open.map(\.id))
+
+        try store.updateAutopilotLogReply(id: open[0].id, reply: "改过的草稿")
+        XCTAssertEqual(store.loadOpenAutopilotPendingItems().first?.generatedReply, "改过的草稿")
+    }
+
+    func testCompletingACommitmentClosesTheMatchingDiscussionRow() throws {
+        try store.upsertCommitment(
+            msgUID: "same-msg", chatUsername: "chat", chatName: "项目群",
+            content: "提交方案", commitTo: "林晓",
+            deadlineAt: Date(), confidence: 0.9, promptVersion: "test"
+        )
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "提交方案", detail: nil, anchorMsgUID: "same-msg",
+            sourceTimestamp: Int(Date().timeIntervalSince1970),
+            dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertEqual(try store.updatePendingDiscussionItems(matchingAnchorMsgUID: "same-msg", status: .done), 1)
+        XCTAssertEqual(store.loadDiscussionItems(status: .pending).count, 0)
+        XCTAssertEqual(store.loadDiscussionItems(excludingStatus: .pending).first?.status, .done)
+    }
 }
