@@ -111,4 +111,15 @@ final class PanelStateTests: XCTestCase {
         XCTAssertNil(continuation?.savedDraftID)
         XCTAssertEqual(continuation?.text, "新回复")
     }
+
+    @MainActor
+    func testLastExtendedSizeSurvivesInvalidate() {
+        let state = PanelState()
+        state.currentState = .extended
+        state.reportExtendedSize(CGSize(width: 420, height: 280))
+        XCTAssertEqual(state.lastExtendedSize.height, 280)
+        state.invalidateMeasuredSize()
+        XCTAssertEqual(state.measuredExtendedSize, .zero)
+        XCTAssertEqual(state.lastExtendedSize.height, 280)
+    }
 }

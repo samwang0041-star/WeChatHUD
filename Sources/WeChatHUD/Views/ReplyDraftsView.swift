@@ -22,6 +22,7 @@ struct ReplyDraftsView: View {
         let chatName: String
         var text: String
         let createdAt: Date
+        let isComposerOnly: Bool
     }
 
     private var filteredDrafts: [Draft] {
@@ -46,7 +47,7 @@ struct ReplyDraftsView: View {
                     .padding(.vertical, 8)
             }
             if drafts.isEmpty {
-                ContentUnavailableView("还没有回复草稿", systemImage: "square.and.pencil", description: Text("在对话里写好回复后选择“存为草稿”，就可以在这里继续编辑。草稿不会自动发送。"))
+                ContentUnavailableView("还没有回复草稿", systemImage: "square.and.pencil", description: Text("对话里正在写的回复、以及点过「存为草稿」的内容，都会出现在这里。草稿不会自动发送。"))
                     .frame(maxWidth: .infinity, minHeight: 240)
             } else if filteredDrafts.isEmpty {
                 VStack(spacing: 10) {
@@ -147,6 +148,9 @@ struct ReplyDraftsView: View {
                                 HStack {
                                     Text(draft.chatName).font(.system(size: 13, weight: .semibold))
                                     Spacer()
+                                    if draft.isComposerOnly {
+                                        Text("正在写").font(.system(size: 11)).foregroundStyle(.secondary)
+                                    }
                                     Text(draft.createdAt, format: .dateTime.hour().minute())
                                         .font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
@@ -179,8 +183,8 @@ struct ReplyDraftsView: View {
                 HStack(spacing: 10) {
                     CompanionAvatar(name: selected.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(selected.chatName) · 私聊").font(.system(size: 15, weight: .semibold))
-                        Text("未发送").font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text("\(selected.chatName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")").font(.system(size: 15, weight: .semibold))
+                        Text(selected.isComposerOnly ? "正在写，还没存成草稿" : "未发送").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Menu {
@@ -261,12 +265,21 @@ struct ReplyDraftsView: View {
 
     private func persist(_ draft: Draft, text: String) {
         do {
-            try store.updateDraft(id: draft.id, text: text)
-            monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
+            if draft.isComposerOnly {
+                try store.setSetting("composer_draft:\(draft.chatUsername)", value: text)
+                monitor.composerDraftEdits[draft.chatUsername] = text
+            } else {
+                try store.updateDraft(id: draft.id, text: text)
+                monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
+            }
             savedAt = Date()
             feedback = nil
         } catch {
-            monitor.unsavedReplyDraftEdits[draft.id] = text
+            if draft.isComposerOnly {
+                monitor.composerDraftEdits[draft.chatUsername] = text
+            } else {
+                monitor.unsavedReplyDraftEdits[draft.id] = text
+            }
             feedback = "自动保存失败，文字仍保留在当前应用中，请重试。"
         }
     }
@@ -297,8 +310,13 @@ struct ReplyDraftsView: View {
 
     private func deleteDraft(_ draft: Draft) {
         do {
-            try store.deleteDraft(id: draft.id)
-            monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
+            if draft.isComposerOnly {
+                try store.clearComposerDraft(chatUsername: draft.chatUsername)
+                monitor.composerDraftEdits[draft.chatUsername] = ""
+            } else {
+                try store.deleteDraft(id: draft.id)
+                monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
+            }
             drafts.removeAll { $0.id == draft.id }
             if selectedID == draft.id { selectedID = drafts.first?.id }
             monitor.refreshWorkspaceChrome()
@@ -314,12 +332,24 @@ struct ReplyDraftsView: View {
     }
 
     private func load() {
-        let stored = store.loadDrafts()
-        if stored.isEmpty && !monitor.unsavedReplyDraftEdits.isEmpty {
+        let rows = store.loadWorkspaceDrafts()
+        if rows.isEmpty && !monitor.unsavedReplyDraftEdits.isEmpty {
             feedback = "本地草稿暂不可读，已保留当前未保存的文字。请稍后重试。"
             return
         }
-        drafts = stored.map { Draft(id: $0.id, chatUsername: $0.chatUsername, chatName: $0.chatName, text: monitor.unsavedReplyDraftEdits[$0.id] ?? $0.text, createdAt: $0.createdAt) }
+        drafts = rows.map { row in
+            let text = row.isComposerOnly
+                ? (monitor.composerDraftEdits[row.chatUsername] ?? row.text)
+                : (monitor.unsavedReplyDraftEdits[row.id] ?? row.text)
+            return Draft(
+                id: row.id,
+                chatUsername: row.chatUsername,
+                chatName: row.chatName,
+                text: text,
+                createdAt: row.createdAt,
+                isComposerOnly: row.isComposerOnly
+            )
+        }
         if selectedID == nil { selectedID = drafts.first?.id }
     }
 }

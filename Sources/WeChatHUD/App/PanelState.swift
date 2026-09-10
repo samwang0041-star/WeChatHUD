@@ -104,6 +104,8 @@ final class PanelState: ObservableObject {
     /// exactly (including expanded rows that reveal action buttons).
     /// `.zero` means "not yet measured" — AppDelegate should ignore it.
     @Published var measuredExtendedSize: CGSize = .zero
+    /// Survives invalidateMeasuredSize so compact to extended can reuse the last real size.
+    private(set) var lastExtendedSize: CGSize = .zero
 
     /// SwiftUI-measured rendered height of the notification banner
     /// content (notch padding included). Published so AppDelegate can
@@ -442,6 +444,9 @@ final class PanelState: ObservableObject {
         guard size != .zero, size != measuredExtendedSize else { return }
         AnimationDebugger.logEvent("reportSize state=\(currentState) size=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) ready=\(isReady)")
         measuredExtendedSize = size
+        if currentState == .extended {
+            lastExtendedSize = size
+        }
     }
 
     /// Reset the size gate so the next SwiftUI PreferenceKey report

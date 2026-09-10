@@ -187,11 +187,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if !self.didHandleInitialStateEmission {
                     self.didHandleInitialStateEmission = true
                     self.panel.setFrameInstantly(height: h, width: w)
-                } else if state == .extended || state == .notification || state == .detail {
-                    // Start the resize synchronously with the state change.
-                    // Extended still accepts the later SwiftUI measurement,
-                    // but this first target prevents the 420pt inbox from
-                    // rendering for one frame inside the old compact window.
+                } else if state == .extended {
+                    let cached = self.panelState.lastExtendedSize
+                    if cached.width > 1, cached.height > 1 {
+                        self.panel.animateHeight(to: cached.height, width: cached.width, caller: "AppDelegate.currentState.extended.cached")
+                    } else {
+                        // First hover: snap the estimate so the inbox is not
+                        // clipped, then let the measurement sink run the only
+                        // animation. Animating the estimate first was the bounce.
+                        self.panel.setFrameInstantly(height: h, width: w)
+                    }
+                } else if state == .notification || state == .detail {
                     self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.\(state)")
                 }
                 // compact is left for the measurement sink to drive because
@@ -581,7 +587,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateMenuBarIcon()
         if let statusItem {
             MenuBarController.shared.isCompanionOpen = { [weak self] in
-                self?.panelState.currentState == .detail
+                self?.panelState.currentState != .compact
             }
             MenuBarController.shared.installMenu(on: statusItem, target: self)
         }
@@ -671,11 +677,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleCompanionFromMenu() {
         MainActor.assumeIsolated {
-            if panelState.currentState == .detail {
-                panelState.collapse()
+            if panelState.currentState == .compact {
+                panelState.goExtended()
             } else {
-                panelState.pendingSettingsTab = "today"
-                panelState.showDetail()
+                panelState.collapse()
             }
         }
     }

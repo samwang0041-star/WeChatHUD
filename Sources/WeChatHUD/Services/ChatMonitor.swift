@@ -1404,7 +1404,7 @@ final class ChatMonitor: ObservableObject {
         workspaceBadges.publish(WorkspaceBadgeCounts(
             tasks: WorkspaceBadgeCounts.taskCount(discussionItems),
             commitments: commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
-            drafts: store.draftCount(),
+            drafts: store.workspaceDraftCount(),
             pendingReplies: autopilotLog.filter { $0.action == .pending }.count
         ))
     }
