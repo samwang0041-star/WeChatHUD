@@ -142,6 +142,15 @@ actor ChatInsightService {
             : "分析范围：已读取该日全部消息，其中 \(analyzedCount) 条可分析文本；图片、语音等媒体内容未纳入语义分析。"
     }
 
+    static func splitCoverageNotice(_ insight: String) -> (notice: String?, body: String) {
+        guard insight.hasPrefix("分析范围：") else { return (nil, insight) }
+        let parts = insight.split(separator: "\n\n", maxSplits: 1, omittingEmptySubsequences: false)
+        if parts.count == 2 {
+            return (String(parts[0]), String(parts[1]))
+        }
+        return (insight, "")
+    }
+
     static func addingCoverageNotice(to result: ChatInsightResult, analyzedCount: Int, isTruncated: Bool) -> ChatInsightResult {
         let notice = coverageNotice(analyzedCount: analyzedCount, isTruncated: isTruncated)
         return ChatInsightResult(

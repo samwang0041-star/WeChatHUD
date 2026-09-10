@@ -93,6 +93,16 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
         XCTAssertTrue(full.contains("媒体内容未纳入"))
     }
 
+    func testCoverageNoticeSplitsOutOfInsightProse() {
+        let notice = ChatInsightService.coverageNotice(analyzedCount: 12, isTruncated: false)
+        let split = ChatInsightService.splitCoverageNotice(notice + "\n\n这是模型写的摘要。")
+        XCTAssertEqual(split.notice, notice)
+        XCTAssertEqual(split.body, "这是模型写的摘要。")
+        let plain = ChatInsightService.splitCoverageNotice("没有范围前缀的解读")
+        XCTAssertNil(plain.notice)
+        XCTAssertEqual(plain.body, "没有范围前缀的解读")
+    }
+
     func testRecalledMessagesAreScopedToTheSelectedChatAndDay() {
         func recall(_ chat: String, at: Int, text: String) -> RecalledMessage {
             RecalledMessage(
