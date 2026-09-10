@@ -45,6 +45,10 @@ extension ChatMonitor {
         let myUsername = reader.myUsername()
         let myDisplayName = reader.displayName(for: myUsername)
         guard !myUsername.isEmpty, !reader.hasAccountSwitched() else { return completed }
+        // One snapshot for the whole drain: the admission rules are consulted
+        // per item, and re-reading them per message would put several queries on
+        // a path that runs for every queued message.
+        let admissionRules = AdmissionRules.load(store: store)
         for item in items {
             guard !Task.isCancelled, !reader.hasAccountSwitched() else { break }
             let msg = item.msg
@@ -52,7 +56,11 @@ extension ChatMonitor {
             // or ignored a sender while this item was backing off.
             guard item.chatUsername == msg.chatUsername,
                   store.isWhitelisted(item.chatUsername),
-                  !MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: store.loadIgnoredSenderMap()),
+                  !admissionRules.isMuted(
+                      chatUsername: msg.chatUsername,
+                      senderUsername: msg.senderUsername,
+                      senderName: msg.senderName
+                  ),
                   !MessageHelpers.isFromSelf(msg, chatUsername: msg.chatUsername, myUsername: myUsername,
                                              myDisplayName: myDisplayName, mySelfNames: reader.mySelfNames) else {
                 completed.insert(msg.id)
@@ -91,7 +99,11 @@ extension ChatMonitor {
             }
             // Scope can change while the provider is answering as well.
             guard store.isWhitelisted(msg.chatUsername),
-                  !MessageHelpers.isIgnoredSender(msg, ignoredSenderMap: store.loadIgnoredSenderMap()) else {
+                  !admissionRules.isMuted(
+                      chatUsername: msg.chatUsername,
+                      senderUsername: msg.senderUsername,
+                      senderName: msg.senderName
+                  ) else {
                 completed.insert(msg.id)
                 continue
             }

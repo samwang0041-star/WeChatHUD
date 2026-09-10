@@ -200,6 +200,25 @@ final class HUDStore: ObservableObject {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_ignored_senders_created_at ON ignored_senders(created_at DESC)")
 
+        // Ignore rules gained a scope: a person can now be muted everywhere
+        // ("global"), not only inside the one conversation where the rule was
+        // created. Existing rows keep the old, narrower meaning.
+        _ = try? exec("ALTER TABLE ignored_senders ADD COLUMN scope TEXT NOT NULL DEFAULT 'chat'")
+
+        // Members the user wants to hear from inside one group, even when the
+        // message is not an @. The room may be noisy overall while two or three
+        // people in it are the reason to keep following it.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS group_member_rules (
+                chat_username   TEXT NOT NULL,
+                chat_name       TEXT NOT NULL,
+                sender_username TEXT NOT NULL,
+                sender_name     TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                PRIMARY KEY(chat_username, sender_username)
+            )
+        """)
+
         try exec("""
             CREATE TABLE IF NOT EXISTS scan_dismissed (
                 username     TEXT PRIMARY KEY,
@@ -877,7 +896,7 @@ final class HUDStore: ObservableObject {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, """
-            SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at
+            SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at, scope
             FROM ignored_senders
             ORDER BY created_at DESC, chat_name ASC, sender_name ASC
         """, -1, &stmt, nil) == SQLITE_OK else {
@@ -890,19 +909,69 @@ final class HUDStore: ObservableObject {
                 senderIdentifier: String(cString: sqlite3_column_text(stmt, 2)),
                 senderUsername: String(cString: sqlite3_column_text(stmt, 3)),
                 senderName: String(cString: sqlite3_column_text(stmt, 4)),
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5)))
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5))),
+                scope: IgnoredSenderScope(
+                    rawValue: sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? ""
+                ) ?? .chat
             )
             result.append(rule)
         }
         return result
     }
 
+    /// Sentinel conversation key for a rule that follows the person everywhere.
+    /// A sentinel keeps the existing composite primary key meaningful instead of
+    /// widening it to nullable columns.
+    static let globalIgnoreScopeKey = "*"
+
     func loadIgnoredSenderMap() -> [String: Set<String>] {
         var map: [String: Set<String>] = [:]
-        for rule in loadIgnoredSenders() {
+        for rule in loadIgnoredSenders() where rule.scope == .chat {
             map[rule.chatUsername, default: []].insert(rule.senderIdentifier)
         }
         return map
+    }
+
+    /// Senders muted in every conversation.
+    func loadGlobalIgnoredSenders() -> Set<String> {
+        Set(
+            loadIgnoredSenders()
+                .filter { $0.scope == .global }
+                .map(\.senderIdentifier)
+        )
+    }
+
+    /// Mute a person everywhere. Independent of any single conversation, so it
+    /// survives the user leaving or re-adding a chat.
+    func ignoreSenderEverywhere(
+        senderUsername: String,
+        senderName: String
+    ) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        let identifier = HUDStore.senderIdentifier(
+            senderUsername: senderUsername,
+            senderName: senderName
+        )
+        try exec("""
+            INSERT INTO ignored_senders(
+                chat_username, chat_name, sender_identifier,
+                sender_username, sender_name, created_at, scope
+            )
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(chat_username, sender_identifier) DO UPDATE SET
+                chat_name       = excluded.chat_name,
+                sender_username = excluded.sender_username,
+                sender_name     = excluded.sender_name,
+                scope           = excluded.scope
+        """, params: [
+            Self.globalIgnoreScopeKey,
+            senderName,
+            identifier,
+            senderUsername,
+            senderName,
+            "\(now)",
+            IgnoredSenderScope.global.rawValue
+        ])
     }
 
     func ignoreSender(
@@ -967,6 +1036,81 @@ final class HUDStore: ObservableObject {
         let identifier = HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
         sqlite3_bind_text(stmt, 2, identifier, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    // MARK: - Message admission
+
+    func loadAdmissionConfig() -> AdmissionConfig {
+        getSettingJSON("admission", as: AdmissionConfig.self) ?? AdmissionConfig()
+    }
+
+    func saveAdmissionConfig(_ config: AdmissionConfig) throws {
+        try setSettingJSON("admission", value: config)
+    }
+
+    // MARK: - Group member rules
+
+    func loadGroupMemberRules() -> [GroupMemberRule] {
+        var result: [GroupMemberRule] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, """
+            SELECT chat_username, chat_name, sender_username, sender_name, created_at
+            FROM group_member_rules
+            ORDER BY created_at DESC, chat_name ASC, sender_name ASC
+        """, -1, &stmt, nil) == SQLITE_OK else {
+            return result
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            result.append(GroupMemberRule(
+                chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
+                chatName: String(cString: sqlite3_column_text(stmt, 1)),
+                senderUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                senderName: String(cString: sqlite3_column_text(stmt, 3)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 4)))
+            ))
+        }
+        return result
+    }
+
+    /// group username → members whose messages should surface.
+    func loadGroupMemberMap() -> [String: Set<String>] {
+        var map: [String: Set<String>] = [:]
+        for rule in loadGroupMemberRules() {
+            map[rule.chatUsername, default: []].insert(rule.senderUsername)
+        }
+        return map
+    }
+
+    func addGroupMemberRule(
+        chatUsername: String,
+        chatName: String,
+        senderUsername: String,
+        senderName: String
+    ) throws {
+        guard !senderUsername.isEmpty else { return }
+        try exec("""
+            INSERT INTO group_member_rules(
+                chat_username, chat_name, sender_username, sender_name, created_at
+            )
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(chat_username, sender_username) DO UPDATE SET
+                chat_name   = excluded.chat_name,
+                sender_name = excluded.sender_name
+        """, params: [
+            chatUsername,
+            chatName,
+            senderUsername,
+            senderName,
+            "\(Int(Date().timeIntervalSince1970))"
+        ])
+    }
+
+    func removeGroupMemberRule(chatUsername: String, senderUsername: String) throws {
+        try exec("""
+            DELETE FROM group_member_rules
+            WHERE chat_username=? AND sender_username=?
+        """, params: [chatUsername, senderUsername])
     }
 
     // MARK: - Scan Dismissed
