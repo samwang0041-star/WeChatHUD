@@ -353,6 +353,9 @@ struct ChatInsightDetailView: View {
     private var timelineContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let result, !result.topics.isEmpty {
+                Text("下面的条数和人数是模型估计，不是逐条统计。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                 ForEach(Array(result.topics.enumerated()), id: \.offset) { index, topic in
                     HStack(alignment: .top, spacing: 12) {
                         VStack(spacing: 0) {
@@ -556,10 +559,10 @@ struct ChatInsightDetailView: View {
                 statusBadge(topic.status)
             }
             HStack(spacing: 12) {
-                Label("\(topic.messageCount)条", systemImage: "bubble.left")
+                Label("约 \(topic.messageCount) 条", systemImage: "bubble.left")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                Label("\(topic.participantCount)人", systemImage: "person.2")
+                Label("约 \(topic.participantCount) 人", systemImage: "person.2")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
