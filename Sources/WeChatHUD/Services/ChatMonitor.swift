@@ -1361,10 +1361,9 @@ final class ChatMonitor: ObservableObject {
     }
 
     private func reloadPendingDiscussionItems() {
-        let next = store.loadDiscussionItems(
-            status: .pending,
-            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-        )
+        let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        _ = try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)
+        let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
         refreshWorkspaceChrome()
     }

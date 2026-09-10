@@ -171,11 +171,24 @@ final class ProductWorkspaceTests: XCTestCase {
             )
         }
         XCTAssertTrue(DiscussionLiveWindow.contains(item(1, sourceOffset: 3_600, dueOffset: nil), cutoff: cutoff))
-        XCTAssertTrue(DiscussionLiveWindow.contains(item(2, sourceOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
+        XCTAssertFalse(DiscussionLiveWindow.contains(item(2, sourceOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
         XCTAssertTrue(DiscussionLiveWindow.contains(item(3, sourceOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
-        var done = item(4, sourceOffset: -20 * 86_400, dueOffset: -15 * 86_400)
-        done.status = .done
-        XCTAssertFalse(DiscussionLiveWindow.contains(done, cutoff: cutoff))
+        func finished(_ id: Int64, status: DiscussionItemStatus, sourceOffset: Int, dueOffset: Int?, updatedOffset: Int) -> DiscussionItem {
+            let base = item(id, sourceOffset: sourceOffset, dueOffset: dueOffset)
+            return DiscussionItem(
+                id: base.id, chatUsername: base.chatUsername, chatName: base.chatName,
+                kind: base.kind, owner: base.owner, content: base.content, detail: base.detail,
+                anchorMsgUID: base.anchorMsgUID, sourceTimestamp: base.sourceTimestamp, dueAt: base.dueAt,
+                status: status, confidence: base.confidence, promptVersion: base.promptVersion,
+                createdAt: now, updatedAt: Date(timeIntervalSince1970: TimeInterval(cutoff + updatedOffset))
+            )
+        }
+        XCTAssertFalse(DiscussionLiveWindow.contains(
+            finished(4, status: .done, sourceOffset: -20 * 86_400, dueOffset: -15 * 86_400, updatedOffset: -20 * 86_400),
+            cutoff: cutoff))
+        XCTAssertTrue(DiscussionLiveWindow.contains(
+            finished(5, status: .archived, sourceOffset: -20 * 86_400, dueOffset: nil, updatedOffset: 0),
+            cutoff: cutoff))
 
         let store = HUDStore(dbPath: ":memory:")
         try store.open()
@@ -199,14 +212,49 @@ final class ProductWorkspaceTests: XCTestCase {
         ))
         XCTAssertEqual(
             store.loadDiscussionItems(status: .pending, relevantSince: cutoff).map(\.content).sorted(),
-            ["刚出现", "旧的但未到期", "旧的无期限"]
+            ["刚出现", "旧的但未到期"]
         )
-        let staleDone = try XCTUnwrap(store.loadDiscussionItems(status: .pending).first { $0.content == "旧的无期限" })
-        try store.updateDiscussionItemStatus(id: staleDone.id, status: .done)
-        XCTAssertFalse(
-            store.loadDiscussionItems(excludingStatus: .pending, relevantSince: cutoff)
-                .contains { $0.content == "旧的无期限" }
+        XCTAssertEqual(try store.archiveStalePendingDiscussionItems(cutoff: cutoff, now: now), 1)
+        XCTAssertEqual(
+            store.loadDiscussionItems(status: .pending, relevantSince: cutoff).map(\.content).sorted(),
+            ["刚出现", "旧的但未到期"]
         )
+        XCTAssertEqual(
+            store.loadDiscussionItems(excludingStatus: .pending, relevantSince: cutoff).map(\.content),
+            ["旧的无期限"]
+        )
+        XCTAssertEqual(
+            store.loadDiscussionItems(excludingStatus: .pending, relevantSince: cutoff).first?.status,
+            .archived
+        )
+    }
+
+    func testLiveRankPutsUpcomingBeforeAncientOverdueAndUndated() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 10, hour: 16))!
+        func item(_ id: Int64, owner: DiscussionItemOwner = .mine, kind: DiscussionItemKind = .todo,
+                  sourceOffset: TimeInterval, dueOffset: TimeInterval?) -> DiscussionItem {
+            DiscussionItem(
+                id: id, chatUsername: "chat", chatName: "项目群", kind: kind, owner: owner,
+                content: "事项\(id)", detail: nil, anchorMsgUID: "\(id)",
+                sourceTimestamp: Int(now.timeIntervalSince1970 + sourceOffset),
+                dueAt: dueOffset.map { now.addingTimeInterval($0) },
+                status: .pending, confidence: 0.9, promptVersion: "test", createdAt: now, updatedAt: now
+            )
+        }
+        let ancientOverdue = item(1, sourceOffset: -150 * 86_400, dueOffset: -145 * 86_400)
+        let recentOverdue = item(2, sourceOffset: -3 * 86_400, dueOffset: -2 * 86_400)
+        let tomorrow = item(3, sourceOffset: -3600, dueOffset: 18 * 3600)
+        let nextWeek = item(4, sourceOffset: -7200, dueOffset: 6 * 86_400)
+        let undatedRecent = item(5, sourceOffset: -1800, dueOffset: nil)
+        let undatedOld = item(6, sourceOffset: -10 * 86_400, dueOffset: nil)
+        let ranked = DiscussionPresentation.items(
+            [ancientOverdue, recentOverdue, tomorrow, nextWeek, undatedRecent, undatedOld],
+            scope: .mine, query: "", history: false, now: now, calendar: calendar
+        )
+        XCTAssertEqual(ranked.map(\.id), [3, 4, 2, 1, 5, 6])
+        XCTAssertEqual(Array(ranked.prefix(4)).map(\.id), [3, 4, 2, 1],
+                       "HUD four slots must not be the oldest overdue pile")
     }
 
     func testCommitmentLoadKeepsDueItemsInsideTheSameWindow() throws {
