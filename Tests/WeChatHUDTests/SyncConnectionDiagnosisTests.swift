@@ -46,4 +46,19 @@ final class SyncConnectionDiagnosisTests: XCTestCase {
             XCTAssertFalse(message.contains("白名单"), message)
         }
     }
+
+    func testConnectionFooterDoesNotAskForAuthorizationWhenSendIsReady() {
+        XCTAssertEqual(
+            SyncSettingsView.connectionFooter(readingReady: false, sendReady: false),
+            "先连接微信。发送回复还需要系统授权。"
+        )
+        XCTAssertEqual(
+            SyncSettingsView.connectionFooter(readingReady: true, sendReady: false),
+            "读取聊天已可使用，发送前需要在系统中额外授权。"
+        )
+        XCTAssertEqual(
+            SyncSettingsView.connectionFooter(readingReady: true, sendReady: true),
+            "读取聊天和跳转发送都已就绪。"
+        )
+    }
 }

@@ -203,6 +203,16 @@ struct SyncSettingsView: View {
         }
     }
 
+    static func connectionFooter(readingReady: Bool, sendReady: Bool) -> String {
+        if !readingReady {
+            return "先连接微信。发送回复还需要系统授权。"
+        }
+        if sendReady {
+            return "读取聊天和跳转发送都已就绪。"
+        }
+        return "读取聊天已可使用，发送前需要在系统中额外授权。"
+    }
+
     private var connectionCapabilityList: some View {
         let readingReady = monitor.stats.lastSyncAt != nil
         let aiConfig = store.loadAIConfig()
@@ -245,9 +255,7 @@ struct SyncSettingsView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle")
                     .foregroundStyle(CompanionPalette.jade)
-                Text(readingReady
-                     ? "读取聊天已可使用，发送前需要在系统中额外授权。"
-                     : "先连接微信。发送回复还需要系统授权。")
+                Text(Self.connectionFooter(readingReady: readingReady, sendReady: sendReady))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }

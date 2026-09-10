@@ -467,7 +467,7 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("没有历史快照") == true)
     }
 
-    func testTodayReportKeepsDueAsksAndDropsUndatedBacklog() throws {
+    func testTodayReportKeepsDueTodayAsksAndDropsOverdueReviewBacklog() throws {
         let (store, path) = try makeTempStore()
         defer {
             store.close()
@@ -504,12 +504,36 @@ final class DailyReportBuilderTests: XCTestCase {
             confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
             createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
         ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-due-today", chatUsername: "wxid_today_due", chatName: "同事",
+            senderName: "同事", rawText: "今天截止", summary: "今天到期的材料",
+            askType: .sendFile, deadlineAt: now,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-review-today", chatUsername: "wxid_review", chatName: "班级群",
+            senderName: "老师", rawText: "明天带被子", summary: "待确认归属：明天带被子到校",
+            askType: .sendFile, deadlineAt: now,
+            confidence: 0.7, bucket: .review, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "wxid_due", chatName: "同事", kind: .todo, owner: .mine,
+            content: "过期仍要交的我要做", detail: nil, anchorMsgUID: "discussion-overdue",
+            sourceTimestamp: Int(yesterday.timeIntervalSince1970),
+            dueAt: yesterday, confidence: 0.9, promptVersion: "test"
+        ))
         let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build(for: now, now: now)
         XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-yesterday" })
         XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-stale" })
-        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-overdue" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-overdue" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-review-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-due-today" })
         XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .todo && $0.content == "过期仍要交的我要做" })
         XCTAssertEqual(report.metrics.pendingAskCount, 2)
+        XCTAssertEqual(report.metrics.pendingTodoCount, 1)
     }
 
     private func makeTempStore() throws -> (HUDStore, String) {

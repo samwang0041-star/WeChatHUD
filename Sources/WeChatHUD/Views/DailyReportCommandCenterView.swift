@@ -269,6 +269,9 @@ struct DailyReportCommandCenterView: View {
                     statLabel("超期", value: progress.overdueCount, color: .red)
                 }
             }
+            Text("含我要做、今天到期的请求，以及还没兑现的承诺")
+                .font(.system(size: isWorkspace ? 12 : 10))
+                .foregroundStyle(.secondary)
         }
         .padding(isWorkspace ? 14 : 10)
         .background(Color(NSColor.controlBackgroundColor))
