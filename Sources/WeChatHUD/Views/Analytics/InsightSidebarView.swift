@@ -7,6 +7,7 @@ struct InsightSidebarView: View {
     @Binding var selectedChat: String?
     @Binding var searchText: String
     let onAnalyzeChat: (String) -> Void
+    var selectedDate: Date = Date()
     @State private var filter: ChatReviewFilter = .all
 
     private enum ChatReviewFilter: String, CaseIterable {
@@ -107,9 +108,9 @@ struct InsightSidebarView: View {
 
     private func whitelistRow(_ entry: WhitelistEntry) -> some View {
         let isSelected = selectedChat == entry.id
-        let hasInsight = insightCoordinator.chatInsights[entry.id] != nil
+        let insight = insightCoordinator.result(for: entry.id, date: selectedDate)
+        let hasInsight = insight != nil
         let isAnalyzing = insightCoordinator.chatInsightLoading.contains(entry.id)
-        let insight = insightCoordinator.chatInsights[entry.id]
         let stats = insightStore.allStats[entry.id]
 
         return Button(action: {
@@ -239,7 +240,7 @@ struct InsightSidebarView: View {
         case .groups: return isGroup
         case .direct: return !isGroup
         case .updated:
-            return insightCoordinator.chatInsights[id] != nil || messageCount > 0
+            return insightCoordinator.result(for: id, date: selectedDate) != nil || messageCount > 0
         }
     }
 
