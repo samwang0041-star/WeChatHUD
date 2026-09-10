@@ -12,10 +12,13 @@ extension ChatMonitor {
 
     func loadDailyReport(for date: Date, force: Bool = false) async {
         let dateKey = date.dailyReportDateKey
+        let factsStamp = currentDailyReportFactsStamp()
         if !force, let cached = dailyReportCache[dateKey],
            Date().timeIntervalSince(cached) < 1800,
            dailyReport?.date.dailyReportDateKey == dateKey {
-            return
+            if dailyReportCacheStamp[dateKey] == factsStamp {
+                return
+            }
         }
         let generation = beginDailyReportLoad()
         dailyReportError = nil
@@ -50,9 +53,28 @@ extension ChatMonitor {
         dailyReport = report
         dailyReportGeneratedAt = report.generatedAt
         dailyReportCache[dateKey] = report.generatedAt
+        dailyReportCacheStamp[dateKey] = factsStamp
         dailyReportError = report.aiErrorMessage
         for ins in insights { dailyReportActionInsights[ins.actionID] = ins }
         dailyReportIsLoading = false
+    }
+
+    /// Local facts the 30-minute cache must not outlive: reply debt, live
+    /// todos, open promises, and last successful sync.
+    func currentDailyReportFactsStamp() -> String {
+        let debts = replyDebtItems.map(\.id).sorted().joined(separator: ",")
+        let tasks = discussionItems
+            .filter { $0.status == .pending && $0.kind != .info }
+            .map { String($0.id) }
+            .sorted()
+            .joined(separator: ",")
+        let commits = commitments
+            .filter { $0.status == .pending || $0.status == .overdue }
+            .map(\.msgUID)
+            .sorted()
+            .joined(separator: ",")
+        let sync = stats.lastSyncAt.map { String(Int($0.timeIntervalSince1970)) } ?? "0"
+        return debts + "|" + tasks + "|" + commits + "|" + sync
     }
 
     func markDailyReportActionDone(_ action: DailyReportAction) {

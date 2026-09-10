@@ -71,6 +71,9 @@ final class ChatMonitor: ObservableObject {
     @Published var dailyReport: DailyReport? = nil
     @Published var dailyReportGeneratedAt: Date?
     var dailyReportCache: [String: Date] = [:]  // dateKey -> generatedAt = nil
+    /// Source fingerprint stored with the 30-minute cache. Inbox/todo/debt
+    /// changes must not keep showing a stale 今日小结.
+    var dailyReportCacheStamp: [String: String] = [:]
     @Published var dailyReportError: String? = nil
     @Published var dailyReportIsLoading: Bool = false
     @Published var dailyReportActionInsights: [String: DailyReportActionInsight] = [:]
