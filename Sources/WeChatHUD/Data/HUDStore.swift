@@ -1215,7 +1215,11 @@ final class HUDStore: ObservableObject {
     /// Load asks filtered by bucket and/or status. Pass nil to skip a
     /// filter. Sort: items with a deadline come first (earliest deadline
     /// first), then dateless items by creation time descending.
-    func loadPendingAsks(bucket: AskBucket? = nil, status: AskStatus? = nil) -> [PendingAsk] {
+    func loadPendingAsks(
+        bucket: AskBucket? = nil,
+        status: AskStatus? = nil,
+        relevantSince: Int? = nil
+    ) -> [PendingAsk] {
         var sql = """
             SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
                    summary, ask_type, deadline_at, confidence, bucket, status,
@@ -1278,6 +1282,9 @@ final class HUDStore: ObservableObject {
                 urgency: urgencyStr.flatMap { s in s.isEmpty ? nil : AskUrgency(rawValue: s) }
             )
             results.append(ask)
+        }
+        if let relevantSince {
+            return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
         }
         return results
     }
@@ -2402,6 +2409,31 @@ final class HUDStore: ObservableObject {
             DiscussionItemStatus.archived.rawValue,
             ts,
             DiscussionItemStatus.pending.rawValue,
+            "\(cutoff)",
+            "\(cutoff)"
+        ])
+        return Int(sqlite3_changes(db))
+    }
+
+    /// Stale classifier asks use the same 14-day source/due window as discussion.
+    @discardableResult
+    func archiveStalePendingAsks(cutoff: Int, now: Date = Date()) throws -> Int {
+        let ts = String(Int(now.timeIntervalSince1970))
+        try exec("""
+            UPDATE pending_asks
+            SET status=?, updated_at=?
+            WHERE status=?
+              AND CAST(created_at AS INTEGER) < ?
+              AND (
+                    deadline_at IS NULL
+                    OR TRIM(CAST(deadline_at AS TEXT)) = ''
+                    OR CAST(IFNULL(deadline_at, 0) AS INTEGER) <= 0
+                    OR CAST(deadline_at AS INTEGER) < ?
+                  )
+        """, params: [
+            AskStatus.dismissed.rawValue,
+            ts,
+            AskStatus.pending.rawValue,
             "\(cutoff)",
             "\(cutoff)"
         ])

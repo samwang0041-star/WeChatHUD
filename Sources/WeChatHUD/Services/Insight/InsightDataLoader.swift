@@ -106,8 +106,11 @@ final class InsightDataLoader {
             }
         }
 
-        let pendingAsks = store.loadPendingAsks(bucket: nil, status: .pending)
-            .filter { DiscussionLiveWindow.contains($0, cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)) }
+        let pendingAsks = store.loadPendingAsks(
+            bucket: nil,
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
         let recalledMessages = store.loadRecalledMessages(since: cutoff, limit: 1000)
         let days = window.dayCount
 

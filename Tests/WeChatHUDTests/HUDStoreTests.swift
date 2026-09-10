@@ -1140,4 +1140,26 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_missing")?.attentionLevel, .vip)
         XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_watch")?.attentionLevel, .vip)
     }
+
+    func testStalePendingAsksLeaveTheLiveWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "old", chatUsername: "c", chatName: "C", senderName: "S",
+            rawText: "旧请求", summary: "旧请求", askType: .none, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "t",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400)),
+            updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "live", chatUsername: "c", chatName: "C", senderName: "S",
+            rawText: "新请求", summary: "新请求", askType: .none, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "t",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff + 3_600)),
+            updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        XCTAssertEqual(try store.archiveStalePendingAsks(cutoff: cutoff, now: now), 1)
+        XCTAssertEqual(store.loadPendingAsks(status: .pending, relevantSince: cutoff).map(\.msgUID), ["live"])
+        XCTAssertEqual(store.loadPendingAsks(status: .dismissed).map(\.msgUID), ["old"])
+    }
 }
