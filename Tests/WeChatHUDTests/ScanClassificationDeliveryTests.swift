@@ -223,6 +223,29 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(store.getAutopilotCursor(username: fixture.autopilotChatUsername)?.lastLocalId, 1)
     }
 
+    func testGreylistPrivateChatIsNotQueuedForAutopilot() async throws {
+        let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+
+        try store.upsertContact(
+            username: fixture.autopilotChatUsername,
+            displayName: "仅保留资料同事",
+            attentionLevel: .greylist,
+            role: .acquaintance
+        )
+        try store.setAutopilotCursor(
+            username: fixture.autopilotChatUsername,
+            lastCreateTime: 100,
+            lastLocalId: 7
+        )
+
+        let outcome = try await scan(fixture.reader, store: store, autopilotActive: true)
+        XCTAssertEqual(outcome?.newInboundMessages.count ?? 0, 0)
+        XCTAssertEqual(store.loadPendingAutopilotInbound().count, 0)
+    }
+
     private func scan(
         _ reader: WeChatReader,
         store: HUDStore,
