@@ -244,22 +244,28 @@ struct InboxView: View {
     }
 
     private var workspaceBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 14) {
             Button {
                 panelState.islandSurface = .tasks
             } label: {
-                Label("查看待办", systemImage: "checklist")
+                Image(systemName: "checklist")
+                    .font(.system(size: 11))
+                    .foregroundColor(IslandInk.secondary)
             }
-            .buttonStyle(IslandPillButtonStyle(emphasized: true))
+            .buttonStyle(.plain)
+            .help("查看待办")
             .accessibilityLabel("查看待办")
 
             Button {
                 panelState.pendingSettingsTab = "today"
                 panelState.showDetail()
             } label: {
-                Label(CompanionProductCopy.openCompanion, systemImage: "macwindow")
+                Image(systemName: "macwindow")
+                    .font(.system(size: 11))
+                    .foregroundColor(IslandInk.tertiary)
             }
-            .buttonStyle(IslandPillButtonStyle())
+            .buttonStyle(.plain)
+            .help(CompanionProductCopy.openCompanion)
             .accessibilityLabel(CompanionProductCopy.openCompanion)
 
             Spacer(minLength: 12)
@@ -268,7 +274,7 @@ struct InboxView: View {
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, IslandMetrics.sectionInset)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background(IslandInk.bar)
     }
 
