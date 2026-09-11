@@ -242,6 +242,9 @@ enum ScanEngine {
             var vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)] = []
             var newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)] = []
             var selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)] = []
+            // Shared budget for backward paging over over-cap unread backlogs,
+            // so the whitelist loop stays inside the scan interval.
+            var backlogPageBudget = Self.backlogPageBudgetPerScan
             let notificationConfig = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
 
             // Usernames of contacts explicitly marked VIP — used to detect
@@ -261,11 +264,40 @@ enum ScanEngine {
                         hasCursor: !isFirstWhitelistScan,
                         unreadCount: unreadHint
                     )
-                    messages = try reader.getMessages(
+                    // The per-chat page is capped, so a backlog larger than the
+                    // cap still needs older pages: the persisted watermark moves
+                    // to the newest fetched message, and anything between the old
+                    // watermark and this page would never be classified again.
+                    // Walk backwards (bounded by a scan-wide page budget) until
+                    // the recorded unread backlog is covered.
+                    var page = try reader.getMessages(
                         chatUsername: entry.id,
                         limit: fetchLimit,
                         sinceLocalId: nil
                     )
+                    if unreadHint > page.count, backlogPageBudget > 0, !page.isEmpty {
+                        var seen = Set(page.map(\.id))
+                        var anchor = page.last.map { ($0.createTime, max(0, $0.localId - 1)) }
+                        while page.count < unreadHint, backlogPageBudget > 0, let cursor = anchor {
+                            backlogPageBudget -= 1
+                            let older = try reader.getMessages(
+                                chatUsername: entry.id,
+                                limit: fetchLimit,
+                                sinceLocalId: nil,
+                                afterCursor: nil,
+                                beforeCursor: cursor
+                            )
+                            let fresh = older.filter { seen.insert($0.id).inserted }
+                            if fresh.isEmpty {
+                                // Older shards/pages are exhausted; stop instead
+                                // of re-reading the same page forever.
+                                break
+                            }
+                            page.append(contentsOf: fresh)
+                            anchor = fresh.last.map { ($0.createTime, max(0, $0.localId - 1)) }
+                        }
+                    }
+                    messages = page
                 } catch { continue }
 
                 let currentCursor = messages.first.map { ($0.createTime, $0.localId) } ?? (0, 0)
@@ -722,8 +754,22 @@ enum ScanEngine {
         max(defaultLimit, min(max(0, unreadCount), hardCap))
     }
 
+    /// Extra backward pages one scan may fetch to cover over-cap unread
+    /// backlogs. Shared by every chat in the scan so a single noisy chat
+    /// cannot stretch the scan past its interval.
+    static let backlogPageBudgetPerScan = 6
+
+    /// Page size for a whitelist chat.
+    ///
+    /// Both the first scan and every later scan must cover the recorded unread
+    /// backlog: the cursor always advances to the newest fetched message, so a
+    /// fixed 100-row page on the `hasCursor` path silently dropped the middle
+    /// of any larger backlog (the session.db unread counter is exactly that
+    /// size). The caller additionally pages backwards when the backlog exceeds
+    /// this cap.
     static func whitelistFetchLimit(hasCursor: Bool, unreadCount: Int, defaultLimit: Int = 100, hardCap: Int = 500) -> Int {
-        hasCursor ? defaultLimit : firstScanFetchLimit(unreadCount: unreadCount, defaultLimit: defaultLimit, hardCap: hardCap)
+        _ = hasCursor
+        return firstScanFetchLimit(unreadCount: unreadCount, defaultLimit: defaultLimit, hardCap: hardCap)
     }
 
     /// First whitelist scan classifies unread for the inbox. Those messages

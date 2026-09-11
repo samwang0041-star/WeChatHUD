@@ -148,7 +148,12 @@ final class ScanEngineTests: XCTestCase {
         XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 40), 100)
         XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 150), 150)
         XCTAssertEqual(ScanEngine.firstScanFetchLimit(unreadCount: 800), 500)
-        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: true, unreadCount: 150), 100)
+        // A cursor does not make a backlog smaller: the page must still cover
+        // the recorded unread count, or the watermark advances past messages
+        // that were never classified.
+        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: true, unreadCount: 150), 150)
+        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: true, unreadCount: 0), 100)
+        XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: true, unreadCount: 900), 500)
         XCTAssertEqual(ScanEngine.whitelistFetchLimit(hasCursor: false, unreadCount: 150), 150)
         XCTAssertFalse(ScanEngine.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: true))
         XCTAssertTrue(ScanEngine.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: false))
