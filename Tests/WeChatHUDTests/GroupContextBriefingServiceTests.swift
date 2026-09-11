@@ -265,6 +265,44 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         XCTAssertLessThan(sameSecondFirst, sameSecondSecond)
     }
 
+    /// The briefing is asked to explain "why was I mentioned" — which it
+    /// cannot do without knowing who the reader is. The payload used to carry
+    /// only the raw @ token, so the model had to guess whether "@老王" was the
+    /// person it was briefing or a bystander.
+    func testPayloadCarriesReaderIdentityAndReaderAuthoredLines() async {
+        let messages = [
+            makeMessage(id: "m1", sender: "Alice", text: "先看下预算", ts: 100),
+            makeMessage(id: "m2", sender: "王小明", text: "我这边没问题", ts: 110),
+            makeMessage(id: "m3", sender: "Alice", text: "@王小明 明天给个结论", ts: 120),
+        ]
+        let client = FakeGroupContextLLMClient(response: """
+        {"situation":"在催结论","why_mentioned":"找的是本人","current_status":"等你","next_step":"给结论","participants":["Alice"],"confidence":0.9}
+        """)
+        let service = GroupContextBriefingService(
+            reader: FakeGroupContextMessageProvider(messages: messages),
+            store: store,
+            client: client
+        )
+
+        _ = await service.explain(
+            notification: makeNotification(messageID: "m3", rawText: "@王小明 明天给个结论", ts: 120),
+            readerNames: ["王小明", "哆啦"]
+        )
+
+        let prompt = await client.lastUserPrompt
+        XCTAssertTrue(prompt.contains("reader_names"), "payload must name the reader")
+        XCTAssertTrue(prompt.contains("王小明"), "reader's own name must appear")
+        XCTAssertTrue(prompt.contains("哆啦"), "every known alias must appear, not just one")
+        // The reader's line must be identifiable, so the model can tell
+        // "someone asking me" from "me already answering".
+        XCTAssertTrue(prompt.contains("is_reader"))
+        XCTAssertTrue(prompt.contains("is_target"))
+        XCTAssertTrue(prompt.contains("now"))
+        // Local wall-clock time, not a raw unix second count.
+        XCTAssertFalse(prompt.contains("\"timestamp\""), "unix timestamps are unusable to the model")
+        XCTAssertFalse(prompt.contains("\"time\":100"), "times must be formatted, not numeric")
+    }
+
     func testSourceTimestampStillIncludesThreeFollowingMessages() async {
         let messages = (0..<12).map { index in
             makeMessage(id: "m\(index)", sender: "Alice", text: "context-\(index)", ts: 100 + index, localId: index + 1)
