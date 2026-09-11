@@ -92,9 +92,9 @@ struct NotificationBannerView: View {
                     .accessibilityLabel("看看什么事")
                 }
                 Spacer(minLength: 4)
-                VStack(spacing: 10) {
-                    closeButton
+                HStack(spacing: 2) {
                     snoozeButton
+                    closeButton
                 }
             }
             if showSnooze {
@@ -164,7 +164,7 @@ struct NotificationBannerView: View {
             ? "刚刚"
             : CompanionProductCopy.clockLabel(notification.timestamp)
         if notification.kind == .groupAt {
-            return "\(notification.senderName)在\(notification.chatName) @ 了你 · \(when)"
+            return "\(notification.senderName) 在「\(notification.chatName)」@ 了你 · \(when)"
         }
         if notification.chatName == notification.senderName {
             return "\(notification.senderName) · \(when)"
