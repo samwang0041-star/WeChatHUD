@@ -13,7 +13,7 @@ actor DiscussionTracker {
     private let store: HUDStore
     private let aiService: any AIServiceProtocol
     private let promptLoader: PromptLoader
-    private let promptVersion = "discussion_v2"
+    private let promptVersion = "discussion_v3"
     private var extractingChats: Set<String> = []
     private let retryBaseDelay: TimeInterval
     private let maxBatchesPerRun = 3
@@ -55,6 +55,11 @@ actor DiscussionTracker {
         let detail: String?
         let dueAt: Date?
         let confidence: Double
+        /// The message that produced this item — used for the "消息原文"
+        /// jump and per-item dedupe, instead of anchoring everything to
+        /// the newest line in the batch.
+        let anchorMsgUID: String
+        let sourceTimestamp: Int
     }
 
     /// Run extraction for one chat over the given messages (chronological
@@ -166,7 +171,11 @@ actor DiscussionTracker {
                 myUsername: myUsername, myDisplayName: myDisplayName,
                 mySelfNames: mySelfNames
             ) {
-                return !isGroup || admissionRules.vipChats.contains(chatUsername)
+                // Self messages carry the other half of ownership: "我派给
+                // 对方" items can only be extracted (and only attributed to
+                // 等对方) if the model can see them. The chat is already
+                // inside the followed scope, so admit them unconditionally.
+                return true
             }
             return admissionRules.decide(
                 chatUsername: chatUsername,
@@ -199,11 +208,12 @@ actor DiscussionTracker {
             return (0, false)
         }
 
-        // Build a compact conversation transcript for the prompt. We
-        // tag each line with "我" or the actual sender so the model
-        // can assign ownership correctly — critical for the weekly
-        // report's "上级派给我 / 我派给下级" slicing.
-        let lines = fresh.map { msg -> String in
+        // Build a compact conversation transcript for the prompt. Each
+        // line carries a sequence number, a speaker tag ("我" or the
+        // actual sender) and a timestamp — the model echoes `msg` back
+        // per item so ownership and the "原文" anchor land on the line
+        // that actually produced the item, not the batch's newest one.
+        let lines = fresh.enumerated().map { idx, msg -> String in
             let isSelf = MessageHelpers.isFromSelf(
                 msg, chatUsername: chatUsername,
                 myUsername: myUsername, myDisplayName: myDisplayName,
@@ -211,7 +221,7 @@ actor DiscussionTracker {
             )
             let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : msg.senderName)
             let ts = MessageInfo.formatRelative(msg.createTime)
-            return "[\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))"
+            return "[\(idx + 1)] [\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))"
         }.joined(separator: "\n")
 
         let knownList = existing.map { "- \($0.kind.label): \($0.content)" }.joined(separator: "\n")
@@ -246,7 +256,7 @@ actor DiscussionTracker {
             return (0, false)
         }
 
-        var items = parseItems(body, relativeTo: Date(timeIntervalSince1970: Double(newest.createTime)))
+        var items = parseItems(body, messages: fresh)
         var outputBody = body
         // One strict-retry, same pattern as CommitmentTracker / Classifier
         if items == nil {
@@ -257,7 +267,7 @@ actor DiscussionTracker {
             }
             if let retryBody = retry.text {
                 outputBody = retryBody
-                items = parseItems(retryBody, relativeTo: Date(timeIntervalSince1970: Double(newest.createTime)))
+                items = parseItems(retryBody, messages: fresh)
             }
         }
         guard let parsed = items else {
@@ -281,9 +291,9 @@ actor DiscussionTracker {
 
         // Persist. Each item is keyed by (chat, anchor_msg_uid, content)
         // so re-runs don't produce duplicates; the UNIQUE constraint
-        // short-circuits silently in that case.
-        let anchor = newest.id
-        let anchorTs = newest.createTime
+        // short-circuits silently in that case. The anchor is the item's
+        // own source message (echoed back as `msg`), falling back to the
+        // batch's newest line when the model omits it.
         var inserted = 0
         for item in parsed {
             let did: Bool
@@ -295,8 +305,8 @@ actor DiscussionTracker {
                     owner: item.owner,
                     content: item.content,
                     detail: item.detail,
-                    anchorMsgUID: anchor,
-                    sourceTimestamp: anchorTs,
+                    anchorMsgUID: item.anchorMsgUID,
+                    sourceTimestamp: item.sourceTimestamp,
                     dueAt: item.dueAt,
                     confidence: item.confidence,
                     promptVersion: promptVersion
@@ -326,7 +336,7 @@ actor DiscussionTracker {
 
     // MARK: - Parsing
 
-    private func parseItems(_ raw: String, relativeTo sourceDate: Date) -> [ExtractedItem]? {
+    private func parseItems(_ raw: String, messages: [MessageInfo]) -> [ExtractedItem]? {
         let cleaned = Self.cleanJSON(raw)
         guard let data = cleaned.data(using: .utf8) else { return nil }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -335,24 +345,49 @@ actor DiscussionTracker {
         guard let arr = root["items"] as? [[String: Any]] else {
             return nil
         }
+        let fallback = messages.last
         var out: [ExtractedItem] = []
         for row in arr {
             guard let kindStr = row["kind"] as? String,
                   let kind = DiscussionItemKind(rawValue: kindStr),
-                  let ownerStr = row["owner"] as? String,
-                  let owner = DiscussionItemOwner(rawValue: ownerStr),
                   let content = row["content"] as? String,
                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+
+            // v3 emits `executor` (who acts) + `msg` (source line number);
+            // `owner` from older model outputs is accepted as a fallback.
+            let owner = Self.owner(for: row)
+            guard let owner else { return nil }
+
+            let msgIndex = (row["msg"] as? Int).flatMap { $0 >= 1 && $0 <= messages.count ? $0 - 1 : nil }
+            let source = msgIndex.map { messages[$0] } ?? fallback
+            let sourceDate = Date(timeIntervalSince1970: Double(source?.createTime ?? 0))
             let detail = row["detail"] as? String
             let deadline = (row["due"] as? String).flatMap { MessageHelpers.resolveDeadline($0, relativeTo: sourceDate) }
             let confidence = (row["confidence"] as? Double) ?? 0.6
             out.append(ExtractedItem(
                 kind: kind, owner: owner,
                 content: content, detail: detail?.isEmpty == true ? nil : detail,
-                dueAt: deadline, confidence: confidence
+                dueAt: deadline, confidence: confidence,
+                anchorMsgUID: source?.id ?? "",
+                sourceTimestamp: source?.createTime ?? 0
             ))
         }
         return out
+    }
+
+    /// `executor` (who performs the action) is authoritative in v3 —
+    /// "我指派对方" reads `peer` and lands in 等对方 instead of 我要做.
+    /// `owner` survives as a fallback for models that ignore the new field.
+    private static func owner(for row: [String: Any]) -> DiscussionItemOwner? {
+        if let executor = row["executor"] as? String {
+            switch executor {
+            case "me": return .mine
+            case "peer": return .theirs
+            case "both", "unknown": return .shared
+            default: break
+            }
+        }
+        return (row["owner"] as? String).flatMap { DiscussionItemOwner(rawValue: $0) }
     }
 
     private static func cleanJSON(_ text: String) -> String {

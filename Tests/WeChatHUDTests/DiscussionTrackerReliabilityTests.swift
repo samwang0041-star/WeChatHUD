@@ -70,6 +70,47 @@ final class DiscussionTrackerReliabilityTests: XCTestCase {
         XCTAssertLessThan(prompt.range(of: "消息1")!.lowerBound, prompt.range(of: "消息3")!.lowerBound)
     }
 
+    /// "我要求别人去做" must land in 等对方, not 我要做 — the v3 prompt asks
+    /// for `executor`, and the parser maps it deterministically.
+    func testDelegatedTaskExtractedAsTheirs() async {
+        let ai = await model(response: #"{"items":[{"kind":"todo","executor":"peer","msg":1,"content":"客户回访名单","due":"+1d","confidence":0.9}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        let count = await extract(tracker, [
+            message(1, time: 1000, text: "小李，客户回访名单明天前给我"),
+            message(2, time: 2000, text: "收到")
+        ])
+        XCTAssertEqual(count, 1)
+        let item = store.loadDiscussionItems(chatUsername: "peer").first
+        XCTAssertEqual(item?.owner, .theirs)
+        XCTAssertEqual(item?.anchorMsgUID, "m1")
+        XCTAssertEqual(item?.sourceTimestamp, 1000)
+        // due resolves relative to the item's own source message, not the batch tail.
+        XCTAssertEqual(item?.dueAt?.timeIntervalSince1970, 1000 + 86400)
+    }
+
+    func testExecutorOverridesLegacyOwnerField() async {
+        let ai = await model(response: #"{"items":[{"kind":"todo","owner":"mine","executor":"peer","msg":1,"content":"出报价单","confidence":0.8}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [message(1)])
+        XCTAssertEqual(store.loadDiscussionItems(chatUsername: "peer").first?.owner, .theirs)
+    }
+
+    func testInvalidMsgIndexFallsBackToNewest() async {
+        let ai = await model(response: #"{"items":[{"kind":"info","executor":"unknown","msg":99,"content":"预算30万","confidence":0.9}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [message(1, time: 1000), message(2, time: 2000)])
+        let item = store.loadDiscussionItems(chatUsername: "peer").first
+        XCTAssertEqual(item?.owner, .shared)
+        XCTAssertEqual(item?.anchorMsgUID, "m2")
+    }
+
+    func testMissingExecutorFallsBackToOwnerField() async {
+        let ai = await model(response: #"{"items":[{"kind":"todo","owner":"mine","content":"我明天发你","confidence":0.9}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [message(1)])
+        XCTAssertEqual(store.loadDiscussionItems(chatUsername: "peer").first?.owner, .mine)
+    }
+
     func testFailureDoesNotAdvanceCheckpointAndCanRetry() async {
         let ai = await model(response: "invalid JSON")
         let tracker = DiscussionTracker(store: store, aiService: ai, retryBaseDelay: 0)

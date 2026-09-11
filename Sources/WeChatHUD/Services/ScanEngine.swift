@@ -316,13 +316,10 @@ enum ScanEngine {
                             msg: msg, chatUsername: entry.id,
                             chatName: msg.chatName, recipientName: recipientName
                         ))
-                        // Private / VIP-room self lines stay in discussion so
-                        // bidirectional extraction can see both sides. Ordinary
-                        // followed groups do not dump every self line into todos.
-                        let isGroupChat = entry.id.contains("@chatroom")
-                        if !isGroupChat || admissionRules.vipChats.contains(entry.id) {
-                            discussionMessages.append(msg)
-                        }
+                        // Self lines must reach bidirectional extraction in
+                        // every followed chat: "我派给对方" items are only
+                        // attributed to 等对方 if the model can see them.
+                        discussionMessages.append(msg)
                         continue
                     }
                     // Admission owns muting now, so a person muted in every
