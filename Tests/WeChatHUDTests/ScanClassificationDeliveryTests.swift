@@ -245,7 +245,8 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         )
 
         let outcome = try await scan(fixture.reader, store: store, autopilotActive: true)
-        XCTAssertEqual(outcome?.newInboundMessages.count ?? 0, 0)
+        let scanned = try XCTUnwrap(outcome, "a nil outcome means the scan itself failed")
+        XCTAssertEqual(scanned.newInboundMessages.count, 0)
         XCTAssertEqual(store.loadPendingAutopilotInbound().count, 0)
     }
 
