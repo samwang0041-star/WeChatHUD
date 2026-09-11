@@ -19,13 +19,24 @@ final class ProactiveAlertEngine {
     private let sendNotification: ProactiveAlertNotificationSender
     private var alertHistory: [Date] = []
     private let maxAlertsPerHour = 5
+    /// Quiet period for an unresolved commitment that is already past its
+    /// deadline. The condition stays true until the user resolves it, so the
+    /// default one-hour window re-fired the same "承诺已到期" all night and
+    /// consumed the shared budget the P0/VIP rules need for new signals.
+    static let overdueCommitmentCooldown: TimeInterval = 24 * 3600
+
     /// Per-identifier dedup — prevents the same alert (e.g. commitment
     /// deadline, P0 debt) from firing on every 10s scan and burning
-    /// through the hourly budget. Each identifier fires at most once
-    /// per hour.
+    /// through the hourly budget. Each identifier carries its own window
+    /// (`overdueCommitmentCooldown` for already-overdue commitments, one hour
+    /// for everything else).
     /// The timestamp is the successful delivery submission time, so an
-    /// identifier becomes eligible again after one hour.
-    private var pushedIdentifiers: [String: Date] = [:]
+    /// identifier becomes eligible again once its window elapses.
+    private struct DedupEntry {
+        let pushedAt: Date
+        let window: TimeInterval
+    }
+    private var pushedIdentifiers: [String: DedupEntry] = [:]
     /// Notification submissions are asynchronous. Keep an identifier
     /// reserved until its completion arrives so two scans cannot enqueue
     /// the same identifier concurrently.
@@ -167,7 +178,8 @@ final class ProactiveAlertEngine {
                 pushAlert(
                     title: "承诺已到期",
                     body: "\(c.content) → \(c.commitTo)",
-                    identifier: "commitment-overdue-\(c.msgUID)"
+                    identifier: "commitment-overdue-\(c.msgUID)",
+                    cooldown: Self.overdueCommitmentCooldown
                 )
             } else if remaining < 3600 {
                 pushAlert(
@@ -262,6 +274,7 @@ final class ProactiveAlertEngine {
         title: String,
         body: String,
         identifier: String,
+        cooldown: TimeInterval = 3600,
         onSuccess: (() -> Void)? = nil
     ) -> Bool {
         let submissionNow = now()
@@ -286,7 +299,7 @@ final class ProactiveAlertEngine {
                 let deliveredAt = self.now()
                 self.pruneExpiredState(at: deliveredAt)
                 self.alertHistory.append(deliveredAt)
-                self.pushedIdentifiers[identifier] = deliveredAt
+                self.pushedIdentifiers[identifier] = DedupEntry(pushedAt: deliveredAt, window: cooldown)
                 onSuccess?()
             }
         }
@@ -296,7 +309,9 @@ final class ProactiveAlertEngine {
     private func pruneExpiredState(at date: Date) {
         let cutoff = date.addingTimeInterval(-3600)
         alertHistory.removeAll { $0 <= cutoff }
-        pushedIdentifiers = pushedIdentifiers.filter { $0.value > cutoff }
+        pushedIdentifiers = pushedIdentifiers.filter { _, entry in
+            entry.pushedAt.addingTimeInterval(entry.window) > date
+        }
     }
 
     private static let systemNotificationSender: ProactiveAlertNotificationSender = {

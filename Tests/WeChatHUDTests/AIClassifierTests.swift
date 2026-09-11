@@ -6,10 +6,10 @@ import XCTest
 /// 1. Pure unit tests on the JSON envelope cleanup, prompt interpolation,
 ///    and config decode paths — these never touch the network and always run.
 ///
-/// 2. A live integration test that hits the local omlx endpoint and runs
-///    the labeled fixture through the classifier, asserting F1 ≥ 0.85.
-///    Skipped automatically if the endpoint is not reachable so CI on a
-///    machine without omlx still passes.
+/// 2. A live integration test that runs the labeled fixture through the
+///    *configured* classifier and asserts F1 ≥ 0.85. Opt-in, like the other
+///    live acceptance tests, and skipped when the saved configuration or its
+///    endpoint is unavailable.
 ///
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
 final class AIClassifierTests: XCTestCase {
@@ -158,7 +158,13 @@ final class AIClassifierTests: XCTestCase {
     /// cannot actually serve a chat completion, so this test stays
     /// green on machines that don't have a healthy local model server.
     func testClassifierAgainstFixturesLive() async throws {
-        let cfg = AIConfig()
+        guard ProcessInfo.processInfo.environment["WCHUD_LIVE_COMPANION_AI"] == "1" else {
+            throw XCTSkip("opt-in only: set WCHUD_LIVE_COMPANION_AI=1 to call the configured provider")
+        }
+        let cfg = try loadConfiguredAI()
+        guard isUsable(cfg) else {
+            throw XCTSkip("device AI configuration is absent or incomplete")
+        }
         let availability = await probeClassifierAvailability(config: cfg)
         guard availability.isUsable else {
             throw XCTSkip("omlx endpoint \(cfg.baseURL) unavailable for live classifier test: \(availability.reason)")
@@ -245,6 +251,28 @@ final class AIClassifierTests: XCTestCase {
     /// The optional file must contain generated or fully rewritten synthetic
     /// examples only. Raw chat exports must never be copied into repo fixtures.
     /// Entries with `expected: null` are ignored until hand-labeled.
+    /// The app's saved AI configuration (`~/.wechat-hud/device-settings.json`),
+    /// which is what the running app would actually call.
+    private func loadConfiguredAI() throws -> AIConfig {
+        let path = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".wechat-hud/device-settings.json")
+        let device = try DeviceSettingsStore(path: path)
+        guard let raw = device.get("ai"), let data = raw.data(using: .utf8) else {
+            throw NSError(domain: "AIClassifierTests", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "missing device AI settings"])
+        }
+        var config = try JSONDecoder().decode(AIConfig.self, from: data)
+        config.migrateIfNeeded()
+        return config
+    }
+
+    private func isUsable(_ config: AIConfig) -> Bool {
+        let slot = config.provider
+        return !slot.providerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !slot.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (slot.providerID == "openai-codex" || !slot.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     private func loadFixtureCases() throws -> [LabeledCase] {
         let here = URL(fileURLWithPath: #filePath)
         let fixturesDir = here
@@ -283,6 +311,8 @@ final class AIClassifierTests: XCTestCase {
     /// out of storage, out of memory, mis-keyed, or otherwise unable to
     /// execute a real request.
     private func probeClassifierAvailability(config: AIConfig) async -> (isUsable: Bool, reason: String) {
+        // The saved device configuration, not `AIConfig()` defaults: the struct
+        // default `baseURL` is empty, so probing it always failed.
         var url = config.baseURL
         while url.hasSuffix("/") { url.removeLast() }
         if !url.hasSuffix("/v1") { url += "/v1" }

@@ -879,8 +879,16 @@ struct AISettingsView: View {
     private func applyPresetProvider(_ id: String) {
         providerID = id
         guard let preset = AIProvider.find(id), preset.id != "custom" else { return }
-        baseURL = preset.baseURL
-        apiKey = ""
+        // Clear the key only when the service address actually moves. The
+        // unconditional wipe destroyed a working credential on a path the user
+        // cannot see coming: `onChange(of: serviceSource)` calls this when
+        // flipping back to "预设供应商" while `providerID == "custom"`, so
+        // two ordinary clicks (preset → custom → preset) silently emptied the
+        // field and saved it. `syncProviderPreset` has always had this guard.
+        if baseURL != preset.baseURL {
+            baseURL = preset.baseURL
+            apiKey = ""
+        }
         models = preset.models
         if model.isEmpty || !preset.models.contains(model) {
             model = preset.models.first ?? ""

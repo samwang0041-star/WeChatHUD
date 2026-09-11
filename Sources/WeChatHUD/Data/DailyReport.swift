@@ -1,4 +1,21 @@
 import Foundation
+import CryptoKit
+
+/// Deterministic id digest for report rows.
+///
+/// Swift seeds `String.hashValue` randomly per process, so ids derived from it
+/// changed on every launch: "忽略风险" was keyed by such an id, which meant the
+/// dismissal silently stopped matching after a restart and left an orphan row
+/// in `daily_report_state` behind each time. SHA-256 is stable across
+/// processes, launches and machines.
+enum StableDigest {
+    static func hex(_ value: String, prefix length: Int = 16) -> String {
+        let digest = SHA256.hash(data: Data(value.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return String(digest.prefix(length))
+    }
+}
 
 // MARK: - Daily Report Data Model
 
@@ -103,7 +120,7 @@ struct DailyReportHighlight: Identifiable, Sendable {
         quotedSnippet: String? = nil,
         involved: [String] = []
     ) {
-        self.id = id ?? "\(sourceChatUsername)-\(summary.hashValue)"
+        self.id = id ?? "\(sourceChatUsername)-\(StableDigest.hex(summary))"
         self.summary = summary
         self.category = category
         self.sourceChatName = sourceChatName
@@ -187,7 +204,7 @@ struct DailyReportRisk: Identifiable, Sendable {
         sourceChatUsername: String? = nil,
         dismissedAt: Date? = nil
     ) {
-        self.id = id ?? "\(type.rawValue)-\(description.hashValue)"
+        self.id = id ?? "\(type.rawValue)-\(StableDigest.hex(description))"
         self.type = type
         self.description = description
         self.severity = severity

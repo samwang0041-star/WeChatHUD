@@ -10,6 +10,11 @@ struct InsightSidebarView: View {
     let onAnalyzeChat: (String) -> Void
     var selectedDate: Date = Date()
     @State private var filter: ChatReviewFilter = .all
+    /// Day stats for the selected (non-today) date, computed off the main
+    /// thread. Reading them straight from the body called `getMessages(limit:
+    /// Int.max)` once per row — and once per session in "其他最近聊天" — during
+    /// SwiftUI body evaluation, before any filter was applied.
+    @State private var dayStatsByChat: [String: ChatStatsData] = [:]
 
     private enum ChatReviewFilter: String, CaseIterable {
         case all = "全部"
@@ -26,6 +31,47 @@ struct InsightSidebarView: View {
             chatList
         }
         .background(CompanionPalette.canvas)
+        .task(id: dayStatsTaskID) { await refreshDayStats() }
+    }
+
+    /// Reload key for the precomputed day stats: the date plus the set of chats
+    /// the sidebar can show.
+    private var dayStatsTaskID: String {
+        let requests = dayStatsRequests()
+        let key = requests
+            .map { "\($0.username)|\($0.isGroup)|\($0.category.rawValue)" }
+            .joined(separator: ",")
+        return "\(Int(selectedDate.timeIntervalSince1970))#\(key)"
+    }
+
+    private func dayStatsRequests() -> [(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory)] {
+        let whitelist: [(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory)] =
+            insightStore.filteredWhitelist(store: store, searchText: "").map {
+            (username: $0.id, displayName: $0.displayName, isGroup: $0.isGroup, category: $0.category)
+        }
+        let others: [(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory)] =
+            insightStore.otherActiveSessions.map {
+            (username: $0.id, displayName: $0.displayName, isGroup: $0.isGroup, category: WhitelistCategory.other)
+        }
+        return whitelist + others
+    }
+
+    private func refreshDayStats() async {
+        guard !Calendar.current.isDateInToday(selectedDate) else {
+            dayStatsByChat = [:]
+            return
+        }
+        let requests = dayStatsRequests()
+        guard !requests.isEmpty else {
+            dayStatsByChat = [:]
+            return
+        }
+        let date = selectedDate
+        let stats = await InsightStore.computeDayStats(requests: requests, date: date, reader: reader)
+        dayStatsByChat = stats
+        // The detail view asks for the selected chat's day stats from its own
+        // body; those now come from the cache this primes instead of a read.
+        insightStore.primeDayStats(stats, date: date)
     }
 
     private var searchBar: some View {
@@ -286,14 +332,7 @@ struct InsightSidebarView: View {
         fallback: ChatStatsData?
     ) -> ChatStatsData? {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        return insightStore.statsForDay(
-            chatUsername: username,
-            chatName: displayName,
-            isGroup: isGroup,
-            category: category,
-            date: selectedDate,
-            reader: reader
-        )
+        return dayStatsByChat[username] ?? fallback
     }
 
     private func dayMessageCount(
@@ -304,14 +343,7 @@ struct InsightSidebarView: View {
         fallback: Int
     ) -> Int {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        return insightStore.statsForDay(
-            chatUsername: username,
-            chatName: displayName,
-            isGroup: isGroup,
-            category: category,
-            date: selectedDate,
-            reader: reader
-        )?.messageCount ?? 0
+        return dayStatsByChat[username]?.messageCount ?? fallback
     }
 
     private func categoryColor(_ cat: WhitelistCategory) -> Color {

@@ -58,7 +58,10 @@ enum DiscussionCorrection {
         let labels = entries
             .sorted { $0.ts > $1.ts }
             .filter { $0.note == chatUsername }
-            .suffix(limit)
+            // `prefix`, not `suffix`: the sort puts the newest entries first,
+            // so `suffix(limit)` handed the model the `limit` *oldest*
+            // corrections — the opposite of "recent corrections in this chat".
+            .prefix(limit)
             .map { entry -> String in
                 switch entry.userAction {
                 case "owner_corrected_mine": return "责任人改为我要做"
