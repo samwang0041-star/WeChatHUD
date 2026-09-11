@@ -21,6 +21,10 @@ enum IslandType {
     static let brand: CGFloat = 13.5
     /// Row title: contact or conversation name. Was 15.
     static let rowTitle: CGFloat = 13
+    /// Sender name in the notification banner's identity line. Sits between
+    /// the row title and the row body: the message below it is the hero, so
+    /// the name must read as context, not as a second headline.
+    static let sender: CGFloat = 12.5
     /// Message body / AI summary inside a row. Was 14.
     static let rowBody: CGFloat = 12
     /// Buttons and inline actions. Was 15.
@@ -56,6 +60,34 @@ enum IslandMetrics {
     static let buddy: CGFloat = 18
     /// Inset for section headers and dividers so they line up with rows.
     static let sectionInset: CGFloat = 14
+
+    // MARK: - Notification banner
+    //
+    // The banner's whole vertical budget, top to bottom:
+    //
+    //     notchHeight + bannerTopGap      — the notch band, plus air
+    //     max(bannerAvatar, icon button)  — the identity line
+    //     bannerRowGap
+    //     n × message line height         — the message, the only variable
+    //     bannerBottomGap
+    //
+    // Every number here is spent. The banner used to be pinned to a 168 pt
+    // floor and stacked a third row under the message (an avatar-indented
+    // column holding headline / snippet / a text action), which left 89 pt
+    // of black under a one-line message — 45 % of the panel doing nothing.
+
+    /// Monogram in the identity line. Smaller than the inbox's 26 pt row
+    /// avatar: there the disc is the row's identity, here the sender's name
+    /// is set right next to it, so the disc only needs to anchor the edge.
+    static let bannerAvatar: CGFloat = 22
+    /// Leading/trailing inset for the banner's content.
+    static let bannerInset: CGFloat = 16
+    /// Air between the notch band and the identity line.
+    static let bannerTopGap: CGFloat = 10
+    /// Air under the message.
+    static let bannerBottomGap: CGFloat = 12
+    /// Between the identity line and the message.
+    static let bannerRowGap: CGFloat = 6
 }
 
 /// Text colours for the island. One ramp, because the surfaces had drifted
@@ -89,6 +121,17 @@ enum IslandInk {
 
 extension View {
     func islandDisplay() -> some View { companionFont(size: IslandType.display, weight: .semibold) }
+    /// The notification banner's hero line — the message itself, and the only
+    /// thing on that surface set at display size.
+    ///
+    /// `.medium`, not `.semibold`: light-on-dark text gains apparent weight
+    /// (the same glyph pattern looks heavier inside a white halo than a black
+    /// one), so 15 pt medium on the black island already reads with the weight
+    /// of 15 pt semibold on white — and three lines of semibold Chinese turns
+    /// the message into a shout.
+    func islandMessage() -> some View { companionFont(size: IslandType.display, weight: .medium) }
+    /// Sender name in the banner's identity line.
+    func islandSender() -> some View { companionFont(size: IslandType.sender, weight: .medium) }
     func islandBrand() -> some View { companionFont(size: IslandType.brand, weight: .semibold) }
     func islandRowTitle() -> some View { companionFont(size: IslandType.rowTitle, weight: .semibold) }
     func islandRowBody() -> some View { companionFont(size: IslandType.rowBody) }

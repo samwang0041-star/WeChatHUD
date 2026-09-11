@@ -5,14 +5,19 @@ import AppKit
 
 /// Offscreen layout harness for the island notification banner.
 ///
-/// The reported bug: `AppDelegate.panelSize(for: .notification)` sizes the
-/// NSPanel as `notchHeight + IslandChrome.notificationBaseBelowNotch`
-/// (32 + 168 = 200 pt), so any banner content that renders taller than that
-/// static budget is clipped by the panel's bottom edge — the user's
-/// screenshot shows the "看看什么事 / 稍后提醒" row cut in half.
+/// The reported bug this harness was built for: the panel was sized from a
+/// static budget (`notchHeight + IslandChrome.notificationBaseBelowNotch`), so
+/// banner content taller than that budget was clipped by the panel's bottom
+/// edge — the user's screenshot shows the action row cut in half.
+///
+/// The budget is now the banner's own rendered height, and the static numbers
+/// survive only as the floor and the pre-measurement fallback. The second half
+/// of the contract (the redesign) is the opposite failure: the old 168 pt floor
+/// held a one-line banner inside a 200 pt window, so 89 pt — 45 % of the panel —
+/// was black nothing. `testPanelHugsTheBannerWithoutDeadSpace` pins that.
 ///
 /// These tests render the real `NotificationBannerView` offscreen at the
-/// real banner width (580 pt) and measure its natural height, so the static
+/// real banner width (580 pt) and measure its natural height, so the panel
 /// budget can be compared against what SwiftUI actually lays out.
 @MainActor
 final class NotificationBannerLayoutTests: XCTestCase {
@@ -23,9 +28,9 @@ final class NotificationBannerLayoutTests: XCTestCase {
     /// keeps this harness honest if the formula ever changes.
     private let bannerWidth: CGFloat = IslandNotificationLayout.panelWidth(notchWidth: 200)
 
-    /// What the pre-fix `panelSize(for: .notification)` budgeted below the
-    /// notch before any measurement was plumbed through.
-    private var legacyStaticBudget: CGFloat { 32 + IslandChrome.notificationBaseBelowNotch }
+    /// The budget used before the first measurement of a banner arrives —
+    /// the two-line banner's arithmetic, not a roomy guess.
+    private var fallbackBudget: CGFloat { 32 + IslandChrome.notificationBaseBelowNotch }
 
     // MARK: - Fixture plumbing
 
@@ -98,7 +103,7 @@ final class NotificationBannerLayoutTests: XCTestCase {
         line: UInt = #line
     ) -> CGFloat {
         let result = measure(view, width: bannerWidth)
-        print("[banner-layout] \(label): intrinsic=\(fmt(result.intrinsic)) fitting=\(fmt(result.fitting)) sizeThatFits=\(fmt(result.sizeThatFits)) legacyBudget=\(legacyStaticBudget)")
+        print("[banner-layout] \(label): intrinsic=\(fmt(result.intrinsic)) fitting=\(fmt(result.fitting)) sizeThatFits=\(fmt(result.sizeThatFits)) fallbackBudget=\(fallbackBudget)")
         XCTAssertTrue(
             result.intrinsic.height.isFinite && result.intrinsic.height > 0,
             "\(label): intrinsic height must be a sane non-zero number, got \(fmt(result.intrinsic))",
@@ -167,7 +172,7 @@ final class NotificationBannerLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(snippet.count, 90, "fixture must mirror the long screenshot case")
         fixture.panelState.showNotification(duration: 3)
         let height = measuredHeight(of: banner(notification, in: fixture), label: "long-group-at")
-        print("[banner-layout] long-group-at snippet chars=\(snippet.count) exceedsLegacyBudget=\(height > legacyStaticBudget)")
+        print("[banner-layout] long-group-at snippet chars=\(snippet.count) exceedsFallbackBudget=\(height > fallbackBudget)")
     }
 
     // MARK: - Fixture 3: briefing expanded
@@ -204,8 +209,8 @@ final class NotificationBannerLayoutTests: XCTestCase {
     /// menu cannot be toggled from the outside without restructuring the view
     /// (out of scope). Measure the two real pieces instead: the banner's
     /// natural height and `IslandSnoozeMenu` on its own; the banner's own
-    /// `VStack(spacing: 10)` stacks them, so banner + 10 + menu is the height
-    /// the panel must hold while 稍后提醒 is open.
+    /// `VStack(spacing: IslandMetrics.bannerRowGap)` stacks them, so banner +
+    /// gap + menu is the height the panel must hold while 稍后提醒 is open.
     func testSnoozeMenuNaturalHeight() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
@@ -213,18 +218,118 @@ final class NotificationBannerLayoutTests: XCTestCase {
         fixture.panelState.showNotification(duration: 3)
         let bannerHeight = measuredHeight(of: banner(notification, in: fixture), label: "long-group-at-for-snooze")
         let menuHeight = measuredHeight(of: IslandSnoozeMenu { _ in }, label: "snooze-menu-standalone")
-        let estimated = bannerHeight + 10 + menuHeight
-        print("[banner-layout] snooze-open-estimate=\(estimated.rounded()) (banner \(bannerHeight.rounded()) + spacing 10 + menu \(menuHeight.rounded())) exceedsLegacyBudget=\(estimated > legacyStaticBudget)")
+        let estimated = bannerHeight + IslandMetrics.bannerRowGap + menuHeight
+        print("[banner-layout] snooze-open-estimate=\(estimated.rounded()) (banner \(bannerHeight.rounded()) + spacing \(IslandMetrics.bannerRowGap) + menu \(menuHeight.rounded())) exceedsFallbackBudget=\(estimated > fallbackBudget)")
     }
 
     // MARK: - Phase 2: regression pins for the measured-height contract
 
+    /// The redesign's contract, and the reason it was done: the panel is the
+    /// black island itself, so any point the banner does not fill is visible as
+    /// an empty tail. The old 168 pt floor held a one-line banner in a 200 pt
+    /// window — 89 pt of nothing, 45 % of the surface. The panel must now hug
+    /// the measurement, from either side: never shorter than the content, and
+    /// never more than a hair taller.
+    func testPanelHugsTheBannerWithoutDeadSpace() throws {
+        try assertHugs(label: "hug-short", notification: previewStyleNotification()) { fixture, _ in
+            fixture.panelState.showNotification(duration: 3)
+        }
+        try assertHugs(label: "hug-long", notification: longGroupAtNotification().0) { fixture, _ in
+            fixture.panelState.showNotification(duration: 3)
+        }
+        try assertHugs(label: "hug-briefing", notification: longGroupAtNotification().0) { fixture, notification in
+            fixture.monitor.groupContextStates[notification.briefingKey] = Self.previewBriefingState()
+            fixture.panelState.showNotification(duration: 3)
+            fixture.panelState.setBriefingExpanded(true)
+        }
+    }
+
+    private func assertHugs(
+        label: String,
+        notification: HUDNotification,
+        configure: (Fixture, HUDNotification) -> Void
+    ) throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        configure(fixture, notification)
+        let natural = measuredHeight(of: banner(notification, in: fixture), label: label)
+        let panelHeight = IslandNotificationLayout.panelHeight(
+            measuredContentHeight: natural,
+            notchHeight: 32,
+            fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
+        )
+        let deadSpace = panelHeight - natural
+        print("[banner-layout] \(label): natural=\(natural.rounded()) panel=\(panelHeight.rounded()) deadSpace=\(deadSpace.rounded())")
+        XCTAssertGreaterThanOrEqual(
+            panelHeight, natural,
+            "\(label): panel shorter than the content — the bottom would be clipped"
+        )
+        XCTAssertLessThan(
+            deadSpace, 8,
+            "\(label): the panel reserves \(deadSpace.rounded()) pt the banner never fills — that tail is visible as empty black under the message"
+        )
+    }
+
+    /// The floor exists to reject a bogus near-zero measurement, not to pad the
+    /// panel: it must stay at or below the shortest banner that can exist (a
+    /// one-line message, which the hug test measures), and below the
+    /// pre-measurement fallback.
+    func testHeightFloorCannotReintroduceDeadSpace() {
+        XCTAssertLessThanOrEqual(
+            IslandNotificationLayout.minBelowNotch, IslandChrome.notificationBaseBelowNotch,
+            "the floor must not exceed the two-line fallback budget"
+        )
+        XCTAssertLessThanOrEqual(
+            32 + IslandNotificationLayout.minBelowNotch, fallbackBudget,
+            "floor and fallback are both below-notch budgets for the same surface"
+        )
+        // The floor still has to hold a real banner: 10 pt of identity line plus
+        // one line of message plus the paddings cannot be less than this.
+        XCTAssertGreaterThanOrEqual(IslandNotificationLayout.minBelowNotch, 60)
+    }
+
+    /// The identity line is one line, always: a long group name truncates
+    /// inside it instead of wrapping. Wrapping would push the message down and
+    /// grow the panel for a fact the user does not need in full (the row in the
+    /// inbox names the group, and the banner's tooltip and AX action carry it).
+    func testIdentityLineStaysOneLineForAbsurdNames() throws {
+        let message = "明天下午评审，能否确认待办责任人的展示方案？"
+        let sane = previewStyleNotification()
+        let absurd = HUDNotification(
+            chatUsername: "wxid-absurd",
+            chatName: "行业合作与生态共建-小程序业务交流群（华东区）-2026 年度",
+            senderUsername: "wxid-absurd-sender",
+            senderName: "欧阳司徒长孙慕容",
+            attentionLevel: .vip,
+            messageID: "absurd-\(UUID().uuidString)",
+            rawText: message,
+            snippet: message,
+            isAtMention: true,
+            timestamp: Date(),
+            kind: .groupAt
+        )
+        XCTAssertGreaterThanOrEqual(absurd.chatName.count, 28, "fixture must stay absurd")
+        let saneHeight = try naturalHeight(of: sane, label: "identity-line-sane")
+        let absurdHeight = try naturalHeight(of: absurd, label: "identity-line-absurd")
+        XCTAssertEqual(
+            absurdHeight, saneHeight, accuracy: 1,
+            "a 29-character group name changed the banner height (\(absurdHeight.rounded()) vs \(saneHeight.rounded())) — the identity line wrapped"
+        )
+    }
+
+    private func naturalHeight(of notification: HUDNotification, label: String) throws -> CGFloat {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        fixture.panelState.showNotification(duration: 3)
+        return measuredHeight(of: banner(notification, in: fixture), label: label)
+    }
+
     /// The reported screenshot case (long group name + three-line snippet)
     /// must fit inside the panel height the app derives from the banner's
     /// own measurement. The banner was slimmed down after the static-budget
-    /// clipping bug was fixed, so the pin is now "panel ≥ measured", not
-    /// "measured > the historical budget".
-    func testLegacyStaticBudgetProvablyClippedTheScreenshotCase() throws {
+    /// clipping bug was fixed, so the pin is "panel ≥ measured", not
+    /// "measured > the static budget".
+    func testStaticBudgetProvablyClippedTheScreenshotCase() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let (notification, snippet) = longGroupAtNotification()
@@ -280,8 +385,8 @@ final class NotificationBannerLayoutTests: XCTestCase {
 
     /// The screenshot case measured 247 pt before the banner was slimmed —
     /// inside the floor/ceiling window then, so the measured height was used
-    /// verbatim. Today's slimmer banner sits below the 168pt floor; the pin
-    /// is that a real measurement still drives the panel without being
+    /// verbatim. Today's banner is slimmer still, and the floor moved down with
+    /// it; the pin is that a real measurement drives the panel without being
     /// clipped, and a tall measurement is still used verbatim.
     func testMeasuredHeightIsUsedVerbatimInsideTheClampWindow() throws {
         let fixture = try makeFixture()
@@ -298,7 +403,7 @@ final class NotificationBannerLayoutTests: XCTestCase {
             panelHeight,
             max(natural, 32 + IslandNotificationLayout.minBelowNotch),
             accuracy: 0.5,
-            "measured height must be used verbatim or floored at the minimum useful height — never shrunk"
+            "measured height must be used verbatim or floored at the shortest real banner — never shrunk"
         )
         // A measurement above the floor is still used verbatim.
         XCTAssertEqual(
@@ -310,7 +415,7 @@ final class NotificationBannerLayoutTests: XCTestCase {
         )
     }
 
-    /// No measurement yet → historical static estimate; tiny/bogus
+    /// No measurement yet → the two-line fallback estimate; tiny/bogus
     /// measurements are clamped so they can never produce a sliver window;
     /// absurd ones are capped.
     func testPanelHeightFallsBackAndClamps() {
@@ -327,12 +432,12 @@ final class NotificationBannerLayoutTests: XCTestCase {
         XCTAssertEqual(
             IslandNotificationLayout.panelHeight(measuredContentHeight: 12, notchHeight: 32, fallbackBelowNotch: 168),
             32 + IslandNotificationLayout.minBelowNotch, accuracy: 0.001,
-            "clamp floor: a bogus short measurement must not shrink the panel below the static budget"
+            "clamp floor: a bogus short measurement must not shrink the panel below the shortest real banner"
         )
         XCTAssertEqual(
             IslandNotificationLayout.panelHeight(measuredContentHeight: 10, notchHeight: 32, fallbackBelowNotch: 168),
-            200, accuracy: 0.001,
-            "clamp floor: 10 pt is a real (if absurd) measurement and clamps up to 200 pt"
+            32 + IslandNotificationLayout.minBelowNotch, accuracy: 0.001,
+            "clamp floor: 10 pt is a real (if absurd) measurement and clamps up to the shortest real banner"
         )
         XCTAssertEqual(
             IslandNotificationLayout.panelHeight(measuredContentHeight: 100_000, notchHeight: 32, fallbackBelowNotch: 168),
@@ -349,12 +454,8 @@ final class NotificationBannerLayoutTests: XCTestCase {
                 measuredContentHeight: 0, notchHeight: 32,
                 fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
             ),
-            legacyStaticBudget, accuracy: 0.001,
-            "the fallback AppDelegate passes must reproduce the pre-fix 200 pt budget"
-        )
-        XCTAssertEqual(
-            IslandNotificationLayout.minBelowNotch, IslandChrome.notificationBaseBelowNotch, accuracy: 0.001,
-            "the clamp floor is documented as the historical static budget"
+            fallbackBudget, accuracy: 0.001,
+            "the fallback AppDelegate passes must reproduce the below-notch fallback budget"
         )
     }
 
@@ -394,7 +495,7 @@ final class NotificationBannerLayoutTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
 
         let reported = fixture.panelState.measuredNotificationSize
-        print("[banner-layout] preference-reported=\(fmt(reported)) legacyBudget=\(legacyStaticBudget)")
+        print("[banner-layout] preference-reported=\(fmt(reported)) fallbackBudget=\(fallbackBudget)")
         XCTAssertGreaterThan(
             reported.height, 1,
             "the banner must report its real height — a zero report means the preference pipe broke"
