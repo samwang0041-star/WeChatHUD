@@ -153,12 +153,47 @@ enum IslandNotificationLayout {
     }
 }
 
-/// Frame curves for "grows out of the Dynamic Island / sucks back in".
+/// Frame dynamics for "grows out of the Dynamic Island / sucks back in".
+///
+/// The window frame is driven by a damped-spring integrator (see
+/// `FloatingPanel`), not a fixed-duration easing curve. Springs carry
+/// velocity across retargets — a mid-flight target change (measured
+/// banner height arriving, a second notification, hover collapse
+/// starting while expand is still in flight) bends the trajectory
+/// instead of stopping and restarting, which is what reads as "卡".
 enum IslandMotion {
+    /// Nominal settle times used by the debug slow-mo path and tests.
     static let expandDuration: TimeInterval = 0.36
     static let collapseDuration: TimeInterval = 0.22
 
+    /// Spring constants in (stiffness, damping). Converted from the
+    /// familiar response/dampingFraction pair: k = (2π/r)², c = 4π·ζ/r.
+    /// Expand is slightly underdamped so the island visibly "pops" out;
+    /// collapse is critically damped so it tucks away without bouncing.
+    static func spring(expanding: Bool) -> (stiffness: Double, damping: Double) {
+        var response = expanding ? 0.42 : 0.26
+        let dampingFraction = expanding ? 0.82 : 1.0
+        // AnimationDebugger's slow-mo used to stretch the fixed-duration
+        // ease; under springs the equivalent is scaling the response.
+        if AnimationDebugger.isEnabled {
+            response *= AnimationDebugger.slowDuration / expandDuration
+        }
+        let omega = 2 * .pi / response
+        return (omega * omega, 2 * dampingFraction * omega)
+    }
+
+    /// Per-axis velocity (pt/s) below which a spring run counts as settled.
+    static let settleVelocity: Double = 18
+    /// Per-axis distance (pt) below which a spring run counts as settled.
+    static let settleDistance: Double = 0.45
+    /// Hard cap so a wedged run can never pin the panel mid-animation.
+    static let maxRunDuration: TimeInterval = 2.5
+    /// Clamp for a display-link hitch — a 200 ms stall must not slingshot
+    /// the frame. Anything above one 20 Hz step is treated as a stall.
+    static let maxStep: TimeInterval = 1.0 / 20.0
+
     /// Ease-out back: bursts downward from the island, overshoots, settles.
+    /// Retained for tests that pin the historical curve shape.
     static func expandProgress(_ t: CGFloat) -> CGFloat {
         let x = min(max(t, 0), 1)
         let overshoot: CGFloat = 1.2
@@ -167,6 +202,7 @@ enum IslandMotion {
     }
 
     /// Ease-in cubic: starts slow, then accelerates into the notch.
+    /// Retained for tests that pin the historical curve shape.
     static func collapseProgress(_ t: CGFloat) -> CGFloat {
         let x = min(max(t, 0), 1)
         return x * x * x

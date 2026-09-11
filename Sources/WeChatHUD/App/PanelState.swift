@@ -228,7 +228,10 @@ final class PanelState: ObservableObject {
     func mouseEntered() {
         isMouseInside = true
         if currentState == .notification { notificationWasInteractedWith = true }
-        // Cancel any pending collapse — we're back inside.
+        // Cancel any pending collapse — we're back inside. Also clear an
+        // exit recorded mid-animation: re-entering means the user is
+        // back, and the pending request must not collapse us later.
+        exitRequestedDuringFrameAnimation = false
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
