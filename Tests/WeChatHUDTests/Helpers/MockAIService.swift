@@ -19,6 +19,9 @@ actor MockAIService: AIServiceProtocol {
 
     func setShouldThrow(_ err: Error) { shouldThrow = err }
 
+    /// Back to succeeding — lets a test show that a second run recovers.
+    func clearShouldThrow() { shouldThrow = nil }
+
     func setConfig(_ c: AIConfig) { configToReturn = c }
 
     // MARK: - AIServiceProtocol

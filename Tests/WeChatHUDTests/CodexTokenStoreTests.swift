@@ -106,6 +106,84 @@ final class CodexTokenStoreTests: XCTestCase {
 
     // MARK: - 401 recovery
 
+    /// When this process rotated the refresh token itself, a later forced
+    /// re-read must not fall back to the older token still sitting in
+    /// auth.json: the server invalidated that one when it issued the new one,
+    /// and using it would fail (and could clobber the only live token).
+    func testRotatedTokenIsPreferredOverTheStaleFileToken() async throws {
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: -3600, refreshToken: "r_file")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let firstJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body: [String: Any] = [
+                "access_token": firstJWT,
+                "refresh_token": "r_rotated",
+                "expires_in": 3600
+            ]
+            return (response, [try JSONSerialization.data(withJSONObject: body)])
+        }
+
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] }
+        )
+        // Our own refresh rotates r_file → r_rotated.
+        _ = try await store.validToken()
+        MockURLProtocol.capturedRequests.removeAll()
+
+        let secondJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let bodyText = req.httpBodyString ?? ""
+            XCTAssertTrue(
+                bodyText.contains("refresh_token=r_rotated"),
+                "the rotated token must be tried first, body: \(bodyText)"
+            )
+            let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body: [String: Any] = [
+                "access_token": secondJWT,
+                "refresh_token": "r_rotated_2",
+                "expires_in": 3600
+            ]
+            return (response, [try JSONSerialization.data(withJSONObject: body)])
+        }
+
+        let (access, _) = try await store.refreshAfter401()
+        XCTAssertEqual(access, secondJWT)
+    }
+
+    func testRefreshCandidatesPreferTheFresherToken() {
+        XCTAssertEqual(
+            CodexTokenStore.refreshCandidates(inMemory: "r_new", fromFile: "r_old", inMemoryWasRotated: true),
+            ["r_new", "r_old"]
+        )
+        // Not rotated by us → the file may have been refreshed by codex CLI.
+        XCTAssertEqual(
+            CodexTokenStore.refreshCandidates(inMemory: "r1", fromFile: "r2", inMemoryWasRotated: false),
+            ["r2", "r1"]
+        )
+        XCTAssertEqual(
+            CodexTokenStore.refreshCandidates(inMemory: "same", fromFile: "same", inMemoryWasRotated: true),
+            ["same"]
+        )
+        XCTAssertEqual(
+            CodexTokenStore.refreshCandidates(inMemory: nil, fromFile: "r_only", inMemoryWasRotated: false),
+            ["r_only"]
+        )
+        XCTAssertTrue(
+            CodexTokenStore.refreshCandidates(inMemory: nil, fromFile: nil, inMemoryWasRotated: false).isEmpty
+        )
+    }
+
     func testRefreshAfter401ForcesReReadOfAuthJSON() async throws {
         // First auth.json has an old refresh token; after 401, we rewrite the file
         // with a new refresh token and expect the next refresh to use the new one.

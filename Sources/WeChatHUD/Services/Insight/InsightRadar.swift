@@ -200,19 +200,6 @@ enum InsightRadar {
             ?? names.first { $0.value.localizedCaseInsensitiveContains(name) }?.key
     }
 
-    private static func isMeaningfulAttitude(_ attitude: String) -> Bool {
-        let text = attitude.trimmed
-        guard !text.isEmpty else { return false }
-        let neutralWords = ["正常", "中性", "平稳", "无明显", "未知"]
-        return !neutralWords.contains { text.localizedCaseInsensitiveContains($0) }
-    }
-
-    private static func isHardNegative(_ attitude: String) -> Bool {
-        let text = attitude.trimmed
-        let words = ["反对", "拒绝", "抵触", "不满", "质疑", "回避", "敷衍", "催促"]
-        return words.contains { text.localizedCaseInsensitiveContains($0) }
-    }
-
     private static func isConcreteRadarSource(_ source: String) -> Bool {
         let text = source.trimmed.lowercased()
         guard !text.isEmpty else { return false }
@@ -220,7 +207,12 @@ enum InsightRadar {
         return !nonConcreteSources.contains(text)
     }
 
-    private static func formatHours(_ hours: Double) -> String {
+    /// `rawHours` is a `waiting_hours` straight off the model, so it is
+    /// bounded before any `Int(_:)`: a reply of `1e30` would otherwise trap
+    /// while formatting. A year is past the point where the exact figure
+    /// means anything to the reader.
+    private static func formatHours(_ rawHours: Double) -> String {
+        let hours = SafeNumber.clamped(rawHours, to: 0...8_760)
         if hours < 1 { return "\(Int(hours * 60)) 分钟" }
         if hours < 24 { return "\(Int(hours)) 小时" }
         return "\(Int(hours / 24)) 天"

@@ -268,17 +268,30 @@ enum CommitmentDeadlineResolver {
         return regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 
+    /// Ceiling on a relative offset, a little over a year. The vocabulary the
+    /// prompt teaches is `+3d` / `+2w`; a larger number is the model emitting
+    /// noise, and rejecting it keeps the commitment unresolved rather than
+    /// giving it a fabricated date.
+    private static let maxRelativeDeadline: TimeInterval = 400 * 86_400
+
     private static func relativeDeadline(_ text: String) -> TimeInterval? {
         guard text.hasPrefix("+"), text.count >= 3 else { return nil }
         let numberPart = text.dropFirst().dropLast()
-        guard let number = Double(numberPart), number > 0 else { return nil }
+        // `isFinite` is load-bearing: `Double("1e400")` is `+∞`, which
+        // survives `addingTimeInterval` into a `Date` whose
+        // `timeIntervalSince1970` traps `Int(_:)` at the storage layer.
+        guard let number = Double(numberPart), number.isFinite, number > 0 else { return nil }
+        let scale: TimeInterval
         switch text.last {
-        case "m": return number * 60
-        case "h": return number * 3_600
-        case "d": return number * 86_400
-        case "w": return number * 604_800
+        case "m": scale = 60
+        case "h": scale = 3_600
+        case "d": scale = 86_400
+        case "w": scale = 604_800
         default: return nil
         }
+        let interval = number * scale
+        guard interval <= maxRelativeDeadline else { return nil }
+        return interval
     }
 
     private static func endOfDay(_ date: Date, calendar: Calendar) -> Date? {

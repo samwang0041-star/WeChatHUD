@@ -34,6 +34,12 @@ actor CodexTokenStore {
     private var accessToken: String?
     private var accessExpiresAt: Date = .distantPast
     private var refreshToken: String?
+    /// The refresh token as it appears on disk, kept alongside the in-memory
+    /// one so a failed refresh can fall back instead of overwriting it.
+    private var fileRefreshToken: String?
+    /// True when `refreshToken` came from a server rotation in this process
+    /// (the response body carries a new `refresh_token` on every use).
+    private var refreshTokenWasRotated = false
     private var accountId: String?
     private var emailCached: String?
 
@@ -87,9 +93,18 @@ actor CodexTokenStore {
     private func loadOrRefresh(forceReread: Bool) async throws {
         if forceReread {
             let profile = try CodexAuth.readProfile(env: envProvider())
-            refreshToken = profile.refreshToken
             accountId = profile.accountId
             emailCached = profile.email
+            // Do not clobber a token this process already rotated. We never
+            // write back to auth.json (codex CLI owns it), so after our own
+            // refresh the file still holds the *older* token — adopting it
+            // meant refreshing with a token the server had already invalidated,
+            // and losing the only live one. The file's token stays available as
+            // a fallback for the reverse case (the CLI rotated it).
+            if refreshToken == nil || !refreshTokenWasRotated {
+                refreshToken = profile.refreshToken
+            }
+            fileRefreshToken = profile.refreshToken
             // If the access token in auth.json is itself still valid, use it
             // directly without burning a refresh.
             if Date() < profile.accessExpiresAt.addingTimeInterval(-safetyMargin) {
@@ -107,17 +122,58 @@ actor CodexTokenStore {
             applyRefreshed(result)
             return
         }
-        guard let refresh = refreshToken else { throw CodexError.authExpired }
+        let candidates = Self.refreshCandidates(
+            inMemory: refreshToken,
+            fromFile: fileRefreshToken,
+            inMemoryWasRotated: refreshTokenWasRotated
+        )
+        guard !candidates.isEmpty else { throw CodexError.authExpired }
 
         let session = urlSession
         let task = Task<RefreshedTokens, Error>.detached(priority: .userInitiated) {
-            try await Self.networkRefresh(refreshToken: refresh, session: session)
+            var lastError: Error = CodexError.authExpired
+            for candidate in candidates {
+                do {
+                    return try await Self.networkRefresh(refreshToken: candidate, session: session)
+                } catch {
+                    // A token the server has already rotated away answers
+                    // invalid_grant; the other candidate may still be live.
+                    lastError = error
+                }
+            }
+            throw lastError
         }
         refreshInFlight = task
         defer { refreshInFlight = nil }
 
         let result = try await task.value
         applyRefreshed(result)
+    }
+
+    /// Ordered refresh-token candidates for a single refresh attempt.
+    ///
+    /// The token that most likely works goes first. If this process already
+    /// rotated the token, the in-memory one is newer than the file's; if it has
+    /// not, the file's token is the fresher of the two (codex CLI may have
+    /// logged in again since we read it).
+    static func refreshCandidates(
+        inMemory: String?,
+        fromFile: String?,
+        inMemoryWasRotated: Bool
+    ) -> [String] {
+        var out: [String] = []
+        func add(_ token: String?) {
+            guard let token, !token.isEmpty, !out.contains(token) else { return }
+            out.append(token)
+        }
+        if inMemoryWasRotated {
+            add(inMemory)
+            add(fromFile)
+        } else {
+            add(fromFile)
+            add(inMemory)
+        }
+        return out
     }
 
     private func applyRefreshed(_ result: RefreshedTokens) {
@@ -139,6 +195,7 @@ actor CodexTokenStore {
         }
         // Server rotates refresh_token on use — keep the newest in memory.
         refreshToken = result.refreshToken
+        refreshTokenWasRotated = true
     }
 
     // MARK: - Network
