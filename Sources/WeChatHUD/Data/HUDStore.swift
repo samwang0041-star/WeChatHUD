@@ -2391,7 +2391,10 @@ final class HUDStore: ObservableObject {
     /// Fold stale pending rows into `archived` so they leave the live HUD/workspace
     /// list but remain reachable from history for 14 days via `updated_at`.
     /// A pending row is stale when both its source message and its due date (if any)
-    /// are older than `cutoff`.
+    /// are older than `cutoff` — AND the row itself is old. An item extracted
+    /// today from a weeks-old message (e.g. a queue drained after a long
+    /// absence) must stay visible; archiving by source alone would sweep it
+    /// before the user ever sees it.
     @discardableResult
     func archiveStalePendingDiscussionItems(cutoff: Int, now: Date = Date()) throws -> Int {
         let ts = String(Int(now.timeIntervalSince1970))
@@ -2400,6 +2403,7 @@ final class HUDStore: ObservableObject {
             SET status=?, updated_at=?
             WHERE status=?
               AND CAST(source_timestamp AS INTEGER) < ?
+              AND CAST(created_at AS INTEGER) < ?
               AND (
                     due_at IS NULL
                     OR CAST(IFNULL(due_at, 0) AS INTEGER) <= 0
@@ -2409,6 +2413,7 @@ final class HUDStore: ObservableObject {
             DiscussionItemStatus.archived.rawValue,
             ts,
             DiscussionItemStatus.pending.rawValue,
+            "\(cutoff)",
             "\(cutoff)",
             "\(cutoff)"
         ])
