@@ -15,6 +15,7 @@ final class ProactiveAlertTests: XCTestCase {
         senderName: String = "Alice",
         isVIP: Bool = false,
         status: UnreadStatus = .pending,
+        replied: Bool = false,
         minutesAgo: Int = 5,
         timestamp: Date? = nil
     ) -> UnreadItem {
@@ -28,7 +29,7 @@ final class ProactiveAlertTests: XCTestCase {
             kind: .privateChat,
             isWhitelisted: true,
             isVIP: isVIP,
-            replied: false,
+            replied: replied,
             status: status,
             isIgnored: false
         )
@@ -71,6 +72,66 @@ final class ProactiveAlertTests: XCTestCase {
         engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
         await Task.yield()
         XCTAssertEqual(sent.count, 1)
+    }
+
+    /// A VIP item you already answered must not escalate — before this
+    /// fix, replied rows still fired "VIP 等你 2 小时了" OS alerts.
+    @MainActor
+    func testRepliedVIPItemDoesNotEscalate() async {
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+        let item = makeUnread(
+            chatUsername: "vip-chat",
+            isVIP: true,
+            replied: true,
+            timestamp: Date().addingTimeInterval(-3 * 60 * 60)
+        )
+
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+        XCTAssertTrue(engine.vipAlertTiers.isEmpty)
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    /// A chat you're actively exchanging in must not escalate or burst —
+    /// you are watching it; the alerts would be pure interruption.
+    @MainActor
+    func testActiveConversationSuppressesVIPAndBurstAlerts() async {
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+        let vip = makeUnread(
+            chatUsername: "live-chat",
+            isVIP: true,
+            timestamp: Date().addingTimeInterval(-3 * 60 * 60)
+        )
+        let burstItems = (0..<3).map { i in
+            makeUnread(chatUsername: "live-chat-\(i)", senderName: "Bob")
+        }
+
+        engine.evaluate(
+            unreadItems: [vip] + burstItems,
+            replyDebtItems: [],
+            commitments: [],
+            recentNotifications: [],
+            activeConversations: ["live-chat", "live-chat-0", "live-chat-1", "live-chat-2"]
+        )
+        await Task.yield()
+        XCTAssertTrue(engine.vipAlertTiers.isEmpty)
+        XCTAssertTrue(sent.isEmpty)
     }
 
     func testVIPOverdueTriggersAlert() {

@@ -1248,7 +1248,8 @@ final class ChatMonitor: ObservableObject {
             unreadItems: unreadItems,
             replyDebtItems: replyDebtItems,
             commitments: commitments,
-            recentNotifications: recentNotifications
+            recentNotifications: recentNotifications,
+            activeConversations: o.activeConversations
         )
 
         // --- Autopilot: feed messages + flush expired batches ---
@@ -1465,6 +1466,10 @@ final class ChatMonitor: ObservableObject {
         for trace in outcome.vipTraceMessages {
             guard trace.chatUsername.contains("@chatroom"),
                   !vipGroupUsernames.contains(trace.chatUsername) else { continue }
+            // The user is mid-exchange in this group — the VIP's message is
+            // visible in the thread they're already reading. Skipping the
+            // OS push avoids double-interrupting an active conversation.
+            guard !outcome.activeConversations.contains(trace.chatUsername) else { continue }
             let key = "\(trace.vipUsername)|\(trace.chatUsername)"
             if var existing = crossGroupBuckets[key] {
                 existing.count += 1
