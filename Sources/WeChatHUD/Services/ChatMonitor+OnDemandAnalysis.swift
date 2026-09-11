@@ -395,7 +395,12 @@ extension ChatMonitor {
         let relationship = profile.map {
             "\($0.relationship) (\($0.hierarchy.rawValue)/\($0.hierarchy.label))"
         } ?? fallback.relationship
-        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        // Exclude autopilot-sent messages: they are the app's wording, not the
+        // user's, and the suggestion path must not learn to imitate the bot.
+        let style = await styleProfiler.getProfile(
+            chatUsername: item.chatUsername,
+            excludeMsgUIDs: autopilotService?.autopilotSentMsgUIDs() ?? []
+        )
         let replyContext = buildReplySuggestionContext(for: item)
 
         let input = AIReplySuggester.Input(

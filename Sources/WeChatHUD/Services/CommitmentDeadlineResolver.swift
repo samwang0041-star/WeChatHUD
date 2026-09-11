@@ -13,11 +13,12 @@ enum CommitmentDeadlineResolver {
     /// Resolve a deadline using `messageDate` as the only temporal anchor.
     ///
     /// Supported forms include `今天17:00`, `明天下午5点半`, `后天 09:30`,
-    /// `2026-09-08 17:00`, and the conservative `tomorrow` token. A date
-    /// without a time resolves to that date's end (23:59:59 in `calendar`).
-    /// A time without a date stays on the message's calendar day, even when
-    /// that time has already passed; the resolver never silently moves it to
-    /// the next day. `vague_soon`, `inherit`, and `none` remain unresolved.
+    /// `下周三`, `本周五前`, `周五 09:30`, `2026-09-08 17:00`, and the
+    /// conservative `tomorrow` token. A date without a time resolves to that
+    /// date's end (23:59:59 in `calendar`). A time without a date stays on the
+    /// message's calendar day, even when that time has already passed; the
+    /// resolver never silently moves it to the next day. `vague_soon`,
+    /// `inherit`, and `none` remain unresolved.
     static func resolve(
         extracted: String,
         label: String = "",
@@ -58,7 +59,7 @@ enum CommitmentDeadlineResolver {
             return .resolved(messageDate.addingTimeInterval(relative))
         }
 
-        let dateSignals = dateSignals(in: text, calendar: calendar)
+        let dateSignals = dateSignals(in: text, messageDate: messageDate, calendar: calendar)
         guard !dateSignals.isAmbiguous else { return .invalid }
 
         let dayBase: Date
@@ -119,7 +120,7 @@ enum CommitmentDeadlineResolver {
         let isAmbiguous: Bool
     }
 
-    private static func dateSignals(in text: String, calendar: Calendar) -> DateSignals {
+    private static func dateSignals(in text: String, messageDate: Date, calendar: Calendar) -> DateSignals {
         let pattern = #"(?<!\d)(\d{4})\s*(?:-|/|年)\s*(\d{1,2})\s*(?:-|/|月)\s*(\d{1,2})\s*日?"#
         let absoluteDates = allMatches(pattern: pattern, in: text).compactMap { match -> Date? in
             guard match.count == 4,
@@ -129,7 +130,6 @@ enum CommitmentDeadlineResolver {
             return makeValidatedDate(year: year, month: month, day: day, calendar: calendar)
         }
         let hasMalformedAbsoluteDate = allMatches(pattern: pattern, in: text).count != absoluteDates.count
-        let absoluteConflict = Set(absoluteDates.map { calendar.dateComponents([.year, .month, .day], from: $0) }).count > 1
 
         var dayOffsets: [Int] = []
         if text.range(of: "后天") != nil { dayOffsets.append(2) }
@@ -139,13 +139,81 @@ enum CommitmentDeadlineResolver {
         if text.range(of: "今天") != nil || text.range(of: "今日") != nil {
             dayOffsets.append(0)
         }
+
+        // Weekday names resolve to a concrete day, so they join the absolute
+        // candidates and take part in the same conflict checks: "明天或周五"
+        // names two days and must stay ambiguous rather than pick one.
+        var dayCandidates = absoluteDates
+        if let weekday = weekdayTarget(in: text, messageDate: messageDate, calendar: calendar) {
+            dayCandidates.append(weekday)
+        }
+
         let dayConflict = Set(dayOffsets).count > 1
-        let mixedAbsoluteAndRelative = !absoluteDates.isEmpty && !dayOffsets.isEmpty
+        let mixedAbsoluteAndRelative = !dayCandidates.isEmpty && !dayOffsets.isEmpty
+        let absoluteConflict = Set(dayCandidates.map { calendar.dateComponents([.year, .month, .day], from: $0) }).count > 1
         return DateSignals(
-            absoluteDate: absoluteDates.first,
+            absoluteDate: dayCandidates.first,
             dayOffset: dayOffsets.first,
             isAmbiguous: hasMalformedAbsoluteDate || absoluteConflict || dayConflict || mixedAbsoluteAndRelative
         )
+    }
+
+    /// Chinese weekday reference → the calendar day it names.
+    ///
+    /// Weekday phrasing is the most common work-deadline form in Chinese, and
+    /// the commitment prompt's own example label is `本周五前`. Without this
+    /// every weekday deadline resolved to nothing — and worse, text that also
+    /// carried a clock time (`下周三下午3点`) resolved to *today* at that time,
+    /// because the weekday token was ignored and only the time matched. A
+    /// missing due date is a gap; a confidently wrong one is a bug.
+    ///
+    /// `本`/`这` pins the day to the message's own week, `下` to the following
+    /// one, `上` to the previous one. A bare weekday means the upcoming
+    /// occurrence: "周五" said on a Saturday is the coming Friday, not the one
+    /// that has just passed.
+    private static func weekdayTarget(in text: String, messageDate: Date, calendar: Calendar) -> Date? {
+        let pattern = #"(下下周|下下星期|下下礼拜|上周|上星期|上礼拜|本周|本星期|这周|这星期|下周|下星期|下礼拜|周|星期|礼拜)\s*([一二三四五六日天])"#
+        guard let match = firstMatch(pattern: pattern, in: text), match.count == 3,
+              let weekday = weekdayNumber(match[2]) else { return nil }
+
+        let qualifier = match[1]
+        let isBare = !["下下周", "下下星期", "下下礼拜", "上周", "上星期", "上礼拜",
+                       "本周", "本星期", "这周", "这星期", "下周", "下星期", "下礼拜"].contains(qualifier)
+        let weekOffset: Int
+        switch qualifier {
+        case "下下周", "下下星期", "下下礼拜": weekOffset = 2
+        case "下周", "下星期", "下礼拜": weekOffset = 1
+        case "上周", "上星期", "上礼拜": weekOffset = -1
+        default: weekOffset = 0
+        }
+
+        let messageDay = calendar.startOfDay(for: messageDate)
+        // Chinese weeks run Monday-first regardless of the locale's
+        // `firstWeekday`; `Calendar.weekday` is Sunday == 1.
+        let daysSinceMonday = (calendar.component(.weekday, from: messageDay) + 5) % 7
+        guard let weekStart = calendar.date(byAdding: .day, value: -daysSinceMonday, to: messageDay),
+              let named = calendar.date(byAdding: .day, value: weekOffset * 7 + (weekday - 1), to: weekStart) else {
+            return nil
+        }
+        // Comparing start-of-day values keeps "has this day already gone by"
+        // unambiguous; `named == messageDay` is today, and stays today.
+        if isBare, named < messageDay {
+            return calendar.date(byAdding: .day, value: 7, to: named)
+        }
+        return named
+    }
+
+    private static func weekdayNumber(_ token: String) -> Int? {
+        switch token {
+        case "一": return 1
+        case "二": return 2
+        case "三": return 3
+        case "四": return 4
+        case "五": return 5
+        case "六": return 6
+        case "日", "天": return 7
+        default: return nil
+        }
     }
 
     private static func makeValidatedDate(year: Int, month: Int, day: Int, calendar: Calendar) -> Date? {

@@ -169,6 +169,7 @@ actor AIDailyReportGenerator {
         let emptyRisks = historical ? "历史报告未保存风险的当前状态，不能据此判断无风险。" : "暂无风险"
 
         let formatted = templateForReport
+            .replacingOccurrences(of: "{report_date}", with: Self.reportDateLine(report.date))
             .replacingOccurrences(of: "{unread_count}", with: unread)
             .replacingOccurrences(of: "{analyzed_chat_count}", with: "\(metrics.analyzedChatCount)")
             .replacingOccurrences(of: "{highlight_count}", with: "\(metrics.highlightCount)")
@@ -200,6 +201,20 @@ actor AIDailyReportGenerator {
     nonisolated private func isHistoricalReport(_ report: DailyReport) -> Bool {
         let calendar = Calendar.current
         return !calendar.isDate(report.date, inSameDayAs: report.generatedAt)
+    }
+
+    /// The date line handed to the prompt as `{report_date}`.
+    ///
+    /// The live report template asks for a "日期+工作小结" draft and tells the
+    /// model to rank items due "24h 内", but no date was ever substituted — the
+    /// model was left to guess what day it was writing about. The weekday is
+    /// included because the surrounding data talks in weekday terms.
+    nonisolated static func reportDateLine(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 EEEE"
+        return formatter.string(from: date)
     }
 
     nonisolated private func historicalDateString(_ date: Date) -> String {

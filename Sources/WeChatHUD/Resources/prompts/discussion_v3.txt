@@ -56,17 +56,22 @@
       "msg": 1,
       "content": "一句话描述这件事（≤30字，保留对象名，不要写'我/你'这类方向词）",
       "detail": "可选的补充细节，没有就省略",
-      "due": "可选 +1d / +2h / +1w 相对截止，不含就省略",
+      "due_text": "可选。原话里的时间说法，照抄，如'周五前'/'下周三'/'明天下午'/'月底前'；没有就省略",
       "confidence": 0.0-1.0
     }
   ]
 }
 ```
 
+**due_text 写法（重要）**：
+- **照抄原话里的时间说法，不要换算成天数或日期。** 原话说"周五前"就写"周五前"，说"下周三"就写"下周三"。
+- 由程序负责把"周五前"换算成真实日期。你自己换算只会算错，因为你不知道现在是几号、星期几。
+- 原话没有时间就省略这个字段，不要为了填满而编一个。
+
 **示例**（假设对应内容在第 3 / 5 / 7 条消息）：
-- 第 3 条我说"小李，客户回访名单周五前给我"→ `{"kind":"todo","executor":"peer","msg":3,"content":"客户回访名单给小李","due":"+4d","confidence":0.9}`
-- 第 5 条对方说"帮我做一下Q2规划，周五前给我"→ `{"kind":"todo","executor":"me","msg":5,"content":"Q2规划交对方","due":"+5d","confidence":0.9}`
-- 第 7 条我说"这个方案我周二决定"→ `{"kind":"decision","executor":"me","msg":7,"content":"方案选型","due":"+2d","confidence":0.85}`
+- 第 3 条我说"小李，客户回访名单周五前给我"→ `{"kind":"todo","executor":"peer","msg":3,"content":"客户回访名单给小李","due_text":"周五前","confidence":0.9}`
+- 第 5 条对方说"帮我做一下Q2规划，周五前给我"→ `{"kind":"todo","executor":"me","msg":5,"content":"Q2规划交对方","due_text":"周五前","confidence":0.9}`
+- 第 7 条我说"这个方案我周二决定"→ `{"kind":"decision","executor":"me","msg":7,"content":"方案选型","due_text":"周二","confidence":0.85}`
 - 我问"报价什么时候能出"，对方没回 → `{"kind":"question","executor":"peer","msg":<我问这句的序号>,"content":"报价出具时间","confidence":0.8}`
 - 对方说"项目预算30万"→ `{"kind":"info","executor":"unknown","msg":<对方说这句的序号>,"content":"项目预算30万","confidence":0.95}`
 

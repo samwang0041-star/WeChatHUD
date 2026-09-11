@@ -43,9 +43,12 @@ final class AIClassifierTests: XCTestCase {
 
     // MARK: - Prompt loader
 
-    func testPromptLoaderLoadsClassifierV3() throws {
+    func testPromptLoaderLoadsTheLiveClassifierPrompt() throws {
+        // Pinned to the version AIClassifier actually sends. This used to load
+        // classifier_v3, which nothing loaded, so the test could pass while the
+        // live prompt was missing or malformed.
         let loader = PromptLoader()
-        let template = try loader.load(version: "classifier_v3")
+        let template = try loader.load(version: AIClassifier.promptVersion)
         XCTAssertTrue(template.contains("{message_body}"), "prompt should contain message body placeholder")
         XCTAssertTrue(template.contains("{sender_name}"), "prompt should contain sender placeholder")
         XCTAssertTrue(template.contains("yes_no"), "prompt should declare ask types")

@@ -63,15 +63,32 @@ actor StyleProfiler {
     /// Build or retrieve a cached style profile for a specific chat.
     /// - Parameter excludeMsgUIDs: Message UIDs to exclude (autopilot-sent messages to prevent style drift).
     func getProfile(chatUsername: String, excludeMsgUIDs: Set<String> = []) async -> StyleProfile {
-        // M2 fix: per-chat cache timestamps
-        if let cached = profileCache[chatUsername],
+        // M2 fix: per-chat cache timestamps.
+        //
+        // The exclusion set is part of the cache key. Caching on the chat alone
+        // let the two callers fight over one entry: the autopilot asks with its
+        // own sent messages excluded, the manual suggester asked with no
+        // exclusions, and whichever ran first handed its profile to the other
+        // for the next 30 minutes. A user who had just auto-replied could have
+        // the autopilot's own wording presented back as "your style".
+        let key = Self.cacheKey(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
+        if let cached = profileCache[key],
            Date().timeIntervalSince(cached.refreshedAt) < 1800 {
             return cached.profile
         }
 
         let profile = await buildProfile(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
-        profileCache[chatUsername] = (profile, Date())
+        profileCache[key] = (profile, Date())
         return profile
+    }
+
+    /// The exclusion set can hold hundreds of ids; hashing it keeps the cache
+    /// key small while staying stable for a given caller.
+    private static func cacheKey(chatUsername: String, excludeMsgUIDs: Set<String>) -> String {
+        guard !excludeMsgUIDs.isEmpty else { return chatUsername }
+        var hasher = Hasher()
+        for uid in excludeMsgUIDs.sorted() { hasher.combine(uid) }
+        return "\(chatUsername)#excl\(hasher.finalize())"
     }
 
     /// Build a generic profile for a contact role (when no chat history).

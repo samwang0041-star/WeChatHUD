@@ -110,15 +110,8 @@ enum ReplySuggestionMode: Equatable {
     case automatic
 }
 
-/// AI-generated briefing for an expanded inbox item.
-/// Contains situation analysis, recommended action, and reply suggestions.
-struct InboxBriefing: Decodable {
-    let situation: String
-    let suggestion: String
-    let replies: [SuggestedReply]
-}
-
-/// One reply suggestion within an InboxBriefing.
+/// One reply suggestion. `rationale` carries the model's one-line reason and
+/// falls back to its `intent` when the model omitted it.
 struct SuggestedReply: Decodable, Identifiable {
     let text: String
     let tone: String

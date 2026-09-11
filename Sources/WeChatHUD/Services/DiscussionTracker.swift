@@ -220,7 +220,11 @@ actor DiscussionTracker {
                 mySelfNames: mySelfNames
             )
             let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : msg.senderName)
-            let ts = MessageInfo.formatRelative(msg.createTime)
+            // Absolute date + weekday, not "3小时前": the model now echoes the
+            // original time wording ("周五前") instead of computing an offset
+            // itself, and it can only do that usefully if it can see which day
+            // the line was sent on.
+            let ts = MessageInfo.formatAbsoluteForPrompt(msg.createTime)
             return "[\(idx + 1)] [\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))"
         }.joined(separator: "\n")
 
@@ -366,7 +370,7 @@ actor DiscussionTracker {
             let source = msgIndex.map { messages[$0] } ?? fallback
             let sourceDate = Date(timeIntervalSince1970: Double(source?.createTime ?? 0))
             let detail = row["detail"] as? String
-            let deadline = (row["due"] as? String).flatMap { MessageHelpers.resolveDeadline($0, relativeTo: sourceDate) }
+            let deadline = Self.resolveDue(row, sourceDate: sourceDate)
             let confidence = (row["confidence"] as? Double) ?? 0.6
             out.append(ExtractedItem(
                 kind: kind, owner: owner,
@@ -377,6 +381,32 @@ actor DiscussionTracker {
             ))
         }
         return out.isEmpty && dropped > 0 ? nil : out
+    }
+
+    /// Resolve the model's due-date wording into an absolute date.
+    ///
+    /// The prompt used to ask for a `+Nd` day offset ("周五前" → `+4d`), which
+    /// the model cannot compute: it is shown only relative timestamps
+    /// ("3小时前") and has no idea what today's date or weekday is. Its own two
+    /// examples proved it — the identical phrase "周五前" was mapped to `+4d` in
+    /// one example and `+5d` in the next.
+    ///
+    /// It now echoes the original wording (`due_text`) and the date is worked
+    /// out here, anchored on the message that produced the item — the same
+    /// division of labour as `commitment_v1`, and the same weekday-aware
+    /// resolver, so the two extractors can no longer disagree about what
+    /// "周五前" means.
+    ///
+    /// `due` is still accepted so outputs cached from the previous prompt
+    /// version keep resolving.
+    private static func resolveDue(_ row: [String: Any], sourceDate: Date) -> Date? {
+        if let text = row["due_text"] as? String, !text.isEmpty {
+            return CommitmentDeadlineResolver.resolve(extracted: text, messageDate: sourceDate)
+        }
+        if let legacyOffset = row["due"] as? String {
+            return MessageHelpers.resolveDeadline(legacyOffset, relativeTo: sourceDate)
+        }
+        return nil
     }
 
     /// Models emit `msg` as an Int, a Double (`"msg": 3.0`) or a string —
