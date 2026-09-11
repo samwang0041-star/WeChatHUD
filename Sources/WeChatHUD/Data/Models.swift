@@ -1485,6 +1485,11 @@ enum DiscussionLiveWindow {
     static func contains(_ item: DiscussionItem, cutoff: Int) -> Bool {
         if item.sourceTimestamp >= cutoff { return true }
         if let due = item.dueAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        // An item extracted just now from an old source message is still
+        // fresh to the user — judge visibility by when we learned of it.
+        if item.status == .pending, Int(item.createdAt.timeIntervalSince1970) >= cutoff {
+            return true
+        }
         // Recently completed / archived rows stay visible in history even when
         // the original source is older than the window.
         if item.status != .pending, Int(item.updatedAt.timeIntervalSince1970) >= cutoff {

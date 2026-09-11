@@ -111,6 +111,42 @@ final class DiscussionTrackerReliabilityTests: XCTestCase {
         XCTAssertEqual(store.loadDiscussionItems(chatUsername: "peer").first?.owner, .mine)
     }
 
+    /// A malformed row drops alone; the rest of the batch still lands and
+    /// the cursor advances — a single bad item must not retry-loop the
+    /// whole window.
+    func testMalformedRowIsSkippedWithoutSinkingTheBatch() async {
+        let ai = await model(response: #"{"items":[{"kind":"bogus","content":"坏行"},{"kind":"todo","executor":"peer","msg":1,"content":"出报价单","confidence":0.8}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        let count = await extract(tracker, [message(1)])
+        XCTAssertEqual(count, 1)
+        let items = store.loadDiscussionItems(chatUsername: "peer")
+        XCTAssertEqual(items.map(\.content), ["出报价单"])
+        XCTAssertNotNil(store.getSetting(DiscussionTracker.cursorKey("peer")))
+    }
+
+    /// An item extracted from a >14d-old source must still be visible —
+    /// the live window checks when WE learned of it, not only the source.
+    func testPendingItemFromOldSourceStaysInLiveWindow() async {
+        let old = Int(Date().timeIntervalSince1970) - 20 * 86400
+        let ai = await model(response: #"{"items":[{"kind":"todo","executor":"peer","msg":1,"content":"归档老任务","confidence":0.8}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [message(1, time: old)])
+        let item = store.loadDiscussionItems(chatUsername: "peer").first
+        XCTAssertEqual(item?.sourceTimestamp, old)
+        XCTAssertTrue(DiscussionLiveWindow.contains(item!, cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)))
+    }
+
+    /// `msg` may arrive as a Double or a string — both must resolve.
+    func testMsgIndexAcceptsDoubleAndStringForms() async {
+        let ai = await model(response: #"{"items":[{"kind":"info","executor":"unknown","msg":1.0,"content":"预算30万"},{"kind":"todo","executor":"me","msg":"2","content":"整理资料"}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [message(1, time: 1000), message(2, time: 2000)])
+        let items = store.loadDiscussionItems(chatUsername: "peer")
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items.first(where: { $0.content == "预算30万" })?.anchorMsgUID, "m1")
+        XCTAssertEqual(items.first(where: { $0.content == "整理资料" })?.anchorMsgUID, "m2")
+    }
+
     func testFailureDoesNotAdvanceCheckpointAndCanRetry() async {
         let ai = await model(response: "invalid JSON")
         let tracker = DiscussionTracker(store: store, aiService: ai, retryBaseDelay: 0)

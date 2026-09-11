@@ -347,18 +347,22 @@ actor DiscussionTracker {
         }
         let fallback = messages.last
         var out: [ExtractedItem] = []
+        var dropped = 0
         for row in arr {
             guard let kindStr = row["kind"] as? String,
                   let kind = DiscussionItemKind(rawValue: kindStr),
                   let content = row["content"] as? String,
-                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  // v3 emits `executor` (who acts) + `msg` (source line
+                  // number); `owner` from older outputs is a fallback. One
+                  // malformed row must not sink the whole batch — drop it
+                  // and keep the rest; only an all-garbage payload fails.
+                  // info/timePlace carry no responsibility — a missing
+                  // owner field defaults to shared instead of dropping.
+                  let owner = Self.owner(for: row) ?? (kind == .info || kind == .timePlace ? .shared : nil)
+                  else { dropped += 1; continue }
 
-            // v3 emits `executor` (who acts) + `msg` (source line number);
-            // `owner` from older model outputs is accepted as a fallback.
-            let owner = Self.owner(for: row)
-            guard let owner else { return nil }
-
-            let msgIndex = (row["msg"] as? Int).flatMap { $0 >= 1 && $0 <= messages.count ? $0 - 1 : nil }
+            let msgIndex = Self.sourceIndex(row["msg"], count: messages.count)
             let source = msgIndex.map { messages[$0] } ?? fallback
             let sourceDate = Date(timeIntervalSince1970: Double(source?.createTime ?? 0))
             let detail = row["detail"] as? String
@@ -372,7 +376,21 @@ actor DiscussionTracker {
                 sourceTimestamp: source?.createTime ?? 0
             ))
         }
-        return out
+        return out.isEmpty && dropped > 0 ? nil : out
+    }
+
+    /// Models emit `msg` as an Int, a Double (`"msg": 3.0`) or a string —
+    /// accept all three, then bounds-check against the transcript length.
+    private static func sourceIndex(_ value: Any?, count: Int) -> Int? {
+        let raw: Int?
+        switch value {
+        case let i as Int: raw = i
+        case let d as Double: raw = d.rounded() == d ? Int(d) : nil
+        case let s as String: raw = Int(s.trimmingCharacters(in: .whitespaces))
+        default: raw = nil
+        }
+        guard let raw, raw >= 1, raw <= count else { return nil }
+        return raw - 1
     }
 
     /// `executor` (who performs the action) is authoritative in v3 —

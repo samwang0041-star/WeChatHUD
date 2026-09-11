@@ -54,7 +54,7 @@
       "kind": "todo|decision|info|timePlace|question",
       "executor": "me|peer|both|unknown",
       "msg": 1,
-      "content": "一句话描述这件事（≤30字，不含人名方向词）",
+      "content": "一句话描述这件事（≤30字，保留对象名，不要写'我/你'这类方向词）",
       "detail": "可选的补充细节，没有就省略",
       "due": "可选 +1d / +2h / +1w 相对截止，不含就省略",
       "confidence": 0.0-1.0
@@ -63,11 +63,11 @@
 }
 ```
 
-**示例**：
-- 我说"小李，客户回访名单周五前给我"→ `{kind:"todo", executor:"peer", msg:<我说这句的序号>, content:"客户回访名单", due:"+4d", confidence:0.9}`
-- 对方说"帮我做一下Q2规划，周五前给我"→ `{kind:"todo", executor:"me", msg:<对方说这句的序号>, content:"Q2规划交对方", due:"+5d", confidence:0.9}`
-- 我说"这个方案我周二决定"→ `{kind:"decision", executor:"me", msg:…, content:"方案选型", due:"+2d", confidence:0.85}`
-- 我问"报价什么时候能出"，对方没回 → `{kind:"question", executor:"peer", msg:…, content:"报价出具时间", confidence:0.8}`
-- 对方说"项目预算30万"→ `{kind:"info", executor:"unknown", msg:…, content:"项目预算30万", confidence:0.95}`
+**示例**（假设对应内容在第 3 / 5 / 7 条消息）：
+- 第 3 条我说"小李，客户回访名单周五前给我"→ `{"kind":"todo","executor":"peer","msg":3,"content":"客户回访名单给小李","due":"+4d","confidence":0.9}`
+- 第 5 条对方说"帮我做一下Q2规划，周五前给我"→ `{"kind":"todo","executor":"me","msg":5,"content":"Q2规划交对方","due":"+5d","confidence":0.9}`
+- 第 7 条我说"这个方案我周二决定"→ `{"kind":"decision","executor":"me","msg":7,"content":"方案选型","due":"+2d","confidence":0.85}`
+- 我问"报价什么时候能出"，对方没回 → `{"kind":"question","executor":"peer","msg":<我问这句的序号>,"content":"报价出具时间","confidence":0.8}`
+- 对方说"项目预算30万"→ `{"kind":"info","executor":"unknown","msg":<对方说这句的序号>,"content":"项目预算30万","confidence":0.95}`
 
 如果没有任何事项：输出 `{"items": []}`。

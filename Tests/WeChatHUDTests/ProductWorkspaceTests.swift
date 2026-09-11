@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import WeChatHUD
 
 final class ProductWorkspaceTests: XCTestCase {
@@ -293,7 +294,18 @@ final class ProductWorkspaceTests: XCTestCase {
             )
         }
         XCTAssertTrue(DiscussionLiveWindow.contains(item(1, sourceOffset: 3_600, dueOffset: nil), cutoff: cutoff))
-        XCTAssertFalse(DiscussionLiveWindow.contains(item(2, sourceOffset: -20 * 86_400, dueOffset: nil), cutoff: cutoff))
+        // Learned long ago + ancient source + no due → drops out of the live
+        // window. (A pending row learned *recently* stays even when its
+        // source is old — createdAt is the freshness signal.)
+        let stalePending = DiscussionItem(
+            id: 2, chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "事项2", detail: nil, anchorMsgUID: "2",
+            sourceTimestamp: cutoff - 20 * 86_400, dueAt: nil,
+            status: .pending, confidence: 0.9, promptVersion: "test",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 10 * 86_400)),
+            updatedAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 10 * 86_400))
+        )
+        XCTAssertFalse(DiscussionLiveWindow.contains(stalePending, cutoff: cutoff))
         XCTAssertTrue(DiscussionLiveWindow.contains(item(3, sourceOffset: -20 * 86_400, dueOffset: 86_400), cutoff: cutoff))
         func finished(_ id: Int64, status: DiscussionItemStatus, sourceOffset: Int, dueOffset: Int?, updatedOffset: Int) -> DiscussionItem {
             let base = item(id, sourceOffset: sourceOffset, dueOffset: dueOffset)
@@ -320,6 +332,12 @@ final class ProductWorkspaceTests: XCTestCase {
             content: "旧的无期限", detail: nil, anchorMsgUID: "old",
             sourceTimestamp: cutoff - 20 * 86_400, dueAt: nil, confidence: 0.9, promptVersion: "test"
         ))
+        // A row is only "stale" when we also learned of it long ago —
+        // backdate created_at so the fixture models an aged pending item.
+        let oldCreatedAt = String(cutoff - 15 * 86_400)
+        sqlite3_exec(store.rawDB,
+            "UPDATE discussion_items SET created_at='\(oldCreatedAt)', updated_at='\(oldCreatedAt)' WHERE anchor_msg_uid='old'",
+            nil, nil, nil)
         XCTAssertTrue(try store.insertDiscussionItem(
             chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
             content: "旧的但未到期", detail: nil, anchorMsgUID: "due",
@@ -412,6 +430,12 @@ final class ProductWorkspaceTests: XCTestCase {
             dueAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 145 * 86_400)),
             confidence: 0.9, promptVersion: "test"
         ))
+        // Staleness is judged by source AND by when the row was learned —
+        // backdate created_at so this fixture models a long-pending item.
+        let agedTs = String(cutoff - 149 * 86_400)
+        sqlite3_exec(store.rawDB,
+            "UPDATE discussion_items SET created_at='\(agedTs)' WHERE anchor_msg_uid='old'",
+            nil, nil, nil)
         XCTAssertTrue(try store.insertDiscussionItem(
             chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
             content: "填写课后服务自主作业报名收集表", detail: nil, anchorMsgUID: "soon",
