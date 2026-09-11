@@ -1,6 +1,7 @@
 import AppKit
 import QuartzCore
 import SwiftUI
+import simd
 
 /// NSView subclass that owns a single persistent mouse tracking area and
 /// forwards enter/exit events via closures. Needed because NSTrackingArea
@@ -263,19 +264,29 @@ class FloatingPanel: NSPanel {
 
     private var animationTimer: Timer?
     private var animationDisplayLink: CADisplayLink?
-    private var animationRun: FrameAnimationRun?
+    private var animationRun: SpringRun?
     var onFrameAnimationStarted: (() -> Void)?
     var onFrameAnimationEnded: (() -> Void)?
 
-    /// One frame-animation pass. Kept as a value so both the display-link
-    /// and the timer fallback step it identically.
-    private struct FrameAnimationRun {
-        let startFrame: NSRect
-        let target: NSRect
-        let duration: TimeInterval
-        let expanding: Bool
-        let startTimestamp: CFTimeInterval
+    /// One frame-animation pass, modelled as four damped springs — one per
+    /// frame component (x, y, width, height). Velocity is kept across
+    /// retargets: when a new target arrives mid-flight we swap `target`
+    /// and keep integrating from the live velocity, so the trajectory
+    /// bends smoothly instead of stopping and restarting from zero.
+    private struct SpringRun {
+        var target: NSRect
+        var velocity: SIMD4<Double>   // x, y, w, h — pt per second
+        var expanding: Bool
+        var lastTimestamp: CFTimeInterval
         let startedWallClock: Date
+    }
+
+    private static func components(of rect: NSRect) -> SIMD4<Double> {
+        SIMD4(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+    }
+
+    private static func rect(from v: SIMD4<Double>) -> NSRect {
+        NSRect(x: v.x, y: v.y, width: v.z, height: v.w)
     }
 
     /// Is `point` (global Cocoa coordinates) inside the panel?
@@ -310,28 +321,26 @@ class FloatingPanel: NSPanel {
     /// Animate the panel frame, keeping its top edge locked to the
     /// screen top (i.e., to the notch).
     ///
-    /// We manually interpolate the frame on a 60 Hz timer instead of
-    /// using AppKit's `NSViewAnimation` or `animator()` because both
-    /// have proven unreliable for `NSPanel` — they often snap width/
-    /// height instantly while only animating the origin, or they use
-    /// easing curves that don't keep the panel visually centred.
-    /// Manual interpolation gives us pixel-perfect symmetric expansion.
+    /// The frame is driven by a per-component damped spring stepped on
+    /// the display link — not a fixed-duration ease and not AppKit's
+    /// `NSViewAnimation`/`animator()` (both proven unreliable for
+    /// NSPanel: they snap width/height instantly or desync the origin).
+    /// Springs give us pixel-perfect symmetric expansion AND, unlike a
+    /// re-anchored easing curve, a retarget mid-flight preserves the
+    /// current velocity — the trajectory bends toward the new target
+    /// instead of stopping and re-launching, which was the visible
+    /// stutter when a measurement or a second notification resized the
+    /// panel mid-expand.
     func animateHeight(to newHeight: CGFloat, width: CGFloat? = nil, caller: String = #function) {
         let newWidth = width ?? frame.width
         refreshNotchGeometry(caller: caller)
         let x = notch.notchCenterX - newWidth / 2
         let y = targetScreen.frame.maxY - newHeight
         let target = NSRect(x: x, y: y, width: newWidth, height: newHeight)
-        let expanding = IslandMotion.isExpanding(from: self.frame, to: target)
-        let duration = AnimationDebugger.isEnabled
-            ? AnimationDebugger.slowDuration
-            : (expanding ? IslandMotion.expandDuration : IslandMotion.collapseDuration)
 
-        // Already heading exactly there? Keep the motion in flight instead
-        // of retargeting. SwiftUI reports the banner's height on every
-        // layout pass, and restarting the ease for an unchanged target
-        // would re-anchor the curve dozens of times per second — visible
-        // as a leaden, stuttering expansion.
+        // Already heading exactly there? Keep the spring in flight —
+        // retargeting to the same value would only re-announce started/
+        // ended to PanelState. SwiftUI re-reports sizes every layout pass.
         if let run = animationRun,
            abs(run.target.height - target.height) < 1,
            abs(run.target.width - target.width) < 1,
@@ -340,32 +349,38 @@ class FloatingPanel: NSPanel {
             return
         }
 
-        AnimationDebugger.logStart(from: self.frame, to: target, caller: caller, duration: duration)
-
-        // Cancel any in-flight animation before starting the new one. This is
-        // a retarget, not a real end event, so don't bounce PanelState through
-        // frameAnimationEnded just before starting again.
-        cancelFrameAnimation(notify: false)
-        onFrameAnimationStarted?()
+        AnimationDebugger.logStart(from: self.frame, to: target, caller: caller,
+                                   duration: AnimationDebugger.isEnabled ? AnimationDebugger.slowDuration : 0)
 
         if CompanionMotion.reduceMotion || self.frame == target {
+            cancelFrameAnimation(notify: false)
             IslandFrameTiming.recordInstant()
             setFrame(target, display: true)
             onFrameAnimationEnded?()
             return
         }
 
-        animationRun = FrameAnimationRun(
-            startFrame: self.frame,
+        if var run = animationRun {
+            // Retarget in flight: keep the integrated velocity so the
+            // spring bends toward the new goal without a velocity zero.
+            run.target = target
+            run.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+            animationRun = run
+            return
+        }
+
+        onFrameAnimationStarted?()
+
+        animationRun = SpringRun(
             target: target,
-            duration: duration,
-            expanding: expanding,
-            startTimestamp: CACurrentMediaTime(),
+            velocity: .zero,
+            expanding: IslandMotion.isExpanding(from: self.frame, to: target),
+            lastTimestamp: 0,
             startedWallClock: Date()
         )
         IslandFrameTiming.begin()
 
-        // Drive the interpolation from the display's own refresh signal.
+        // Drive the integration from the display's own refresh signal.
         // A repeating `Timer` fires on the runloop clock, so a busy frame
         // (SwiftUI re-laying out the panel as it resizes) leaves it behind
         // — the timer then bursts to catch up or skips a beat, which is the
@@ -373,19 +388,23 @@ class FloatingPanel: NSPanel {
         // fires once per vsync and hands us `targetTimestamp`, the moment
         // the frame we are about to draw will be shown, so each frame is
         // positioned for its own presentation time and never drifts.
+        // ProMotion: don't cap at 60 — a 120 Hz panel animating at half
+        // rate reads as jank next to the rest of the system UI.
         if let contentView, contentView.window != nil {
             let link = contentView.displayLink(target: self, selector: #selector(stepFrameAnimation(_:)))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
+            let maxFPS = Double(targetScreen.maximumFramesPerSecond)
+            let ceiling = max(60, maxFPS)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: Float(ceiling), preferred: Float(ceiling))
             link.add(to: .main, forMode: .common)
             animationDisplayLink = link
         } else {
             // Fallback when the view is not in a window yet.
             let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-                guard let self, let start = self.animationRun?.startTimestamp else {
+                guard self?.animationRun != nil else {
                     timer.invalidate()
                     return
                 }
-                self.stepFrameAnimation(at: CACurrentMediaTime(), elapsedOverride: CACurrentMediaTime() - start)
+                self?.stepFrameAnimation(at: CACurrentMediaTime())
             }
             animationTimer = timer
             // Continue animating during mouse tracking and menu interactions.
@@ -397,43 +416,56 @@ class FloatingPanel: NSPanel {
         // `targetTimestamp` is the presentation time of the frame being
         // drawn right now — one refresh ahead of `timestamp` — so the
         // position lands exactly where it should appear on screen.
-        stepFrameAnimation(at: link.targetTimestamp, elapsedOverride: nil)
+        stepFrameAnimation(at: link.targetTimestamp)
     }
 
-    private func stepFrameAnimation(at mediaTime: CFTimeInterval, elapsedOverride: TimeInterval?) {
-        guard let run = animationRun else { return }
+    private func stepFrameAnimation(at mediaTime: CFTimeInterval) {
+        guard var run = animationRun else { return }
         let stepStart = CACurrentMediaTime()
         let now = ProcessInfo.processInfo.systemUptime
         IslandFrameTiming.tick(uptime: now)
-        let elapsed = elapsedOverride ?? (mediaTime - run.startTimestamp)
-        let rawT = min(max(elapsed, 0) / run.duration, 1.0)
-        let progress = run.expanding
-            ? IslandMotion.expandProgress(rawT)
-            : IslandMotion.collapseProgress(rawT)
 
-        let startFrame = run.startFrame
-        let target = run.target
-        let ix = startFrame.origin.x + (target.origin.x - startFrame.origin.x) * progress
-        let iy = startFrame.origin.y + (target.origin.y - startFrame.origin.y) * progress
-        let iw = startFrame.size.width + (target.size.width - startFrame.size.width) * progress
-        let ih = startFrame.size.height + (target.size.height - startFrame.size.height) * progress
+        // First tick after a retarget/start has no previous timestamp —
+        // use one nominal frame instead of a huge dt.
+        let dt = run.lastTimestamp > 0
+            ? min(max(mediaTime - run.lastTimestamp, 0), IslandMotion.maxStep)
+            : 1.0 / 60.0
+        run.lastTimestamp = mediaTime
+
+        // Semi-implicit Euler: velocity integrates acceleration, position
+        // integrates the new velocity. Stable for our stiffness range and
+        // cheap enough to run inside a vsync tick.
+        let (k, c) = IslandMotion.spring(expanding: run.expanding)
+        var pos = FloatingPanel.components(of: frame)
+        let targetV = FloatingPanel.components(of: run.target)
+        let accel = -k * (pos - targetV) - c * run.velocity
+        run.velocity += accel * dt
+        pos += run.velocity * dt
+
+        let stepped = FloatingPanel.rect(from: pos)
         // `display: false` — the window server composites the resized
         // window at its own display cycle. Forcing a synchronous redraw
         // here re-laid-out the whole SwiftUI tree inside the tick, which is
         // what starved the next frames.
-        setFrame(NSRect(x: ix, y: iy, width: iw, height: ih), display: false)
+        setFrame(stepped, display: false)
+        animationRun = run
 
-        AnimationDebugger.logSample(window: self, startTime: run.startedWallClock, elapsed: elapsed)
+        AnimationDebugger.logSample(window: self, startTime: run.startedWallClock,
+                                    elapsed: Date().timeIntervalSince(run.startedWallClock))
 
         // Anything slow here is our own main-thread work (window resize +
         // SwiftUI re-render) rather than the display's cadence, so surface
         // it separately when hunting stutter.
         let cost = CACurrentMediaTime() - stepStart
         if cost > 0.008 {
-            AnimationDebugger.logEvent(String(format: "slowStep %.1fms w=%.0f h=%.0f", cost * 1000, iw, ih))
+            AnimationDebugger.logEvent(String(format: "slowStep %.1fms w=%.0f h=%.0f",
+                                            cost * 1000, stepped.width, stepped.height))
         }
 
-        if rawT >= 1.0 {
+        let settled = simd_distance(pos, targetV) < IslandMotion.settleDistance
+            && simd_length(run.velocity) < IslandMotion.settleVelocity
+        let wedged = Date().timeIntervalSince(run.startedWallClock) > IslandMotion.maxRunDuration
+        if settled || wedged {
             finishFrameAnimation()
         }
     }
@@ -450,7 +482,7 @@ class FloatingPanel: NSPanel {
         setFrame(run.target, display: true)
         onFrameAnimationEnded?()
         AnimationDebugger.logEnd(frame: frame)
-        IslandFrameTiming.finish(duration: run.duration)
+        IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.startedWallClock))
     }
 
     /// Snap the panel to the target size with NO animation. Used on
