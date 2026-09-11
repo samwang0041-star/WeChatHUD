@@ -450,7 +450,7 @@ struct ActionPanelView: View {
 
     private func suggestionRow(_ suggestion: SuggestedReply) -> some View {
         Button(action: {
-            WeChatLauncher.openChatAndPaste(named: monitor.displayName(for: item.chatUsername), text: suggestion.text)
+            monitor.openWeChatChatAndPaste(item.chatUsername, text: suggestion.text)
         }) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -565,7 +565,7 @@ struct ActionPanelView: View {
         case .handled:
             monitor.restoreInboxItem(item)
         default:
-            WeChatLauncher.openChat(named: monitor.displayName(for: item.chatUsername))
+            monitor.openWeChatChat(item.chatUsername)
         }
     }
 

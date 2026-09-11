@@ -152,7 +152,7 @@ enum WeChatLauncher {
     /// and submit — opening that conversation. Silently no-ops if WeChat
     /// isn't running (we don't try to launch it; the user typically
     /// keeps it running anyway).
-    static func openChat(named chatName: String) {
+    static func openChat(named chatName: String, searchNames: [String] = []) {
         Task { @MainActor in
             guard !PreviewRuntime.isEnabled else { return }
             guard !textActionInFlight else { notifyUser(SendFailureReason.operationInProgress.userMessage); return }
@@ -178,7 +178,8 @@ enum WeChatLauncher {
                 ClipboardGuard.restore(saved)
                 finishClipboardRestore()
             }
-            if let failure = await navigateToChat(app: app, chatName: chatName) { notifyUser(failure.userMessage) }
+            let names = WeChatOpenSearch.names(stored: searchNames.isEmpty ? [chatName] : searchNames, username: chatName)
+            if let failure = await navigateToChat(app: app, searchNames: names) { notifyUser(failure.userMessage) }
         }
     }
 
@@ -187,9 +188,9 @@ enum WeChatLauncher {
     /// suggestions: copying first and then calling `openChat` is racy
     /// because `openChat` itself uses the pasteboard for WeChat search
     /// and only restores the previous clipboard.
-    static func openChatAndPaste(named chatName: String, text: String) {
+    static func openChatAndPaste(named chatName: String, text: String, searchNames: [String] = []) {
         Task { @MainActor in
-            let result = await performTextAction(chatName: chatName, text: text, typingDelay: 0, sendKey: nil)
+            let result = await performTextAction(chatName: chatName, text: text, typingDelay: 0, sendKey: nil, searchNames: searchNames)
             if case .failed(let reason) = result { notifyUser(reason.userMessage) }
         }
     }
@@ -631,9 +632,10 @@ enum WeChatLauncher {
         chatName: String,
         text: String,
         typingDelay: TimeInterval = 0,
-        sendKey: WeChatSendKey = .cmdEnter
+        sendKey: WeChatSendKey = .cmdEnter,
+        searchNames: [String] = []
     ) async -> SendResult {
-        switch await performTextAction(chatName: chatName, text: text, typingDelay: typingDelay, sendKey: sendKey) {
+        switch await performTextAction(chatName: chatName, text: text, typingDelay: typingDelay, sendKey: sendKey, searchNames: searchNames) {
         case .completed: return .sent
         case .failed(let reason): return .failed(reason)
         }
@@ -657,8 +659,10 @@ enum WeChatLauncher {
     /// cannot establish an account, so verify process database evidence before
     /// navigation, before paste, and once more immediately before the send key.
     @MainActor private static func performTextAction(
-        chatName: String, text: String, typingDelay: TimeInterval, sendKey: WeChatSendKey?
+        chatName: String, text: String, typingDelay: TimeInterval, sendKey: WeChatSendKey?,
+        searchNames: [String] = []
     ) async -> TextActionOutcome {
+        let searchNames = WeChatOpenSearch.names(stored: searchNames.isEmpty ? [chatName] : searchNames, username: chatName)
         guard !PreviewRuntime.isEnabled else { return .failed(.previewMode) }
         guard !textActionInFlight else { return .failed(.operationInProgress) }
         textActionInFlight = true
@@ -678,23 +682,23 @@ enum WeChatLauncher {
             finishClipboardRestore()
         }
         let axApp = AXUIElementCreateApplication(binding.processID)
-        if let failure = await navigateToChat(app: app, chatName: chatName) { return .failed(failure) }
+        if let failure = await navigateToChat(app: app, searchNames: searchNames) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
-        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
         guard let input = findMessageInput(in: axApp) else { return .failed(.inputNotFound) }
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         _ = clickAXElementCenter(input)
         guard await pause(max(0.2, typingDelay)) else { return .failed(.accountUnverified) }
         if let failure = await accountFailure(binding) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
-        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         postCmdKey(kVK_ANSI_A)
         guard await pause(0.05) else { return .failed(.accountUnverified) }
         // Check again after the asynchronous gap before any reply text is pasted.
         if let failure = await accountFailure(binding) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
-        guard isCurrentChat(axApp: axApp, chatName: chatName) else { return .failed(.chatMismatch) }
+        guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         postCmdKey(kVK_ANSI_V)
@@ -712,7 +716,7 @@ enum WeChatLauncher {
             retractPastedDraft(axApp: axApp)
             return .failed(.lostForeground)
         }
-        guard isCurrentChat(axApp: axApp, chatName: chatName) else {
+        guard isCurrentChat(axApp: axApp, searchNames: searchNames) else {
             retractPastedDraft(axApp: axApp)
             return .failed(.chatMismatch)
         }
@@ -726,7 +730,7 @@ enum WeChatLauncher {
 
     /// Every navigation step is awaited while the shared automation lock is held.
     /// No delayed search or clipboard callback survives this method's return.
-    @MainActor private static func navigateToChat(app: NSRunningApplication, chatName: String) async -> SendFailureReason? {
+    @MainActor private static func navigateToChat(app: NSRunningApplication, searchNames: [String]) async -> SendFailureReason? {
         postWillOpenWeChat()
         let activated = await withCheckedContinuation { continuation in
             activateWeChat(app: app) { continuation.resume(returning: $0) }
@@ -741,38 +745,46 @@ enum WeChatLauncher {
         // Do not use sidebar substring matching: similarly named chats are distinct.
         guard let search = findSearchField(in: axApp), clickAXElementCenter(search) else { return .inputNotFound }
         guard await pause(0.12), isWeChatFrontmost(app) else { return .lostForeground }
-        _ = AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        postCmdKey(kVK_ANSI_A)
-        guard await pause(0.05), isWeChatFrontmost(app) else { return .lostForeground }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(chatName, forType: .string)
-        postCmdKey(kVK_ANSI_V)
-        // Allow search results to settle, then reject multiple exact results.
-        guard await pause(0.4) else { return .lostForeground }
-        for _ in 0..<12 {
-            guard isWeChatFrontmost(app), !Task.isCancelled else { return .lostForeground }
-            var matches: [AXUIElement] = []
-            var remaining = 5000
-            func collect(_ element: AXUIElement, depth: Int) {
-                guard depth <= 40, remaining > 0 else { return }
-                remaining -= 1
-                if axString(element, kAXIdentifierAttribute) == "search_item_\(chatName)" { matches.append(element) }
-                for child in axChildren(element) { collect(child, depth: depth + 1) }
-            }
-            collect(axApp, depth: 0)
-            guard remaining > 0, matches.count <= 1 else { return .chatMismatch }
-            if let match = matches.first {
-                guard clickAXElementCenter(match) else { return .chatMismatch }
-                for _ in 0..<12 {
-                    guard await pause(0.1), isWeChatFrontmost(app) else { return .lostForeground }
-                    if isCurrentChat(axApp: axApp, chatName: chatName), let input = findMessageInput(in: axApp) {
-                        _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                        return clickAXElementCenter(input) ? nil : .inputNotFound
-                    }
+        let names = searchNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !names.isEmpty else { return .chatMismatch }
+        for (index, chatName) in names.enumerated() {
+            _ = AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            postCmdKey(kVK_ANSI_A)
+            guard await pause(0.05), isWeChatFrontmost(app) else { return .lostForeground }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(chatName, forType: .string)
+            postCmdKey(kVK_ANSI_V)
+            guard await pause(index == 0 ? 0.4 : 0.25) else { return .lostForeground }
+            var sawMatch = false
+            for _ in 0..<12 {
+                guard isWeChatFrontmost(app), !Task.isCancelled else { return .lostForeground }
+                var matches: [AXUIElement] = []
+                var remaining = 5000
+                func collect(_ element: AXUIElement, depth: Int) {
+                    guard depth <= 40, remaining > 0 else { return }
+                    remaining -= 1
+                    if axString(element, kAXIdentifierAttribute) == "search_item_\(chatName)" { matches.append(element) }
+                    for child in axChildren(element) { collect(child, depth: depth + 1) }
                 }
-                return .chatMismatch
+                collect(axApp, depth: 0)
+                guard remaining > 0 else { return .chatMismatch }
+                if matches.count > 1 { break }
+                if let match = matches.first {
+                    sawMatch = true
+                    guard clickAXElementCenter(match) else { return .chatMismatch }
+                    for _ in 0..<12 {
+                        guard await pause(0.1), isWeChatFrontmost(app) else { return .lostForeground }
+                        if isCurrentChat(axApp: axApp, searchNames: names), let input = findMessageInput(in: axApp) {
+                            _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                            return clickAXElementCenter(input) ? nil : .inputNotFound
+                        }
+                    }
+                    break
+                }
+                guard await pause(0.1) else { return .lostForeground }
             }
-            guard await pause(0.1) else { return .lostForeground }
+            if sawMatch { return .chatMismatch }
+            log("sendMessage: WeChat search missed '\(chatName)', trying next name")
         }
         return .chatMismatch
     }
@@ -817,14 +829,14 @@ enum WeChatLauncher {
         NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && !app.isTerminated
     }
 
-    private static func isCurrentChat(axApp: AXUIElement, chatName: String) -> Bool {
+    private static func isCurrentChat(axApp: AXUIElement, searchNames: [String]) -> Bool {
         guard let currentTitle = currentChatTitle(in: axApp) else {
             log("sendMessage: unable to read current chat title")
             return false
         }
-        let matches = normalizeChatTitle(currentTitle) == normalizeChatTitle(chatName)
+        let matches = WeChatOpenSearch.titleMatches(currentTitle, acceptable: searchNames)
         if !matches {
-            log("sendMessage: expected chat '\(chatName)', current title '\(currentTitle)'")
+            log("sendMessage: expected chat \(searchNames), current title '\(currentTitle)'")
         }
         return matches
     }

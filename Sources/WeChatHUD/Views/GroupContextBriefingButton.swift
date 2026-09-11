@@ -186,7 +186,7 @@ struct GroupContextBriefingCard: View {
         VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
             Button {
-                WeChatLauncher.openChat(named: notification.chatName)
+                monitor.openWeChatChat(notification.chatUsername)
             } label: {
                 Label("去微信回复", systemImage: "bubble.left.and.bubble.right.fill")
                     .islandButton()
