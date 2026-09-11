@@ -200,13 +200,18 @@ struct InboxRowView: View {
 
             Spacer()
 
+            // Hidden on hover: the action chip overlays this corner and a
+            // half-covered timestamp reads as two UIs stacked on each other.
+            // opacity(0) keeps the layout width so nothing reflows.
             Text(relativeTime(item.timestamp))
                 .islandMeta()
                 .foregroundColor(IslandInk.tertiary)
+                .opacity(hovered || showSnoozeMenu ? 0 : 1)
             if islandCatalog {
                 Image(systemName: "chevron.right")
                     .companionFont(size: 12, weight: .semibold)
                     .foregroundColor(IslandInk.quaternary)
+                    .opacity(hovered || showSnoozeMenu ? 0 : 1)
             }
         }
     }
