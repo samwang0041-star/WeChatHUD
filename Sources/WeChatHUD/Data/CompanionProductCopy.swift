@@ -116,4 +116,18 @@ enum CompanionProductCopy {
     static func compactStatus(count: Int, sync: String) -> String {
         "收起 · \(count) 项待处理。\(compactHoverHint) \(sync)"
     }
+
+    /// Menu-bar badge next to the icon. Read aloud it should make sense:
+    /// "3 待办" = three things waiting on you; "等 4h+" = a VIP has been
+    /// waiting that long. Empty string = nothing needs attention.
+    static func menuBarBadge(pendingCount: Int, longestWait: VIPAlertTier) -> String {
+        switch longestWait {
+        case .t2, .t3, .t4:
+            let wait = "等 \(longestWait.agingLabel)"
+            return pendingCount > 0 ? " \(pendingCount) 待办 · \(wait)" : " \(wait)"
+        case .none, .t1:
+            if pendingCount > 9 { return " 9+" }
+            return pendingCount > 0 ? " \(pendingCount) 待办" : ""
+        }
+    }
 }

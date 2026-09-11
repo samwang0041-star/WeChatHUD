@@ -601,9 +601,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .store(in: &cancellables)
 
         // Update badge when inbox items OR VIP escalation tiers change.
-        // Priority: VIP at T2+ takes over with a "!" prefix + aging,
-        // otherwise show unread counts. Two publishers combined via
-        // CombineLatest so either signal redraws the badge.
+        // At VIP T2+ the badge also shows the longest wait ("等 4h+");
+        // otherwise it's just the pending count. The string itself lives
+        // in CompanionProductCopy.menuBarBadge so it's unit-testable.
         //
         // Plan M6.1: instead of writing directly to statusItem.button.title
         // (which would race with MenuBarController's spinner overlay during
@@ -614,19 +614,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .combineLatest(monitor.$vipAlertTiers)
             .sink { items, tiers in
                 let compactCount = items.filter(\.surfacesInCompact).count
-                let escalated = tiers.values.filter { $0 >= .t2 }
-                let worstTier = escalated.max() ?? .none
-                let text: String
-                if worstTier >= .t2 {
-                    text = " ! \(worstTier.agingLabel)"
-                } else if compactCount > 9 {
-                    text = " 9+"
-                } else if compactCount > 0 {
-                    text = " \(compactCount)"
-                } else {
-                    text = ""
-                }
-                MenuBarController.shared.badgeText = text
+                let worstTier = tiers.values.max() ?? .none
+                MenuBarController.shared.badgeText = CompanionProductCopy.menuBarBadge(
+                    pendingCount: compactCount, longestWait: worstTier
+                )
             }
             .store(in: &cancellables)
 
