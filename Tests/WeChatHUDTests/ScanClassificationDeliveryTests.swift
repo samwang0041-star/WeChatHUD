@@ -150,6 +150,9 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(outcome?.latestPreview?.chatUsername, fixture.groupChatUsername)
         XCTAssertEqual(outcome?.latestPreview?.kind, .groupAt)
         XCTAssertTrue(outcome?.latestPreview?.isAtMention == true)
+        // The "@me" prefix is redundant next to the banner headline that
+        // already says "@ 了你" — the snippet starts at the real content.
+        XCTAssertEqual(outcome?.latestPreview?.snippet, "请确认")
     }
 
     func testFollowedGroupQueuesMentionsButNotOrdinaryChatter() async throws {

@@ -409,7 +409,13 @@ enum ScanEngine {
                         attentionLevel: effectiveLevel,
                         messageID: msg.id,
                         rawText: msg.text,
-                        snippet: Self.deduplicateSenderInSnippet(msg.text, senderName: msg.senderName),
+                        snippet: Self.deduplicateSenderInSnippet(
+                            msg.text,
+                            senderName: msg.senderName,
+                            myUsername: myUname,
+                            myDisplayName: myDisplayName,
+                            mySelfNames: selfNames
+                        ),
                         isAtMention: isAt,
                         timestamp: msgTime,
                         kind: kind
@@ -768,9 +774,29 @@ enum ScanEngine {
     }
 
     /// Strip leading sender name from snippet to avoid "亮🌸: 亮🌸让你..." duplication.
-    private static func deduplicateSenderInSnippet(_ text: String, senderName: String) -> String {
+    private static func deduplicateSenderInSnippet(
+        _ text: String,
+        senderName: String,
+        myUsername: String = "",
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
+    ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snippet = String(trimmed.prefix(80))
+        var snippet = String(trimmed.prefix(80))
+        // Leading "@我"/"@所有人" tokens are redundant in the banner — the
+        // headline already renders "在<群> @ 了你". Only strip mentions
+        // aimed at the user (or @所有人/@All); a leading "@张三" directed
+        // at somebody else carries meaning and stays.
+        while snippet.hasPrefix("@") {
+            guard let space = snippet.firstIndex(where: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "　" }) else { break }
+            let token = String(snippet[snippet.index(after: snippet.startIndex)..<space])
+            let isMe = token == "所有人" || token.lowercased() == "all"
+                || token == myUsername || (!myDisplayName.isEmpty && token == myDisplayName)
+                || mySelfNames.contains(token)
+            guard isMe else { break }
+            snippet = String(snippet[snippet.index(after: space)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !senderName.isEmpty else { return snippet }
         // Check if text starts with "senderName" followed by common separators
         for sep in ["：", ":", " ", ""] {
