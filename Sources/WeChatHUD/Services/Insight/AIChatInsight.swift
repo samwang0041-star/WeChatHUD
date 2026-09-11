@@ -95,7 +95,18 @@ actor AIChatInsight {
                 inputSummary: "[\(chatUsername)] \(prompt.prefix(100))",
                 trackLabel: "对话分析"
             ),
-            decodeAs: ChatInsightResult.self
+            decodeAs: ChatInsightResult.self,
+            // The cache below stores whatever this returns. A model reply whose
+            // fields are all present but empty decoded "successfully" and was
+            // cached as a real analysis, so require something to actually be in
+            // it before treating the call as a success worth caching.
+            isUsable: { result in
+                !result.headline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !result.insight.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || !result.topics.isEmpty
+                    || !result.actionItems.isEmpty
+                    || !result.decisions.isEmpty
+            }
         )
 
         guard let (parsed, _) = result else {

@@ -42,6 +42,24 @@ actor AIGroupCatchup {
             case skipSafe = "skip_safe"
             case noiseRatio = "noise_ratio"
         }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            headline = try container.decode(String.self, forKey: .headline)
+            highlights = try container.decode([String].self, forKey: .highlights)
+            needsUserAction = try container.decode(Bool.self, forKey: .needsUserAction)
+            actionSummary = try container.decode(String.self, forKey: .actionSummary)
+            skipSafe = try container.decode(Bool.self, forKey: .skipSafe)
+            // The prompt asks for 0.0–1.0 and nothing enforces it. The value
+            // is read back as a percentage, so an unbounded one traps
+            // `Int(_:)` on the way out; bound it where it enters rather than
+            // at each reader. Same clamp `GroupContextBriefingService`
+            // already applies to its confidence.
+            noiseRatio = SafeNumber.clamped(
+                try container.decode(Double.self, forKey: .noiseRatio),
+                to: 0...1
+            )
+        }
     }
 
     /// Input bundle. `messages` should be most-recent-last (chronological).

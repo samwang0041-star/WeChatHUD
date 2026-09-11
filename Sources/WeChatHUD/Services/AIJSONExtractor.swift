@@ -43,24 +43,61 @@ enum AIJSONExtractor {
         balancedCandidates(from: raw, open: "[", close: "]")
     }
 
+    /// Responses are bounded by `max_tokens`; anything past this is a runaway
+    /// echo, and scanning it is what made a brace-heavy answer quadratic.
+    static let maxScanLength = 200_000
+    /// Characters the balanced scan may examine before giving up. A long run of
+    /// unclosed braces used to walk to the end of the text once per brace.
+    private static let scanBudget = 2_000_000
+
     private static func balancedCandidates(from raw: String, open: Character, close: Character) -> [String] {
-        let cleaned = stripMarkdownFence(stripThinkingBlocks(raw)).trimmingCharacters(in: .whitespacesAndNewlines)
+        var cleaned = stripThinkingBlocks(raw)
+        if cleaned.count > maxScanLength {
+            cleaned = String(cleaned.prefix(maxScanLength))
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return [] }
 
-        let chars = Array(cleaned)
+        // Scan the fence's inside first (that is conventionally the payload),
+        // then the surrounding text: stripping the fence used to discard
+        // everything outside it, so prose-before-JSON, multiple fences, or JSON
+        // that followed a non-JSON fence lost the payload completely.
+        let inside = stripMarkdownFence(cleaned)
+        var variants = [inside]
+        if inside != cleaned { variants.append(cleaned) }
+
+        var seen = Set<String>()
         var results: [String] = []
-        var starts: [Int] = []
-
-        for (index, char) in chars.enumerated() where char == open {
-            starts.append(index)
+        var budget = scanBudget
+        for variant in variants where !variant.isEmpty {
+            for candidate in balancedCandidates(in: variant, open: open, close: close, budget: &budget) {
+                if seen.insert(candidate).inserted { results.append(candidate) }
+            }
+            if budget <= 0 { break }
         }
+        return results
+    }
 
-        for start in starts {
+    /// Every balanced `open … close` slice in `text`, newest-first, spending at
+    /// most `budget` character visits in total so a pathological input cannot
+    /// make the scan quadratic.
+    private static func balancedCandidates(
+        in text: String,
+        open: Character,
+        close: Character,
+        budget: inout Int
+    ) -> [String] {
+        let chars = Array(text)
+        var results: [String] = []
+
+        for start in chars.indices where chars[start] == open {
             var depth = 0
             var inString = false
             var escaping = false
 
             for index in start..<chars.count {
+                budget -= 1
+                if budget <= 0 { return results }
                 let char = chars[index]
                 if inString {
                     if escaping {

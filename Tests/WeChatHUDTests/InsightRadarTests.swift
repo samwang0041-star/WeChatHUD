@@ -20,28 +20,48 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
     }
 
-    func testBuildFindingsSuppressesAggregateOnlyPressureWithoutEvidence() {
-        let result = makeInsight()
+    /// The radar is evidence-only: a card needs a named chat behind it.
+    ///
+    /// The old version of this test asserted `!contains(.pressure)` — which the
+    /// builder satisfies by construction, because it has no pressure path at
+    /// all — so the assertion could not fail and the "suppression" it claimed
+    /// to verify was never exercised. These two runs pin both halves: counters
+    /// alone produce nothing, a named contact produces a card.
+    func testOverviewEvidenceProducesRelationshipCardButCountersAloneDoNot() {
+        let countersOnly = InsightRadar.buildFindings(
+            chatInsights: [:],
+            chatNames: [:],
+            overview: makeOverview(overdueChats: 3, pendingAsks: 248, urgentAsks: 5),
+            limit: 6
+        )
+        XCTAssertTrue(countersOnly.isEmpty, "aggregate counters without a named chat are not a radar card")
 
+        let withEvidence = InsightRadar.buildFindings(
+            chatInsights: [:],
+            chatNames: ["vip@chatroom": "重要客户"],
+            overview: makeOverview(neglectedHighValue: [(name: "重要客户", role: "客户")]),
+            limit: 6
+        )
+        XCTAssertEqual(withEvidence.map(\.kind), [.relationship])
+        XCTAssertEqual(withEvidence.first?.chatUsername, "vip@chatroom")
+        XCTAssertEqual(withEvidence.first?.route, .openChat("vip@chatroom"))
+    }
+
+    /// Contract: only action / waiting / relationship cards leave `buildFindings`.
+    /// Adding an attitude, pressure or blind-spot card without the evidence
+    /// logic those signals need fails here on purpose.
+    func testRadarEmitsOnlyEvidenceBackedKinds() {
+        let result = makeInsight()
         let findings = InsightRadar.buildFindings(
             chatInsights: ["project@chatroom": result],
             chatNames: ["project@chatroom": "项目群"],
             overview: makeOverview(overdueChats: 1, pendingAsks: 248, urgentAsks: 0),
             limit: 6
         )
-
-        XCTAssertFalse(findings.contains { $0.kind == .pressure })
-    }
-
-    func testBuildFindingsIgnoresNeutralAttitudes() {
-        let result = makeInsight()
-
-        let findings = InsightRadar.buildFindings(
-            chatInsights: ["project@chatroom": result],
-            chatNames: ["project@chatroom": "项目群"]
+        XCTAssertTrue(
+            findings.allSatisfy { [.action, .waiting, .relationship].contains($0.kind) },
+            "unexpected radar kinds: \(findings.map(\.kind))"
         )
-
-        XCTAssertFalse(findings.contains { $0.kind == .attitude })
     }
 
     func testBriefingActionMapsDisplayNameBackToChatUsername() {

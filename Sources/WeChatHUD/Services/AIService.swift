@@ -398,7 +398,25 @@ actor AIRateLimiter {
     private var timestamps: [Date] = []
     private let maxCallsPerSecond = 4
 
+    /// Admit a call, waiting outside the actor when the window is full.
+    ///
+    /// The previous implementation slept *inside* `acquire`, between reading
+    /// `timestamps` and appending to it. Every caller that arrived during that
+    /// suspension observed a window that was still empty, so N concurrent
+    /// callers all passed the check and the limiter admitted all of them.
+    /// Reservation is now a single synchronous hop; only the wait is async.
     func acquire() async {
+        while true {
+            let wait = reserve()
+            if wait <= 0 { return }
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+        }
+    }
+
+    /// Record an admitted call, or report how long to wait before retrying.
+    /// Synchronous on purpose: check-and-record must be one actor-isolated
+    /// step for the limit to hold under concurrency.
+    private func reserve() -> TimeInterval {
         let now = Date()
         // Drop timestamps older than 1s
         timestamps = timestamps.filter { now.timeIntervalSince($0) < 1.0 }
@@ -406,11 +424,22 @@ actor AIRateLimiter {
         if timestamps.count >= maxCallsPerSecond {
             let oldest = timestamps[0]
             let wait = 1.0 - now.timeIntervalSince(oldest)
-            if wait > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-            }
+            if wait > 0 { return wait }
         }
         timestamps.append(Date())
+        return 0
+    }
+
+    /// Pure form of the admission decision, so the limit can be tested without
+    /// sleeping. Appends on admission and returns 0; otherwise returns the
+    /// remaining wait and records nothing.
+    static func waitTime(now: Date, timestamps: inout [Date], maxCallsPerSecond: Int = 4) -> TimeInterval {
+        timestamps.removeAll { now.timeIntervalSince($0) >= 1.0 }
+        if timestamps.count >= maxCallsPerSecond, let oldest = timestamps.first {
+            return max(1.0 - now.timeIntervalSince(oldest), 0.001)
+        }
+        timestamps.append(now)
+        return 0
     }
 }
 

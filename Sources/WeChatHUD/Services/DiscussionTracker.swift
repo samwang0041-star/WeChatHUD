@@ -411,15 +411,15 @@ actor DiscussionTracker {
 
     /// Models emit `msg` as an Int, a Double (`"msg": 3.0`) or a string —
     /// accept all three, then bounds-check against the transcript length.
+    ///
+    /// The bounds check happens inside `SafeNumber.jsonInt`, before any
+    /// `Int(_:)` conversion: a model that answers `"msg": 1e30` used to trap
+    /// the scan thread here, because `Int(d)` was evaluated to produce the
+    /// value the `guard` then rejected.
     private static func sourceIndex(_ value: Any?, count: Int) -> Int? {
-        let raw: Int?
-        switch value {
-        case let i as Int: raw = i
-        case let d as Double: raw = d.rounded() == d ? Int(d) : nil
-        case let s as String: raw = Int(s.trimmingCharacters(in: .whitespaces))
-        default: raw = nil
-        }
-        guard let raw, raw >= 1, raw <= count else { return nil }
+        // `count == 0` has to be rejected here: `1...count` would be an
+        // invalid range, and the caller indexes `messages` with the result.
+        guard count > 0, let raw = SafeNumber.jsonInt(value, in: 1...count) else { return nil }
         return raw - 1
     }
 

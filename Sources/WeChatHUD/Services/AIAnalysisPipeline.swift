@@ -18,7 +18,9 @@ import Foundation
 ///         decodeAs: MyResult.self
 ///     )
 actor AIAnalysisPipeline {
-    private let aiService: AIService
+    /// Protocol-typed so the pipeline's error/empty-payload behaviour can be
+    /// exercised with a stub instead of a live endpoint.
+    private let aiService: any AIServiceProtocol
     private let store: HUDStore
 
     struct Configuration {
@@ -49,7 +51,7 @@ actor AIAnalysisPipeline {
         }
     }
 
-    init(aiService: AIService, store: HUDStore) {
+    init(aiService: any AIServiceProtocol, store: HUDStore) {
         self.aiService = aiService
         self.store = store
     }
@@ -61,7 +63,8 @@ actor AIAnalysisPipeline {
     func execute<T: Decodable>(
         prompt: String,
         configuration: Configuration,
-        decodeAs: T.Type
+        decodeAs: T.Type,
+        isUsable: (T) -> Bool = { _ in true }
     ) async -> (value: T, model: String?)? {
         let trackID = "\(configuration.trackLabel):\(UUID().uuidString.prefix(8))"
         AIActivityTracker.shared.begin(trackID, label: configuration.trackLabel)
@@ -73,20 +76,30 @@ actor AIAnalysisPipeline {
         let firstResult = await call(prompt: prompt, configuration: configuration)
         let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
 
-        guard let (text, model) = firstResult else {
+        let text: String
+        let model: String?
+        switch firstResult {
+        case .success(let success):
+            text = success.text
+            model = success.model
+        case .failure(let error):
             await writeAudit(
                 input: configuration.inputSummary,
                 output: "",
                 latencyMs: latencyMs,
                 status: .httpError,
-                error: "AI call failed",
+                error: "AI call failed: \(Self.failureDescription(error))",
                 model: nil,
                 configuration: configuration
             )
             return nil
         }
 
-        if let parsed = AIJSONExtractor.decodeFirstObject(from: text, as: decodeAs) {
+        // A payload that decodes but carries nothing is not a success: callers
+        // cache whatever comes back, so `{}`-shaped or all-empty answers were
+        // stored as a valid analysis and the strict retry below was never
+        // reached. `isUsable` lets each caller say what "nothing" means for it.
+        if let parsed = AIJSONExtractor.decodeFirstObject(from: text, as: decodeAs), isUsable(parsed) {
             await writeAudit(
                 input: configuration.inputSummary,
                 output: text,
@@ -118,20 +131,26 @@ actor AIAnalysisPipeline {
         let retryResult = await call(prompt: retryPrompt, configuration: configuration)
         let retryLatencyMs = Int(Date().timeIntervalSince(retryStarted) * 1000)
 
-        guard let (retryText, retryModel) = retryResult else {
+        let retryText: String
+        let retryModel: String?
+        switch retryResult {
+        case .success(let success):
+            retryText = success.text
+            retryModel = success.model
+        case .failure(let error):
             await writeAudit(
                 input: configuration.inputSummary,
                 output: "",
                 latencyMs: latencyMs + retryLatencyMs,
                 status: .httpError,
-                error: "AI call failed on retry",
+                error: "AI call failed on retry: \(Self.failureDescription(error))",
                 model: model,
                 configuration: configuration
             )
             return nil
         }
 
-        if let retryParsed = AIJSONExtractor.decodeFirstObject(from: retryText, as: decodeAs) {
+        if let retryParsed = AIJSONExtractor.decodeFirstObject(from: retryText, as: decodeAs), isUsable(retryParsed) {
             await writeAudit(
                 input: configuration.inputSummary,
                 output: retryText,
@@ -172,13 +191,19 @@ actor AIAnalysisPipeline {
         let result = await call(prompt: prompt, configuration: configuration)
         let latencyMs = Int(Date().timeIntervalSince(started) * 1000)
 
-        guard let (text, model) = result else {
+        let text: String
+        let model: String?
+        switch result {
+        case .success(let success):
+            text = success.text
+            model = success.model
+        case .failure(let error):
             await writeAudit(
                 input: configuration.inputSummary,
                 output: "",
                 latencyMs: latencyMs,
                 status: .httpError,
-                error: "AI call failed",
+                error: "AI call failed: \(Self.failureDescription(error))",
                 model: nil,
                 configuration: configuration
             )
@@ -202,17 +227,26 @@ actor AIAnalysisPipeline {
     private func call(
         prompt: String,
         configuration: Configuration
-    ) async -> (text: String, model: String?)? {
+    ) async -> Result<(text: String, model: String?), Error> {
         do {
             let result = try await aiService.completeWithMetadata(
                 system: configuration.systemPrompt,
                 user: prompt,
                 options: configuration.options
             )
-            return (text: result.text, model: result.model)
+            return .success((text: result.text, model: result.model))
         } catch {
-            return nil
+            return .failure(error)
         }
+    }
+
+    /// Error detail for the audit log. The audit row is local; the provider's
+    /// own words ("HTTP 429", "model not found") are what make a failure
+    /// actionable — collapsing every one of them into "AI call failed" left the
+    /// audit unable to distinguish a quota problem from a parse problem.
+    private static func failureDescription(_ error: Error) -> String {
+        let raw = String(describing: error)
+        return raw.count > 300 ? String(raw.prefix(300)) + "…" : raw
     }
 
     private func writeAudit(
