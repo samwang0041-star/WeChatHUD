@@ -232,7 +232,7 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "sparkles",
                 title: "AI 整理",
-                detail: "配置后，AI 将帮你从聊天中提取要点、待办和你答应的事。",
+                detail: "从聊天提取待办和约定。",
                 status: aiTested ? "已就绪" : (aiConfigured ? "已配置" : "尚未设置"),
                 ready: aiReady,
                 actionTitle: aiReady ? nil : "设置 AI"
@@ -243,7 +243,7 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "arrow.up.forward.app",
                 title: "跳转与发送",
-                detail: "在微信中打开对应的聊天，并支持由不漏事帮你发送消息。",
+                detail: "在微信中打开对话并发送。",
                 status: sendReady ? "已就绪" : "待授权",
                 ready: sendReady,
                 actionTitle: sendReady ? nil : "打开系统设置"

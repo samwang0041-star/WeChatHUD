@@ -901,7 +901,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             guard !Task.isCancelled else { return }
             let alert = NSAlert()
-            alert.messageText = "聊天伴侣尚未完成重新打开"
+            alert.messageText = "WeChatHUD 尚未完成重新打开"
             alert.informativeText = "原来的窗口仍在运行。请回到原窗口继续使用，再试一次。"
             alert.runModal()
             NSApp.terminate(nil)

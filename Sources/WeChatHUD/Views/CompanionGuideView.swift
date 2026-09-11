@@ -39,16 +39,13 @@ struct CompanionGuideView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("怎么用不漏事")
+        .accessibilityLabel("怎么用 WeChatHUD")
     }
 
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("不漏事，从这里开始。")
+            Text("怎么用")
                 .font(.system(size: 28, weight: .bold))
-            Text("少翻聊天，记住答应的事，需要时再回复。")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
         }
         .padding(.bottom, 8)
     }
@@ -56,9 +53,9 @@ struct CompanionGuideView: View {
     private var quickStartCard: some View {
         HStack(alignment: .top, spacing: 20) {
             VStack(alignment: .leading, spacing: 18) {
-                guideStep(number: "1", title: "连接微信", detail: "先让助手读到你关心的聊天。", buttonTitle: "连接微信", action: showIntroduction)
-                guideStep(number: "2", title: "选择关注的人", detail: "从一位联系人或一个群开始。", buttonTitle: "选择对话", action: { navigate(.contacts) })
-                guideStep(number: "3", title: "看清下一步", detail: "谁在等你、你答应了什么，都在今天。", buttonTitle: "打开今天", action: { navigate(.today) })
+                guideStep(number: "1", title: "连接微信", detail: "读取这台 Mac 上已登录的微信。", buttonTitle: "连接微信", action: showIntroduction)
+                guideStep(number: "2", title: "选择关注的人", detail: "选一个联系人或群。", buttonTitle: "选择对话", action: { navigate(.contacts) })
+                guideStep(number: "3", title: "看清下一步", detail: "「今天」里看待回和待办。", buttonTitle: "打开今天", action: { navigate(.today) })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -74,9 +71,9 @@ struct CompanionGuideView: View {
 
     private var dailyUseCard: some View {
         GuideCard(icon: "tray.full.fill", tint: .blue, title: "每天怎么用") {
-            guideTopic("从「今天」开始", "打开聊天伴侣，先看该回的和该做的。点开一条消息能看原文、摘要和下一步。普通闲聊可以先收起来。", icon: "bubble.left.and.bubble.right")
-            guideTopic("群里有人 @你", "群消息会标出谁提到了你。点「看看什么事」就能看发生了什么、为什么找你、接下来怎么办。", icon: "person.2.fill")
-            guideTopic("我答应的事", "答应过别人的话会留在这里，带着原话和截止时间。真正做完了再点完成，不要只靠自动整理。", icon: "checkmark.bubble.fill")
+            guideTopic("从「今天」开始", "看待回和待办。点开一条消息看原文和摘要。", icon: "bubble.left.and.bubble.right")
+            guideTopic("群里有人 @你", "会标出谁提到了你。", icon: "person.2.fill")
+            guideTopic("我答应的事", "带着原话和截止时间。做完后点完成。", icon: "checkmark.bubble.fill")
             guideTopic("草稿", "在对话里写好回复后选「存为草稿」，之后可以在「草稿」里接着改、复制或回到原对话。草稿不会自己发出去。", icon: "square.and.pencil")
             guideTopic("头顶上的提醒", "可以分别决定：群里 @你、重点联系人、普通更新要不要弹出。鼠标移上去就能继续看。到期提醒走系统通知。", icon: "bell.badge.fill")
             guideTopic("发送和自动回复", "点「发送」会先让你看清发给谁、发什么。自动回复默认关着；打开后草稿先出现在「待确认回复」。只有再打开「自动发出去」，符合条件的回复才会自己发出。群聊默认只记录。", icon: "paperplane.fill")
@@ -85,7 +82,7 @@ struct CompanionGuideView: View {
 
     private var privacyCard: some View {
         GuideCard(icon: "lock.shield.fill", tint: .orange, title: "数据与隐私") {
-            privacyRow("本机聊天资料", "连接时只读取聊天原文，不修改微信里的记录。助手整理出的事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
+            privacyRow("本机聊天资料", "只读取聊天原文，不改微信记录。事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
             privacyRow("发给 AI 的内容", "打开 AI 后，相关聊天片段会发给你选的服务，用来写摘要和草稿。请只用你信任的服务。", icon: "arrow.up.right")
             privacyRow("发送和自动回复", "默认每次发送都要你确认。自动回复默认关着；若打开「自动发出去」，符合条件的回复会自己发出。钱、红包这类消息仍不会自动回。", icon: "hand.raised")
         }
@@ -95,7 +92,7 @@ struct CompanionGuideView: View {
         GuideCard(icon: "wrench.and.screwdriver.fill", tint: .purple, title: "遇到问题时") {
             troubleshootingRow("看不到新消息", "先确认这台 Mac 上的微信已经登录，再打开「微信连接」。页面会告诉你还差哪一步。连上之后点「查看新消息」。", buttonTitle: "检查连接", tab: .system)
             troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
-            troubleshootingRow("跳转或发送没反应", "确认微信正在运行并已登录，并在系统设置的「隐私与安全性 → 辅助功能」里允许聊天伴侣控制微信。发送失败时回到微信核对当前对话，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
+            troubleshootingRow("跳转或发送没反应", "确认微信已登录，并在「隐私与安全性 → 辅助功能」里允许 WeChatHUD。发送失败时回微信核对，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
             troubleshootingRow("关注错了人", "到「关注谁」里拿掉或改级别。要换微信账号，用连接页的「更换微信账号」；不同账号的资料分开保存。", buttonTitle: "关注谁", tab: .contacts)
         }
     }
@@ -104,8 +101,8 @@ struct CompanionGuideView: View {
         GuideCard(icon: "command", tint: .gray, title: "键盘快捷键") {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
-            shortcutRow("Esc", "把不漏事收成一条（只在它是当前窗口时有效）")
-            Text("菜单栏可以打开或收起头顶上的不漏事、查看新消息，以及退出。工作台从岛上的齿轮进入。")
+            shortcutRow("Esc", "收起浮窗（仅当前窗口时有效）")
+            Text("菜单栏可打开或收起浮窗、查看新消息、退出。")
                 .guideSecondary()
                 .textSelection(.enabled)
         }

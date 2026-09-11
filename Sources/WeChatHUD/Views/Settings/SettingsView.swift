@@ -58,22 +58,22 @@ struct SettingsView: View {
         }
         var subtitle: String {
             switch self {
-            case .today: return "从重要的对话开始，理清今天需要处理的事。"
-            case .drafts: return "写好的回复，确认后再发。"
-            case .tasks: return "从聊天里整理，分清谁来做。"
-            case .commitments: return "答应过的话，带着原文和截止时间留在这里。"
-            case .insight: return "一段聊天里发生了什么。"
-            case .dailyReport: return "今天处理了什么、还剩什么。"
-            case .contacts: return "只整理你选的人，以及群里点名的消息。"
-            case .aiButler: return "决定助手帮你读什么、写什么。不设也能看原文。"
-            case .notifications: return "谁来的消息要弹出，停留多久。"
-            case .aiService: return "摘要和草稿用哪家服务。未测试也能先保存。"
-            case .autopilot: return "忙的时候，先替你准备好回复。"
-            case .autopilotDashboard: return "助理写好的回复，确认后再发。"
-            case .system: return "让重要的聊天及时出现在这里。"
-            case .preferences: return "登录启动、权限和减少动态效果。"
-            case .localData: return "近两周整理过的事情，还可以找回来。"
-            case .guide: return "不漏事，从这里开始。"
+            case .today: return "待回和待办"
+            case .drafts: return "确认后发送"
+            case .tasks: return "谁来做"
+            case .commitments: return "已答应的事"
+            case .insight: return "按天查看"
+            case .dailyReport: return "今天做了什么、还剩什么"
+            case .contacts: return "关注的对话"
+            case .aiButler: return "分析范围"
+            case .notifications: return "谁弹出、停多久"
+            case .aiService: return "摘要和草稿用哪家"
+            case .autopilot: return "自动回复"
+            case .autopilotDashboard: return "确认后发送"
+            case .system: return "连接微信"
+            case .preferences: return "启动、权限、动效"
+            case .localData: return "近两周记录"
+            case .guide: return "说明"
             }
         }
         var isDaily: Bool { [.today, .tasks, .commitments, .drafts].contains(self) }
@@ -109,10 +109,12 @@ struct SettingsView: View {
                         .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(CompanionProductCopy.brandName).companionFont(size: 15, weight: .bold)
-                        Text(CompanionProductCopy.brandPromise)
-                            .companionFont(size: 11)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if !CompanionProductCopy.brandPromise.isEmpty {
+                            Text(CompanionProductCopy.brandPromise)
+                                .companionFont(size: 11)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 0)
                 }.padding(.horizontal, 14).padding(.top, 16).padding(.bottom, 10)

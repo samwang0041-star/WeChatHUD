@@ -3,9 +3,9 @@ import Foundation
 /// First-launch copy and empty-state policy. Views render this; tests lock
 /// the new-user contract so a first install stays explainable in plain language.
 enum FirstLaunchGuide {
-    static let productName = "不漏事"
-    static let productPitch = "从你选中的微信对话里，找出该回、该做、该记住的事，并在本机整理好。"
-    static let neverAutoSend = "不会替你发送任何消息。回复草稿都要你自己确认。"
+    static let productName = CompanionProductCopy.brandName
+    static let productPitch = "从你选的微信对话里整理待回和待办。数据在本机。"
+    static let neverAutoSend = "不会自动发消息。草稿需确认后才发。"
     static let timeEstimate = "大约 3 分钟"
     static let finishCTA = "开始使用"
     static let skipCTA = "稍后设置"
@@ -27,15 +27,15 @@ enum FirstLaunchGuide {
     ]
 
     static let welcomeCapabilities: [(icon: String, title: String, detail: String)] = [
-        ("bubble.left.and.text.bubble.right", "群里有人 @ 你", "用一句话说清发生了什么、为什么找你。"),
-        ("checkmark.bubble", "有人让你办事", "记下承诺和截止时间，避免忘掉。"),
-        ("square.and.pencil", "需要回复时", "先写好草稿，由你确认后再发。")
+        ("bubble.left.and.text.bubble.right", "群里有人 @ 你", "显示群聊摘要。"),
+        ("checkmark.bubble", "有人让你办事", "记下待办和截止时间。"),
+        ("square.and.pencil", "需要回复时", "起草回复，确认后发送。")
     ]
 
     static let finishRecipe: [(icon: String, title: String, detail: String)] = [
-        ("sun.max", "先看「今天」", "该回、该做的事会列在最上面。"),
-        ("text.bubble", "点开一条消息", "先看摘要和原文，再决定回不回。"),
-        ("hand.raised", "发送前再确认一次", "助手不会自动发出任何内容。")
+        ("sun.max", "先看「今天」", "待回和待办列在上面。"),
+        ("text.bubble", "点开一条消息", "看摘要和原文。"),
+        ("hand.raised", "发送前再确认一次", "不会自动发送。")
     ]
 
     /// Words a first-run screen must not show. Technical recovery stays in
@@ -83,9 +83,9 @@ enum FirstLaunchGuide {
     }
 
     static let consentTitle = "需要一次本机准备"
-    static let consentMessage = "助手会在这台 Mac 上做一次读取准备，大约 1–2 分钟。微信可能会关闭，你需要重新打开并登录。聊天记录不会被改动，也可以随时取消。"
+    static let consentMessage = "需要一次本机读取准备，大约 1–2 分钟。微信可能会关闭，重新打开并登录即可。聊天记录不会改动。"
     static let pickerTitle = "允许读取这个微信账号"
-    static let pickerMessage = "已帮你找到微信资料位置。直接点「允许读取」即可，不用自己找文件夹。"
+    static let pickerMessage = "已找到微信资料。点「允许读取」。"
     static let pickerMiss = "这个文件夹里没有找到微信聊天。请先打开并登录微信，或回到微信账号资料再试。"
 
     static func connection(
@@ -104,7 +104,7 @@ enum FirstLaunchGuide {
         switch state {
         case .applying:
             title = "正在应用连接"
-            detail = "助手会重新打开，然后继续检查能不能读到聊天。"
+            detail = "WeChatHUD 会重新打开，然后继续检查能不能读到聊天。"
             buttonTitle = "正在应用…"
         case .probing:
             title = "正在检查微信"
@@ -116,7 +116,7 @@ enum FirstLaunchGuide {
             buttonTitle = "正在读取…"
         case .connected:
             title = "微信已连接"
-            detail = "新消息会自动更新。下一步选出真正需要帮忙的对话。"
+            detail = "下一步：选择要整理的对话。"
             buttonTitle = "检查更新"
         case .wechatNotInstalled:
             title = "先在这台 Mac 安装微信"
@@ -144,11 +144,11 @@ enum FirstLaunchGuide {
             buttonTitle = "重试准备"
         case .readyToRestart:
             title = "准备好了，继续完成连接"
-            detail = "点继续后，助手会重新打开并确认能读到聊天。"
+            detail = "点继续后，WeChatHUD 会重新打开并确认能读到聊天。"
             buttonTitle = "继续连接"
         case .needsAccountSelection:
             title = "需要重新选择微信账号"
-            detail = "之前选择的微信账号已经读不到了。请选择当前登录的账号；助手不会自动换号。"
+            detail = "之前选择的微信账号已经读不到了。请选择当前登录的账号；不会自动换号。"
             buttonTitle = "选择微信账号"
         case .syncFailed:
             title = "暂时未能连接微信"
@@ -186,7 +186,7 @@ enum FirstLaunchGuide {
         let text = reason.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { return "这次准备没有完成，请重试。" }
         if text.contains("密钥提取工具不存在") || text.contains("准备组件没有随应用安装") {
-            return "这次安装不完整，请重新安装助手后再试。"
+            return "这次安装不完整，请重新安装 WeChatHUD 后再试。"
         }
         if text.contains("微信数据目录不存在") || text.contains("还没有选定微信账号") {
             return "找不到当前微信账号资料，请重新选择账号。"
@@ -214,17 +214,17 @@ enum FirstLaunchGuide {
 
     // MARK: - AI / contacts
 
-    static let aiTitle = "让助手读懂消息"
+    static let aiTitle = "AI 分析"
     static let aiSubtitle = "没有 AI 也能看微信原文。摘要、@你的原因和回复草稿，需要一个可用的 AI 服务。"
     static let aiPrivacy = "相关聊天片段会发送给这个服务。连接测试只发送测试文本，不含聊天记录。"
     static let aiSkipHint = "可以先跳过，稍后再设。"
 
     static let contactsTitle = "从一个人或一个群开始"
-    static let contactsSubtitle = "先选择你想让不漏事帮你整理的对话，之后可以随时调整。"
+    static let contactsSubtitle = "选择要整理的对话。"
     static let contactsSkipHint = "可以先跳过，稍后在「今天」里添加。"
     static let contactsFooter = "只整理你选中的对话，之后可以随时调整。AI 可选，不影响开始使用。"
-    static let islandConnectTitle = "先连接微信，重要的事才不会漏。"
-    static let islandConnectDetail = "登录这台 Mac 的微信后，就可以开始。"
+    static let islandConnectTitle = "先连接微信"
+    static let islandConnectDetail = "登录这台 Mac 的微信。"
     static let islandConnectPrivacy = ["只整理你关注的对话。", "自动回复默认关闭。"]
 
     static func remainingActionDetail(_ action: OnboardingReadinessAction) -> String {
@@ -258,13 +258,13 @@ enum FirstLaunchGuide {
         if !wechatConnected {
             return EmptyCopy(
                 title: "还不能整理消息",
-                detail: "先完成微信连接。连上以后，助手会从你关注的对话里找出该处理的事。"
+                detail: "先完成微信连接。连上以后从关注的对话里找待办。"
             )
         }
         if !hasTrackedConversations {
             return EmptyCopy(
                 title: "还没有关注的对话",
-                detail: "先选一个联系人或群聊。助手只整理你选中的对话，不会查看全部微信。"
+                detail: "先选一个联系人或群聊。只整理你选中的对话。"
             )
         }
         if hasOpenTasks || hasOtherInboxItems {
@@ -295,19 +295,19 @@ enum FirstLaunchGuide {
             )
         }
         return EmptyCopy(
-            title: "现在没有需要你处理的事。",
-            detail: "有重要消息时，我会提醒你。"
+            title: "没有待处理的事",
+            detail: "没有新消息。"
         )
     }
 
     static func compactEmpty(wechatConnected: Bool, hasTrackedConversations: Bool) -> String {
         if !wechatConnected { return "还没连接微信" }
         if !hasTrackedConversations { return "还没选择对话" }
-        return "现在没有需要你处理的事。"
+        return "没有待处理的事"
     }
 
     static let setupCardTitle = "还差几步就能开始"
-    static let setupCardSubtitle = "按顺序点下去即可。没做完时，今天页不会假装已经在工作。"
+    static let setupCardSubtitle = "按顺序完成。"
 
     static func setupStepDetail(_ action: OnboardingReadinessAction) -> String {
         switch action {

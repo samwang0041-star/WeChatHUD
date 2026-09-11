@@ -45,7 +45,7 @@ struct MacExperienceSettingsView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                         .frame(width: 28)
-                    Text("已经打开开关？请先重新检查。若仍未生效，退出并重新打开聊天伴侣后再试。")
+                    Text("已经打开开关？请先重新检查。若仍未生效，退出并重新打开 WeChatHUD 后再试。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 12)
@@ -53,7 +53,7 @@ struct MacExperienceSettingsView: View {
                         refresh()
                         permissionCheckMessage = accessibilityGranted
                             ? "权限已生效，可以返回聊天继续回复。"
-                            : "当前应用仍未获得授权。请重新打开聊天伴侣后再试；回复内容不会自动发送。"
+                            : "当前应用仍未获得授权。请重新打开 WeChatHUD 后再试；回复内容不会自动发送。"
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -135,7 +135,7 @@ struct MacExperienceSettingsView: View {
 
     private var loginExplanation: String {
         switch loginStatus {
-        case .enabled: return "登录这台 Mac 后自动启动聊天伴侣。"
+        case .enabled: return "登录后自动启动 WeChatHUD。"
         case .requiresApproval: return "已申请登录启动，仍需在系统设置中允许。"
         case .notRegistered: return "需要时手动启动；开启后会向 macOS 注册登录项。"
         case .notFound:
@@ -163,7 +163,7 @@ struct MacExperienceSettingsView: View {
         switch notificationStatus {
         case .authorized: return "已允许，承诺到期等提醒可进入通知中心。"
         case .provisional, .ephemeral: return "通知受系统限制，请在系统设置中检查提醒方式。"
-        case .denied: return "通知未获允许，顶部浮窗和聊天伴侣窗口仍可使用。"
+        case .denied: return "通知未获允许，顶部浮窗和窗口仍可使用。"
         case .notDetermined: return "用于承诺到期和重要消息提醒，由你决定是否允许。"
         @unknown default: return "请在系统设置中检查通知权限。"
         }

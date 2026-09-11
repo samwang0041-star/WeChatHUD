@@ -46,7 +46,7 @@ struct AutopilotSettingsView: View {
             SettingsSection("自动回复") {
                 SettingsToggleRow(
                     "自动发出去",
-                    subtitle: autoSendEnabled ? "比较有把握的回复会按你设的节奏发出去。" : "关闭时只写草稿，由你确认后发送。",
+                    subtitle: autoSendEnabled ? "达到阈值则自动发送。" : "只写草稿，确认后发送。",
                     isOn: Binding(
                         get: { autoSendEnabled },
                         set: { newValue in
@@ -100,7 +100,7 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                SettingsRow("每小时最多", subtitle: "避免频繁发送，保持自然节奏。") {
+                SettingsRow("每小时最多", subtitle: "每小时发送上限。") {
                     Picker("每小时最多", selection: $maxRepliesPerHour) {
                         ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
                     }
@@ -188,7 +188,7 @@ struct AutopilotSettingsView: View {
 
     private var limitsBatchRow: some View {
         SettingsSection("连着几条一起回") {
-            SettingsRow("连着几条一起回", subtitle: "对方连着发时先等一会儿，避免一条一条抢着回。") {
+            SettingsRow("连着几条一起回", subtitle: "连发时先等一会儿再回。") {
                 Picker("连着几条一起回", selection: $batchWindowSeconds) {
                     ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
                 }
