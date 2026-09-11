@@ -110,7 +110,12 @@ enum ScanEngine {
 
             for session in sessions where session.unreadCount > 0 {
                 let isSnoozed = (chatActions[session.username]?.snoozedUntil ?? 0) > nowEpoch
-                let fetchLimit = session.isGroup ? min(session.unreadCount, 30) : 5
+                // Private chats fetch 20, not 5: `latestSelfTime` feeds the
+                // live-exchange suppression — with 5, a rapid-fire reply
+                // burst (peer sends 6 within the window) pushed your last
+                // outbound out of view and alerts fired while you were
+                // literally typing in that chat.
+                let fetchLimit = session.isGroup ? min(session.unreadCount, 30) : 20
                 let recentMsgs = (try? reader.getMessages(
                     chatUsername: session.username,
                     limit: fetchLimit
