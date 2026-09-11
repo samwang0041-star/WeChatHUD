@@ -343,6 +343,13 @@ class FloatingPanel: NSPanel {
         /// not a healthy one that just received a new goal.
         var startedWallClock: Date
 
+        /// The rect the run ends on: the target as the window server will
+        /// store it. See `FloatingPanel.landing(_:)`.
+        var landing: SIMD4<Double>
+
+        /// The rect the window server was storing after the last tick.
+        var painted: SIMD4<Double>
+
         /// The goal as an `NSRect`, read from the spring's own target
         /// components so the integrator and the window can never disagree
         /// about where the run is heading.
@@ -351,6 +358,37 @@ class FloatingPanel: NSPanel {
 
     private static func components(of rect: NSRect) -> SIMD4<Double> {
         SIMD4(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+    }
+
+    /// The whole-point rect the window server will store for `rect`.
+    ///
+    /// AppKit floors the origin and ceils the size (verified against a live
+    /// panel: `x: 500.6` → `500`, `w: 560.1` → `561`, `560.0` → `560`).
+    /// Landing on this rect — computed here instead of read back from the
+    /// window — means the final `setFrame` paints exactly the pixels the run
+    /// was already showing, so ending a run cannot jolt the panel.
+    /// Internal so the pixel-grid contract is testable without a live window
+    /// server (see `IslandFrameSpringTests`).
+    static func landing(_ rect: NSRect) -> SIMD4<Double> {
+        SIMD4(rect.origin.x.rounded(.down), rect.origin.y.rounded(.down),
+              rect.size.width.rounded(.up), rect.size.height.rounded(.up))
+    }
+
+    /// Where to aim the spring so the *stored* rect is the landing rect for the
+    /// whole tail: the centre of the quantization cell.
+    ///
+    /// A floor-quantized origin maps to `[landing, landing + 1)` and a
+    /// ceil-quantized size to `(landing - 1, landing]`, so ±½ from the centre is
+    /// as far as the residual can be — and the residual is what the spring
+    /// never quite spends. Aiming at the landing rect itself would let a
+    /// ceiled size stall a point above it (the bug behind the jolt); aiming at
+    /// the centre makes the stored rect equal the landing for the entire
+    /// settling motion, so the run ends with nothing to correct.
+    ///
+    /// The half point of *travel* this gives up is not visible: the stored
+    /// window rect is the landing rect either way.
+    static func springTarget(for landing: SIMD4<Double>) -> SIMD4<Double> {
+        SIMD4(landing.x + 0.5, landing.y + 0.5, landing.z - 0.5, landing.w - 0.5)
     }
 
     private static func rect(from v: SIMD4<Double>) -> NSRect {
@@ -433,11 +471,14 @@ class FloatingPanel: NSPanel {
             // spring bends toward the new goal without a velocity zero.
             // The wedge clock restarts too — it exists to unstick a run
             // that never settles, not to truncate a healthy retarget.
-            run.spring.target = FloatingPanel.components(of: target)
+            let landing = FloatingPanel.landing(target)
+            run.spring.target = FloatingPanel.springTarget(for: landing)
             // Re-seed the integrator from the live frame so a retarget can
             // never inherit a stale position.
             run.spring.position = FloatingPanel.components(of: frame)
             run.spring.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+            run.landing = landing
+            run.painted = FloatingPanel.components(of: frame)
             run.startedWallClock = Date()
             animationRun = run
             return
@@ -445,14 +486,17 @@ class FloatingPanel: NSPanel {
 
         onFrameAnimationStarted?()
 
+        let landing = FloatingPanel.landing(target)
         animationRun = SpringRun(
             spring: IslandFrameSpring(
                 position: FloatingPanel.components(of: frame),
-                target: FloatingPanel.components(of: target),
+                target: FloatingPanel.springTarget(for: landing),
                 expanding: IslandMotion.isExpanding(from: self.frame, to: target)
             ),
             lastTimestamp: 0,
-            startedWallClock: Date()
+            startedWallClock: Date(),
+            landing: landing,
+            painted: FloatingPanel.components(of: frame)
         )
         IslandFrameTiming.begin()
 
@@ -519,6 +563,10 @@ class FloatingPanel: NSPanel {
         // here re-laid-out the whole SwiftUI tree inside the tick, which is
         // what starved the next frames.
         setFrame(stepped, display: false)
+        // What the window server actually kept. AppKit floors the origin and
+        // ceils the size, so this is the rect the user is looking at — the
+        // only honest input to "is there anything left to animate?".
+        run.painted = FloatingPanel.components(of: frame)
         animationRun = run
 
         AnimationDebugger.logSample(window: self, startTime: run.startedWallClock,
@@ -537,9 +585,21 @@ class FloatingPanel: NSPanel {
         // healthy run settles well inside it (measured ~0.44 s expand,
         // ~0.50 s collapse).
         let wedged = Date().timeIntervalSince(run.startedWallClock) > IslandMotion.maxRunDuration
-        if run.spring.hasSettled || wedged {
+        if weldedToTarget(run) || wedged {
             finishFrameAnimation()
         }
+    }
+
+    /// Whether the tick loop is done with this run.
+    ///
+    /// Ending on the *stored* rect rather than on the spring's own distance
+    /// keeps the final correction inside the arrival: see
+    /// `IslandFrameSpring.hasArrived(painted:landing:)` for the measurements
+    /// behind it. `hasSettled` is kept as the second opinion so a run whose
+    /// residual collapses faster than a point still ends promptly.
+    private func weldedToTarget(_ run: SpringRun) -> Bool {
+        run.spring.hasArrived(painted: run.painted, landing: run.landing)
+            || run.spring.hasSettled
     }
 
     private func finishFrameAnimation() {
@@ -549,9 +609,12 @@ class FloatingPanel: NSPanel {
         animationTimer = nil
         animationDisplayLink?.invalidate()
         animationDisplayLink = nil
-        // Land exactly on the target and paint once, so the final frame is
-        // never left to a deferred composite of the previous step.
-        setFrame(run.target, display: true)
+        // Land on the whole-point rect the server would store for the target,
+        // and paint once so the final frame is never left to a deferred
+        // composite of the previous step. Setting whole points means the
+        // window stores exactly this rect — no quantizer step is left to
+        // happen after the motion has stopped.
+        setFrame(FloatingPanel.rect(from: run.landing), display: true)
         onFrameAnimationEnded?()
         AnimationDebugger.logEnd(frame: frame)
         IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.startedWallClock))
@@ -661,7 +724,13 @@ class FloatingPanel: NSPanel {
 // MARK: - Animation Debugger
 
 struct AnimationDebugger {
-    static let isEnabled = ProcessInfo.processInfo.environment["WCHUD_ANIMATION_DEBUG"] == "1"
+    /// `WCHUD_ANIMATION_DEBUG=1` logs and slows the springs down so a run can
+    /// be read frame by frame; `=fast` logs at real speed, which is the only
+    /// way to see the dynamics the user actually gets (slow-mo changes which
+    /// quantized rect the run settles on).
+    private static let mode = ProcessInfo.processInfo.environment["WCHUD_ANIMATION_DEBUG"]
+    static let isEnabled = mode != nil
+    static let isSlowMotion = mode == "1"
     static let slowDuration: TimeInterval = 2.0
     private static let boot = Date()
 

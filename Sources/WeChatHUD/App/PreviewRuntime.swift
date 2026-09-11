@@ -31,6 +31,16 @@ enum PreviewRuntime {
         }
     }
 
+    /// `--preview-hover` drives the compact pill's hover expansion without a
+    /// real cursor, so the "cursor enters the idle island" transition can be
+    /// traced and measured from a repeatable launch.
+    @MainActor static func simulateHover(after delay: TimeInterval = 2.5) {
+        guard isEnabled, CommandLine.arguments.contains("--preview-hover") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            (NSApp.delegate as? AppDelegate)?.panelState.mouseEntered()
+        }
+    }
+
     static func applyAccessibilityOverrides() {
         CompanionMotion.reduceMotionProvider = {
             reduceMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

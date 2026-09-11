@@ -190,11 +190,22 @@ enum IslandMotion {
     /// Expand is slightly underdamped so the island visibly "pops" out;
     /// collapse is critically damped so it tucks away without bouncing.
     static func spring(expanding: Bool) -> (stiffness: Double, damping: Double) {
-        var response = expanding ? 0.42 : 0.26
-        let dampingFraction = expanding ? 0.82 : 1.0
+        spring(expanding: expanding, distance: .infinity)
+    }
+
+    /// The pair a run uses at `distance` points from its goal.
+    ///
+    /// An expand pops out of the notch (underdamped) until it is inside
+    /// `arrivalBand`, then borrows the critically damped pair so the last
+    /// couple of points converge from one side instead of ringing across the
+    /// pixel grid.
+    static func spring(expanding: Bool, distance: Double) -> (stiffness: Double, damping: Double) {
+        let popping = expanding && distance >= arrivalBand
+        var response = popping ? 0.42 : 0.26
+        let dampingFraction = popping ? 0.82 : 1.0
         // AnimationDebugger's slow-mo used to stretch the fixed-duration
         // ease; under springs the equivalent is scaling the response.
-        if AnimationDebugger.isEnabled {
+        if AnimationDebugger.isSlowMotion {
             response *= AnimationDebugger.slowDuration / expandDuration
         }
         let omega = 2 * .pi / response
@@ -203,13 +214,28 @@ enum IslandMotion {
 
     /// Per-axis velocity (pt/s) below which a spring run counts as settled.
     static let settleVelocity: Double = 18
-    /// Per-axis distance (pt) below which a spring run counts as settled.
+    /// Distance (pt) inside which an expand stops popping and arrives
+    /// critically damped.
+    ///
+    /// The expand is deliberately underdamped so the island pops out of the
+    /// notch, but the tail of that ring decays to a fraction of a point and
+    /// then crosses pixel boundaries a few times: the traced hover expansion
+    /// stepped 1 pt three times in its last ~100 ms (x, then y/h, then w)
+    /// after the motion had visibly stopped. Ringing is worth having over
+    /// hundreds of points of travel and worth nothing over the last two, so
+    /// inside this band the run borrows the critically damped pair and
+    /// converges from one side.
+    static let arrivalBand: Double = 2.0
+    /// Per-axis distance (pt) below which a spring run used to count as
+    /// settled. Kept as the reference the historical freeze test measures
+    /// against; the live settle test is pixel-based (see
+    /// `IslandFrameSpring.hasSettled`).
     static let settleDistance: Double = 0.45
     /// Hard cap so a wedged run can never pin the panel mid-animation.
     /// Scaled under AnimationDebugger slow-mo so the cap stays "10× the
     /// nominal expand" rather than truncating the debug animation itself.
     static var maxRunDuration: TimeInterval {
-        AnimationDebugger.isEnabled
+        AnimationDebugger.isSlowMotion
             ? 2.5 * (AnimationDebugger.slowDuration / expandDuration)
             : 2.5
     }
@@ -274,7 +300,8 @@ struct IslandFrameSpring {
     /// acceleration, position integrates the new velocity. Stable for our
     /// stiffness range and cheap enough to run inside a display-link tick.
     mutating func step(dt: TimeInterval) {
-        let (k, c) = IslandMotion.spring(expanding: expanding)
+        let (k, c) = IslandMotion.spring(expanding: expanding,
+                                         distance: simd_distance(position, target))
         let accel = -k * (position - target) - c * velocity
         velocity += accel * dt
         position += velocity * dt
@@ -293,5 +320,32 @@ struct IslandFrameSpring {
     var hasSettled: Bool {
         simd_distance(position, target) < IslandMotion.settleDistance
             && simd_length(velocity) < IslandMotion.settleVelocity
+    }
+
+    /// True when the rect the window server is storing is already the rect the
+    /// run will end on, and the spring is slow.
+    ///
+    /// `painted` is read back from the live window each tick, so this asks the
+    /// only question that matters visually: is there anything left to change?
+    /// Comparing the *stored* rects — rather than the spring's own distance to
+    /// its target — is what keeps a run from correcting the panel after its
+    /// motion has visibly stopped.
+    ///
+    /// That correction is unavoidable unless the target is chosen for the
+    /// quantizer. AppKit floors the origin and ceils the size (verified live:
+    /// `w: 560.1` is stored as `561`, `x: 500.6` as `500`), so a spring
+    /// converging on the *ideal* fractional rect from above stalls a point
+    /// outside it and never rounds back down. The traced hover expansion sat
+    /// motionless at `561×253` for ~200 ms and then the finish snap repainted
+    /// `560×252` — the "last-step jitter" reported from an idle-pill hover.
+    /// Rounding the paint instead moved the knife edge to the half point, where
+    /// the same trace showed the left edge flipping `583 ↔ 584` for ~150 ms.
+    ///
+    /// `FloatingPanel` therefore aims the spring at the *centre of the
+    /// quantization cell* for the landing rect (origin + ½, size − ½), so the
+    /// stored rect equals the landing rect throughout the tail and the run can
+    /// end with nothing left to correct.
+    func hasArrived(painted: SIMD4<Double>, landing: SIMD4<Double>) -> Bool {
+        simd_length(velocity) < IslandMotion.settleVelocity && painted == landing
     }
 }
