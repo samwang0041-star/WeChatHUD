@@ -93,6 +93,33 @@ final class ChatNamingTests: XCTestCase {
         XCTAssertNil(store.chatAlias(for: "chat"))
     }
 
+    func testWeChatSearchPrefersCurrentRemarkOverStaleStoredName() {
+        let names = WeChatOpenSearch.names(
+            liveRemark: "新备注",
+            liveNick: "曾某某",
+            hudAlias: nil,
+            stored: ["个金小曾"],
+            username: "wxid_xiaozeng"
+        )
+        XCTAssertEqual(names.first, "新备注")
+        XCTAssertTrue(names.contains("个金小曾"))
+        XCTAssertTrue(names.contains("wxid_xiaozeng"))
+        XCTAssertLessThan(names.firstIndex(of: "新备注")!, names.firstIndex(of: "个金小曾")!)
+    }
+
+    func testWeChatTitleMatchesAnySearchName() {
+        XCTAssertTrue(WeChatOpenSearch.titleMatches("新备注 (2)", acceptable: ["个金小曾", "新备注"]))
+        XCTAssertFalse(WeChatOpenSearch.titleMatches("别人", acceptable: ["个金小曾", "新备注"]))
+    }
+
+    func testIdentitySearchNamesPutRemarkFirst() {
+        let index = ContactIdentityIndex.build(records: [
+            .init(username: "wxid_x", nickName: "曾某某", remark: "新备注")
+        ])
+        XCTAssertEqual(index.searchNames(for: "wxid_x").first, "新备注")
+        XCTAssertEqual(index.searchNames(for: "wxid_x"), ["新备注", "曾某某", "wxid_x"])
+    }
+
     // MARK: - Repair of previously persisted rows
 
     func testRepairRewritesRawIdsInPersistedRows() throws {

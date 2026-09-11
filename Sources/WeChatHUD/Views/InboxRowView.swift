@@ -128,7 +128,7 @@ struct InboxRowView: View {
             renamingChat = item
         }
         Button("在微信中打开") {
-            WeChatLauncher.openChat(named: monitor.displayName(for: item.chatUsername))
+            monitor.openWeChatChat(item.chatUsername)
         }
         Button("查看对话详情") {
             panelState.showChatDetail(chatUsername: item.chatUsername,

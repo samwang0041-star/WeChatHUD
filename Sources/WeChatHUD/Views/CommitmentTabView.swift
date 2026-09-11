@@ -208,7 +208,7 @@ struct CommitmentTabView: View {
                                 .buttonStyle(.bordered)
                             Spacer()
                             Button("查看对话") {
-                                WeChatLauncher.openChat(named: monitor.displayName(for: commitment.chatUsername))
+                                monitor.openWeChatChat(commitment.chatUsername)
                             }
                             .buttonStyle(.plain)
                             .foregroundStyle(CompanionPalette.jade)

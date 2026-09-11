@@ -1215,6 +1215,10 @@ final class ChatMonitor: ObservableObject {
         // Build unified inbox from scan results
         rebuildInbox()
         reader.purgeEphemeralCache()
+        let refreshedNames = refreshLiveWeChatDisplayNames()
+        if refreshedNames > 0 {
+            print("[WCHUD] refreshed \(refreshedNames) WeChat display names")
+        }
         // Rows written before the naming fallback existed still carry raw
         // `…@chatroom` ids. Repair before reloading so the published lists
         // already show readable names.

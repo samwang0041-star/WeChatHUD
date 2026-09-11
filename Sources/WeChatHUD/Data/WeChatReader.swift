@@ -538,6 +538,19 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Names WeChat's own search can match: current remark, then nickname, then username.
+    func weChatSearchNames(for username: String) -> [String] {
+        lock.withLock { contactIdentityIndex.searchNames(for: username) }
+    }
+
+    func weChatRemark(for username: String) -> String? {
+        lock.withLock { contactIdentityIndex.remarkByUsername[username] }
+    }
+
+    func weChatNickName(for username: String) -> String? {
+        lock.withLock { contactIdentityIndex.nickNameByUsername[username] }
+    }
+
     /// Member display names recovered for an unnamed group, if any.
     func groupMemberNames(for username: String) -> [String] {
         lock.withLock { groupMemberNamesCache[username] ?? [] }
