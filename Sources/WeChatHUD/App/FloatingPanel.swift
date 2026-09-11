@@ -278,7 +278,9 @@ class FloatingPanel: NSPanel {
         var velocity: SIMD4<Double>   // x, y, w, h — pt per second
         var expanding: Bool
         var lastTimestamp: CFTimeInterval
-        let startedWallClock: Date
+        /// Refreshed on retarget: the wedge cap protects a wedged run,
+        /// not a healthy one that just received a new goal.
+        var startedWallClock: Date
     }
 
     private static func components(of rect: NSRect) -> SIMD4<Double> {
@@ -363,8 +365,11 @@ class FloatingPanel: NSPanel {
         if var run = animationRun {
             // Retarget in flight: keep the integrated velocity so the
             // spring bends toward the new goal without a velocity zero.
+            // The wedge clock restarts too — it exists to unstick a run
+            // that never settles, not to truncate a healthy retarget.
             run.target = target
             run.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+            run.startedWallClock = Date()
             animationRun = run
             return
         }

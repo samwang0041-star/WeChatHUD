@@ -187,7 +187,13 @@ enum IslandMotion {
     /// Per-axis distance (pt) below which a spring run counts as settled.
     static let settleDistance: Double = 0.45
     /// Hard cap so a wedged run can never pin the panel mid-animation.
-    static let maxRunDuration: TimeInterval = 2.5
+    /// Scaled under AnimationDebugger slow-mo so the cap stays "10× the
+    /// nominal expand" rather than truncating the debug animation itself.
+    static var maxRunDuration: TimeInterval {
+        AnimationDebugger.isEnabled
+            ? 2.5 * (AnimationDebugger.slowDuration / expandDuration)
+            : 2.5
+    }
     /// Clamp for a display-link hitch — a 200 ms stall must not slingshot
     /// the frame. Anything above one 20 Hz step is treated as a stall.
     static let maxStep: TimeInterval = 1.0 / 20.0
