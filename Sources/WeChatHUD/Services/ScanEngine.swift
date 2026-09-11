@@ -23,6 +23,11 @@ enum ScanEngine {
         let vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)]
         /// User's own outgoing messages detected this scan (for commitment tracking).
         let selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)]
+        /// Chats where the user sent something within
+        /// `activeConversationWindow` — a live exchange the user is
+        /// watching. Consumers (banner, proactive alerts) should not
+        /// re-interrupt for these chats.
+        let activeConversations: Set<String>
     }
 
     /// Run a full scan of WeChat's databases and produce an atomic update
@@ -101,6 +106,7 @@ enum ScanEngine {
             var groupMemberCount = 0
             var unreadCollected: [UnreadItem] = []
             var suppressedCollected: [UnreadItem] = []
+            var activeConversations: Set<String> = []
 
             for session in sessions where session.unreadCount > 0 {
                 let isSnoozed = (chatActions[session.username]?.snoozedUntil ?? 0) > nowEpoch
@@ -114,6 +120,9 @@ enum ScanEngine {
                     .filter { MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
                     .map { $0.createTime }
                     .max() ?? 0
+                if latestSelfTime > 0, nowEpoch - latestSelfTime <= Self.activeConversationWindow {
+                    activeConversations.insert(session.username)
+                }
 
                 let isWhitelisted = whitelistSet.contains(session.username)
                 let isVIP = vipSet.contains(session.username)
@@ -317,6 +326,7 @@ enum ScanEngine {
                     .max() ?? 0
                 let isLiveExchange = latestSelfTime > 0
                     && nowEpoch - latestSelfTime <= Self.activeConversationWindow
+                if isLiveExchange { activeConversations.insert(entry.id) }
 
                 // Queue persistence and the source cursor are one durable
                 // unit. A failed queue write must leave the cursor unchanged
@@ -685,7 +695,8 @@ enum ScanEngine {
                 newInboundMessages: autopilotInbound,
                 newInboundForClassifier: newInboundForClassifier,
                 vipTraceMessages: vipTraceMessages,
-                selfOutgoingMessages: selfOutgoingMessages
+                selfOutgoingMessages: selfOutgoingMessages,
+                activeConversations: activeConversations
             )
         } catch {
             print("[WCHUD] performScan error: \(error)")

@@ -72,18 +72,28 @@ final class ProactiveAlertEngine {
     }
 
     /// Evaluate all rules against current state. Called after each scan.
+    /// `activeConversations` are chats the user replied inside within the
+    /// last `ScanEngine.activeConversationWindow` seconds — a live
+    /// exchange. Their items keep flowing into the inbox, but OS-level
+    /// interruptions (VIP escalation, burst) would be noise: the user is
+    /// literally watching that chat. Replied items are likewise never
+    /// alertable — you already answered them.
     func evaluate(
         unreadItems: [UnreadItem],
         replyDebtItems: [ReplyDebtItem],
         commitments: [Commitment],
-        recentNotifications: [HUDNotification]
+        recentNotifications: [HUDNotification],
+        activeConversations: Set<String> = []
     ) {
         let evaluationNow = now()
         pruneExpiredState(at: evaluationNow)
+        let alertable = unreadItems.filter {
+            !$0.replied && !activeConversations.contains($0.chatUsername)
+        }
 
         // Rule 1: VIP message overdue — with escalation tiers.
         var newTiers: [String: VIPAlertTier] = [:]
-        for item in unreadItems where item.isVIP {
+        for item in alertable where item.isVIP {
             let overdueMinutes = Int(evaluationNow.timeIntervalSince(item.timestamp) / 60)
             let tier = VIPAlertTier.compute(overdueMinutes: overdueMinutes)
             guard tier != .none else { continue }
@@ -113,9 +123,9 @@ final class ProactiveAlertEngine {
         // the normal in-flight dedup and hourly budget still prevent flooding.
         evaluateCommitmentDeadlines(commitments: commitments, at: evaluationNow)
 
-        // Rule 3: Burst messages (3+ from same person in unread)
+        // Rule 3: Burst messages (3+ unanswered from the same person)
         var senderCounts: [String: Int] = [:]
-        for item in unreadItems {
+        for item in alertable {
             senderCounts[item.senderName, default: 0] += 1
         }
         for (sender, count) in senderCounts where count >= 3 {
@@ -126,8 +136,11 @@ final class ProactiveAlertEngine {
             )
         }
 
-        // Rule 4: High-priority reply debt
-        if let p0 = replyDebtItems.first, p0.priority == .p0 {
+        // Rule 4: High-priority reply debt. The scorer already clears
+        // debt once you reply; `activeConversations` additionally covers
+        // the "you're mid-exchange right now" case the scorer can't see.
+        if let p0 = replyDebtItems.first, p0.priority == .p0,
+           !activeConversations.contains(p0.chatUsername) {
             let minutes = Int(evaluationNow.timeIntervalSince(p0.timestamp) / 60)
             if minutes > 30 {
                 pushAlert(
