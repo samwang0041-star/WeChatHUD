@@ -16,6 +16,11 @@ struct NotificationBannerContent: Equatable {
     /// Whether the user was @-mentioned. Drives the chip, which is the only
     /// accent colour on the surface.
     let showsMention: Bool
+    /// The mention was a broadcast (`@所有人`) rather than a personal one. The
+    /// chip must say which: `isAtMention` is true for both, and calling a group
+    /// announcement "@你" tells the user they were singled out when they were
+    /// not — in a work group that is the more common of the two.
+    let mentionIsBroadcast: Bool
     /// The conversation, or `nil` when it would just repeat the sender — in a
     /// private chat `chatName == senderName`, and printing both says nothing
     /// twice.
@@ -36,14 +41,25 @@ struct NotificationBannerContent: Equatable {
         // identity line is blank tells the user nothing about where it came
         // from, so fall back the way the rest of the app does.
         sender = rawSender.isEmpty ? "未知发送者" : rawSender
-        // `.groupAt` is by definition an @-mention, so the kind is honoured as
-        // well as the flag: the chip is never dropped from a mention banner.
-        showsMention = notification.isAtMention || notification.kind == .groupAt
-        conversation = (chat.isEmpty || chat == sender) ? nil : chat
+        // The chip is a group-chat affordance: `kind == .groupAt` is where the
+        // mention carries meaning. Keying it off `isAtMention` alone would also
+        // mark a private chat — where the flag is computed from the text
+        // regardless of chat type — as "somebody @-mentioned you", which is not
+        // a thing that happens outside a group.
+        showsMention = notification.kind == .groupAt
+        mentionIsBroadcast = notification.isAtEveryone
+        // The conversation is named unless it would only repeat the sender —
+        // and that is a private-chat situation. In a group whose name happens to
+        // equal a member's name, dropping the chat name would leave the banner
+        // unable to say which group it came from.
+        let repeatsSender = chat == sender
+        conversation = (chat.isEmpty || (repeatsSender && notification.kind == .privateChat)) ? nil : chat
 
         arrival = CompanionProductCopy.arrivalLabel(notification.timestamp, now: now, calendar: calendar)
         message = Self.heroMessage(notification.snippet)
-        openLabel = notification.canExplainContext ? "看看前后文" : "打开对话"
+        // One string for the one action: it is both the tooltip the mouse user
+        // reads and the label VoiceOver announces, so the two can never drift.
+        openLabel = notification.canExplainContext ? "看看这句话的前后文" : "打开这段对话"
     }
 
     /// The message, laid out as one flowing block.
@@ -51,13 +67,21 @@ struct NotificationBannerContent: Equatable {
     /// Newlines fold into spaces: WeChat messages are routinely typed with hard
     /// breaks, and inside a three-line preview a blank line costs a whole line
     /// of the only content the banner has. The text itself is never rewritten —
-    /// only whitespace runs collapse. Media-only messages have no text at all,
-    /// and saying so beats an empty card.
+    /// only whitespace runs collapse.
+    ///
+    /// An empty body is not a media message — `WeChatParser.renderMessage`
+    /// gives every media type its own placeholder (`[图片]`, `[语音]`, …), so
+    /// those arrive here as text. Empty means the body could not be read: an
+    /// appmsg card with neither `<title>` nor `<des>`, or a text message whose
+    /// content was nothing but a mention token. Saying "内容无法显示" matches the
+    /// vocabulary the rest of the app already uses for unreadable content
+    /// (`MessageHelpers.unreadableExact`), instead of the reassuring
+    /// "收到一条新消息", which would report a parse failure as a normal message.
     static func heroMessage(_ snippet: String) -> String {
         let folded = snippet
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return folded.isEmpty ? "收到一条新消息" : folded
+        return folded.isEmpty ? "内容无法显示" : folded
     }
 }
 
@@ -184,7 +208,6 @@ struct NotificationBannerView: View {
         .background { tapSurface }
         .companionAnimation(CompanionMotion.ease(0.15), value: hovering)
         .accessibilityElement(children: .contain)
-        .accessibilityAction(named: Text(content.openLabel)) { openConversation() }
     }
 
     /// `[avatar] 周然 @你 · 群名 · 刚刚                        [稍后] [关闭]`
@@ -213,7 +236,7 @@ struct NotificationBannerView: View {
                     separator
                     Text(conversation)
                         .islandMeta()
-                        .foregroundStyle(IslandInk.tertiary)
+                        .foregroundStyle(IslandInk.meta)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .layoutPriority(-1)
@@ -221,7 +244,7 @@ struct NotificationBannerView: View {
                 separator
                 Text(content.arrival)
                     .islandMeta()
-                    .foregroundStyle(IslandInk.tertiary)
+                    .foregroundStyle(IslandInk.meta)
                     .fixedSize()
             }
             .allowsHitTesting(false)
@@ -234,21 +257,25 @@ struct NotificationBannerView: View {
 
     /// The banner's only accent colour. Being @-mentioned is the reason a group
     /// message is allowed to interrupt at all, so it gets the mint that every
-    /// other emphasis on the island gives up.
+    /// other emphasis on the island gives up — and it names *which* mention it
+    /// was, because the two mean different things to the reader.
     private var mentionChip: some View {
-        Text("@你")
+        Text(content.mentionIsBroadcast ? "@全员" : "@你")
             .islandMicro()
             .foregroundStyle(CompanionPalette.islandMint)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(CompanionPalette.islandMint.opacity(0.16), in: Capsule())
-            .accessibilityLabel("提到了你")
+            .accessibilityLabel(content.mentionIsBroadcast ? "提到了所有人" : "提到了你")
     }
 
+    /// Decoration, not information: the ramp step below `meta` exists to keep
+    /// the line readable, and a `·` that VoiceOver reads out is noise.
     private var separator: some View {
         Text("·")
             .islandMeta()
             .foregroundStyle(IslandInk.quaternary)
+            .accessibilityHidden(true)
     }
 
     /// Hover wash: the card lights up as one clickable object. Inset a little
@@ -261,18 +288,26 @@ struct NotificationBannerView: View {
             .allowsHitTesting(false)
     }
 
-    /// Full-card tap target, drawn *behind* the content. Every non-interactive
-    /// element on the card is marked non-hit-testable, so this layer receives
-    /// exactly the clicks that did not land on an icon button — deterministically,
-    /// without depending on how SwiftUI arbitrates a child button against an
-    /// ancestor tap gesture. That arbitration is the reason the previous
-    /// revision removed the body action entirely; a body click that also
-    /// triggered "关闭" would be the worst bug this surface could have.
+    /// Full-card tap target, drawn *behind* the content and carrying the card's
+    /// only action.
+    ///
+    /// It is a real `Button`, not a tap gesture: every non-interactive element
+    /// on the card is marked non-hit-testable, so the clicks that reach this
+    /// layer are exactly the ones that missed an icon button — and a `Button`
+    /// is what gives those clicks (and VoiceOver) a name. A gesture-backed
+    /// layer has no label: the container it hangs off published the action as
+    /// an `AXCustomAction` whose name arrived at the accessibility API as the
+    /// debug descriptor `Name:看看这句话的前后文\nTarget:0x0\nSelector:(null)`,
+    /// leaving VoiceOver with a garbled English string for the surface's
+    /// primary action. A button publishes `AXPress` and the label below.
     private var tapSurface: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .onTapGesture { openConversation() }
-            .help(notification.canExplainContext ? "看看这句话的前后文" : "打开这段对话")
+        Button(action: openConversation) {
+            Color.clear
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(content.openLabel)
+        .help(content.openLabel)
     }
 
     // MARK: - Briefing (in-place context card)
@@ -300,11 +335,19 @@ struct NotificationBannerView: View {
 
     // MARK: - Controls
 
+    /// The glyph is 11 pt inside a 24×22 slot, and `.frame` only sizes the
+    /// layout: without an explicit shape a `.plain` button hit-tests the drawn
+    /// symbol alone, so ~85 % of the slot — including the corners a user's
+    /// cursor naturally lands on — fell through to the card action behind it.
+    /// Missing ✕ by two points opened the conversation instead of closing the
+    /// banner. `contentShape` has to be *inside* the label: applied to the
+    /// Button it has no effect.
     private var closeButton: some View {
         Button { panelState.collapseAndYield() } label: {
             Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(hovering ? IslandInk.secondary : IslandInk.tertiary)
                 .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("关闭通知")
@@ -323,6 +366,7 @@ struct NotificationBannerView: View {
                     ? CompanionPalette.islandMint
                     : (hovering ? IslandInk.secondary : IslandInk.tertiary))
                 .frame(width: 24, height: 22)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("稍后提醒")

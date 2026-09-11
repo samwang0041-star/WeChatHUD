@@ -106,12 +106,15 @@ extension View {
 enum IslandChrome {
     static let expandedWidth: CGFloat = 560
     static let notificationMinWidth: CGFloat = 580
-    /// Below-notch budget used only before a banner has measured itself:
-    /// the two-line banner (see `IslandNotificationLayout`). It is not a
-    /// target size — the measured height is — so it is deliberately close to
-    /// the real content instead of a roomy guess. A too-large fallback makes
-    /// the panel flash open at the wrong size and then shrink.
-    static let notificationBaseBelowNotch: CGFloat = 86
+    /// Below-notch budget used before a banner has measured itself — an
+    /// **upper bound on real content**, not an average. It has to stay one,
+    /// because it is not only the first frame's size: when the same message is
+    /// re-presented the banner keeps its `.id`, so the size preference does not
+    /// fire again and the fallback is what the panel is left with. A fallback
+    /// below real content clips the message; above it costs one frame of extra
+    /// height that the spring usually retargets away before it is drawn.
+    /// 116 pt is the measured three-line banner (145 pt) less the 32 pt notch.
+    static let notificationBaseBelowNotch: CGFloat = 116
 }
 
 /// Height budget for the `.notification` banner.
@@ -139,10 +142,11 @@ enum IslandNotificationLayout {
     /// than this means "no usable measurement yet", never "a small banner".
     static let minBelowNotch: CGFloat = 68
 
-    /// Ceiling for the hung banner, below the notch. The tallest real
-    /// content is the expanded briefing card (measured ~534 pt total),
-    /// which fits comfortably inside this.
-    static let maxBelowNotch: CGFloat = 560
+    /// Ceiling for the hung banner, below the notch — a runaway guard, not a
+    /// design budget. The tallest real content is the expanded briefing card
+    /// with its own 稍后提醒 menu open (measured 615 pt total, i.e. 583 below
+    /// the notch), and the panel clips whatever the ceiling cuts off.
+    static let maxBelowNotch: CGFloat = 600
 
     /// Width the panel gives the banner. Single source of truth shared by
     /// `AppDelegate.panelSize(for:)` (which sizes the NSPanel) and

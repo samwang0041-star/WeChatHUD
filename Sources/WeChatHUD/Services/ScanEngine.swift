@@ -783,10 +783,13 @@ enum ScanEngine {
     ) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var snippet = String(trimmed.prefix(80))
-        // Leading "@我"/"@所有人" tokens are redundant in the banner — the
-        // headline already renders "在<群> @ 了你". Only strip mentions
-        // aimed at the user (or @所有人/@All); a leading "@张三" directed
-        // at somebody else carries meaning and stays.
+        // Leading "@我"/"@所有人" tokens are redundant on the banner: the
+        // identity line already carries a mention chip, and the body should
+        // start at the content. Only strip mentions aimed at the user (or
+        // @所有人/@All); a leading "@张三" directed at somebody else carries
+        // meaning and stays. The chip distinguishes the two cases — "@全员" for
+        // a broadcast, "@你" for a personal mention — precisely because the
+        // token itself is gone by the time the banner renders.
         while snippet.hasPrefix("@") {
             guard let space = snippet.firstIndex(where: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "　" }) else { break }
             let token = String(snippet[snippet.index(after: snippet.startIndex)..<space])

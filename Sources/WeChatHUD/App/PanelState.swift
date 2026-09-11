@@ -517,6 +517,25 @@ final class PanelState: ObservableObject {
     /// Notifications may expand an idle island, but must never replace an
     /// active inbox, detail view, or popover. Hover pauses dismissal.
     func showNotification(duration: TimeInterval = 3) {
+        // In-place surfaces belong to the banner that opened them. When the
+        // next notification arrives while the previous banner is still up, the
+        // new one must not inherit them: a leaked `briefingExpanded` swaps the
+        // new banner for the *previous* message's briefing card — the new
+        // message never renders at all — and the `popoverOpen` it latches makes
+        // the guard below drop the notification outright, so it gets no timer
+        // and never auto-dismisses.
+        //
+        // Only the banner's own two surfaces are cleared, and only while the
+        // panel is still showing a banner. A popover belonging to something
+        // else (the autopilot review) keeps holding the notification off, and
+        // in `.detail` the same card is part of the page rather than a
+        // transient surface — which is why `setBriefingExpanded` deliberately
+        // leaves `popoverOpen` alone there.
+        if currentState == .notification, briefingExpanded || snoozeMenuExpanded {
+            briefingExpanded = false
+            snoozeMenuExpanded = false
+            refreshTransientIslandHold()
+        }
         guard currentState != .detail, currentState != .extended, !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
         islandSnoozeUndo = nil
         toastMessage = nil

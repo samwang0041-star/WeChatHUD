@@ -58,6 +58,78 @@ final class PanelStateTests: XCTestCase {
         XCTAssertFalse(state.briefingExpanded)
     }
 
+    /// A banner's in-place surfaces belong to that banner.
+    ///
+    /// Expanding the briefing card and then receiving the next notification
+    /// used to leave `briefingExpanded` set — nothing resets it between two
+    /// banners, because `currentState` never leaves `.notification` and the
+    /// `didSet` that clears it early-returns on an unchanged value. The banner
+    /// that arrived second then rendered the *first* message's briefing card,
+    /// so its own text never appeared at all; and because a latched briefing
+    /// also latches `popoverOpen`, `showNotification` rejected the new
+    /// notification outright — no timer, no auto-dismiss.
+    @MainActor
+    func testNewNotificationClearsThePreviousBannersInPlaceSurfaces() {
+        let state = PanelState()
+        state.currentState = .notification
+        state.setBriefingExpanded(true)
+        XCTAssertTrue(state.briefingExpanded)
+        XCTAssertTrue(state.popoverOpen)
+
+        state.showNotification(duration: 30)
+
+        XCTAssertFalse(state.briefingExpanded, "the next banner must not inherit the previous one's briefing card")
+        XCTAssertFalse(state.popoverOpen, "the latched popover must not survive into the next banner")
+        XCTAssertEqual(state.currentState, .notification)
+    }
+
+    /// …but the same card inside the detail view is part of the page, not a
+    /// transient surface: a notification arriving behind it must not close
+    /// what the user is reading (and the notification is dropped anyway).
+    @MainActor
+    func testNotificationDoesNotClearABriefingOpenedInsideTheDetailView() {
+        let state = PanelState()
+        state.currentState = .detail
+        state.setBriefingExpanded(true)
+
+        state.showNotification(duration: 30)
+
+        XCTAssertTrue(state.briefingExpanded, "the detail view's own briefing card is not a banner surface")
+        XCTAssertEqual(state.currentState, .detail, "a notification must not replace the open detail view")
+    }
+
+    /// An open snooze menu is also banner-scoped, and it holds the panel open
+    /// the same way.
+    @MainActor
+    func testNewNotificationClearsAnOpenSnoozeMenu() {
+        let state = PanelState()
+        state.currentState = .notification
+        state.setSnoozeMenuExpanded(true)
+        XCTAssertTrue(state.popoverOpen)
+
+        state.showNotification(duration: 30)
+
+        XCTAssertFalse(state.snoozeMenuExpanded)
+        XCTAssertFalse(state.popoverOpen)
+    }
+
+    /// …but a popover that is *not* one of the banner's surfaces keeps holding
+    /// the notification off. Clearing only what a previous banner latched is
+    /// what makes this safe; the autopilot review popover is the standing case
+    /// for it, and `IslandInteractionTests` pins the plain-popover variant.
+    @MainActor
+    func testNewNotificationStillYieldsToANonBannerPopover() {
+        let state = PanelState()
+        state.currentState = .notification
+        state.setAutopilotPopoverOpen(true)
+        XCTAssertTrue(state.popoverOpen)
+
+        state.showNotification(duration: 30)
+
+        XCTAssertTrue(state.autopilotPopoverOpen, "the autopilot popover is not a banner surface")
+        XCTAssertTrue(state.popoverOpen)
+    }
+
     @MainActor
     func testNotificationCollapsesOnMouseExit() {
         let state = PanelState()

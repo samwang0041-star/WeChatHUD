@@ -387,6 +387,16 @@ struct HUDNotification: Identifiable, Equatable {
         attentionLevel == .vip
     }
 
+    /// The mention was addressed to the whole group (`@所有人` / `@all`) rather
+    /// than to this user personally. `isAtMention` is true for both — it means
+    /// "this concerns me", which is why the message interrupts at all — so any
+    /// surface that names the mention has to ask this to avoid crediting a
+    /// broadcast to the reader. Checked against `rawText`, because the leading
+    /// token is stripped from `snippet` before it reaches the UI.
+    var isAtEveryone: Bool {
+        MessageHelpers.isAtEveryone(rawText)
+    }
+
     var briefingKey: String {
         if !messageID.isEmpty { return messageID }
         return "\(chatUsername):\(Int(timestamp.timeIntervalSince1970)):\(senderName)"
