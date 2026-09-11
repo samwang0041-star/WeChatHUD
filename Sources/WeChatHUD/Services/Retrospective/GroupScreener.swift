@@ -54,8 +54,15 @@ actor GroupScreener {
         }
 
         if !needAI.isEmpty {
-            let aiDecisions = await runAIScreen(needAI, samples: samples)
+            // A nil result means the screen produced no usable decisions at all
+            // (prompt missing, AI error, unparseable reply). Cache nothing in
+            // that case: a transient outage used to be persisted as
+            // `ask_each_time` with source `.ai`, which silently excluded the
+            // group from every later run with no way to recover.
+            let aiDecisions = await runAIScreen(needAI, samples: samples) ?? []
+            var decided = Set<String>()
             for (c, decision, confidence) in aiDecisions {
+                decided.insert(c.chatUsername)
                 // Spec §7.1: confidence < 0.7 forces askEachTime so user
                 // gets to confirm rather than AI making a low-confidence call.
                 let finalDecision: ScopeDecision = (confidence < 0.7) ? .askEachTime : decision
@@ -73,14 +80,25 @@ actor GroupScreener {
                 case .askEachTime: ask.append(c)
                 }
             }
+            // Candidates the model did not answer: ask about them this run,
+            // cache nothing, retry the screen next run.
+            for c in needAI where !decided.contains(c.chatUsername) {
+                ask.append(c)
+            }
         }
 
         return ScreenResult(included: included, excluded: excluded, askEachTime: ask)
     }
 
-    private func runAIScreen(_ candidates: [ScopeCandidate], samples: [String: [String]]) async -> [(ScopeCandidate, ScopeDecision, Double)] {
+    /// Nil when no decision could be obtained (prompt load failure, AI error,
+    /// or a reply with no parseable items).
+    private func runAIScreen(_ candidates: [ScopeCandidate], samples: [String: [String]]) async -> [(ScopeCandidate, ScopeDecision, Double)]? {
         let groupsArr: [[String: Any]] = candidates.map { c in
             [
+                // Stable key: the model echoes it back and `parse` matches on it,
+                // so two groups that happen to share a display name cannot be
+                // given the same decision.
+                "chat_username": c.chatUsername,
                 "chat_name": c.chatName,
                 "sample_messages": samples[c.chatUsername] ?? []
             ]
@@ -93,7 +111,7 @@ actor GroupScreener {
             template = try promptLoader.load(version: "retrospective_group_screen_v1")
         } catch {
             print("[Retrospective] GroupScreener prompt load failed: \(error)")
-            return candidates.map { ($0, .askEachTime, 0.0) }
+            return nil
         }
         let userPrompt = template.replacingOccurrences(of: "{groups_json}", with: groupsStr)
 
@@ -106,7 +124,7 @@ actor GroupScreener {
             )
         } catch {
             print("[Retrospective] GroupScreener AI call failed: \(error)")
-            return candidates.map { ($0, .askEachTime, 0.0) }
+            return nil
         }
 
         // Ledger entry — note this happens regardless of parse outcome
@@ -125,20 +143,29 @@ actor GroupScreener {
         return GroupScreener.parse(response.text, candidates: candidates)
     }
 
+    /// Decisions the model actually made, in candidate order.
+    ///
+    /// Matching prefers the stable `chat_username`; `chat_name` remains as a
+    /// fallback for replies that predate that key, but each reply item is
+    /// consumed at most once so two same-named groups cannot share one
+    /// decision. Candidates the model skipped are simply absent — the caller
+    /// asks about them without caching anything.
     static func parse(_ raw: String, candidates: [ScopeCandidate]) -> [(ScopeCandidate, ScopeDecision, Double)] {
-        guard let arr = extractItems(raw) else {
-            return candidates.map { ($0, .askEachTime, 0.0) }
-        }
+        guard var remaining = extractItems(raw) else { return [] }
         var out: [(ScopeCandidate, ScopeDecision, Double)] = []
         for c in candidates {
-            if let item = arr.first(where: { ($0["chat_name"] as? String) == c.chatName }) {
-                let decisionRaw = (item["decision"] as? String) ?? "exclude"
-                let conf = (item["confidence"] as? Double) ?? 0.5
-                let decision = ScopeDecision(rawValue: decisionRaw) ?? .askEachTime
-                out.append((c, decision, conf))
-            } else {
-                out.append((c, .askEachTime, 0.0))
+            let index = remaining.firstIndex { entry in
+                if let key = entry["chat_username"] as? String, !key.isEmpty {
+                    return key == c.chatUsername
+                }
+                return (entry["chat_name"] as? String) == c.chatName
             }
+            guard let index else { continue }
+            let item = remaining.remove(at: index)
+            let decisionRaw = (item["decision"] as? String) ?? "exclude"
+            let conf = (item["confidence"] as? Double) ?? 0.5
+            let decision = ScopeDecision(rawValue: decisionRaw) ?? .askEachTime
+            out.append((c, decision, conf))
         }
         return out
     }

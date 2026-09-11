@@ -216,7 +216,13 @@ enum ClassifierCLI {
 
     private static func runReal(args: [String]) -> Never {
         var perChat = 10
-        var outPath = "/tmp/wchud_classify_real_\(Int(Date().timeIntervalSince1970)).json"
+        // Default under the per-user temp directory (`/var/folders/...` on
+        // macOS, mode 0700) rather than the shared `/tmp`: the file holds raw
+        // WeChat text, and anything written directly to /tmp is readable by
+        // every local user even though the sticky bit stops deletion.
+        var outPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wchud_classify_real_\(Int(Date().timeIntervalSince1970)).json")
+            .path
         var includeGroups = false
         var maxTotal = 100   // hard cap so we don't accidentally chew through hours of GPU time
 
@@ -414,7 +420,11 @@ enum ClassifierCLI {
                 withJSONObject: fixtureRows,
                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             )
-            try json.write(to: URL(fileURLWithPath: outPath))
+            let url = URL(fileURLWithPath: outPath)
+            try json.write(to: url)
+            // Raw WeChat text: keep the file owner-only even for a caller-chosen
+            // path (the repo-root guard above only rejects repository targets).
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             print("\n已写入: \(outPath)")
             print("下一步：只提炼分类行为，把样本重写为合成语料后再加入 Tests/Fixtures")
         } catch {

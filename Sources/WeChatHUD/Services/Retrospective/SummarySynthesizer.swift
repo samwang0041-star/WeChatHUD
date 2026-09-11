@@ -8,17 +8,20 @@ actor SummarySynthesizer {
     private let aiService: any AIServiceProtocol
     private let promptLoader: PromptLoader
     private let dataLedger: DataLedger
+    private let redactor: Redactor
 
     init(
         store: HUDStore,
         aiService: any AIServiceProtocol,
         promptLoader: PromptLoader = PromptLoader(),
-        dataLedger: DataLedger
+        dataLedger: DataLedger,
+        redactor: Redactor = Redactor()
     ) {
         self.store = store
         self.aiService = aiService
         self.promptLoader = promptLoader
         self.dataLedger = dataLedger
+        self.redactor = redactor
     }
 
     struct SynthesizedSummary: Sendable {
@@ -38,6 +41,32 @@ actor SummarySynthesizer {
 
         let aggregated = SummarySynthesizer.aggregateJSON(highlights: highlights, todos: todos)
 
+        // The ledger below records `redacted: true`, so the payload has to
+        // actually be redacted. It was not: highlight summaries, involved
+        // names, chat names and quoted snippets went to the model verbatim
+        // while the ledger claimed otherwise (a real name and group name leak,
+        // and an untrue audit number). Register every name the payload mentions
+        // so the redactor can substitute codenames, then mask the JSON itself.
+        for highlight in highlights {
+            for name in highlight.involved {
+                _ = await redactor.codenameFor(username: name, displayName: name)
+            }
+            let chatName = highlight.sourceChatName
+            if !chatName.isEmpty {
+                _ = await redactor.codenameFor(username: chatName, displayName: chatName)
+            }
+        }
+        for todo in todos {
+            for name in todo.involved {
+                _ = await redactor.codenameFor(username: name, displayName: name)
+            }
+            let chatName = todo.sourceChatName
+            if !chatName.isEmpty {
+                _ = await redactor.codenameFor(username: chatName, displayName: chatName)
+            }
+        }
+        let redactedAggregate = await redactor.redactText(aggregated)
+
         let template: String
         do {
             template = try promptLoader.load(version: "retrospective_summary_synth_v1")
@@ -45,7 +74,7 @@ actor SummarySynthesizer {
             print("[Retrospective] SummarySynthesizer prompt load failed: \(error)")
             return SummarySynthesizer.fallbackSummary(highlights: highlights)
         }
-        let userPrompt = template.replacingOccurrences(of: "{aggregated_json}", with: aggregated)
+        let userPrompt = template.replacingOccurrences(of: "{aggregated_json}", with: redactedAggregate)
 
         let result: AICompletionResult
         do {
@@ -73,7 +102,34 @@ actor SummarySynthesizer {
         guard let parsed = SummarySynthesizer.parse(result.text) else {
             return SummarySynthesizer.fallbackSummary(highlights: highlights)
         }
-        return parsed
+        return await restoreNames(in: parsed)
+    }
+
+    /// Codenames back to real names, so the stored summary reads naturally.
+    private func restoreNames(in summary: SynthesizedSummary) async -> SynthesizedSummary {
+        func restore(_ item: SummaryItem) async -> SummaryItem {
+            SummaryItem(
+                text: await redactor.unredactText(item.text),
+                evidenceHighlightIDs: item.evidenceHighlightIDs
+            )
+        }
+        var top3: [SummaryItem] = []
+        for item in summary.top3 {
+            top3.append(await restore(item))
+        }
+        let risk: SummaryItem?
+        if let item = summary.risk {
+            risk = await restore(item)
+        } else {
+            risk = nil
+        }
+        let missed: SummaryItem?
+        if let item = summary.missed {
+            missed = await restore(item)
+        } else {
+            missed = nil
+        }
+        return SynthesizedSummary(top3: top3, risk: risk, missed: missed)
     }
 
     // MARK: - Aggregation + parsing

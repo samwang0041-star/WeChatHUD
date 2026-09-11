@@ -98,18 +98,34 @@ enum WeChatLauncher {
     /// launched via `open` (Launch Services), so we append every step
     /// of the click flow to a known path and read it from the terminal
     /// for troubleshooting.
-    private static let logPath = "/tmp/wchud_launcher.log"
+    ///
+    /// The log carries AX tree dumps — contact names, group titles, input-box
+    /// text. It used to live at `/tmp/wchud_launcher.log`, which the sticky
+    /// bit makes undeletable by others but still world-readable. It now sits
+    /// in HUD's own 0700 directory with a 0600 file, matching every other
+    /// on-disk artifact this app writes.
+    private static let logDirectory: String = {
+        let dir = NSHomeDirectory() + "/.wechat-hud/logs"
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir)
+        return dir
+    }()
+
+    private static var logPath: String { logDirectory + "/launcher.log" }
 
     private static func log(_ msg: String) {
         let line = "[\(Date())] \(msg)\n"
-        if let data = line.data(using: .utf8) {
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            } else {
-                try? data.write(to: URL(fileURLWithPath: logPath))
-            }
+        guard let data = line.data(using: .utf8) else { return }
+        let path = logPath
+        if let handle = FileHandle(forWritingAtPath: path) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            handle.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: data,
+                                           attributes: [.posixPermissions: 0o600])
         }
     }
 
@@ -218,9 +234,9 @@ enum WeChatLauncher {
             let title = axString(el, kAXTitleAttribute) ?? ""
             if title == "Search" || title == "搜索" { return false }
             // Skip zero-sized elements.
-            guard let sizeRaw = axGet(el, kAXSizeAttribute) else { return false }
+            guard let sizeValue = axValue(axGet(el, kAXSizeAttribute)) else { return false }
             var size = CGSize.zero
-            guard AXValueGetValue(sizeRaw as! AXValue, .cgSize, &size),
+            guard AXValueGetValue(sizeValue, .cgSize, &size),
                   size.width > 10, size.height > 10 else { return false }
             return true
         }
@@ -233,6 +249,21 @@ enum WeChatLauncher {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
         return err == .success ? value : nil
+    }
+
+    /// Unbox an AX attribute that is supposed to be an `AXValue`.
+    ///
+    /// `axGet` only checks the error code, so the CFTypeRef it returns is
+    /// whatever the target process put in that slot — text, an array, or
+    /// nothing like the shape we asked for, depending on WeChat's version and
+    /// its state mid-relayout. `as!` on a mismatched type traps, inside the
+    /// send path; the conditional downcast yields nil instead.
+    private static func axValue(_ raw: CFTypeRef?) -> AXValue? {
+        // `raw as? AXValue` always succeeds for a CF type (the compiler
+        // rejected the first version of this helper), so ask CF for the type ID
+        // and only then reinterpret the reference.
+        guard let raw, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+        return unsafeBitCast(raw, to: AXValue.self)
     }
 
     private static func axString(_ element: AXUIElement, _ attribute: String) -> String? {
@@ -354,9 +385,9 @@ enum WeChatLauncher {
                             ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty {
                     var y: CGFloat = 0
-                    if let posRaw = axGet(el, kAXPositionAttribute) {
+                    if let posValue = axValue(axGet(el, kAXPositionAttribute)) {
                         var point = CGPoint.zero
-                        if AXValueGetValue(posRaw as! AXValue, .cgPoint, &point) {
+                        if AXValueGetValue(posValue, .cgPoint, &point) {
                             y = point.y
                         }
                     }
@@ -472,8 +503,10 @@ enum WeChatLauncher {
         }
         // Both values come back wrapped in AXValue; unbox via the
         // type-specific accessor.
-        let posValue = posRaw as! AXValue
-        let sizeValue = sizeRaw as! AXValue
+        guard let posValue = axValue(posRaw), let sizeValue = axValue(sizeRaw) else {
+            log("AX: attribute was not an AXValue")
+            return false
+        }
         var point = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(posValue, .cgPoint, &point),
