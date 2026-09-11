@@ -30,7 +30,13 @@ struct ConversationDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     messagesSection
-                    if !suggestions.isEmpty || isLoadingSuggestions {
+                    // Render whenever there is reply-debt context, not only once
+                    // suggestions exist: the "生成建议" button lives inside this
+                    // section, and it is the only caller of `loadSuggestions()`.
+                    // Gating the section on `!suggestions.isEmpty` made the block,
+                    // the button, `SuggestionRowView` and `recordReplyFeedback`
+                    // unreachable — suggestions could never appear.
+                    if !suggestions.isEmpty || isLoadingSuggestions || hasReplyDebtContext {
                         divider
                         replySuggestionsSection
                     }
@@ -305,7 +311,16 @@ struct ConversationDetailView: View {
             return
         }
         let sendKey = monitor.loadAutopilotConfig().sendKey
-        let result = await WeChatLauncher.sendMessageDetailed(chatName: chatName, text: text, sendKey: sendKey)
+        // `chatName` is the HUD label, which may be a local alias WeChat has
+        // never seen. Passing it as the search set pointed the send at a
+        // same-named stranger (and validated them as the target). Search only
+        // with names WeChat itself resolves.
+        let result = await WeChatLauncher.sendMessageDetailed(
+            chatName: chatName,
+            text: text,
+            sendKey: sendKey,
+            searchNames: monitor.weChatSendSearchNames(for: chatUsername)
+        )
         needsOperationPermission = result == .failed(.accessibilityDenied)
         var confirmed = false
         if result.succeeded {

@@ -14,7 +14,6 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertFalse(config.handleGroupAt)
         XCTAssertTrue(config.vipAutoNotify)
         XCTAssertFalse(config.autoSendEnabled)
-        XCTAssertFalse(config.enabled)
     }
 
     func testGroupAtSettingIsTheQueueGate() {
@@ -48,57 +47,76 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertTrue(config.sensitiveKeywords.contains("合同"))
     }
 
-    // MARK: - Sensitive keyword detection logic
+    // MARK: - Sensitive keyword detection (production rule)
+    //
+    // These used to re-implement the matching loop locally, with semantics that
+    // differed from production (case-sensitive, reply text only), so the real
+    // guardrail could have been deleted while all four stayed green.
 
-    func testSensitiveKeywordMatchInReply() {
-        let config = AutopilotConfig()
-        let reply = "好的，我把密码发给你"
-        let matched = config.sensitiveKeywords.first { reply.contains($0) }
-        XCTAssertEqual(matched, "密码")
+    func testInboundTriggerTextHitsSensitiveKeywords() {
+        let hold = AutopilotService.autopilotSafetyHoldReason(
+            triggerText: "帮我转账 5000 给供应商",
+            replyText: nil,
+            risk: .low,
+            reasonCode: nil,
+            sensitiveKeywords: ["转账", "密码"]
+        )
+        XCTAssertEqual(hold, "命中敏感词「转账」")
     }
 
-    func testSensitiveKeywordNoMatchInSafeReply() {
-        let config = AutopilotConfig()
-        let reply = "好的，收到了，我看看"
-        let matched = config.sensitiveKeywords.first { reply.contains($0) }
-        XCTAssertNil(matched)
+    func testKeywordMatchIsCaseInsensitive() {
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "send me the PASSWORD",
+                replyText: nil,
+                risk: .low,
+                reasonCode: nil,
+                sensitiveKeywords: ["password"]
+            ),
+            "命中敏感词「password」"
+        )
     }
 
-    func testSensitiveKeywordEmptyList() {
-        var config = AutopilotConfig()
-        config.sensitiveKeywords = []
-        let reply = "转账密码是123456"
-        let matched = config.sensitiveKeywords.first { reply.contains($0) }
-        XCTAssertNil(matched)
+    func testKeywordScanCoversTheReplyToo() {
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "在吗", replyText: "我把密码发你", risk: .low,
+                reasonCode: nil, sensitiveKeywords: ["密码"]
+            ),
+            "命中敏感词「密码」"
+        )
     }
 
-    func testSensitiveKeywordCustomList() {
-        var config = AutopilotConfig()
-        config.sensitiveKeywords = ["机密", "保密"]
-        let reply = "这个项目是保密的"
-        let matched = config.sensitiveKeywords.first { reply.contains($0) }
-        XCTAssertEqual(matched, "保密")
+    func testEmptyKeywordListReliesOnRiskAndReasonCode() {
+        XCTAssertNil(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "转账密码是123456", replyText: "好", risk: .low,
+                reasonCode: nil, sensitiveKeywords: []
+            )
+        )
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "在吗", replyText: "好", risk: .low,
+                reasonCode: "money", sensitiveKeywords: []
+            ),
+            "涉及转账或金钱内容"
+        )
     }
 
-    // MARK: - Session send limit logic
+    // MARK: - Session send limit (production rule)
+
+    func testSessionLimitReachedSkipsTheSend() {
+        let result = defaultDowngradeInput(sessionSent: 50, maxSendsPerSession: 50)
+        XCTAssertEqual(result.action, .skipped)
+        XCTAssertTrue(result.reasoning.contains("上限 50"))
+    }
+
+    func testSessionLimitNotReachedSends() {
+        XCTAssertEqual(defaultDowngradeInput(sessionSent: 49, maxSendsPerSession: 50).action, .sent)
+    }
 
     func testSessionLimitZeroMeansUnlimited() {
-        var config = AutopilotConfig()
-        config.maxSendsPerSession = 0
-        // 0 means unlimited — no cap check should trigger
-        XCTAssertFalse(config.maxSendsPerSession > 0 && 100 >= config.maxSendsPerSession)
-    }
-
-    func testSessionLimitReached() {
-        let config = AutopilotConfig()  // default 50
-        let sessionSent = 50
-        XCTAssertTrue(config.maxSendsPerSession > 0 && sessionSent >= config.maxSendsPerSession)
-    }
-
-    func testSessionLimitNotReached() {
-        let config = AutopilotConfig()
-        let sessionSent = 10
-        XCTAssertFalse(config.maxSendsPerSession > 0 && sessionSent >= config.maxSendsPerSession)
+        XCTAssertEqual(defaultDowngradeInput(sessionSent: 10_000, maxSendsPerSession: 0).action, .sent)
     }
 
     // MARK: - AutopilotConfig Codable roundtrip
@@ -117,6 +135,75 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(decoded.sensitiveKeywords, ["custom"])
         XCTAssertEqual(decoded.confidenceThreshold, 0.9)
         XCTAssertTrue(decoded.autoSendEnabled)
+    }
+
+    // MARK: - Tolerant decoding
+
+    func testConfigDecodesFromPartialJSONWithDefaults() throws {
+        // A real stored row on this machine had 17 keys and no
+        // `autoSendEnabled`. The synthesized decoder rejected the whole object,
+        // `getSettingJSON` turned that into nil, every caller saw a fresh
+        // default config, and the next save wrote those defaults over the
+        // user's guardrails.
+        let json = #"{"confidenceThreshold":0.65,"maxSendsPerSession":12}"#
+        let decoded = try JSONDecoder().decode(AutopilotConfig.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.confidenceThreshold, 0.65)
+        XCTAssertEqual(decoded.maxSendsPerSession, 12)
+        XCTAssertFalse(decoded.autoSendEnabled)
+        XCTAssertEqual(decoded.sensitiveKeywords, AutopilotConfig().sensitiveKeywords)
+        XCTAssertEqual(decoded.sendKey, .cmdEnter)
+    }
+
+    func testConfigClampsOutOfRangeRatios() throws {
+        // A hand-edited or corrupted row must not push the threshold outside
+        // [0, 1]: a negative threshold would auto-send everything.
+        let json = #"{"confidenceThreshold":-3,"silentNightThreshold":9}"#
+        let decoded = try JSONDecoder().decode(AutopilotConfig.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.confidenceThreshold, 0)
+        XCTAssertEqual(decoded.silentNightThreshold, 1)
+    }
+
+    // MARK: - Media confidence decay
+
+    func testMediaDecayFactorIsApplied() {
+        XCTAssertEqual(AutopilotService.effectiveConfidence(base: 0.9, hasMedia: true), 0.63, accuracy: 0.0001)
+        XCTAssertEqual(AutopilotService.effectiveConfidence(base: 0.9, hasMedia: false), 0.9, accuracy: 0.0001)
+    }
+
+    /// A media reply at 0.9 sends on its own but must fall below the 0.8
+    /// threshold once decayed. Deleting the decay, changing the factor, or
+    /// swapping the two confidence inputs flips this test — the old suite could
+    /// not see any of that because every downgrade test passed
+    /// `confidence == originalConfidence`.
+    func testMediaDecayCrossesTheSendThreshold() {
+        let decayed = AutopilotService.effectiveConfidence(base: 0.9, hasMedia: true)
+        let downgraded = defaultDowngradeInput(confidence: decayed, originalConfidence: 0.9)
+        XCTAssertEqual(downgraded.action, .stall)
+        XCTAssertTrue(downgraded.reasoning.contains("信心偏低"))
+        XCTAssertEqual(defaultDowngradeInput(confidence: 0.9, originalConfidence: 0.9).action, .sent)
+    }
+
+    /// "群聊不自动发" (README) is enforced at the send gate, not only at the
+    /// queue gate: an @-mention in a group can be drafted, but never sent
+    /// unattended.
+    func testGroupReplyAlwaysRequiresManualConfirmation() {
+        XCTAssertEqual(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "收到，我看下",
+                sensitiveKeywords: [],
+                isGroup: true
+            ),
+            "群聊消息，请人工确认后发送"
+        )
+        XCTAssertNil(
+            AutopilotService.automaticSendHoldReason(
+                safetyHold: nil,
+                replyText: "收到，我看下",
+                sensitiveKeywords: [],
+                isGroup: false
+            )
+        )
     }
 
     // MARK: - AutopilotAction and AutopilotRisk enums

@@ -644,8 +644,7 @@ actor AutopilotService {
         }
 
         let risk = AutopilotRisk(rawValue: decision.risk) ?? .medium
-        // Media confidence decay: media replies are inherently less certain
-        let effectiveConfidence = hasMedia ? decision.confidence * 0.7 : decision.confidence
+        let effectiveConfidence = Self.effectiveConfidence(base: decision.confidence, hasMedia: hasMedia)
         let safetyHold = Self.autopilotSafetyHoldReason(
             triggerText: combinedText,
             replyText: decision.reply,
@@ -813,7 +812,8 @@ actor AutopilotService {
                 safetyHold: safetyHold,
                 replyText: replyText,
                 sensitiveKeywords: config.sensitiveKeywords,
-                downgradedAction: downgraded.action
+                downgradedAction: downgraded.action,
+                isGroup: representative.isGroup
             )
         )
         pendingSendQueue.append(pendingItem)
@@ -843,11 +843,16 @@ actor AutopilotService {
 
     private func searchNames(for username: String, fallback: String) -> [String] {
         _ = try? reader.refreshContactsIfChanged()
+        // Deliberately no HUD alias and no caller-supplied fallback: this array
+        // is the search input *and* the accepted-title set for the send below.
+        // An alias that only exists in HUD's database can match a same-named
+        // stranger in WeChat search, and the title check would then accept that
+        // stranger as the recipient. Only names WeChat itself knows are safe.
+        _ = fallback
         return WeChatOpenSearch.names(
             liveRemark: reader.weChatRemark(for: username),
             liveNick: reader.weChatNickName(for: username),
-            hudAlias: store.chatAlias(for: username),
-            stored: [fallback, store.getContact(username: username)?.displayName].compactMap { $0 },
+            stored: [store.getContact(username: username)?.displayName].compactMap { $0 },
             username: username
         )
     }
@@ -1216,7 +1221,10 @@ actor AutopilotService {
         return "\(mediaType.promptContext)\n\(result.promptContext)"
     }
 
-    nonisolated private static func autopilotSafetyHoldReason(
+    /// Decision hold for one AI reply. Internal rather than private so the
+    /// guardrail has a behaviour test: the keyword scan covers the *inbound*
+    /// text as well as the reply, which no test exercised before.
+    nonisolated static func autopilotSafetyHoldReason(
         triggerText: String,
         replyText: String?,
         risk: AutopilotRisk,
@@ -1349,7 +1357,10 @@ actor AutopilotService {
                 sentAt: nil, createdAt: Date()
             )
             try? store.insertAutopilotLog(logEntry)
-            print("[WCHUD] Autopilot: proactive draft queued for '\(entry.displayName)': \(content)")
+            // stdout lands in the system log. A proactive draft plus the
+            // contact's display name is exactly the private content the log
+            // should not carry, so only the shape of the event is logged.
+            print("[WCHUD] Autopilot: proactive draft queued (\(content.count) chars)")
         }
     }
 
@@ -1473,6 +1484,17 @@ actor AutopilotService {
         reason == "已有发送正在进行"
     }
 
+    /// Media confidence decay: a reply about an image, voice note or file is
+    /// directed at content the model cannot actually see, so its self-reported
+    /// confidence is discounted before any threshold check. Kept as its own
+    /// function because the factor is a safety parameter: it used to live
+    /// inline in `processBatch`, where no test could reach it.
+    static let mediaConfidenceDecay = 0.7
+
+    static func effectiveConfidence(base: Double, hasMedia: Bool) -> Double {
+        hasMedia ? base * mediaConfidenceDecay : base
+    }
+
     static func isEligibleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {
         item.scheduledSendTime <= now && item.manualOnlyReason == nil
     }
@@ -1484,10 +1506,19 @@ actor AutopilotService {
         safetyHold: String?,
         replyText: String,
         sensitiveKeywords: [String],
-        downgradedAction: AutopilotAction = .sent
+        downgradedAction: AutopilotAction = .sent,
+        isGroup: Bool = false
     ) -> String? {
         if let safetyHold {
             return "安全检查：\(safetyHold)"
+        }
+        // "群聊不自动发" is a product promise (README) and a group reply is the
+        // highest-consequence case for a wrong target. Group messages only reach
+        // this point when the user turned @-mention handling on, and even then
+        // they wait for a human; without this check `manualOnlyReason` was nil
+        // for them and `isEligibleForAutomaticSend` sent them unattended.
+        if isGroup {
+            return "群聊消息，请人工确认后发送"
         }
         if !sensitiveKeywords.isEmpty, !replyText.isEmpty {
             let lower = replyText.lowercased()

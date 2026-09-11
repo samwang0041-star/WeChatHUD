@@ -62,6 +62,21 @@ extension ChatMonitor {
         )
     }
 
+    /// Names that are safe to *search with* and to validate the opened chat
+    /// against when the goal is delivering a message.
+    ///
+    /// `weChatSearchNames` also feeds the HUD alias into the same array, and
+    /// that array is both the search input and the accepted-title set. A HUD
+    /// alias exists only in HUD's own database — WeChat never shows it — so
+    /// typing it into WeChat search can land on a same-named stranger, and the
+    /// title check would then confirm that stranger as the intended chat. This
+    /// path keeps the array to names WeChat itself resolves (live remark →
+    /// nickname → username).
+    func weChatSendSearchNames(for chatUsername: String) -> [String] {
+        _ = try? reader.refreshContactsIfChanged()
+        return reader.weChatSearchNames(for: chatUsername)
+    }
+
     /// Keep whitelist/contact labels on the current WeChat remark so the
     /// UI and search do not stay on a renamed 备注.
     @discardableResult
@@ -161,23 +176,44 @@ extension ChatMonitor {
     /// covers data written by an older build before this fix existed.
     @discardableResult
     func repairStaleChatNames() -> Int {
+        Self.repairStaleChatNames(store: store, resolve: { [weak self] username in
+            self?.displayName(for: username)
+        })
+    }
+
+    /// The row-level repair, separated from the resolver.
+    ///
+    /// This used to exist only as a copy inside the test file ("mirrors
+    /// ChatMonitor's repair loop"), which meant the loop the app actually runs
+    /// — including its "only write a name that improves the row" rule — was
+    /// never exercised. The monitor passes its own resolver; tests pass a stub.
+    @discardableResult
+    static func repairStaleChatNames(store: HUDStore, resolve: (String) -> String?) -> Int {
         let rows = store.uninformativeChatNameRows()
         guard !rows.isEmpty else { return 0 }
 
         // Resolve each chat once — the same chat appears in many tables.
         var resolvedByChat: [String: String] = [:]
+        var unresolvable: Set<String> = []
         var updates: [(table: String, keyColumn: String, nameColumn: String, key: String, oldName: String, newName: String)] = []
         for row in rows {
-            let resolved: String
-            if let cached = resolvedByChat[row.key] {
+            let resolved: String?
+            if unresolvable.contains(row.key) {
+                resolved = nil
+            } else if let cached = resolvedByChat[row.key] {
                 resolved = cached
             } else {
-                resolved = displayName(for: row.key)
-                resolvedByChat[row.key] = resolved
+                resolved = resolve(row.key)
+                if let resolved {
+                    resolvedByChat[row.key] = resolved
+                } else {
+                    unresolvable.insert(row.key)
+                }
             }
             // Nothing better than what is stored — leave the row alone rather
             // than churn the database on every scan.
-            guard resolved != row.name,
+            guard let resolved,
+                  resolved != row.name,
                   !ContactIdentityIndex.isRawChatIdentifier(resolved) else { continue }
             updates.append((row.table, row.keyColumn, row.nameColumn, row.key, row.name, resolved))
         }
@@ -187,11 +223,20 @@ extension ChatMonitor {
     /// Rewrite `commit_to` values that are raw chat ids.
     @discardableResult
     func repairStaleCommitTargets() -> Int {
+        Self.repairStaleCommitTargets(store: store, resolve: { [weak self] target in
+            self?.canonicalDisplayName(for: target)
+        })
+    }
+
+    /// Rewrite `commit_to` values that are raw chat ids. Same split as
+    /// `repairStaleChatNames` so the loop itself is testable.
+    @discardableResult
+    static func repairStaleCommitTargets(store: HUDStore, resolve: (String) -> String?) -> Int {
         let rows = store.uninformativeCommitTargets()
         guard !rows.isEmpty else { return 0 }
         var updates: [(msgUID: String, oldTarget: String, newTarget: String)] = []
         for row in rows {
-            guard let resolved = canonicalDisplayName(for: row.target) else { continue }
+            guard let resolved = resolve(row.target) else { continue }
             updates.append((row.msgUID, row.target, resolved))
         }
         return store.applyResolvedCommitTargets(updates)
