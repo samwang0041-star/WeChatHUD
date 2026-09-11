@@ -2058,10 +2058,10 @@ final class ChatMonitor: ObservableObject {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
         switch status {
         case .fulfilled:
-            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .done)
+            _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .done)
             reloadPendingDiscussionItems()
         case .cancelled:
-            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .dismissed)
+            _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .dismissed)
             reloadPendingDiscussionItems()
         case .pending, .overdue:
             break
