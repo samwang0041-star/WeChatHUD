@@ -46,6 +46,16 @@ actor RetrospectiveAnalyzer {
         runID: Int
     ) async throws -> AnalysisResult {
         // 1. Codename + redact every message; format as transcript lines.
+        //
+        // Register every speaker *before* redacting anything. The transcript is
+        // built oldest-first and used to register a sender only when their own
+        // first line was reached, so a name mentioned in an earlier message
+        // (someone who had not spoken yet) stayed in plaintext in exactly the
+        // text that is sent to the model. Two passes close that ordering hole.
+        _ = await redactor.codenameFor(username: myUsername, displayName: myDisplayName)
+        for msg in messages {
+            _ = await redactor.codenameFor(username: msg.senderUsername, displayName: msg.senderName)
+        }
         let myCodename = await redactor.codenameFor(username: myUsername, displayName: myDisplayName)
         var lines: [String] = []
         // Iterate chronologically (caller passes newest-first per ChatAnalyzer convention)
