@@ -17,9 +17,25 @@ final class IslandHitTestTests: XCTestCase {
         XCTAssertTrue(IslandHitTest.contains(frame: frame, point: topEdge))
     }
 
-    func testCursorJustOutsideTopEdgeIsAbsorbedByTolerance() {
+    func testCursorJustOutsideTopEdgeReadsAsOutside() {
+        // No slack: a point past the edge is outside. This test used to pin
+        // the opposite (a 2 pt tolerance absorbed it), which is what stranded
+        // the panel open — the exit path consults this and AppKit sends the
+        // exit only once, so "1 pt outside" had its notification discarded.
+        // On this panel the case cannot arise in practice anyway: the frame's
+        // top edge *is* the top of the display, so nothing can be above it.
         let justAbove = NSPoint(x: frame.midX, y: frame.maxY + 1)
-        XCTAssertTrue(IslandHitTest.contains(frame: frame, point: justAbove))
+        XCTAssertFalse(IslandHitTest.contains(frame: frame, point: justAbove))
+    }
+
+    func testFractionallyOutsideBottomEdgeReadsAsOutside() {
+        // The realistic exit: a slow, deliberate move away crosses the
+        // boundary by a fraction of a point.
+        for slack in [0.25, 0.5, 1.0, 1.5, 2.0, 3.0] {
+            let outside = NSPoint(x: frame.midX, y: frame.minY - slack)
+            XCTAssertFalse(IslandHitTest.contains(frame: frame, point: outside),
+                           "\(slack) pt below the panel must read as outside")
+        }
     }
 
     func testDeliberateMoveAwayStillReadsAsOutside() {

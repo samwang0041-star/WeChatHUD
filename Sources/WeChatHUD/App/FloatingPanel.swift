@@ -52,9 +52,20 @@ final class PillContainerView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        if let window, IslandHitTest.contains(frame: window.frame, point: NSEvent.mouseLocation) {
-            return
-        }
+        // Forward unconditionally.
+        //
+        // This used to be filtered by "is the cursor still inside the panel
+        // frame?", to drop exits raised while the window resizes. AppKit
+        // delivers exactly ONE exit per hover, and at the moment that event
+        // is processed the cursor is only a fraction of a point past the
+        // frame edge — so a slow, deliberate move off the panel had its exit
+        // discarded and the panel never collapsed, however far the pointer
+        // then travelled. A fast flick only worked because it cleared several
+        // points within a single event.
+        //
+        // Whether the pointer is really gone is decided downstream, where the
+        // question can be asked again; it cannot be settled here, because this
+        // event does not come twice.
         onExited?()
     }
 }
@@ -303,15 +314,15 @@ class FloatingPanel: NSPanel {
 
     /// Is `point` (global Cocoa coordinates) inside the panel?
     ///
-    /// `NSRect.contains` treats the `maxY` edge as exclusive, and the
-    /// whole point of this panel is to sit *on* the top edge of the
-    /// display. A cursor pushed against the top of the screen therefore
-    /// reports as outside, which used to make the expand animation settle
-    /// with "mouse outside" and trigger a spurious auto-collapse while the
-    /// user's pointer never moved. Inset the rect instead of testing the
-    /// raw frame.
-    func containsMouse(_ point: NSPoint = NSEvent.mouseLocation, tolerance: CGFloat = 2) -> Bool {
-        IslandHitTest.contains(frame: frame, point: point, tolerance: tolerance)
+    /// The panel sits *on* the top edge of the display, so the test has to
+    /// count a cursor parked on that top scanline as inside — the raw
+    /// `NSRect.contains` excludes its `maxY` edge, which used to make the
+    /// expand animation settle with "mouse outside" and trigger a spurious
+    /// auto-collapse while the pointer never moved. `IslandHitTest` makes
+    /// every edge inclusive instead of widening the rect, so a cursor that
+    /// has genuinely left still reads as outside.
+    func containsMouse(_ point: NSPoint = NSEvent.mouseLocation) -> Bool {
+        IslandHitTest.contains(frame: frame, point: point)
     }
 
     /// True while a frame animation is in flight (display link or the
