@@ -1,22 +1,21 @@
 <p align="center">
-  <img src="Resources/AppIcon.svg" width="128" height="128" alt="不漏事">
+  <img src="Resources/AppIcon.svg" width="128" height="128" alt="WeChatHUD">
 </p>
 
-<h1 align="center">不漏事</h1>
+<h1 align="center">WeChatHUD</h1>
 
 <p align="center">
-  <strong>安静地替你记住，需要你时把事情说清楚。</strong><br>
-  macOS 上的微信聊天伴侣
+  macOS 微信助手。从你选的对话里整理待回、待办和草稿。
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.2.12-0B5960?style=for-the-badge" alt="下载 1.2.12"></a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.2.13-0B5960?style=for-the-badge" alt="下载 1.2.13"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-66D4B7?style=for-the-badge" alt="macOS 14+">
   <img src="https://img.shields.io/badge/芯片-Apple%20Silicon-074E55?style=for-the-badge" alt="Apple Silicon">
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.12-macOS14-arm64.zip">下载正式版安装包</a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.13-macOS14-arm64.zip">下载正式版安装包</a>
   ·
   <a href="docs/user-guide.md">使用指南</a>
   ·
@@ -25,15 +24,11 @@
 
 ---
 
-**不漏事**住在菜单栏和屏幕上方。它只看你选中的微信对话，把该回、该做、该记住的事整理到这台 Mac。
-
-群里有人 @ 你、有人让你办事、你随口答应过一句——这些不该被下一屏消息冲掉。打开「今天」，先处理真正值得你看的那几条。
-
-仓库名是 `WeChatHUD`，打开之后看到的名字是 **不漏事**。
+WeChatHUD 在菜单栏和屏幕上方。只读取你选中的微信对话，在本机整理待回、待办和草稿。
 
 ## 它是做什么的
 
-不漏事是微信的本机助手，不是另一个聊天软件。
+本机微信助手，不是另一个聊天软件。
 
 | 它会做 | 它不会做 |
 | --- | --- |
@@ -73,9 +68,9 @@
 ## 下载与安装
 
 1. 从 [Releases](https://github.com/samwang0041-star/WeChatHUD/releases/latest) 下载  
-   [`WeChatHUD-1.2.12-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.12-macOS14-arm64.zip)
+   [`WeChatHUD-1.2.13-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.2.13-macOS14-arm64.zip)
 2. 解压后，把 **WeChatHUD** 拖进「应用程序」
-3. 打开应用。菜单栏会出现不漏事
+3. 打开应用。菜单栏会出现 WeChatHUD
 
 需要：
 
@@ -83,7 +78,7 @@
 - Apple 芯片（arm64）
 - 这台 Mac 已安装并登录微信
 
-跳转到微信或送出草稿时，系统可能要求在「系统设置 → 隐私与安全性 → 辅助功能」里允许不漏事。按提示打开即可。
+跳转到微信或送出草稿时，系统可能要求在「系统设置 → 隐私与安全性 → 辅助功能」里允许 WeChatHUD。按提示打开即可。
 
 如果系统提示无法验证开发者，按住 Control 再点应用图标，选择「打开」。同一份 zip 附带 `.sha256` 校验文件。
 
@@ -91,7 +86,7 @@
 
 大约 3 分钟。
 
-1. **先打开并登录微信**，再回到不漏事，点「连接微信」。
+1. **先打开并登录微信**，再回到 WeChatHUD，点「连接微信」。
 2. 系统出现授权窗口时，直接点「允许读取」。不用自己找文件夹。
 3. 有的 Mac 还需要一次「本机读取准备」，大约 1–2 分钟。微信可能会退出，重新打开并登录即可；聊天记录不会被改动。
 4. 出现「微信已连接」和更新时间，这一步才算完成。
@@ -109,7 +104,7 @@
 ## 数据怎么处理
 
 - 微信聊天按只读方式在本机读取。助手整理出的事项、草稿和设置保存在这台 Mac（`~/.wechat-hud`）。
-- 不漏事不替你登录微信，也不会把密钥或聊天上传到我们这边。
+- WeChatHUD 不替你登录微信，也不会把密钥或聊天上传到我们这边。
 - 打开 AI 后，相关聊天片段会发给**你自己选择的服务**（DeepSeek、Kimi、智谱、本机 Codex 等），用来写摘要和草稿。请只用你信任的服务。
 - API Key 和登录状态只留在你的 Mac 和对应官方工具里，不要写进截图或工单。
 
@@ -142,6 +137,6 @@ open ".build/WeChatHUD Preview.app"
 
 ## 版本
 
-当前正式版是 **1.2.12**。应用内可以检查 GitHub Releases 上的更新。
+当前正式版是 **1.2.13**。应用内可以检查 GitHub Releases 上的更新。
 
 源码与安装包都在这个仓库。欢迎先读使用指南，再决定要不要从源码自己编一份。

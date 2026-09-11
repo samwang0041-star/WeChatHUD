@@ -695,9 +695,9 @@ struct AISettingsView: View {
     private var behaviorSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsSection("分析与建议") {
-                SettingsToggleRow("消息摘要", subtitle: "帮你快速了解对方在说什么。", isOn: $summaryEnabled)
+                SettingsToggleRow("消息摘要", subtitle: "显示消息摘要。", isOn: $summaryEnabled)
                 SettingsRowDivider()
-                SettingsToggleRow("回复建议", subtitle: "先替你起草，由你决定怎么回。", isOn: $suggestionsEnabled)
+                SettingsToggleRow("回复建议", subtitle: "起草回复，由你发送。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
                 SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
                     Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
@@ -707,7 +707,7 @@ struct AISettingsView: View {
             SettingsSection("更多帮助") {
                 SettingsToggleRow("重点联系人的语气提示", subtitle: "整理重点联系人在群聊中的表达，结合原话提示语气，供你参考。", isOn: $moodDetectionEnabled)
                 SettingsRowDivider()
-                SettingsToggleRow("今日小结里的下一步建议", subtitle: "把紧急的事说清楚，并建议你接下来怎么做。", isOn: $dailyReportActionInsightsEnabled)
+                SettingsToggleRow("今日小结里的下一步建议", subtitle: "给紧急事项加下一步建议。", isOn: $dailyReportActionInsightsEnabled)
             }
         }
         .onChange(of: summaryEnabled) { _, _ in debouncedSave() }

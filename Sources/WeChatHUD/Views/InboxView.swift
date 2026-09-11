@@ -194,10 +194,12 @@ struct InboxView: View {
                 Text(CompanionProductCopy.brandName)
                     .islandBrand()
                     .foregroundStyle(IslandInk.primary)
-                Text(CompanionProductCopy.brandPromise)
-                    .islandMeta()
-                    .foregroundStyle(IslandInk.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !CompanionProductCopy.brandPromise.isEmpty {
+                    Text(CompanionProductCopy.brandPromise)
+                        .islandMeta()
+                        .foregroundStyle(IslandInk.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 0)
         }

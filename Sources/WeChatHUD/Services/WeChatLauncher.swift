@@ -62,7 +62,7 @@ enum WeChatLauncher {
             case .weChatNotRunning:
                 return "微信未运行"
             case .accessibilityDenied:
-                return "macOS 尚未允许当前应用操作微信。若系统开关已开启，请重新打开聊天伴侣后再试。"
+                return "macOS 尚未允许当前应用操作微信。若系统开关已开启，请重新打开 WeChatHUD 后再试。"
             case .lostForeground:
                 return "微信窗口失去焦点，已取消发送"
             case .chatMismatch:

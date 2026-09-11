@@ -31,7 +31,9 @@ struct OnboardingView: View {
                     .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(CompanionProductCopy.brandName).font(.headline)
-                    Text(CompanionProductCopy.brandPromise).font(.caption).foregroundStyle(.secondary)
+                    if !CompanionProductCopy.brandPromise.isEmpty {
+                        Text(CompanionProductCopy.brandPromise).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
             }
@@ -213,7 +215,7 @@ struct OnboardingView: View {
 
     private var wechatDetection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            heading("先连接你的微信", subtitle: "连接后，助手会在需要时帮你梳理重要消息，不漏下该处理的事。")
+            heading("先连接你的微信", subtitle: "连接后读取你选的对话。")
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 14) {
                     numberedStep(1, "在这台 Mac 上登录微信", "请先确保已在本地正常登录微信。")
@@ -280,7 +282,7 @@ struct OnboardingView: View {
 
     private var featureOverview: some View {
         VStack(alignment: .leading, spacing: 14) {
-            heading("可以开始用了", subtitle: "平时收在屏幕上方；有事时点开「今天」，看摘要和草稿，确认后再回复。")
+            heading("可以开始用了", subtitle: "浮窗在屏幕上方。打开「今天」看待回和草稿。")
             ForEach(FirstLaunchGuide.finishRecipe, id: \.title) { item in
                 featureRow(item.icon, item.title, item.detail)
             }

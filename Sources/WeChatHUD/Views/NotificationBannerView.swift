@@ -61,10 +61,12 @@ struct NotificationBannerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(CompanionProductCopy.brandName)
                         .islandBrand()
-                    Text(CompanionProductCopy.brandPromise)
-                        .islandMeta()
-                        .foregroundStyle(IslandInk.tertiary)
-                        .lineLimit(2)
+                    if !CompanionProductCopy.brandPromise.isEmpty {
+                        Text(CompanionProductCopy.brandPromise)
+                            .islandMeta()
+                            .foregroundStyle(IslandInk.tertiary)
+                            .lineLimit(2)
+                    }
                 }
                 Spacer(minLength: 4)
                 closeButton

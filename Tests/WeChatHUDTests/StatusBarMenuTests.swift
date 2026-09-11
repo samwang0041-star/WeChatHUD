@@ -10,14 +10,14 @@ final class StatusBarMenuTests: XCTestCase {
             }
         }
         XCTAssertEqual(titles, [
-            "打开不漏事",
+            "打开 WeChatHUD",
             "查看新消息",
             "—",
             "按时间回顾",
             "怎么用",
             "检查更新…",
             "—",
-            "退出不漏事"
+            "退出 WeChatHUD"
         ])
         XCTAssertEqual(StatusBarMenuSpec.actions(), [
             .toggleCompanion, .refresh, nil, .timeReview, .guide, .updates, nil, .quit
@@ -25,14 +25,14 @@ final class StatusBarMenuTests: XCTestCase {
     }
 
     func testOpenTitleTogglesAndUpdateShowsVersion() {
-        XCTAssertEqual(CompanionProductCopy.companionToggleTitle(isOpen: false), "打开不漏事")
-        XCTAssertEqual(CompanionProductCopy.companionToggleTitle(isOpen: true), "收起不漏事")
+        XCTAssertEqual(CompanionProductCopy.companionToggleTitle(isOpen: false), "打开 WeChatHUD")
+        XCTAssertEqual(CompanionProductCopy.companionToggleTitle(isOpen: true), "收起 WeChatHUD")
         XCTAssertEqual(StatusBarMenuSpec.updateTitle("1.2.1"), "查看更新 1.2.1…")
         XCTAssertEqual(StatusBarMenuSpec.updateTitle(nil), "检查更新…")
     }
 
     func testMenuCopyStaysInCompanionLanguage() {
-        let leaked = ["浮窗", "复盘", "刷新", "WeChatHUD", "工作台", "洞察", "简报", "白名单"]
+        let leaked = ["浮窗", "复盘", "刷新", "工作台", "洞察", "简报", "白名单"]
         let rows = StatusBarMenuSpec.rows(companionOpen: false, updateVersion: "1.2.1")
             + StatusBarMenuSpec.rows(companionOpen: true, updateVersion: nil)
         for row in rows {

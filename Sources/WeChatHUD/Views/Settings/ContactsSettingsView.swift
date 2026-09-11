@@ -724,13 +724,13 @@ private struct ContactInspectorView: View {
     private func trackingReason(_ contact: ContactEntry) -> String {
         switch contact.attentionLevel {
         case .vip:
-            return "会优先提醒你该回的消息。"
+            return "优先提醒该回的消息。"
         case .whitelist:
-            return "助手会整理这个人的聊天。"
+            return "会整理这个人的聊天。"
         case .greylist:
-            return "只记住是谁，不日常提醒。"
+            return "不日常提醒。"
         case .stranger:
-            return "还没让助手看这个人。"
+            return "未关注。"
         }
     }
 

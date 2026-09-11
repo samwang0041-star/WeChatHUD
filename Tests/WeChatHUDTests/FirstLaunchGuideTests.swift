@@ -3,10 +3,10 @@ import XCTest
 
 final class FirstLaunchGuideTests: XCTestCase {
     func testWelcomeTellsANewUserWhatTheProductDoesAndWillNotDo() {
-        XCTAssertEqual(FirstLaunchGuide.productName, "不漏事")
-        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("该回"))
+        XCTAssertEqual(FirstLaunchGuide.productName, "WeChatHUD")
+        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("待回"))
         XCTAssertTrue(FirstLaunchGuide.productPitch.contains("本机"))
-        XCTAssertTrue(FirstLaunchGuide.neverAutoSend.contains("不会替你发送"))
+        XCTAssertTrue(FirstLaunchGuide.neverAutoSend.contains("不会自动发消息"))
         XCTAssertTrue(FirstLaunchGuide.welcomeNeeds.contains { $0.contains("登录微信") })
         XCTAssertEqual(FirstLaunchGuide.welcomeCapabilities.count, 3)
         XCTAssertEqual(FirstLaunchGuide.stepTitles, ["连接微信", "选择关注", "开始使用"])
@@ -71,7 +71,7 @@ final class FirstLaunchGuideTests: XCTestCase {
     func testPreparationErrorsAreMappedToSomethingACustomerCanDo() {
         XCTAssertEqual(
             FirstLaunchGuide.userFacingPreparationError("密钥提取工具不存在: /tmp/tool"),
-            "这次安装不完整，请重新安装助手后再试。"
+            "这次安装不完整，请重新安装 WeChatHUD 后再试。"
         )
         XCTAssertEqual(
             FirstLaunchGuide.userFacingPreparationError("提取的密钥均未通过数据库页 HMAC 校验"),
@@ -109,7 +109,7 @@ final class FirstLaunchGuideTests: XCTestCase {
 
         XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: false, hasTrackedConversations: false), "还没连接微信")
         XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: false), "还没选择对话")
-        XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: true), "现在没有需要你处理的事。")
+        XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: true), "没有待处理的事")
     }
 
     func testTodayEmptyDoesNotHideOpenTasksBehindNoWorkCopy() {

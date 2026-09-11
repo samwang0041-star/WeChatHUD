@@ -73,7 +73,7 @@ final class ProductAccessibilityTests: XCTestCase {
     }
 
     func testIslandControlsHaveSpokenNames() {
-        XCTAssertEqual(CompanionProductCopy.openCompanion, "打开不漏事")
+        XCTAssertEqual(CompanionProductCopy.openCompanion, "打开 WeChatHUD")
         XCTAssertTrue(CompanionProductCopy.compactStatus(count: 3, sync: "刚刚同步").contains("3 项待处理"))
         XCTAssertFalse(CompanionProductCopy.compactHoverHint.contains("工作台"))
         let choices = CompanionProductCopy.snoozeChoices()
