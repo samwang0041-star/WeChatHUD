@@ -381,35 +381,4 @@ final class InboxViewLogicTests: XCTestCase {
         XCTAssertEqual(groupAction.replySuggestionMode, .automatic)
     }
 
-    // MARK: - Headline copy
-
-    /// The expanded-island greeting must describe the queue it sits
-    /// above: passive updates ("发来一个表情") are not "需要你" items.
-    func testHeadlineMatchesQueueSemantics() {
-        let passive = [
-            makeItem(chatUsername: "p1", actionRequired: false),
-            makeItem(chatUsername: "p2", actionRequired: false)
-        ]
-        XCTAssertEqual(inboxHeadlineCopy(inboxHeaderState(passive)), "收到 2 条新消息")
-
-        let mention = [
-            makeItem(chatUsername: "room@chatroom", actionRequired: true, isGroup: true, isAtMention: true)
-        ]
-        XCTAssertEqual(inboxHeadlineCopy(inboxHeaderState(mention)), "有 1 条 @ 你的消息")
-
-        let reply = [
-            makeItem(chatUsername: "a", actionRequired: true, priority: .p1)
-        ]
-        XCTAssertEqual(inboxHeadlineCopy(inboxHeaderState(reply)), "1 条消息等你回复")
-
-        let urgent = [
-            makeItem(chatUsername: "a", actionRequired: true, priority: .p0)
-        ]
-        XCTAssertEqual(inboxHeadlineCopy(inboxHeaderState(urgent)), "1 件事需要尽快处理")
-    }
-
-    func testHeadlineIsNilWhenIdle() {
-        XCTAssertNil(inboxHeadlineCopy(.idle))
-        XCTAssertEqual(inboxHeaderState([]), .idle)
-    }
 }

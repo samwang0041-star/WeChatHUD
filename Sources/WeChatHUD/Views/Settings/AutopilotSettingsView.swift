@@ -7,6 +7,7 @@ struct AutopilotSettingsView: View {
 
     @State private var confidenceThreshold: Double = 0.8
     @State private var autoSendEnabled: Bool = false
+    @State private var handleGroupAt: Bool = false
     @State private var maxRepliesPerHour: Int = 20
     @State private var batchWindowSeconds: Int = 10
     @State private var replyStyle: AutopilotReplyStyle = .auto
@@ -45,7 +46,7 @@ struct AutopilotSettingsView: View {
             SettingsSection("自动回复") {
                 SettingsToggleRow(
                     "自动发出去",
-                    subtitle: autoSendEnabled ? "比较有把握的回复会按你设的节奏发出去。" : "关闭时只写草稿，由你确认后发送。",
+                    subtitle: autoSendEnabled ? "达到阈值则自动发送。" : "只写草稿，确认后发送。",
                     isOn: Binding(
                         get: { autoSendEnabled },
                         set: { newValue in
@@ -56,6 +57,17 @@ struct AutopilotSettingsView: View {
                                 save()
                             }
                         }
+                    )
+                )
+                SettingsRowDivider()
+                SettingsToggleRow(
+                    "群里 @我 时也准备回复",
+                    subtitle: handleGroupAt
+                        ? "群 @ 会写成待确认草稿。转账和红包仍不会自动回。"
+                        : "群消息默认只记录，不写回复。",
+                    isOn: Binding(
+                        get: { handleGroupAt },
+                        set: { handleGroupAt = $0; save() }
                     )
                 )
                 SettingsRowDivider()
@@ -88,7 +100,7 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                SettingsRow("每小时最多", subtitle: "避免频繁发送，保持自然节奏。") {
+                SettingsRow("每小时最多", subtitle: "每小时发送上限。") {
                     Picker("每小时最多", selection: $maxRepliesPerHour) {
                         ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
                     }
@@ -176,7 +188,7 @@ struct AutopilotSettingsView: View {
 
     private var limitsBatchRow: some View {
         SettingsSection("连着几条一起回") {
-            SettingsRow("连着几条一起回", subtitle: "对方连着发时先等一会儿，避免一条一条抢着回。") {
+            SettingsRow("连着几条一起回", subtitle: "连发时先等一会儿再回。") {
                 Picker("连着几条一起回", selection: $batchWindowSeconds) {
                     ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
                 }
@@ -351,6 +363,7 @@ struct AutopilotSettingsView: View {
     private func load() {
         let cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
         autoSendEnabled = cfg.autoSendEnabled
+        handleGroupAt = cfg.handleGroupAt
         confidenceThreshold = cfg.confidenceThreshold
         maxRepliesPerHour = cfg.maxRepliesPerHour
         batchWindowSeconds = cfg.batchWindowSeconds
@@ -370,6 +383,7 @@ struct AutopilotSettingsView: View {
         // we rebuilt from scratch).
         var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
         cfg.autoSendEnabled = autoSendEnabled
+        cfg.handleGroupAt = handleGroupAt
         cfg.confidenceThreshold = confidenceThreshold
         cfg.maxRepliesPerHour = maxRepliesPerHour
         cfg.batchWindowSeconds = batchWindowSeconds

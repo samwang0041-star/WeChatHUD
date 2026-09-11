@@ -152,6 +152,29 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertTrue(outcome?.latestPreview?.isAtMention == true)
     }
 
+    func testFollowedGroupQueuesMentionsButNotOrdinaryChatter() async throws {
+        let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+
+        try store.addToWhitelist(
+            username: fixture.groupChatUsername,
+            displayName: "项目群",
+            isGroup: true,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.setWhitelistCursor(username: fixture.groupChatUsername, lastCreateTime: 100, lastLocalId: 0)
+
+        let outcome = try await scan(fixture.reader, store: store)
+        XCTAssertEqual(outcome?.newInboundForClassifier.count, 1)
+        XCTAssertTrue(outcome?.newInboundForClassifier.first?.msg.text.contains("@") == true)
+        XCTAssertEqual(store.classificationQueueCount(), 1)
+        XCTAssertEqual(try store.discussionQueueCount(), 1)
+        XCTAssertEqual(outcome?.latestPreview?.kind, .groupAt)
+    }
+
     func testLatestPreviewUsesOrdinaryPrivateMessageWhenEnabled() async throws {
         let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
         defer { fixture.cleanup() }
@@ -198,6 +221,29 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(store.loadPendingAutopilotInbound().count, 1)
         XCTAssertEqual(store.getAutopilotCursor(username: fixture.autopilotChatUsername)?.lastCreateTime, 1_000)
         XCTAssertEqual(store.getAutopilotCursor(username: fixture.autopilotChatUsername)?.lastLocalId, 1)
+    }
+
+    func testGreylistPrivateChatIsNotQueuedForAutopilot() async throws {
+        let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+
+        try store.upsertContact(
+            username: fixture.autopilotChatUsername,
+            displayName: "仅保留资料同事",
+            attentionLevel: .greylist,
+            role: .acquaintance
+        )
+        try store.setAutopilotCursor(
+            username: fixture.autopilotChatUsername,
+            lastCreateTime: 100,
+            lastLocalId: 7
+        )
+
+        let outcome = try await scan(fixture.reader, store: store, autopilotActive: true)
+        XCTAssertEqual(outcome?.newInboundMessages.count ?? 0, 0)
+        XCTAssertEqual(store.loadPendingAutopilotInbound().count, 0)
     }
 
     private func scan(
@@ -290,6 +336,7 @@ private final class SyntheticScanFixture {
             INSERT INTO [\(table)] VALUES (1, 1, 1000, 1, '请确认方案', 0);
             INSERT INTO [\(Self.messageTable(for: autopilotChatUsername))] VALUES (1, 1, 1000, 2, '自动驾驶请跟进', 0);
             INSERT INTO [\(Self.messageTable(for: groupChatUsername))] VALUES (1, 1, 900, 3, '@synthetic_account 请确认', 0);
+            INSERT INTO [\(Self.messageTable(for: groupChatUsername))] VALUES (2, 1, 910, 3, '今晚聚餐随便吃', 0);
             """
         guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else {
             throw NSError(domain: "SyntheticScanFixture", code: 3)
@@ -316,7 +363,7 @@ private final class SyntheticScanFixture {
                 last_timestamp INTEGER
             );
             INSERT INTO SessionTable VALUES ('\(autopilotChatUsername)', 1, 1000);
-            INSERT INTO SessionTable VALUES ('\(groupChatUsername)', 1, 900);
+            INSERT INTO SessionTable VALUES ('\(groupChatUsername)', 2, 910);
             """
         guard sqlite3_exec(sessionDB, sessionSchema, nil, nil, nil) == SQLITE_OK else {
             throw NSError(domain: "SyntheticScanFixture", code: 6)

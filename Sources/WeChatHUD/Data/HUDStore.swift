@@ -53,6 +53,7 @@ final class HUDStore: ObservableObject {
 
         // One-time migration: copy legacy whitelist entries into contacts.
         migrateWhitelistToContacts()
+        repairVIPTrackingAlignment()
 
         // Best-effort housekeeping. Failures are non-fatal — the app
         // still starts, we just leave old audit rows around.
@@ -1214,7 +1215,11 @@ final class HUDStore: ObservableObject {
     /// Load asks filtered by bucket and/or status. Pass nil to skip a
     /// filter. Sort: items with a deadline come first (earliest deadline
     /// first), then dateless items by creation time descending.
-    func loadPendingAsks(bucket: AskBucket? = nil, status: AskStatus? = nil) -> [PendingAsk] {
+    func loadPendingAsks(
+        bucket: AskBucket? = nil,
+        status: AskStatus? = nil,
+        relevantSince: Int? = nil
+    ) -> [PendingAsk] {
         var sql = """
             SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
                    summary, ask_type, deadline_at, confidence, bucket, status,
@@ -1277,6 +1282,9 @@ final class HUDStore: ObservableObject {
                 urgency: urgencyStr.flatMap { s in s.isEmpty ? nil : AskUrgency(rawValue: s) }
             )
             results.append(ask)
+        }
+        if let relevantSince {
+            return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
         }
         return results
     }
@@ -2151,10 +2159,12 @@ final class HUDStore: ObservableObject {
                  OR (
                     CAST(IFNULL(deadline_at, 0) AS INTEGER) > 0
                     AND CAST(deadline_at AS INTEGER) >= ?
-                 ))
+                 )
+                 OR CAST(updated_at AS INTEGER) >= ?)
                 """)
             params.append(CommitmentStatus.pending.rawValue)
             params.append(CommitmentStatus.overdue.rawValue)
+            params.append("\(relevantSince)")
             params.append("\(relevantSince)")
             params.append("\(relevantSince)")
         }
@@ -2271,7 +2281,8 @@ final class HUDStore: ObservableObject {
     ///   - excludingStatus: if set, drop that status (used for history)
     ///   - id: if set, only that row
     ///   - sinceTimestamp: if set, only items with `source_timestamp >= this`
-    ///   - relevantSince: if set, keep pending rows plus history whose source or due date is on/after this
+    ///   - relevantSince: if set, keep rows whose source or due date is on/after this;
+    ///     completed/archived rows also stay if they were updated on/after this
     ///   - limit: cap results (nil = no cap)
     func loadDiscussionItems(
         chatUsername: String? = nil,
@@ -2316,15 +2327,21 @@ final class HUDStore: ObservableObject {
         }
         if let relevantSince {
             clauses.append("""
-                (status=?
-                 OR CAST(source_timestamp AS INTEGER) >= ?
-                 OR (
-                    CAST(IFNULL(due_at, 0) AS INTEGER) > 0
-                    AND CAST(due_at AS INTEGER) >= ?
-                 ))
+                (
+                    CAST(source_timestamp AS INTEGER) >= ?
+                    OR (
+                        CAST(IFNULL(due_at, 0) AS INTEGER) > 0
+                        AND CAST(due_at AS INTEGER) >= ?
+                    )
+                    OR (
+                        status != ?
+                        AND CAST(updated_at AS INTEGER) >= ?
+                    )
+                )
                 """)
-            params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
+            params.append("\(relevantSince)")
+            params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
         }
         if !clauses.isEmpty {
@@ -2371,11 +2388,74 @@ final class HUDStore: ObservableObject {
         loadDiscussionItems(id: id, limit: 1).first
     }
 
+    /// Fold stale pending rows into `archived` so they leave the live HUD/workspace
+    /// list but remain reachable from history for 14 days via `updated_at`.
+    /// A pending row is stale when both its source message and its due date (if any)
+    /// are older than `cutoff`.
+    @discardableResult
+    func archiveStalePendingDiscussionItems(cutoff: Int, now: Date = Date()) throws -> Int {
+        let ts = String(Int(now.timeIntervalSince1970))
+        try exec("""
+            UPDATE discussion_items
+            SET status=?, updated_at=?
+            WHERE status=?
+              AND CAST(source_timestamp AS INTEGER) < ?
+              AND (
+                    due_at IS NULL
+                    OR CAST(IFNULL(due_at, 0) AS INTEGER) <= 0
+                    OR CAST(due_at AS INTEGER) < ?
+                  )
+        """, params: [
+            DiscussionItemStatus.archived.rawValue,
+            ts,
+            DiscussionItemStatus.pending.rawValue,
+            "\(cutoff)",
+            "\(cutoff)"
+        ])
+        return Int(sqlite3_changes(db))
+    }
+
+    /// Stale classifier asks use the same 14-day source/due window as discussion.
+    @discardableResult
+    func archiveStalePendingAsks(cutoff: Int, now: Date = Date()) throws -> Int {
+        let ts = String(Int(now.timeIntervalSince1970))
+        try exec("""
+            UPDATE pending_asks
+            SET status=?, updated_at=?
+            WHERE status=?
+              AND CAST(created_at AS INTEGER) < ?
+              AND (
+                    deadline_at IS NULL
+                    OR TRIM(CAST(deadline_at AS TEXT)) = ''
+                    OR CAST(IFNULL(deadline_at, 0) AS INTEGER) <= 0
+                    OR CAST(deadline_at AS INTEGER) < ?
+                  )
+        """, params: [
+            AskStatus.dismissed.rawValue,
+            ts,
+            AskStatus.pending.rawValue,
+            "\(cutoff)",
+            "\(cutoff)"
+        ])
+        return Int(sqlite3_changes(db))
+    }
+
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
             UPDATE discussion_items SET status=?, updated_at=? WHERE id=?
         """, params: [status.rawValue, "\(now)", "\(id)"])
+    }
+
+    /// Completing/cancelling a commitment closes the extracted todo with the same source message.
+    @discardableResult
+    func updatePendingDiscussionItems(matchingAnchorMsgUID uid: String, status: DiscussionItemStatus) throws -> Int {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec(
+            "UPDATE discussion_items SET status=?, updated_at=? WHERE anchor_msg_uid=? AND status=?",
+            params: [status.rawValue, "\(now)", uid, DiscussionItemStatus.pending.rawValue]
+        )
+        return Int(sqlite3_changes(db))
     }
 
     /// Corrects AI-assigned responsibility without changing the item's status.
@@ -2437,6 +2517,91 @@ final class HUDStore: ObservableObject {
         guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM reply_drafts", -1, &stmt, nil) == SQLITE_OK,
               sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
         return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    /// Saved drafts plus in-progress composer text that is not already a saved row.
+    func workspaceDraftCount() -> Int {
+        loadWorkspaceDrafts().count
+    }
+
+    struct WorkspaceDraft: Equatable {
+        let id: Int64
+        let chatUsername: String
+        let chatName: String
+        let text: String
+        let createdAt: Date
+        let isComposerOnly: Bool
+    }
+
+    func loadWorkspaceDrafts() -> [WorkspaceDraft] {
+        let saved = loadDrafts()
+        var result = saved.map {
+            WorkspaceDraft(
+                id: $0.id,
+                chatUsername: $0.chatUsername,
+                chatName: $0.chatName,
+                text: $0.text,
+                createdAt: $0.createdAt,
+                isComposerOnly: false
+            )
+        }
+        // Multiple saved rows can share a chat. Never use uniqueKeysWithValues
+        // here: duplicate keys trap, and the drafts page would fail to open.
+        var savedTextsByChat: [String: Set<String>] = [:]
+        for row in saved {
+            savedTextsByChat[row.chatUsername, default: []].insert(row.text)
+        }
+        for composer in loadComposerDrafts() {
+            if savedTextsByChat[composer.chatUsername]?.contains(composer.text) == true { continue }
+            let name = getWhitelistEntry(username: composer.chatUsername)?.displayName
+                ?? getContact(username: composer.chatUsername)?.displayName
+                ?? composer.chatUsername
+            result.insert(
+                WorkspaceDraft(
+                    id: Self.composerDraftID(composer.chatUsername),
+                    chatUsername: composer.chatUsername,
+                    chatName: name,
+                    text: composer.text,
+                    createdAt: Date(),
+                    isComposerOnly: true
+                ),
+                at: 0
+            )
+        }
+        return result
+    }
+
+    func loadComposerDrafts() -> [(chatUsername: String, text: String)] {
+        var results: [(chatUsername: String, text: String)] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(
+            db,
+            "SELECT key, value FROM settings WHERE key LIKE 'composer_draft:%'",
+            -1, &stmt, nil
+        ) == SQLITE_OK else { return [] }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let key = String(cString: sqlite3_column_text(stmt, 0))
+            let value = String(cString: sqlite3_column_text(stmt, 1))
+            let username = String(key.dropFirst("composer_draft:".count))
+            guard !username.isEmpty,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            results.append((username, value))
+        }
+        return results
+    }
+
+    func clearComposerDraft(chatUsername: String) throws {
+        try setSetting("composer_draft:\(chatUsername)", value: "")
+    }
+
+    static func composerDraftID(_ chatUsername: String) -> Int64 {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in chatUsername.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 1_099_511_628_211
+        }
+        return Int64(bitPattern: hash | (1 << 63))
     }
 
     func loadDrafts() -> [(id: Int64, chatUsername: String, chatName: String, text: String, sendAt: Date?, createdAt: Date)] {
@@ -2703,7 +2868,7 @@ final class HUDStore: ObservableObject {
         } else {
             sqlite3_bind_null(stmt, 13)
         }
-        sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+        sqlite3_bind_int64(stmt, 14, Int64(entry.createdAt.timeIntervalSince1970))
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
         }
@@ -2790,13 +2955,78 @@ final class HUDStore: ObservableObject {
         try exec("UPDATE autopilot_log SET action=? WHERE id=?", params: [action.rawValue, String(id)])
     }
 
+    func markAutopilotLogSent(id: Int64) throws {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])
+    }
+
+    /// Pending drafts from every session, including ones whose session already ended.
+    func loadOpenAutopilotPendingItems(relevantSince: Int? = nil) -> [AutopilotLogEntry] {
+        var results: [AutopilotLogEntry] = []
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        var sql = """
+            SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
+                   trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
+                   action, ai_reasoning, sent_at, created_at
+            FROM autopilot_log WHERE action='pending'
+        """
+        if relevantSince != nil {
+            sql += " AND created_at >= ?"
+        }
+        sql += " ORDER BY created_at DESC"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        if let relevantSince {
+            sqlite3_bind_int64(stmt, 1, Int64(relevantSince))
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            results.append(autopilotLogEntry(from: stmt!))
+        }
+        return results
+    }
+
+    /// Current-session log plus leftover pending rows from ended sessions.
+    func loadAutopilotDisplayLog(sessionId: Int64?, limit: Int = 50, relevantSince: Int? = nil) -> [AutopilotLogEntry] {
+        var result: [AutopilotLogEntry] = []
+        var seen = Set<Int64>()
+        for item in loadOpenAutopilotPendingItems(relevantSince: relevantSince) {
+            if seen.insert(item.id).inserted { result.append(item) }
+        }
+        if let sessionId {
+            for item in loadAutopilotLog(sessionId: sessionId, limit: limit) {
+                if seen.insert(item.id).inserted { result.append(item) }
+            }
+        }
+        return result
+    }
+
     func updateAutopilotLogReply(id: Int64, reply: String) throws {
         try exec("UPDATE autopilot_log SET generated_reply=? WHERE id=?", params: [reply, String(id)])
     }
 
-    func markAutopilotLogSent(id: Int64) throws {
-        let now = Int(Date().timeIntervalSince1970)
-        try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])
+    private func autopilotLogEntry(from stmt: OpaquePointer) -> AutopilotLogEntry {
+        let genReply = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
+        let reasoning = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 12)) : nil
+        let sentAt = sqlite3_column_type(stmt, 13) != SQLITE_NULL
+            ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 13)))
+            : nil
+        return AutopilotLogEntry(
+            id: sqlite3_column_int64(stmt, 0),
+            sessionId: sqlite3_column_int64(stmt, 1),
+            chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+            chatName: String(cString: sqlite3_column_text(stmt, 3)),
+            senderUsername: String(cString: sqlite3_column_text(stmt, 4)),
+            senderName: String(cString: sqlite3_column_text(stmt, 5)),
+            triggerMsgUID: String(cString: sqlite3_column_text(stmt, 6)),
+            triggerText: String(cString: sqlite3_column_text(stmt, 7)),
+            generatedReply: genReply,
+            confidence: sqlite3_column_double(stmt, 9),
+            riskLevel: AutopilotRisk(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .low,
+            action: AutopilotAction(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .skipped,
+            aiReasoning: reasoning,
+            sentAt: sentAt,
+            createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 14)))
+        )
     }
 
     func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {
@@ -3142,6 +3372,23 @@ final class HUDStore: ObservableObject {
                     role: defaultContactRole(for: entry.category)
                 )
             }
+        }
+    }
+
+    /// Contacts settings is the product VIP list; the scan still reads whitelist.
+    /// A contact marked 重点关注 must be scanned as VIP even if an older writer
+    /// left whitelist on watch or omitted the row.
+    func repairVIPTrackingAlignment() {
+        for contact in loadContacts() where contact.attentionLevel == .vip {
+            let existing = getWhitelistEntry(username: contact.username)
+            guard existing?.attentionLevel != .vip else { continue }
+            try? upsertWhitelistTracking(
+                username: contact.username,
+                displayName: existing?.displayName ?? contact.displayName,
+                isGroup: existing?.isGroup ?? contact.username.contains("@chatroom"),
+                category: existing?.category ?? .other,
+                attentionLevel: .vip
+            )
         }
     }
 

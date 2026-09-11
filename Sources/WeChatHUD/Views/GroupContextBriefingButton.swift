@@ -1,8 +1,80 @@
 import SwiftUI
 
+struct GroupContextBriefingButton: View {
+    @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
+
+    let notification: HUDNotification
+    /// Retained for call-site compatibility. The chip used to render a
+    /// tighter variant here; the island type scale is now dense enough that
+    /// both hosts read the same, so the flag no longer changes the chrome.
+    let compact: Bool
+
+    init(notification: HUDNotification, compact: Bool = false) {
+        self.notification = notification
+        self.compact = compact
+    }
+
+    var body: some View {
+        let state = monitor.groupContextState(for: notification)
+
+        Button {
+            let target = !panelState.briefingExpanded
+            withMotion(CompanionMotion.spring) {
+                panelState.setBriefingExpanded(target)
+            }
+            if target {
+                monitor.loadGroupContextBriefing(for: notification)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if state.isLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                }
+                Text(state.isLoading ? "分析中…" : "看看什么事")
+                    .islandButton()
+                    .lineLimit(1)
+            }
+            .foregroundColor(IslandInk.primary)
+            .padding(.horizontal, IslandMetrics.buttonInset)
+            .padding(.vertical, 6)
+            .background(buttonBackground(state: state))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(IslandInk.divider, lineWidth: 0.5)
+            )
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(panelState.briefingExpanded ? "收起群聊上下文" : "看看什么事")
+    }
+
+    private func buttonBackground(state: GroupContextBriefingLoadState) -> Color {
+        if state.isLoading { return BriefingChipInk.loading }
+        if let briefing = state.briefing {
+            return briefing.source == .ai ? BriefingChipInk.ai : BriefingChipInk.snippet
+        }
+        return BriefingChipInk.idle
+    }
+}
+
+/// Fills for the 「看看什么事」 chip. A bordered control needs a touch more
+/// presence than a row hover, so the neutral states come from the shared
+/// chip washes in `IslandInk`; the two jade states keep the AI-vs-cached
+/// distinction.
+private enum BriefingChipInk {
+    static let idle = IslandInk.chip
+    static let snippet = IslandInk.chipStrong
+    static let ai = CompanionPalette.jade.opacity(0.34)
+    static let loading = CompanionPalette.jade.opacity(0.42)
+}
+
 /// The in-place context-briefing card, rendered inline by the surface
-/// that hosts the trigger (notification banner below the action row).
-/// Lives inside the panel's AX tree, unlike the removed anchored popover.
+/// that hosts the trigger button (notification banner below the action
+/// row, conversation detail inside the context section). Lives inside
+/// the panel's AX tree, unlike the removed anchored popover.
 struct GroupContextBriefingCard: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
@@ -30,23 +102,23 @@ struct GroupContextBriefingCard: View {
 
             footer
         }
-        .padding(14)
+        .padding(IslandMetrics.rowInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(IslandInk.bar)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(notification.chatName)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white.opacity(0.55))
+                .islandMeta()
+                .foregroundColor(IslandInk.tertiary)
             Text("为什么 @ 你？")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.white)
+                .islandDisplay()
+                .foregroundColor(IslandInk.primary)
             Text("AI 解读 · 根据最近消息")
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.45))
+                .islandMeta()
+                .foregroundColor(IslandInk.quaternary)
         }
     }
 
@@ -61,16 +133,16 @@ struct GroupContextBriefingCard: View {
     private var originalSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("原文")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .islandSection()
+                .foregroundColor(IslandInk.tertiary)
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
+                        .islandMeta()
+                        .foregroundColor(IslandInk.secondary)
                     Text(notification.snippet)
-                        .font(.system(size: 12))
-                        .foregroundColor(.white)
+                        .islandRowBody()
+                        .foregroundColor(IslandInk.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -84,11 +156,11 @@ struct GroupContextBriefingCard: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
+                .islandMeta()
                 .foregroundStyle(CompanionPalette.islandMint)
             }
-            .padding(10)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(9)
+            .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -97,8 +169,8 @@ struct GroupContextBriefingCard: View {
             ProgressView()
                 .controlSize(.small)
             Text("正在整理群聊上下文…")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+                .islandRowBody()
+                .foregroundColor(IslandInk.secondary)
         }
         .padding(.vertical, 12)
     }
@@ -109,8 +181,8 @@ struct GroupContextBriefingCard: View {
                 .font(.system(size: 11))
                 .foregroundColor(.orange)
             Text(message)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+                .islandRowBody()
+                .foregroundColor(IslandInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
@@ -120,13 +192,13 @@ struct GroupContextBriefingCard: View {
         VStack(alignment: .leading, spacing: 8) {
         HStack(spacing: 8) {
             Button {
-                WeChatLauncher.openChat(named: notification.chatName)
+                monitor.openWeChatChat(notification.chatUsername)
             } label: {
                 Label("去微信回复", systemImage: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .islandButton()
+                    .foregroundStyle(IslandInk.primary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 7)
                     .background(CompanionPalette.jade, in: Capsule())
             }
             .buttonStyle(.plain)
@@ -137,11 +209,11 @@ struct GroupContextBriefingCard: View {
                 showSnooze.toggle()
             } label: {
                 Label("稍后提醒", systemImage: "clock")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .islandButton()
+                    .foregroundStyle(IslandInk.primary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(showSnooze ? CompanionPalette.jade : Color.white.opacity(0.10), in: Capsule())
+                    .padding(.vertical, 7)
+                    .background(showSnooze ? CompanionPalette.jade : IslandInk.chip, in: Capsule())
             }
             .buttonStyle(.plain)
             .accessibilityHint("打开稍后提醒时间")
@@ -175,16 +247,16 @@ struct GroupContextBriefingCard: View {
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(title):")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.55))
+                    .islandSection()
+                    .foregroundColor(IslandInk.tertiary)
                 Text(text)
-                    .font(.system(size: 12))
-                    .foregroundColor(.white)
+                    .islandRowBody()
+                    .foregroundColor(IslandInk.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(10)
+        .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

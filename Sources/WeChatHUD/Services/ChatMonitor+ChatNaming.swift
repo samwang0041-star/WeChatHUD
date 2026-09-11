@@ -25,23 +25,75 @@ extension ChatMonitor {
         if let alias = store.chatAlias(for: chatUsername), !alias.isEmpty {
             return alias
         }
-        if let contactName = store.getContact(username: chatUsername)?.displayName,
-           !contactName.isEmpty,
-           !ContactIdentityIndex.isRawChatIdentifier(contactName) {
-            return contactName
-        }
-        if let whitelistName = store.getWhitelistEntry(username: chatUsername)?.displayName,
-           !whitelistName.isEmpty,
-           !ContactIdentityIndex.isRawChatIdentifier(whitelistName) {
-            return whitelistName
-        }
         let resolved = reader.displayName(for: chatUsername)
         if resolved.isEmpty || ContactIdentityIndex.isRawChatIdentifier(resolved) {
+            if let contactName = store.getContact(username: chatUsername)?.displayName,
+               !contactName.isEmpty,
+               !ContactIdentityIndex.isRawChatIdentifier(contactName) {
+                return contactName
+            }
+            if let whitelistName = store.getWhitelistEntry(username: chatUsername)?.displayName,
+               !whitelistName.isEmpty,
+               !ContactIdentityIndex.isRawChatIdentifier(whitelistName) {
+                return whitelistName
+            }
             return chatUsername.contains("@chatroom")
                 ? ContactIdentityIndex.unnamedGroupPlaceholder
                 : chatUsername
         }
         return resolved
+    }
+
+    /// Names to type into WeChat search. Live remark first, then nickname,
+    /// HUD alias, stale stored labels, username. Old remarks must not be
+    /// the only query — WeChat search matches the current remark.
+    func weChatSearchNames(for chatUsername: String) -> [String] {
+        _ = try? reader.refreshContactsIfChanged()
+        displayNameCache.removeValue(forKey: chatUsername)
+        return WeChatOpenSearch.names(
+            liveRemark: reader.weChatRemark(for: chatUsername),
+            liveNick: reader.weChatNickName(for: chatUsername),
+            hudAlias: store.chatAlias(for: chatUsername),
+            stored: [
+                store.getContact(username: chatUsername)?.displayName,
+                store.getWhitelistEntry(username: chatUsername)?.displayName
+            ].compactMap { $0 },
+            username: chatUsername
+        )
+    }
+
+    /// Keep whitelist/contact labels on the current WeChat remark so the
+    /// UI and search do not stay on a renamed 备注.
+    @discardableResult
+    func refreshLiveWeChatDisplayNames() -> Int {
+        _ = try? reader.refreshContactsIfChanged()
+        displayNameCache.removeAll()
+        var changed = 0
+        for entry in store.getWhitelist() {
+            if let alias = store.chatAlias(for: entry.id), !alias.isEmpty { continue }
+            let live = reader.displayName(for: entry.id)
+            guard !live.isEmpty,
+                  live != entry.displayName,
+                  !ContactIdentityIndex.isRawChatIdentifier(live) else { continue }
+            _ = store.propagateChatName(username: entry.id, displayName: live, previousName: entry.displayName)
+            changed += 1
+        }
+        return changed
+    }
+
+    func openWeChatChat(_ chatUsername: String) {
+        WeChatLauncher.openChat(
+            named: displayName(for: chatUsername),
+            searchNames: weChatSearchNames(for: chatUsername)
+        )
+    }
+
+    func openWeChatChatAndPaste(_ chatUsername: String, text: String) {
+        WeChatLauncher.openChatAndPaste(
+            named: displayName(for: chatUsername),
+            text: text,
+            searchNames: weChatSearchNames(for: chatUsername)
+        )
     }
 
     /// True when WeChat itself has no name for this chat and the label is

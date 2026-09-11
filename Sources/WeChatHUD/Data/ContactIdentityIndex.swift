@@ -8,7 +8,9 @@ struct ContactIdentityIndex {
     }
 
     static let empty = ContactIdentityIndex(
-        displayNameByUsername: [:], weChatNameByUsername: [:], canonicalUsernameByAlias: [:]
+        displayNameByUsername: [:], weChatNameByUsername: [:],
+        remarkByUsername: [:], nickNameByUsername: [:],
+        canonicalUsernameByAlias: [:]
     )
 
     let displayNameByUsername: [String: String]
@@ -16,6 +18,8 @@ struct ContactIdentityIndex {
     /// has none. Separate from `displayNameByUsername`, which may hold a
     /// placeholder or a member-derived label instead.
     let weChatNameByUsername: [String: String]
+    let remarkByUsername: [String: String]
+    let nickNameByUsername: [String: String]
     private let canonicalUsernameByAlias: [String: String]
 
     /// Placeholder used when a group has no name anywhere in WeChat's
@@ -47,6 +51,8 @@ struct ContactIdentityIndex {
     static func build(records: [Record]) -> ContactIdentityIndex {
         var displayNames: [String: String] = [:]
         var weChatNames: [String: String] = [:]
+        var remarks: [String: String] = [:]
+        var nicks: [String: String] = [:]
         var aliasBuckets: [String: Set<String>] = [:]
 
         func addAlias(_ alias: String, username: String) {
@@ -65,6 +71,8 @@ struct ContactIdentityIndex {
                 ?? fallback
             displayNames[username] = display
             weChatNames[username] = record.remark.trimmedNonEmpty ?? record.nickName.trimmedNonEmpty ?? ""
+            if let remark = record.remark.trimmedNonEmpty { remarks[username] = remark }
+            if let nick = record.nickName.trimmedNonEmpty { nicks[username] = nick }
 
             addAlias(username, username: username)
             if let shortId = WeChatReader.legacyShortUsername(for: username) {
@@ -83,6 +91,8 @@ struct ContactIdentityIndex {
         return ContactIdentityIndex(
             displayNameByUsername: displayNames,
             weChatNameByUsername: weChatNames,
+            remarkByUsername: remarks,
+            nickNameByUsername: nicks,
             canonicalUsernameByAlias: canonical
         )
     }
@@ -101,6 +111,14 @@ struct ContactIdentityIndex {
             return displayNameByUsername[canonical]
         }
         return nil
+    }
+
+    func searchNames(for username: String) -> [String] {
+        WeChatOpenSearch.names(
+            liveRemark: remarkByUsername[username],
+            liveNick: nickNameByUsername[username],
+            username: username
+        )
     }
 
     func normalizeMentions(in text: String) -> String {
@@ -151,6 +169,46 @@ struct ContactIdentityIndex {
     static func isUninformativeChatName(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed == unnamedGroupPlaceholder || isRawChatIdentifier(trimmed)
+    }
+}
+
+enum WeChatOpenSearch {
+    static func names(
+        liveRemark: String? = nil,
+        liveNick: String? = nil,
+        hudAlias: String? = nil,
+        stored: [String] = [],
+        username: String
+    ) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        func add(_ raw: String?) {
+            let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !trimmed.isEmpty else { return }
+            let key = ContactIdentityIndex.normalizeAlias(trimmed)
+            guard seen.insert(key).inserted else { return }
+            result.append(trimmed)
+        }
+        add(liveRemark)
+        add(liveNick)
+        add(hudAlias)
+        for name in stored { add(name) }
+        add(username)
+        return result
+    }
+
+    static func titleMatches(_ currentTitle: String, acceptable: [String]) -> Bool {
+        let current = normalizedTitle(currentTitle)
+        return acceptable.contains { normalizedTitle($0) == current }
+    }
+
+    static func normalizedTitle(_ name: String) -> String {
+        var out = name.trimmingCharacters(in: .whitespaces)
+        if let range = out.range(of: #"[（(]\d+[）)]$"#, options: .regularExpression) {
+            out.removeSubrange(range)
+            out = out.trimmingCharacters(in: .whitespaces)
+        }
+        return out
     }
 }
 

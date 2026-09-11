@@ -1100,9 +1100,9 @@ enum AdmissionMode: String, Codable, CaseIterable {
     var detail: String {
         switch self {
         case .whitelistOnly:
-            return "只有「关注的人」和群里的重点成员会进来。其余对话不提醒、也不做 AI 分析。"
+            return "只有关注的人、群里 @你、以及你点名的成员会进来。关注一个群不会把每一条闲聊都拿来分析。"
         case .all:
-            return "微信里有未读的对话都会进来。AI 用量会明显增加，也更容易被打扰。"
+            return "微信里有未读的对话都会进收件箱。摘要和待办仍只整理你关注的人和群。"
         }
     }
 }
@@ -1483,9 +1483,13 @@ enum DiscussionLiveWindow {
     }
 
     static func contains(_ item: DiscussionItem, cutoff: Int) -> Bool {
-        if item.status == .pending { return true }
         if item.sourceTimestamp >= cutoff { return true }
         if let due = item.dueAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        // Recently completed / archived rows stay visible in history even when
+        // the original source is older than the window.
+        if item.status != .pending, Int(item.updatedAt.timeIntervalSince1970) >= cutoff {
+            return true
+        }
         return false
     }
 
@@ -1493,6 +1497,14 @@ enum DiscussionLiveWindow {
         if item.status == .pending || item.status == .overdue { return true }
         if Int(item.createdAt.timeIntervalSince1970) >= cutoff { return true }
         if let due = item.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
+        if Int(item.updatedAt.timeIntervalSince1970) >= cutoff { return true }
+        return false
+    }
+
+    /// Classifier asks use the same 14-day source/due window as discussion.
+    static func contains(_ ask: PendingAsk, cutoff: Int) -> Bool {
+        if Int(ask.createdAt.timeIntervalSince1970) >= cutoff { return true }
+        if let due = ask.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
         return false
     }
 }
@@ -1754,6 +1766,26 @@ struct AutopilotLogEntry: Identifiable {
     let aiReasoning: String?
     let sentAt: Date?
     let createdAt: Date
+
+    func replacingReply(_ reply: String) -> AutopilotLogEntry {
+        AutopilotLogEntry(
+            id: id,
+            sessionId: sessionId,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            senderUsername: senderUsername,
+            senderName: senderName,
+            triggerMsgUID: triggerMsgUID,
+            triggerText: triggerText,
+            generatedReply: reply,
+            confidence: confidence,
+            riskLevel: riskLevel,
+            action: action,
+            aiReasoning: aiReasoning,
+            sentAt: sentAt,
+            createdAt: createdAt
+        )
+    }
 }
 
 /// An autopilot session — one contiguous period of autopilot mode.
@@ -1878,6 +1910,11 @@ struct AutopilotConfig: Codable {
     var maxRepliesPerHour: Int = 20
     /// Whether to handle group @mentions (currently false per user request).
     var handleGroupAt: Bool = false
+
+    /// Group traffic is logged-only unless the user turned on @-mention handling.
+    func shouldQueue(isGroup: Bool, isAtMention: Bool) -> Bool {
+        !isGroup || (handleGroupAt && isAtMention)
+    }
     /// Whether VIP contacts get the "busy" auto-notification.
     var vipAutoNotify: Bool = true
     /// The "busy" message template for VIP contacts.

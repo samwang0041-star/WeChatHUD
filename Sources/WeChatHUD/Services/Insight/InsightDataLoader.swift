@@ -43,7 +43,9 @@ final class InsightDataLoader {
         let bulkStats = reader.bulkMessageStats(
             chatUsernames: filteredSessions.map(\.username),
             selfNames: selfNames,
-            sinceTsEpoch: cutoff
+            sinceTsEpoch: cutoff,
+            myUsername: reader.myUsername(),
+            myDisplayName: reader.displayName(for: reader.myUsername())
         )
 
         var stats: [String: ChatStatsData] = [:]
@@ -106,9 +108,13 @@ final class InsightDataLoader {
             }
         }
 
-        let pendingAsks = store.loadPendingAsks(bucket: nil, status: .pending)
+        let pendingAsks = store.loadPendingAsks(
+            bucket: nil,
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
         let recalledMessages = store.loadRecalledMessages(since: cutoff, limit: 1000)
-        let days = window.seconds.map { max($0 / 86400, 1) } ?? 365
+        let days = window.dayCount
 
         let overview = ChatStatsEngine.computeGlobalOverview(
             allStats: stats,

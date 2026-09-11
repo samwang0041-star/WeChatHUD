@@ -187,11 +187,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if !self.didHandleInitialStateEmission {
                     self.didHandleInitialStateEmission = true
                     self.panel.setFrameInstantly(height: h, width: w)
-                } else if state == .extended || state == .notification || state == .detail {
-                    // Start the resize synchronously with the state change.
-                    // Extended still accepts the later SwiftUI measurement,
-                    // but this first target prevents the 420pt inbox from
-                    // rendering for one frame inside the old compact window.
+                } else if state == .extended {
+                    let cached = self.panelState.lastExtendedSize
+                    if cached.width > 1, cached.height > 1 {
+                        self.panel.animateHeight(to: cached.height, width: cached.width, caller: "AppDelegate.currentState.extended.cached")
+                    } else {
+                        // First hover: snap the estimate so the inbox is not
+                        // clipped, then let the measurement sink run the only
+                        // animation. Animating the estimate first was the bounce.
+                        self.panel.setFrameInstantly(height: h, width: w)
+                    }
+                } else if state == .notification || state == .detail {
                     self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.\(state)")
                 }
                 // compact is left for the measurement sink to drive because
@@ -368,6 +374,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // immediately at launch and holds it, so the island's frame
             // and the banner's content can be captured side by side
             // without clicking anything.
+            // `--preview-tasks` / `--preview-empty` do the same for the
+            // inline task list and the empty inbox, so every island surface
+            // can be inspected from a repeatable launch.
+            if CommandLine.arguments.contains("--preview-tasks") {
+                panelState.islandSurface = .tasks
+                panelState.goExtended()
+            }
+            if CommandLine.arguments.contains("--preview-empty") {
+                PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState)
+            }
             if CommandLine.arguments.contains("--preview-notification") {
                 // Fire the banner after the launch-time work (workspace
                 // window first paint, preview data seeding) has settled — a
@@ -505,23 +521,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             .store(in: &cancellables)
 
-        // VIP escalation: when the engine advances a chat to T3+,
-        // surface a toast on top of whatever the user is currently
-        // doing. We intentionally don't auto-open the extended panel
-        // — the user might be mid-typing in WeChat and we shouldn't
-        // steal their attention, just tap them on the shoulder.
-        monitor.$pendingEscalationBanner
-            .compactMap { $0 }
-            .sink { [weak self] banner in
-                guard let self = self else { return }
-                let label = "「\(banner.chatName)」已等你 \(banner.tier.agingLabel) — 该回一下了"
-                self.panelState.showToast(label, duration: 6)
-                // Consume it so a re-run of the sink doesn't re-fire.
-                Task { @MainActor in self.monitor.pendingEscalationBanner = nil }
-            }
-            .store(in: &cancellables)
-
-
         // Keyboard shortcuts — only active when the panel is key.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
@@ -588,7 +587,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateMenuBarIcon()
         if let statusItem {
             MenuBarController.shared.isCompanionOpen = { [weak self] in
-                self?.panelState.currentState == .detail
+                self?.panelState.currentState != .compact
             }
             MenuBarController.shared.installMenu(on: statusItem, target: self)
         }
@@ -614,17 +613,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         monitor.$inboxItems
             .combineLatest(monitor.$vipAlertTiers)
             .sink { items, tiers in
-                let p0p1 = items.filter { $0.priority != .p2 }.count
-                let total = items.count
+                let compactCount = items.filter(\.surfacesInCompact).count
                 let escalated = tiers.values.filter { $0 >= .t2 }
                 let worstTier = escalated.max() ?? .none
                 let text: String
                 if worstTier >= .t2 {
                     text = " ! \(worstTier.agingLabel)"
-                } else if p0p1 > 0 {
-                    text = " \(p0p1)"
-                } else if total > 0 {
-                    text = " \(total)"
+                } else if compactCount > 9 {
+                    text = " 9+"
+                } else if compactCount > 0 {
+                    text = " \(compactCount)"
                 } else {
                     text = ""
                 }
@@ -679,11 +677,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleCompanionFromMenu() {
         MainActor.assumeIsolated {
-            if panelState.currentState == .detail {
-                panelState.collapse()
+            if panelState.currentState == .compact {
+                panelState.goExtended()
             } else {
-                panelState.pendingSettingsTab = "today"
-                panelState.showDetail()
+                panelState.collapse()
             }
         }
     }
@@ -904,7 +901,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             guard !Task.isCancelled else { return }
             let alert = NSAlert()
-            alert.messageText = "聊天伴侣尚未完成重新打开"
+            alert.messageText = "WeChatHUD 尚未完成重新打开"
             alert.informativeText = "原来的窗口仍在运行。请回到原窗口继续使用，再试一次。"
             alert.runModal()
             NSApp.terminate(nil)

@@ -203,9 +203,22 @@ struct SyncSettingsView: View {
         }
     }
 
+    static func connectionFooter(readingReady: Bool, sendReady: Bool) -> String {
+        if !readingReady {
+            return "先连接微信。发送回复还需要系统授权。"
+        }
+        if sendReady {
+            return "读取聊天和跳转发送都已就绪。"
+        }
+        return "读取聊天已可使用，发送前需要在系统中额外授权。"
+    }
+
     private var connectionCapabilityList: some View {
         let readingReady = monitor.stats.lastSyncAt != nil
-        let aiReady = AISettingsValidation.connectionError(store.loadAIConfig().provider, requireModel: true) == nil
+        let aiConfig = store.loadAIConfig()
+        let aiConfigured = AISettingsValidation.connectionError(aiConfig.provider, requireModel: true) == nil
+        let aiTested = AIConnectionEvidenceStore.isSuccessful(aiConfig, store: store)
+        let aiReady = aiConfigured
         let sendReady = AXIsProcessTrusted()
         return VStack(alignment: .leading, spacing: 0) {
             capabilityRow(
@@ -219,8 +232,8 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "sparkles",
                 title: "AI 整理",
-                detail: "配置后，AI 将帮你从聊天中提取要点、待办和你答应的事。",
-                status: aiReady ? "已就绪" : "尚未设置",
+                detail: "从聊天提取待办和约定。",
+                status: aiTested ? "已就绪" : (aiConfigured ? "已配置" : "尚未设置"),
                 ready: aiReady,
                 actionTitle: aiReady ? nil : "设置 AI"
             ) {
@@ -230,7 +243,7 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "arrow.up.forward.app",
                 title: "跳转与发送",
-                detail: "在微信中打开对应的聊天，并支持由不漏事帮你发送消息。",
+                detail: "在微信中打开对话并发送。",
                 status: sendReady ? "已就绪" : "待授权",
                 ready: sendReady,
                 actionTitle: sendReady ? nil : "打开系统设置"
@@ -242,9 +255,7 @@ struct SyncSettingsView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle")
                     .foregroundStyle(CompanionPalette.jade)
-                Text(readingReady
-                     ? "读取聊天已可使用，发送前需要在系统中额外授权。"
-                     : "先连接微信。发送回复还需要系统授权。")
+                Text(Self.connectionFooter(readingReady: readingReady, sendReady: sendReady))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -528,7 +539,7 @@ struct SyncSettingsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                Text("将整理过的聊天内容导出为 Markdown 文件，便于保存和查阅。")
+                Text(LocalDataRetrospection.exportCaption)
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -564,7 +575,7 @@ struct SyncSettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("记录回溯")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("这些是不漏事为你整理过的内容。")
+                            Text(LocalDataRetrospection.windowCaption)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -611,7 +622,7 @@ struct SyncSettingsView: View {
     private var recallsList: some View {
         Group {
             if recalledMessages.isEmpty {
-                emptyRow("暂无撤回记录")
+                emptyRow(LocalDataRetrospection.emptyRecalls)
             } else {
                 ForEach(recalledMessages.filter { matchesDataSearch($0.senderName, $0.chatName, $0.originalText) }) { msg in
                     SettingsRowDivider()
@@ -655,7 +666,7 @@ struct SyncSettingsView: View {
     private var commitmentsList: some View {
         Group {
             if commitments.isEmpty {
-                emptyRow("暂无承诺记录")
+                emptyRow(LocalDataRetrospection.emptyCommitments)
             } else {
                 ForEach(commitments.filter { matchesDataSearch($0.content, $0.commitTo) }) { item in
                     SettingsRowDivider()
@@ -674,7 +685,7 @@ struct SyncSettingsView: View {
                                     Text("已完成")
                                         .font(.system(size: 12))
                                         .foregroundColor(CompanionPalette.jade)
-                                } else if let d = item.deadlineAt {
+                                } else if item.status == .pending || item.status == .overdue, let d = item.deadlineAt {
                                     Text(d < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(d.timeIntervalSince1970)))")
                                         .font(.system(size: 12))
                                         .foregroundColor(d < Date() ? .red : .secondary)
@@ -708,7 +719,7 @@ struct SyncSettingsView: View {
     private var pendingAsksList: some View {
         Group {
             if pendingAsks.isEmpty {
-                emptyRow("暂无待决事项")
+                emptyRow(LocalDataRetrospection.emptyPendingAsks)
             } else {
                 ForEach(pendingAsks.filter { matchesDataSearch($0.senderName, $0.chatName, $0.summary) }) { ask in
                     SettingsRowDivider()
@@ -867,16 +878,44 @@ struct SyncSettingsView: View {
     }
 
     private func reloadData() {
+        let snapshot = LocalDataRetrospection.load(store: store)
         switch selectedSection {
-        case .recalls:
-            recalledMessages = store.loadRecalledMessages(since: 0, limit: 50)
-        case .commitments:
-            commitments = store.loadCommitments(status: .pending) + store.loadCommitments(status: .fulfilled)
-        case .pendingAsks:
-            let main = store.loadPendingAsks(bucket: .main, status: .pending)
-            let review = store.loadPendingAsks(bucket: .review, status: .pending)
-            let done = store.loadPendingAsks(bucket: .main, status: .done)
-            pendingAsks = main + review + done.prefix(10)
+        case .recalls:     recalledMessages = snapshot.recalls
+        case .commitments: commitments = snapshot.commitments
+        case .pendingAsks: pendingAsks = snapshot.pendingAsks
         }
+    }
+}
+
+/// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
+/// use the same 14-day cutoff as 待办, not the whole sqlite history.
+enum LocalDataRetrospection {
+    static let windowDays = DiscussionLiveWindow.pendingDays
+    static let exportCaption = "导出一份状态报告到桌面：未读、待回复、承诺等统计。不是聊天原文。"
+    static let windowCaption = "只看近 \(windowDays) 天整理过的记录。更早的已收起。"
+    static let emptyRecalls = "近两周没有撤回记录"
+    static let emptyCommitments = "近两周没有记下的承诺"
+    static let emptyPendingAsks = "近两周没有未处理的提问"
+
+    struct Snapshot {
+        var recalls: [RecalledMessage]
+        var commitments: [Commitment]
+        var pendingAsks: [PendingAsk]
+    }
+
+    static func cutoff(now: Date = Date()) -> Int {
+        DiscussionLiveWindow.cutoff(days: windowDays, now: now)
+    }
+
+    static func load(store: HUDStore, now: Date = Date()) -> Snapshot {
+        let since = cutoff(now: now)
+        let main = store.loadPendingAsks(bucket: .main, status: .pending, relevantSince: since)
+        let review = store.loadPendingAsks(bucket: .review, status: .pending, relevantSince: since)
+        let done = store.loadPendingAsks(bucket: .main, status: .done, relevantSince: since)
+        return Snapshot(
+            recalls: store.loadRecalledMessages(since: since, limit: 50),
+            commitments: store.loadCommitments(relevantSince: since),
+            pendingAsks: main + review + Array(done.prefix(10))
+        )
     }
 }

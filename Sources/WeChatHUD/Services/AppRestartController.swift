@@ -53,9 +53,9 @@ enum AppRestartController {
             case .restartInProgress:
                 return "应用正在重启，请稍候"
             case .bundleMissing:
-                return "请从应用程序打开完整的聊天伴侣后再试"
+                return "请从应用程序打开完整的 WeChatHUD 后再试"
             case .notApplicationBundle:
-                return "请从应用程序打开完整的聊天伴侣后再试"
+                return "请从应用程序打开完整的 WeChatHUD 后再试"
             case .launchFailed:
                 return "新应用启动失败，当前应用仍在运行，请稍后重试"
             }

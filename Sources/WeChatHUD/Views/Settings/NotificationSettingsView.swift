@@ -13,7 +13,7 @@ struct NotificationSettingsView: View {
             SettingsRowDivider()
             SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
             SettingsRowDivider()
-            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，普通消息也会展开浮窗；关闭可减少打扰。", isOn: $config.allWhitelist)
+            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
             SettingsRowDivider()
             SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
                 Picker("展示时间", selection: $config.durationSeconds) {

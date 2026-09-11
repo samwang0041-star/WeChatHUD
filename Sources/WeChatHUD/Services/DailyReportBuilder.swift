@@ -29,10 +29,35 @@ struct DailyReportBuilder {
             .map { store.todos(for: $0.id, statuses: historical ? nil : [.pending])
                 .filter { !historical || ($0.createdAt >= startOfDay && $0.createdAt < endOfRange) } } ?? []
 
-        let pendingAsks = store.loadPendingAsks(status: historical ? nil : .pending)
-            .filter { $0.createdAt >= startOfDay && $0.createdAt < endOfRange }
+        let pendingAsks = store.loadPendingAsks(
+            status: historical ? nil : .pending,
+            relevantSince: historical ? nil : DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+        )
+            .filter { ask in
+                if historical {
+                    return ask.createdAt >= startOfDay && ask.createdAt < endOfRange
+                }
+                // 待办 keeps the 14-day backlog. 今日小结 is "今天还剩什么":
+                // confirmed asks created today, or due on this calendar day.
+                // Last week's overdue classifier asks and 待确认归属 stay off
+                // this page. Overdue 我要做 still arrives via liveDiscussions.
+                let live = DiscussionLiveWindow.contains(
+                    ask,
+                    cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+                )
+                guard live else { return false }
+                guard ask.bucket == .main else { return false }
+                let createdToday = ask.createdAt >= startOfDay && ask.createdAt < endOfRange
+                let dueToday = ask.deadlineAt.map { calendar.isDate($0, inSameDayAs: date) } ?? false
+                return createdToday || dueToday
+            }
         let handledAsks = historical ? [] : store.loadPendingAsks(status: .done)
             .filter { $0.updatedAt >= startOfDay && $0.updatedAt < endOfRange }
+
+        let liveDiscussions = historical ? [] : store.loadDiscussionItems(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
+        ).filter { $0.kind != .info && $0.owner == .mine }
 
         // 3. Commitments
         let allCommitments = store.loadCommitments()
@@ -51,8 +76,10 @@ struct DailyReportBuilder {
         // 5. Build metrics
         let metrics = DailyReportMetrics(
             unreadMessageCount: historical ? 0 : stats.unreadCount,
-            pendingTodoCount: historical ? 0 : runTodos.count,
-            pendingAskCount: historical ? 0 : pendingAsks.count,
+            pendingTodoCount: historical ? 0 : runTodos.count + liveDiscussions.count,
+            pendingAskCount: historical ? 0 : pendingAsks.filter { ask in
+                !liveDiscussions.contains { $0.anchorMsgUID == ask.msgUID }
+            }.count,
             pendingCommitmentCount: pendingCommitments.count,
             overdueCommitmentCount: overdueCommitments.count,
             replyDebtCount: historical ? 0 : replyDebtItems.filter { $0.timestamp < endOfRange }.count,
@@ -109,6 +136,19 @@ struct DailyReportBuilder {
             ))
         }
 
+        let discussionAnchors = Set(liveDiscussions.map(\.anchorMsgUID))
+        for item in liveDiscussions {
+            actions.append(DailyReportAction(
+                content: item.content,
+                type: .todo,
+                urgency: urgencyFor(deadline: item.dueAt),
+                deadline: item.dueAt,
+                sourceChatName: item.chatName,
+                sourceChatUsername: item.chatUsername,
+                relatedID: "discussion-\(item.id)"
+            ))
+        }
+
         // Commitments (pending + overdue)
         for c in pendingCommitments + overdueCommitments {
             actions.append(DailyReportAction(
@@ -136,7 +176,7 @@ struct DailyReportBuilder {
         }
 
         // Pending asks
-        for ask in historical ? [] : pendingAsks {
+        for ask in historical ? [] : pendingAsks where !discussionAnchors.contains(ask.msgUID) {
             actions.append(DailyReportAction(
                 content: ask.summary,
                 type: .ask,

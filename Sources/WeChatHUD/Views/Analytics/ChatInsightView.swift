@@ -57,12 +57,14 @@ struct ChatInsightView: View {
             insightStore: insightStore,
             insightCoordinator: insightCoordinator,
             store: store,
+            reader: reader,
             selectedChat: $selectedChat,
             searchText: $searchText,
             onAnalyzeChat: { chatUsername in
                 guard insightCoordinator.result(for: chatUsername, date: selectedDate) == nil else { return }
                 Task { await monitor.analyzeOneChat(chatUsername: chatUsername, date: selectedDate) }
-            }
+            },
+            selectedDate: selectedDate
         )
     }
 

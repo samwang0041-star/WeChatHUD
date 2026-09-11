@@ -36,6 +36,43 @@ final class ProactiveAlertTests: XCTestCase {
 
     // MARK: - Rule 1: VIP overdue
 
+    /// A tier advance is delivered as a macOS notification and nothing
+    /// else. The engine used to also hand the advance to an in-panel
+    /// escalation toast ("「名字」已等你 4h+ — 该回一下了"); that banner was
+    /// removed as superseded UI, so this pins the remaining contract:
+    /// exactly one notification per tier, with the tier's own wording.
+    @MainActor
+    func testTierAdvanceNotifiesOnceWithTierWording() async {
+        let start = Date(timeIntervalSince1970: 3_000_000)
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+        // 4h+ overdue -> T4.
+        let item = makeUnread(
+            chatUsername: "vip-chat",
+            senderName: "Alice",
+            isVIP: true,
+            timestamp: start.addingTimeInterval(-5 * 60 * 60)
+        )
+
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+        XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t4)
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent.first?.0, "VIP 等你超过 4 小时")
+
+        // Re-evaluating the same overdue message must not notify again.
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+        XCTAssertEqual(sent.count, 1)
+    }
+
     func testVIPOverdueTriggersAlert() {
         let items = [makeUnread(isVIP: true, status: .overdue)]
         let overdueVIPs = items.filter { $0.isVIP && $0.status == .overdue }
@@ -370,7 +407,6 @@ final class ProactiveAlertTests: XCTestCase {
     func testVIPTierRemainsVisibleAndRetriesAfterFailedSend() async {
         let start = Date(timeIntervalSince1970: 3_000_000)
         var attempt = 0
-        var advanced: [VIPAlertTier] = []
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"),
             now: { start },
@@ -379,7 +415,6 @@ final class ProactiveAlertTests: XCTestCase {
                 completion(attempt == 1 ? TestError() : nil)
             }
         )
-        engine.onTierAdvanced = { _, tier in advanced.append(tier) }
         let item = makeUnread(
             chatUsername: "vip-chat",
             senderName: "Alice",
@@ -390,13 +425,19 @@ final class ProactiveAlertTests: XCTestCase {
         engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
         XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
         await Task.yield()
-        XCTAssertTrue(advanced.isEmpty)
 
         engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
         await Task.yield()
 
+        // The first submission failed, the retry succeeded.
         XCTAssertEqual(attempt, 2)
-        XCTAssertEqual(advanced, [.t1])
+        XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
+
+        // The successful retry recorded the tier, so another scan must not
+        // push the same escalation at the user twice.
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+        XCTAssertEqual(attempt, 2)
         XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
     }
 }

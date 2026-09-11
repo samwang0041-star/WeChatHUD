@@ -1092,4 +1092,113 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(all.count, 1)
         XCTAssertEqual(all[0].displayName, "Alice Updated")
     }
+
+    func testOpenAutopilotPendingSurvivesEndedSessionAndSavesReply() throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "c", chatName: "C",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "proactive", triggerText: "在吗",
+            generatedReply: "稍后", confidence: 0.6,
+            riskLevel: .medium, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        try store.endAutopilotSession(id: sessionId)
+        XCTAssertNil(store.currentAutopilotSession())
+
+        let open = store.loadOpenAutopilotPendingItems()
+        XCTAssertEqual(open.count, 1)
+        XCTAssertEqual(open[0].triggerMsgUID, "proactive")
+        let display = store.loadAutopilotDisplayLog(sessionId: nil)
+        XCTAssertEqual(display.map(\.id), open.map(\.id))
+
+        try store.updateAutopilotLogReply(id: open[0].id, reply: "改过的草稿")
+        XCTAssertEqual(store.loadOpenAutopilotPendingItems().first?.generatedReply, "改过的草稿")
+    }
+
+    func testStaleAutopilotPendingIsHiddenFromLiveWindow() throws {
+        let sessionId = try store.startAutopilotSession()
+        let stale = Date(timeIntervalSince1970: 1_700_000_000) // 2023
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "c", chatName: "C",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "old", triggerText: "在吗",
+            generatedReply: "稍后", confidence: 0.6,
+            riskLevel: .medium, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: stale
+        ))
+        try store.endAutopilotSession(id: sessionId)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: Date(timeIntervalSince1970: 1_778_000_000))
+        XCTAssertTrue(store.loadOpenAutopilotPendingItems().contains { $0.triggerMsgUID == "old" })
+        XCTAssertFalse(store.loadOpenAutopilotPendingItems(relevantSince: cutoff).contains { $0.triggerMsgUID == "old" })
+        XCTAssertFalse(store.loadAutopilotDisplayLog(sessionId: nil, relevantSince: cutoff).contains { $0.triggerMsgUID == "old" })
+    }
+
+    func testCompletingACommitmentClosesTheMatchingDiscussionRow() throws {
+        try store.upsertCommitment(
+            msgUID: "same-msg", chatUsername: "chat", chatName: "项目群",
+            content: "提交方案", commitTo: "林晓",
+            deadlineAt: Date(), confidence: 0.9, promptVersion: "test"
+        )
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "chat", chatName: "项目群", kind: .todo, owner: .mine,
+            content: "提交方案", detail: nil, anchorMsgUID: "same-msg",
+            sourceTimestamp: Int(Date().timeIntervalSince1970),
+            dueAt: nil, confidence: 0.9, promptVersion: "test"
+        ))
+        XCTAssertEqual(try store.updatePendingDiscussionItems(matchingAnchorMsgUID: "same-msg", status: .done), 1)
+        XCTAssertEqual(store.loadDiscussionItems(status: .pending).count, 0)
+        XCTAssertEqual(store.loadDiscussionItems(excludingStatus: .pending).first?.status, .done)
+    }
+
+    func testVIPContactRepairPromotesOrCreatesWhitelistTracking() throws {
+        try store.upsertContact(
+            username: "wxid_vip_missing",
+            displayName: "测试号",
+            attentionLevel: .vip,
+            role: .colleague
+        )
+        try store.addToWhitelist(
+            username: "wxid_vip_watch",
+            displayName: "赖豪",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.upsertContact(
+            username: "wxid_vip_watch",
+            displayName: "赖豪",
+            attentionLevel: .vip,
+            role: .colleague
+        )
+
+        store.repairVIPTrackingAlignment()
+
+        XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_missing")?.attentionLevel, .vip)
+        XCTAssertEqual(store.getWhitelistEntry(username: "wxid_vip_watch")?.attentionLevel, .vip)
+    }
+
+    func testStalePendingAsksLeaveTheLiveWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_778_000_000)
+        let cutoff = DiscussionLiveWindow.cutoff(days: 14, now: now)
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "old", chatUsername: "c", chatName: "C", senderName: "S",
+            rawText: "旧请求", summary: "旧请求", askType: .none, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "t",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff - 20 * 86_400)),
+            updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "live", chatUsername: "c", chatName: "C", senderName: "S",
+            rawText: "新请求", summary: "新请求", askType: .none, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "t",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(cutoff + 3_600)),
+            updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        XCTAssertEqual(try store.archiveStalePendingAsks(cutoff: cutoff, now: now), 1)
+        XCTAssertEqual(store.loadPendingAsks(status: .pending, relevantSince: cutoff).map(\.msgUID), ["live"])
+        XCTAssertEqual(store.loadPendingAsks(status: .dismissed).map(\.msgUID), ["old"])
+    }
 }

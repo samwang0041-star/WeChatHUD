@@ -72,6 +72,12 @@ struct WorkspaceBadgeCounts: Equatable {
     var commitments = 0
     var drafts = 0
     var pendingReplies = 0
+
+    /// Sidebar 待办 badge. Matches the island default and 今天「我要做」:
+    /// live pending work assigned to me, not info memos and not the whole dump.
+    static func taskCount(_ items: [DiscussionItem]) -> Int {
+        items.filter { $0.status == .pending && $0.kind != .info && $0.owner == .mine }.count
+    }
 }
 
 @MainActor

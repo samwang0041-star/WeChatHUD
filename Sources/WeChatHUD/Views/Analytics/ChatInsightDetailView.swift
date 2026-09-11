@@ -93,7 +93,7 @@ struct ChatInsightDetailView: View {
                     if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                         ProgressView().controlSize(.small)
                     } else {
-                        Label("分析", systemImage: "sparkles")
+                        Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -138,11 +138,11 @@ struct ChatInsightDetailView: View {
     private var headerSummary: String {
         var parts = [dateLabel]
         if let stats {
-            if stats.participantCount > 0 {
-                parts.append("\(stats.participantCount) 位成员")
+            if isGroup, stats.participantCount > 0 {
+                parts.append("当天 \(stats.participantCount) 人发过言")
             }
             if stats.messageCount > 0 {
-                parts.append("\(stats.messageCount) 条对话")
+                parts.append("\(stats.messageCount) 条消息")
             }
         }
         return parts.joined(separator: " · ")
@@ -263,7 +263,7 @@ struct ChatInsightDetailView: View {
 
         if !followUps.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("仍需跟进")
+                Text(ChatReviewFollowUps.heading(selectedDate: selectedDate))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 ForEach(Array(followUps.enumerated()), id: \.offset) { _, item in
@@ -289,18 +289,54 @@ struct ChatInsightDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(CompanionPalette.jade.opacity(0.28), lineWidth: 1)
-                    )
+                          .stroke(CompanionPalette.jade.opacity(0.28), lineWidth: 1)
+                   )
+               }
+                if livePendingCount > followUps.count {
+                    Button("还有 \(livePendingCount - followUps.count) 件在待办里") {
+                        panelState.pendingDiscussionChatUsername = chatUsername
+                        panelState.pendingSettingsTab = "tasks"
+                        panelState.showDetail()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CompanionPalette.jade)
+                    .font(.system(size: 13, weight: .medium))
+                }
+           }
+       }
+
+        if let result {
+            let aiWait = result.waitingForMe.map(\.what).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            let aiActions = result.actionItems.map(\.what).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !aiWait.isEmpty || !aiActions.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("AI 读到的待办")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(Array((aiActions + aiWait).prefix(5).enumerated()), id: \.offset) { _, text in
+                        Text(text)
+                            .font(.system(size: 14))
+                    }
+                    Text("这是模型从这一天的聊天里抽的，不是待办页的权威列表。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
 
         if let result, !result.insight.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("原文")
+                let split = ChatInsightService.splitCoverageNotice(result.insight)
+                if let notice = split.notice {
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Text("AI 解读")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
-                Text(result.insight)
+                Text(split.body)
                     .font(.system(size: 13))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
@@ -324,6 +360,9 @@ struct ChatInsightDetailView: View {
     private var timelineContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let result, !result.topics.isEmpty {
+                Text("下面的条数和人数是模型估计，不是逐条统计。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                 ForEach(Array(result.topics.enumerated()), id: \.offset) { index, topic in
                     HStack(alignment: .top, spacing: 12) {
                         VStack(spacing: 0) {
@@ -359,6 +398,12 @@ struct ChatInsightDetailView: View {
             .map { FollowUpItem(title: $0.title, owner: $0.owner, due: $0.due) }
     }
 
+    private var livePendingCount: Int {
+        monitor.discussionItems.filter {
+            $0.chatUsername == chatUsername && $0.status == .pending && $0.kind != .info
+        }.count
+    }
+
     // MARK: - Chart Components
 
     private func hourlyBarChart(_ messagesByHour: [Int]) -> some View {
@@ -368,7 +413,7 @@ struct ChatInsightDetailView: View {
                 VStack(spacing: 2) {
                     Spacer(minLength: 0)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.blue.opacity(hour >= 9 && hour <= 18 ? 0.7 : 0.4))
+                        .fill(Color.blue.opacity(hour >= 9 && hour < 18 ? 0.7 : 0.4))
                         .frame(width: 12, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
                     if hour % 3 == 0 {
                         Text("\(hour)")
@@ -521,10 +566,10 @@ struct ChatInsightDetailView: View {
                 statusBadge(topic.status)
             }
             HStack(spacing: 12) {
-                Label("\(topic.messageCount)条", systemImage: "bubble.left")
+                Label("约 \(topic.messageCount) 条", systemImage: "bubble.left")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                Label("\(topic.participantCount)人", systemImage: "person.2")
+                Label("约 \(topic.participantCount) 人", systemImage: "person.2")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }

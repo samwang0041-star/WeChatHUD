@@ -91,7 +91,7 @@ struct SupportDiagnosticsView: View {
     }
 
     private var countSummary: String {
-        "关注 \(store.getWhitelist().count) · 待分类 \(store.classificationQueueCount()) · 草稿 \(store.loadDrafts().count)"
+        "关注 \(store.getWhitelist().count) · 待分类 \(store.classificationQueueCount()) · 草稿 \(store.workspaceDraftCount())"
     }
 
     private var keyState: String {
