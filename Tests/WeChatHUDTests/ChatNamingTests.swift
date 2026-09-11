@@ -122,35 +122,69 @@ final class ChatNamingTests: XCTestCase {
 
     // MARK: - Repair of previously persisted rows
 
+    @MainActor
     func testRepairRewritesRawIdsInPersistedRows() throws {
         let raw = "43753159251@chatroom"
         try insertCommitment(msgUID: "uid-1", chatUsername: raw, chatName: raw)
         XCTAssertEqual(store.loadCommitments().first?.chatName, raw)
 
-        let changed = repair { _ in "群聊 · 赖豪、张沛" }
+        let changed = ChatMonitor.repairStaleChatNames(store: store) { _ in "群聊 · 赖豪、张沛" }
 
         XCTAssertEqual(changed, 1)
         XCTAssertEqual(store.loadCommitments().first?.chatName, "群聊 · 赖豪、张沛")
     }
 
+    @MainActor
     func testRepairLeavesRowsWithRealNamesAlone() throws {
         try insertCommitment(msgUID: "uid-2", chatUsername: "54461316910@chatroom", chatName: "产品营销组")
 
-        let changed = repair { _ in "不该用到" }
+        let changed = ChatMonitor.repairStaleChatNames(store: store) { _ in "不该用到" }
 
         XCTAssertEqual(changed, 0)
         XCTAssertEqual(store.loadCommitments().first?.chatName, "产品营销组")
     }
 
+    @MainActor
     func testRepairKeepsRawIdWhenNoBetterNameExists() throws {
         let raw = "43753159251@chatroom"
         try insertCommitment(msgUID: "uid-3", chatUsername: raw, chatName: raw)
 
         // Resolver has nothing better — never blank the row out.
-        let changed = repair { _ in nil }
+        let changed = ChatMonitor.repairStaleChatNames(store: store) { _ in nil }
 
         XCTAssertEqual(changed, 0)
         XCTAssertEqual(store.loadCommitments().first?.chatName, raw)
+    }
+
+    /// The commit-target loop had no test at all: only a copy of it lived in
+    /// this file. Driving the production static pins the "raw id only, never a
+    /// person's name" rule it relies on.
+    @MainActor
+    func testCommitTargetRepairRewritesRawIdsThroughProductionLoop() throws {
+        let raw = "43753159251@chatroom"
+        try store.upsertCommitment(
+            msgUID: "uid-target-loop", chatUsername: raw, chatName: raw,
+            content: "立基本框架", commitTo: raw,
+            confidence: 0.9, promptVersion: "v1"
+        )
+
+        let changed = ChatMonitor.repairStaleCommitTargets(store: store) { _ in "群聊 · 赖豪、张沛" }
+
+        XCTAssertEqual(changed, 1)
+        XCTAssertEqual(store.loadCommitments().first?.commitTo, "群聊 · 赖豪、张沛")
+    }
+
+    @MainActor
+    func testCommitTargetRepairKeepsUnresolvableTarget() throws {
+        let raw = "43753159251@chatroom"
+        try store.upsertCommitment(
+            msgUID: "uid-target-loop-2", chatUsername: raw, chatName: raw,
+            content: "立基本框架", commitTo: raw,
+            confidence: 0.9, promptVersion: "v1"
+        )
+
+        XCTAssertEqual(ChatMonitor.repairStaleCommitTargets(store: store) { _ in nil }, 0)
+        XCTAssertEqual(store.loadCommitments().first?.commitTo, raw)
     }
 
     func testPropagateChatNameUpdatesExistingRows() throws {
@@ -207,21 +241,6 @@ final class ChatNamingTests: XCTestCase {
             confidence: 0.9,
             promptVersion: "v1"
         )
-    }
-
-    /// Mirrors ChatMonitor's repair loop: collect uninformative rows, resolve
-    /// each chat, then write only the ones that actually improve.
-    private func repair(resolve: (String) -> String?) -> Int {
-        let rows = store.uninformativeChatNameRows()
-        var updates: [(table: String, keyColumn: String, nameColumn: String, key: String, oldName: String, newName: String)] = []
-        for row in rows {
-            guard let resolved = resolve(row.key),
-                  !resolved.isEmpty,
-                  resolved != row.name,
-                  !ContactIdentityIndex.isRawChatIdentifier(resolved) else { continue }
-            updates.append((row.table, row.keyColumn, row.nameColumn, row.key, row.name, resolved))
-        }
-        return store.applyResolvedChatNames(updates)
     }
 
     // MARK: - Member recovery from contact.db
@@ -283,8 +302,6 @@ final class ChatNamingTests: XCTestCase {
         XCTAssertEqual(sqlite3_exec(db, schema, nil, nil, nil), SQLITE_OK)
         sqlite3_close(db)
 
-        // Point a reader at the fixture by overriding the decryption cache:
-        // the reader only needs contact.db readable at the cached path.
         let reader = WeChatReader(keysPath: dir + "/keys.json", dbDir: dir, cacheStrategy: .memory)
         let index = ContactIdentityIndex.build(records: [
             .init(username: "43753159251@chatroom", nickName: "", remark: ""),
@@ -293,41 +310,18 @@ final class ChatNamingTests: XCTestCase {
         ])
         XCTAssertEqual(index.displayName(for: "43753159251@chatroom"), ContactIdentityIndex.unnamedGroupPlaceholder)
 
-        // The member join is what turns a nameless room into a usable label.
-        let members = try membersFromFixture(contactPath: contactPath, room: "43753159251@chatroom")
-        XCTAssertEqual(members, ["赖豪", "张沛"])
-        XCTAssertEqual(
-            ContactIdentityIndex.memberDerivedGroupLabel(memberNames: members),
-            "群聊 · 赖豪、张沛"
-        )
-        _ = reader
-    }
+        // Drive the production JOIN — this is the query whose result becomes the
+        // group's display name. The previous version ran a copy of the SQL here
+        // and threw the reader away, so `loadGroupMemberNames` never executed.
+        var contactDB: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(contactPath, &contactDB), SQLITE_OK)
+        reader.loadGroupMemberNames(db: contactDB, knownNames: index.displayNameByUsername)
+        sqlite3_close(contactDB)
 
-    /// Mirrors the join used by `WeChatReader.loadGroupMemberNames` so the
-    /// fixture proves the query shape, not just the pure label formatting.
-    private func membersFromFixture(contactPath: String, room: String) throws -> [String] {
-        var db: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(contactPath, &db), SQLITE_OK)
-        defer { sqlite3_close(db) }
-        let sql = """
-            SELECT c.nick_name, c.remark
-            FROM chat_room r
-            JOIN chatroom_member m ON m.room_id = r.id
-            JOIN name2id n ON n.rowid = m.member_id
-            LEFT JOIN contact c ON c.username = n.username
-            WHERE r.username = ? AND n.username <> 'yuriwong'
-            """
-        var stmt: OpaquePointer?
-        XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, room, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        var names: [String] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let remark = sqlite3_column_text(stmt, 1).map { String(cString: $0) } ?? ""
-            let nick = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? ""
-            let name = remark.isEmpty ? nick : remark
-            if !name.isEmpty { names.append(name) }
-        }
-        return names
+        XCTAssertEqual(
+            reader.groupMemberNames(for: "43753159251@chatroom"), ["赖豪", "张沛"],
+            "the member join is what turns a nameless room into a usable label"
+        )
+        XCTAssertEqual(reader.displayName(for: "43753159251@chatroom"), "群聊 · 赖豪、张沛")
     }
 }

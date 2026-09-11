@@ -1930,7 +1930,6 @@ struct PendingSend: Identifiable {
 
 /// Persisted autopilot configuration.
 struct AutopilotConfig: Codable {
-    var enabled: Bool = false
     /// Master switch for unattended WeChat sends. Default false because
     /// UI automation is inherently high-risk until target and delivery
     /// verification both pass. Manual approval/send remains available.
@@ -1981,6 +1980,50 @@ struct AutopilotConfig: Codable {
     /// is interpreted as a newline and the message never leaves the
     /// input box.
     var sendKey: WeChatSendKey = .cmdEnter
+
+    init() {}
+
+    /// Tolerant decoding: any key the persisted JSON lacks falls back to the
+    /// default above instead of failing the whole object.
+    ///
+    /// The synthesized decoder required every key. A row written by an older
+    /// build (a real one on this machine had 17 keys and no `autoSendEnabled`)
+    /// therefore failed to decode as a whole; `getSettingJSON`'s `try?` turned
+    /// that into "no config", every caller saw a fresh default instance, and
+    /// the next save wrote those defaults over the user's guardrail settings.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = AutopilotConfig()
+
+        func value<T: Decodable>(_ key: CodingKeys, _ defaultValue: T) -> T {
+            // `try?` flattens to T?, so a missing key, a JSON null and a value
+            // of the wrong type all land on the default.
+            (try? c.decodeIfPresent(T.self, forKey: key)) ?? defaultValue
+        }
+
+        autoSendEnabled = value(.autoSendEnabled, fallback.autoSendEnabled)
+        // Ratios are clamped so a hand-edited or corrupted row cannot push the
+        // threshold outside [0, 1] (a negative threshold would auto-send
+        // everything the model produced).
+        confidenceThreshold = SafeNumber.clamped(
+            value(.confidenceThreshold, fallback.confidenceThreshold), to: 0...1)
+        maxRepliesPerHour = value(.maxRepliesPerHour, fallback.maxRepliesPerHour)
+        handleGroupAt = value(.handleGroupAt, fallback.handleGroupAt)
+        vipAutoNotify = value(.vipAutoNotify, fallback.vipAutoNotify)
+        vipBusyTemplate = value(.vipBusyTemplate, fallback.vipBusyTemplate)
+        batchWindowSeconds = value(.batchWindowSeconds, fallback.batchWindowSeconds)
+        excludedContacts = value(.excludedContacts, fallback.excludedContacts)
+        replyStyle = value(.replyStyle, fallback.replyStyle)
+        maxSendsPerSession = value(.maxSendsPerSession, fallback.maxSendsPerSession)
+        sensitiveKeywords = value(.sensitiveKeywords, fallback.sensitiveKeywords)
+        replySpeedMultiplier = value(.replySpeedMultiplier, fallback.replySpeedMultiplier)
+        proactiveEnabled = value(.proactiveEnabled, fallback.proactiveEnabled)
+        maxProactivePerSession = value(.maxProactivePerSession, fallback.maxProactivePerSession)
+        proactiveSilenceDays = value(.proactiveSilenceDays, fallback.proactiveSilenceDays)
+        silentNightThreshold = SafeNumber.clamped(
+            value(.silentNightThreshold, fallback.silentNightThreshold), to: 0...1)
+        sendKey = value(.sendKey, fallback.sendKey)
+    }
 }
 
 /// Which keystroke submits a message in WeChat, matching the "按 Enter
