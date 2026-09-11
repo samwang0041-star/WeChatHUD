@@ -52,6 +52,43 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertTrue(CompanionProductCopy.compactHoverHint.contains("移入查看"))
     }
 
+    /// The banner's arrival stamp answers "how long has this been waiting", so
+    /// a fresh message is relative and only a stale one falls back to the clock
+    /// (which is the only form that carries a date).
+    func testArrivalLabelIsRelativeWhileTheMessageIsFresh() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 9, hour: 14, minute: 32))!
+
+        XCTAssertEqual(CompanionProductCopy.arrivalLabel(now, now: now, calendar: calendar), "刚刚")
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-59), now: now, calendar: calendar),
+            "刚刚"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-60), now: now, calendar: calendar),
+            "1 分钟前"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-12 * 60), now: now, calendar: calendar),
+            "12 分钟前"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-59 * 60), now: now, calendar: calendar),
+            "59 分钟前"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-3600), now: now, calendar: calendar),
+            "今天 13:32"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(
+                calendar.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: 22, minute: 10))!,
+                now: now, calendar: calendar
+            ),
+            "9月8日 22:10"
+        )
+    }
+
     func testMenuBarBadgeIsReadableChinese() {
         XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .none), "")
         XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .none), " 3 待办")

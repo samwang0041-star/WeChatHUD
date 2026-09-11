@@ -412,9 +412,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     PreviewRuntime.simulateNotification(monitor: self.monitor, panelState: self.panelState, longForm: true)
                     cfg.durationSeconds = savedDuration
                     try? self.store.setSettingJSON("notification", value: cfg)
-                    // `--preview-briefing` performs the banner's own
-                    // "看看什么事" action afterwards, so the expanded
-                    // in-place card can be captured in the real panel too.
+                    // `--preview-briefing` performs the banner's own body
+                    // action (a click anywhere on the card) afterwards, so the
+                    // expanded in-place card can be captured in the real panel
+                    // too.
                     if CommandLine.arguments.contains("--preview-briefing") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                             guard let self, let notif = self.monitor.latestNotification else { return }

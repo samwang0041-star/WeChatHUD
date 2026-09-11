@@ -110,6 +110,22 @@ enum CompanionProductCopy {
         "已安排在\(clockLabel(until, now: now, calendar: calendar)) 提醒"
     }
 
+    /// Arrival stamp for the notification banner's identity line.
+    ///
+    /// Deliberately not `clockLabel`: a banner is never older than the moment
+    /// it interrupts, so "今天" is redundant with the interruption itself, and
+    /// elapsed time ("12 分钟前") answers the only question a fresh message
+    /// raises — how long has it been waiting. Past today it falls back to
+    /// `clockLabel`, which does carry the date.
+    static func arrivalLabel(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let elapsed = now.timeIntervalSince(date)
+        if elapsed < 60 { return "刚刚" }
+        if elapsed < 3600 {
+            return "\(max(1, Int(elapsed / 60))) 分钟前"
+        }
+        return clockLabel(date, now: now, calendar: calendar)
+    }
+
     static let compactHoverHint = "移入查看。"
     static let forbiddenChrome = ["工作台", "洞察", "简报", "白名单", "db_storage"]
 

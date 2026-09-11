@@ -106,7 +106,12 @@ extension View {
 enum IslandChrome {
     static let expandedWidth: CGFloat = 560
     static let notificationMinWidth: CGFloat = 580
-    static let notificationBaseBelowNotch: CGFloat = 168
+    /// Below-notch budget used only before a banner has measured itself:
+    /// the two-line banner (see `IslandNotificationLayout`). It is not a
+    /// target size — the measured height is — so it is deliberately close to
+    /// the real content instead of a roomy guess. A too-large fallback makes
+    /// the panel flash open at the wrong size and then shrink.
+    static let notificationBaseBelowNotch: CGFloat = 86
 }
 
 /// Height budget for the `.notification` banner.
@@ -117,13 +122,22 @@ enum IslandChrome {
 /// snippet lays out taller than that, so the action row was cut off by the
 /// window's bottom edge. The banner now reports its rendered height through
 /// `SizePreferenceKey`, the same pipe the extended inbox uses, and the
-/// panel hugs that measurement. The static constants below survive only as
-/// the floor / pre-measurement fallback.
+/// panel hugs that measurement.
+///
+/// The clamp around that measurement is asymmetric on purpose:
+///
+///   - **Floor = the shortest banner that can exist** (a one-line message:
+///     `topGap + identityLine + rowGap + one line + bottomGap` ≈ 68 pt).
+///     It exists to reject a bogus near-zero measurement, not to pad the
+///     panel. It used to be 168 pt — the panel was then born 89 pt taller
+///     than a short banner's content, and that black tail was the emptiness
+///     this layout was rebuilt to remove.
+///   - **Ceiling = the tallest real content** (the expanded briefing card,
+///     measured ~534 pt).
 enum IslandNotificationLayout {
-    /// Smallest useful distance below the notch. Matches the historical
-    /// static budget, so the measured path can only ever grow the panel —
-    /// a bogus short measurement can never produce a sliver window.
-    static let minBelowNotch: CGFloat = 168
+    /// Shortest real banner below the notch, in points. A rendering shorter
+    /// than this means "no usable measurement yet", never "a small banner".
+    static let minBelowNotch: CGFloat = 68
 
     /// Ceiling for the hung banner, below the notch. The tallest real
     /// content is the expanded briefing card (measured ~534 pt total),
