@@ -51,4 +51,15 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(choices[2].whenLabel, "明天 09:00")
         XCTAssertTrue(CompanionProductCopy.compactHoverHint.contains("移入查看"))
     }
+
+    func testMenuBarBadgeIsReadableChinese() {
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .none), "")
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .none), " 3 待办")
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 10, longestWait: .none), " 9+")
+        // Below T2 escalation the badge stays a plain count.
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t1), " 3 待办")
+        // Escalated: count + how long the VIP has been waiting.
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t4), " 3 待办 · 等 4h+")
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .t3), " 等 2h")
+    }
 }
