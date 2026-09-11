@@ -120,6 +120,152 @@ final class IslandFrameSpringTests: XCTestCase {
             .hasSettled, "so the settle test can never pass — only the wedge cap ends the run")
     }
 
+    // MARK: - Landing on the pixel grid
+
+    /// A window is painted on whole points, so the run has to aim where the
+    /// server will actually store it. AppKit floors the origin and ceils the
+    /// size; the exact ideal rect is therefore unreachable from above, and a
+    /// spring that keeps converging on it stalls a point outside.
+    func testLandingRectIsWhatTheWindowServerStores() {
+        // The traced hover: an expanded pane measured 560×252 with a
+        // fractional origin, and the compact pill sits on a half point.
+        XCTAssertEqual(FloatingPanel.landing(NSRect(x: 584, y: 865, width: 560, height: 252)),
+                       SIMD4(584, 865, 560, 252))
+        XCTAssertEqual(FloatingPanel.landing(NSRect(x: 715.5, y: 1085, width: 297, height: 32)),
+                       SIMD4(715, 1085, 297, 32))
+        // 560.1 → 561 and 500.6 → 500 are the live-verified rules.
+        XCTAssertEqual(FloatingPanel.landing(NSRect(x: 500.6, y: 100, width: 560.1, height: 252.4)),
+                       SIMD4(500, 100, 561, 253))
+    }
+
+    /// The aim point must be the centre of the cell that quantizes to the
+    /// landing rect, so that the *stored* rect equals the landing rect for the
+    /// whole settling motion — that is what leaves the run with nothing to
+    /// correct on its final frame.
+    func testSpringAimsAtTheCentreOfTheLandingCell() {
+        let landing = FloatingPanel.landing(NSRect(x: 584, y: 865, width: 560, height: 252))
+        let aim = FloatingPanel.springTarget(for: landing)
+        XCTAssertEqual(aim, SIMD4(584.5, 865.5, 559.5, 251.5))
+
+        // Any residual the spring can still have (< ½ pt) quantizes back to the
+        // landing rect: floor(origin + ½ ± ½) and ceil(size − ½ ± ½).
+        for drift in [-0.49, -0.25, 0.0, 0.25, 0.49] {
+            let position = aim + SIMD4(repeating: drift)
+            XCTAssertEqual(quantized(position), landing,
+                           "a residual of \(drift) pt changed the stored rect")
+        }
+    }
+
+    /// The end test reads the *stored* rect, so it cannot declare victory while
+    /// the pixels still have a point to move — and it does not wait for the
+    /// asymptote either, which is what turned the last frame into a jolt.
+    func testArrivalIsJudgedOnStoredPixelsNotOnTheAsymptote() {
+
+        let landing = SIMD4<Double>(584, 865, 560, 252)
+        var spring = IslandFrameSpring(
+            position: FloatingPanel.springTarget(for: landing),
+            target: FloatingPanel.springTarget(for: landing),
+            expanding: true
+        )
+        spring.velocity = SIMD4(repeating: 5)
+        XCTAssertTrue(spring.hasArrived(painted: landing, landing: landing))
+
+        // One point out on the ceiled size — the stall the old code waited on.
+        XCTAssertFalse(spring.hasArrived(painted: SIMD4(584, 865, 561, 253), landing: landing))
+        // Moving fast through the right pixels is not an arrival either.
+        spring.velocity = SIMD4(repeating: 200)
+        XCTAssertFalse(spring.hasArrived(painted: landing, landing: landing))
+    }
+
+    /// Inside the arrival band an expand stops popping and borrows the
+    /// critically damped pair, so the last couple of points converge from one
+    /// side instead of crossing pixel boundaries a few times (the live trace
+    /// stepped 1 pt three times in its final ~100 ms with the ring still on).
+    func testArrivalBandSwitchesToTheCriticallyDampedPair() {
+        // Outside the band the expand is underdamped — the pop out of the notch.
+        let popping = IslandMotion.spring(expanding: true, distance: 50)
+        let settling = IslandMotion.spring(expanding: false, distance: 50)
+        XCTAssertNotEqual(popping.stiffness, settling.stiffness)
+        XCTAssertNotEqual(popping.damping, settling.damping)
+
+        // Inside it, both agree: the run arrives instead of ringing.
+        let arriving = IslandMotion.spring(expanding: true, distance: 0.5)
+        XCTAssertEqual(arriving.stiffness, settling.stiffness, accuracy: 0.0001)
+        XCTAssertEqual(arriving.damping, settling.damping, accuracy: 0.0001)
+
+        // A collapse never pops, wherever it is.
+        XCTAssertEqual(IslandMotion.spring(expanding: false, distance: 50).stiffness,
+                       IslandMotion.spring(expanding: false, distance: 0.5).stiffness,
+                       accuracy: 0.0001)
+    }
+
+    /// End-to-end on the pixel grid: the expansion traced from the reported
+    /// hover must finish with the stored rect already equal to the landing
+    /// rect, and its last stretch must be monotone — the underdamped ring used
+    /// to cross pixel boundaries three times in the final ~100 ms.
+    func testHoverExpansionLandsOnTheStoredRectWithoutRinging() {
+        // Real geometry from the trace: a compact pill at x 715.5 widening to a
+        // measured 560×252 pane.
+        let start = SIMD4<Double>(715.5, 1085, 297, 32)
+        let ideal = SIMD4<Double>(584, 865, 560, 252)
+        let landing = FloatingPanel.landing(NSRect(x: ideal.x, y: ideal.y, width: ideal.z, height: ideal.w))
+        var spring = IslandFrameSpring(
+            position: start,
+            target: FloatingPanel.springTarget(for: landing),
+            expanding: IslandMotion.isExpanding(
+                from: NSRect(x: start.x, y: start.y, width: start.z, height: start.w),
+                to: NSRect(x: ideal.x, y: ideal.y, width: ideal.z, height: ideal.w)
+            )
+        )
+
+        var stored = quantized(start)
+        var paintedWidths: [Double] = []
+        var ticks = 0
+        while !spring.hasArrived(painted: stored, landing: landing) && ticks < 600 {
+            spring.step(dt: 1.0 / 60.0)
+            // What the window server keeps for this tick.
+            stored = quantized(spring.position)
+            paintedWidths.append(stored.z)
+            ticks += 1
+        }
+
+        XCTAssertLessThan(ticks, 60, "the expansion must arrive on its own, not at the wedge cap")
+        XCTAssertEqual(stored, landing, "the run ended on pixels it was not showing")
+
+        // Monotone over the tail: ringing shows up as the painted size going
+        // back and forth across a pixel boundary.
+        let tail = Array(paintedWidths.suffix(12))
+        for (previous, next) in zip(tail, tail.dropFirst()) {
+            XCTAssertLessThanOrEqual(previous, next,
+                                     "the painted width went \(previous) → \(next) on the way in")
+        }
+    }
+
+    /// Same contract on the way back: the collapse must land on the stored
+    /// rect it is already showing.
+    func testCollapseLandsOnTheStoredRect() {
+        let start = SIMD4<Double>(584, 865, 560, 252)
+        let compact = SIMD4<Double>(715.5, 1085, 297, 32)
+        let landing = FloatingPanel.landing(
+            NSRect(x: compact.x, y: compact.y, width: compact.z, height: compact.w))
+        var spring = IslandFrameSpring(
+            position: start,
+            target: FloatingPanel.springTarget(for: landing),
+            expanding: false
+        )
+
+        var stored = quantized(start)
+        var ticks = 0
+        while !spring.hasArrived(painted: stored, landing: landing) && ticks < 600 {
+            spring.step(dt: 1.0 / 60.0)
+            stored = quantized(spring.position)
+            ticks += 1
+        }
+        XCTAssertLessThan(ticks, 60)
+        XCTAssertEqual(stored, landing,
+                       "the collapse ended \(ticks) ticks short: the finish snap would have jolted the pill")
+    }
+
     func testSettleRequiresBothDistanceAndVelocity() {
         // Distance clear, still flying: not settled, or the spring would
         // stop the instant it crossed the target.

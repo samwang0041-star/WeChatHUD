@@ -365,6 +365,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if PreviewRuntime.isEnabled {
             PreviewRuntime.applyAccessibilityOverrides()
             PreviewRuntime.applyAppearanceOverride()
+            PreviewRuntime.simulateHover()
             PreviewRuntime.installCaptureBridge()
             PreviewRuntime.seed(store: store, monitor: monitor)
         } else {
