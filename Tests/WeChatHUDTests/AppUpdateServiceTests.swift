@@ -227,13 +227,19 @@ final class AppUpdateServiceTests: XCTestCase {
                 url: "https://api.github.com/repos/samwang0041-star/WeChatHUD/releases/assets/10"
             )
         ])
+        let verifiedPaths = LockedPaths()
         let service = AppUpdateService(
             http: client,
             currentVersion: AppVersion("1.2.0")!,
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: current,
             tokenProvider: { "secret-token" },
-            allowsNonApplicationDestination: true
+            allowsNonApplicationDestination: true,
+            // The synthetic bundle is not signed; the signature policy itself is
+            // covered by AppUpdateSignatureTests. What this test pins is that the
+            // install path *asks* about the extracted bundle.
+            signatureTeamIdentifier: { url in verifiedPaths.append(url); return "TEAM123" },
+            runningTeamIdentifier: { "TEAM123" }
         )
         let offer = AppUpdateOffer(
             version: AppVersion("1.3.0")!,
@@ -260,6 +266,8 @@ final class AppUpdateServiceTests: XCTestCase {
 
         let installed = try await service.install(offer, destination: current)
         XCTAssertEqual(installed.standardizedFileURL.path, current.standardizedFileURL.path)
+        XCTAssertEqual(verifiedPaths.paths.count, 1, "the extracted bundle must be signature-checked")
+        XCTAssertEqual(verifiedPaths.paths.first?.lastPathComponent, "WeChatHUD.app")
         XCTAssertEqual(client.requests[0].url?.absoluteString, "https://api.github.com/repos/samwang0041-star/WeChatHUD/releases/assets/9")
         XCTAssertEqual(client.requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
         let plist = NSDictionary(contentsOf: current.appendingPathComponent("Contents/Info.plist"))
@@ -412,6 +420,24 @@ final class AppUpdateServiceTests: XCTestCase {
         """
         try plist.write(to: contents.appendingPathComponent("Info.plist"), atomically: true, encoding: .utf8)
         return url
+    }
+}
+
+/// Collects paths observed by a `@Sendable` test closure.
+final class LockedPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [URL] = []
+
+    var paths: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(url)
     }
 }
 
