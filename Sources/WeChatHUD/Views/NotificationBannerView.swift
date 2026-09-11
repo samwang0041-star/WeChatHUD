@@ -53,67 +53,49 @@ struct NotificationBannerView: View {
         // effect, and closing a banner must not also open a conversation.
     }
 
+    /// Restrained banner: one content row, icon actions top-right, a
+    /// single mint text action under the snippet. The island pill itself
+    /// is the brand — no logo/header row eating the notification's space.
     private var notificationSurface: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(CompanionPalette.islandMint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(CompanionProductCopy.brandName)
-                        .islandBrand()
-                    if !CompanionProductCopy.brandPromise.isEmpty {
-                        Text(CompanionProductCopy.brandPromise)
-                            .islandMeta()
-                            .foregroundStyle(IslandInk.tertiary)
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 4)
-                closeButton
-            }
-
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
                 // Same avatar vocabulary as the inbox rows — the first
                 // character of the chat name — instead of a generic
                 // person glyph that can't tell a group from a contact.
                 CompanionAvatar(name: notification.chatName, size: IslandMetrics.avatar)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(headline)
                         .islandRowTitle()
+                        .foregroundStyle(IslandInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("“\(notification.snippet)”")
                         .islandDisplay()
                         .foregroundColor(IslandInk.primary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                    Button("看看什么事") {
+                        showSnooze = false
+                        panelState.setSnoozeMenuExpanded(false)
+                        if notification.canExplainContext {
+                            withMotion(CompanionMotion.spring) {
+                                panelState.setBriefingExpanded(true)
+                            }
+                            monitor.loadGroupContextBriefing(for: notification)
+                        } else {
+                            panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .islandMeta()
+                    .foregroundStyle(CompanionPalette.islandMint)
+                    .help(notification.canExplainContext ? "看看这句话的前后文" : "打开这段对话")
+                    .accessibilityLabel("看看什么事")
                 }
                 Spacer(minLength: 4)
-                Button("查看对话") {
-                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                VStack(spacing: 10) {
+                    closeButton
+                    snoozeButton
                 }
-                .buttonStyle(.plain)
-                .islandMeta()
-                .foregroundStyle(CompanionPalette.islandMint)
-                .accessibilityLabel("查看对话")
-            }
-
-            HStack(spacing: 8) {
-                Button("看看什么事") {
-                    showSnooze = false
-                    panelState.setSnoozeMenuExpanded(false)
-                    if notification.canExplainContext {
-                        withMotion(CompanionMotion.spring) {
-                            panelState.setBriefingExpanded(true)
-                        }
-                        monitor.loadGroupContextBriefing(for: notification)
-                    } else {
-                        panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
-                    }
-                }
-                .buttonStyle(IslandPillButtonStyle(emphasized: !showSnooze))
-                snoozeButton
-                Spacer(minLength: 0)
             }
             if showSnooze {
                 IslandSnoozeMenu { date in
@@ -163,10 +145,14 @@ struct NotificationBannerView: View {
         Button {
             showSnooze.toggle()
         } label: {
-            Label("稍后提醒", systemImage: "clock")
+            Image(systemName: "clock")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(showSnooze ? CompanionPalette.islandMint : IslandInk.tertiary)
+                .frame(width: 24, height: 22)
         }
-        .buttonStyle(IslandPillButtonStyle(emphasized: showSnooze))
+        .buttonStyle(.plain)
         .help("稍后提醒")
+        .accessibilityLabel("稍后提醒")
         .accessibilityHint("打开稍后提醒时间")
         .onChange(of: showSnooze) { _, isOpen in
             panelState.setSnoozeMenuExpanded(isOpen)
