@@ -41,12 +41,15 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     private var walMtimes: [String: Date] = [:]      // relative path → last-seen WAL mtime
     private var contactsMtime: Date?                 // last-seen contact.db mtime
     private var keysMtime: Date?                     // last-seen all_keys.json mtime
-    /// Cache: chatUsername → relPath of the DB that contains its Msg_ table.
-    /// Avoids O(N_dbs) table lookups on every getMessages() call.
-    private var chatDBCache: [String: String] = [:]
-    /// Negative cache: chats we scanned all DBs for and found no table.
-    /// Cleared on each refreshIfChanged so new tables are discovered.
-    private var chatDBNegativeCache: Set<String> = []
+    /// Cache: chatUsername → every message DB that contains its `Msg_` table.
+    ///
+    /// WeChat shards message history: the same table exists in up to ten
+    /// `message_N.db` files, split by time, in *addition* to one table per
+    /// chat. A real library measured 932 of 2572 tables living in more than one
+    /// shard, and 103 of 115 whitelisted chats were multi-shard. An empty array
+    /// is the negative cache (scanned, nothing found). Cleared when keys are
+    /// reloaded, which is also when the set of DBs can change.
+    private var chatShardCache: [String: [String]] = [:]
 
     /// Reusable read-only handles, keyed by decrypted file path.
     ///
@@ -199,8 +202,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 return  // unchanged, nothing to do
             }
             // Changed key material invalidates both discovery and decrypted snapshots.
-            chatDBNegativeCache.removeAll()
-            chatDBCache.removeAll()
+            chatShardCache.removeAll()
             guard let data = fm.contents(atPath: keysPath) else {
                 throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
             }
@@ -290,7 +292,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             // positive path still rescans when a table really has moved:
             // `getMessages` drops the single stale mapping and retries.
             if normalized.hasPrefix("message/") {
-                chatDBNegativeCache.removeAll()
+                // Drop the "this chat has no table anywhere" entries: a rewrite
+                // can introduce a table that was not there before. Positive
+                // shard lists survive, for the reason above; a shard added later
+                // (WeChat rotating in a new message_N.db) arrives with the key
+                // file that describes it, and `loadKeys` clears the whole cache.
+                chatShardCache = chatShardCache.filter { !$0.value.isEmpty }
             }
             mainMtimes[normalized] = mainMtime
             walMtimes[normalized] = walMtime
@@ -465,7 +472,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// without this the UI would have to show a raw `…@chatroom` id.
     ///
     /// Runs while `contact.db` is already open in `loadContacts()`.
-    private func loadGroupMemberNames(db: OpaquePointer?, knownNames: [String: String]) {
+    /// Internal rather than private: the member-name JOIN is what turns a
+    /// nameless group into a usable label, and the only way to test the query
+    /// the app actually runs is to hand it a fixture database.
+    func loadGroupMemberNames(db: OpaquePointer?, knownNames: [String: String]) {
         var result: [String: [String]] = [:]
         var stmt: OpaquePointer?
         let sql = """
@@ -693,23 +703,39 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var results: [MessageInfo] = []
-        var foundTable = false
-        let usedCachedMapping = chatDBCache[chatUsername] != nil
-
+        var seenIDs = Set<String>()
+        let effectiveLimit = max(1, limit)
         // Negative cache: we already scanned all DBs and this chat has no table.
-        if chatDBNegativeCache.contains(chatUsername) {
+        let usedCachedMapping = chatShardCache[chatUsername] != nil
+        if usedCachedMapping, chatShardCache[chatUsername]?.isEmpty == true {
             return []
         }
 
-        // Determine which DB(s) to search. Fast path: use cached mapping.
-        let dbsToSearch: [String]
-        if let cachedRel = chatDBCache[chatUsername] {
-            dbsToSearch = [cachedRel]
+        // Which DBs hold this chat's table. On a miss every message DB is
+        // probed and *all* hits are recorded — a chat's history is split across
+        // shards by time, so stopping at the first hit (the old behaviour)
+        // returned only the slice that happened to live in whichever DB was
+        // probed first, and a day whose messages sat in another shard came back
+        // empty.
+        let dbPaths: [String]
+        if let cached = chatShardCache[chatUsername] {
+            dbPaths = cached
         } else {
-            dbsToSearch = findMessageDBs()
+            let allDBs = findMessageDBs()
+            var found: [String] = []
+            for relPath in allDBs {
+                let decPath = try getDecryptedDB(relativePath: relPath)
+                let db = try acquireReadonly(path: decPath)
+                if Self.msgTableName(chatUsername: chatUsername, db: db) != nil {
+                    found.append(relPath)
+                }
+            }
+            chatShardCache[chatUsername] = found
+            dbPaths = found
         }
 
-        for relPath in dbsToSearch {
+        var foundTable = false
+        for relPath in dbPaths {
             let decPath = try getDecryptedDB(relativePath: relPath)
             // One handle serves both the table probe and the query, and stays
             // cached for later calls. This method already holds `lock`, so the
@@ -719,15 +745,13 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 continue
             }
             foundTable = true
-            // Remember this mapping for future calls.
-            chatDBCache[chatUsername] = relPath
 
             var sql = """
                 SELECT local_id, local_type, create_time, real_sender_id,
                        message_content, WCDB_CT_message_content
                 FROM [\(tableName)]
             """
-            sql += Self.messageQuerySuffix(limit: limit, sinceLocalId: sinceLocalId,
+            sql += Self.messageQuerySuffix(limit: effectiveLimit, sinceLocalId: sinceLocalId,
                                            afterCursor: afterCursor, oldestFirst: oldestFirst,
                                            startTime: startTime, endTime: endTime,
                                            beforeCursor: beforeCursor)
@@ -805,6 +829,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 let senderName = displayName(for: senderUsername)
 
                 let uid = "\(relPath)/\(tableName)/\(localId)"
+                guard seenIDs.insert(uid).inserted else { continue }
                 let msg = MessageInfo(
                     id: uid,
                     localId: localId,
@@ -824,12 +849,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             guard stepResult == SQLITE_DONE else {
                 throw ReaderError.sqlError("Message query interrupted: \(String(cString: sqlite3_errmsg(db)))")
             }
-            break  // Msg_<hash> table lives in exactly one DB — no need to check others.
         }
 
-        // Cache miss: cached DB no longer has this table. Retry with full scan.
+        // Cache miss: the cached shards no longer hold this table (WeChat moved
+        // or dropped it). Retry with a full probe.
         if !foundTable && usedCachedMapping {
-            chatDBCache.removeValue(forKey: chatUsername)
+            chatShardCache.removeValue(forKey: chatUsername)
             return try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId,
                                    afterCursor: afterCursor, oldestFirst: oldestFirst,
                                            startTime: startTime, endTime: endTime,
@@ -838,11 +863,19 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         // Full scan found nothing — remember so we skip next time.
         if !foundTable {
-            chatDBNegativeCache.insert(chatUsername)
+            chatShardCache[chatUsername] = []
         }
 
-        // SQLite has already applied the requested composite ordering.
-        return results
+        // Each shard applied its own LIMIT, so merge them into one page: the
+        // newest (or oldest, when ascending) rows across all shards, in the
+        // requested composite order.
+        results.sort { lhs, rhs in
+            if lhs.createTime != rhs.createTime {
+                return oldestFirst ? lhs.createTime < rhs.createTime : lhs.createTime > rhs.createTime
+            }
+            return oldestFirst ? lhs.localId < rhs.localId : lhs.localId > rhs.localId
+        }
+        return results.count > effectiveLimit ? Array(results.prefix(effectiveLimit)) : results
     }
 
     /// A bounded oldest-first page ensures a scan advances only over messages it read.
