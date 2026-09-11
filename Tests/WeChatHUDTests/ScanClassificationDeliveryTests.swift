@@ -246,6 +246,93 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(store.loadPendingAutopilotInbound().count, 0)
     }
 
+    /// You replied after the inbound arrived → the banner must not pop;
+    /// the message still lands in the recent-notifications feed.
+    func testInboundNewerThanYourReplyDoesNotPopBanner() async throws {
+        let fixture = try SyntheticScanFixture(chatUsername: chatUsername, selfReplyAt: 1_050)
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+
+        var config = NotificationConfig()
+        config.allWhitelist = true
+        try store.setSettingJSON("notification", value: config)
+        try store.addToWhitelist(
+            username: chatUsername,
+            displayName: "合成同事",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.setWhitelistCursor(username: chatUsername, lastCreateTime: 100, lastLocalId: 0)
+
+        let outcome = try await scan(fixture.reader, store: store)
+        XCTAssertNil(outcome?.latestPreview, "already-answered inbound must not pop the banner")
+        XCTAssertEqual(
+            outcome?.recentNotifications.first(where: { $0.chatUsername == chatUsername })?.kind,
+            .privateChat,
+            "the message should still be recorded in the inbox feed"
+        )
+    }
+
+    /// You sent a message seconds ago and the other side answers right
+    /// back — that is a live exchange, not a new ask. Suppress the popup;
+    /// a stale exchange (reply older than the window) still pops.
+    func testLiveExchangeSuppressesBannerButStaleExchangeDoesNot() async throws {
+        let now = Int(Date().timeIntervalSince1970)
+
+        let live = try SyntheticScanFixture(
+            chatUsername: chatUsername,
+            selfReplyAt: now - 30,
+            inboundAt: now - 5
+        )
+        defer { live.cleanup() }
+        let liveStore = try live.makeStore()
+        defer { liveStore.close() }
+        var config = NotificationConfig()
+        config.allWhitelist = true
+        try liveStore.setSettingJSON("notification", value: config)
+        try liveStore.addToWhitelist(
+            username: chatUsername,
+            displayName: "合成同事",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try liveStore.setWhitelistCursor(username: chatUsername, lastCreateTime: now - 600, lastLocalId: 0)
+
+        let liveOutcome = try await scan(live.reader, store: liveStore)
+        XCTAssertNil(liveOutcome?.latestPreview, "replies inside a live exchange must not re-pop")
+        XCTAssertNotNil(
+            liveOutcome?.recentNotifications.first(where: { $0.chatUsername == chatUsername }),
+            "live-exchange replies still belong in the feed"
+        )
+
+        let stale = try SyntheticScanFixture(
+            chatUsername: chatUsername,
+            selfReplyAt: now - ScanEngine.activeConversationWindow - 60,
+            inboundAt: now - 5
+        )
+        defer { stale.cleanup() }
+        let staleStore = try stale.makeStore()
+        defer { staleStore.close() }
+        try staleStore.setSettingJSON("notification", value: config)
+        try staleStore.addToWhitelist(
+            username: chatUsername,
+            displayName: "合成同事",
+            isGroup: false,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try staleStore.setWhitelistCursor(username: chatUsername, lastCreateTime: now - 600, lastLocalId: 0)
+
+        let staleOutcome = try await scan(stale.reader, store: staleStore)
+        XCTAssertEqual(
+            staleOutcome?.latestPreview?.chatUsername, chatUsername,
+            "a reply older than the conversation window must not suppress the banner"
+        )
+    }
+
     private func scan(
         _ reader: WeChatReader,
         store: HUDStore,
@@ -285,7 +372,13 @@ private final class SyntheticScanFixture {
     let groupChatUsername = "team@chatroom"
     private let key = Data(repeating: 0x44, count: 32)
 
-    init(chatUsername: String) throws {
+    /// `selfReplyAt`: when set, appends a self-authored message (sender =
+    /// `synthetic_account`, the fixture's `myUsername()`) to the private
+    /// chat at that createTime — used to exercise banner suppression when
+    /// the user already replied or is mid-conversation.
+    /// `inboundAt`: overrides the private-chat inbound's createTime so
+    /// "live exchange" tests can use wall-clock-relative timestamps.
+    init(chatUsername: String, selfReplyAt: Int? = nil, inboundAt: Int = 1_000) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("scan-classification-\(UUID().uuidString)")
         dbDir = root.appendingPathComponent("synthetic_account/db_storage", isDirectory: true)
         keysURL = root.appendingPathComponent("keys.json")
@@ -333,10 +426,12 @@ private final class SyntheticScanFixture {
             INSERT INTO Name2Id(user_name) VALUES ('\(chatUsername)');
             INSERT INTO Name2Id(user_name) VALUES ('\(autopilotChatUsername)');
             INSERT INTO Name2Id(user_name) VALUES ('group_sender');
-            INSERT INTO [\(table)] VALUES (1, 1, 1000, 1, '请确认方案', 0);
+            INSERT INTO Name2Id(user_name) VALUES ('synthetic_account');
+            INSERT INTO [\(table)] VALUES (1, 1, \(inboundAt), 1, '请确认方案', 0);
             INSERT INTO [\(Self.messageTable(for: autopilotChatUsername))] VALUES (1, 1, 1000, 2, '自动驾驶请跟进', 0);
             INSERT INTO [\(Self.messageTable(for: groupChatUsername))] VALUES (1, 1, 900, 3, '@synthetic_account 请确认', 0);
             INSERT INTO [\(Self.messageTable(for: groupChatUsername))] VALUES (2, 1, 910, 3, '今晚聚餐随便吃', 0);
+            \(selfReplyAt.map { "INSERT INTO [\(table)] VALUES (2, 1, \($0), 4, '收到', 0);" } ?? "")
             """
         guard sqlite3_exec(db, schema, nil, nil, nil) == SQLITE_OK else {
             throw NSError(domain: "SyntheticScanFixture", code: 3)

@@ -298,6 +298,26 @@ enum ScanEngine {
                         || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
                 }
 
+                // Smart interruption suppression. `latestSelfTime` is the
+                // newest self-authored message in this chat (from the full
+                // fetch, not just `newMessages`, so a reply sent between
+                // scans is seen even when it shares the same second as the
+                // inbound). Two cases mean the user is already inside this
+                // conversation and a banner would be noise:
+                //   1. already answered — the inbound is older than your
+                //      latest self message (you replied after it arrived)
+                //   2. live exchange — you sent something here within the
+                //      last `activeConversationWindow`s, so inbound replies
+                //      are the far side answering you, not a new ask
+                // The message still lands in the inbox feed
+                // (`perChatLatest`); only the popup is suppressed.
+                let latestSelfTime = messages
+                    .filter { MessageHelpers.isFromSelf($0, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
+                    .map(\.createTime)
+                    .max() ?? 0
+                let isLiveExchange = latestSelfTime > 0
+                    && nowEpoch - latestSelfTime <= Self.activeConversationWindow
+
                 // Queue persistence and the source cursor are one durable
                 // unit. A failed queue write must leave the cursor unchanged
                 // so the next scan can retry the same source messages.
@@ -402,9 +422,12 @@ enum ScanEngine {
                         isAtMention: isAt,
                         atMutedGroups: admissionRules.config.atMutedGroups
                     )
+                    let alreadyAnswered = latestSelfTime > msg.createTime
+                    let suppressPopup = alreadyAnswered || isLiveExchange
                     if decision.isAdmitted,
                        shouldPresent,
                        bannerAllowed,
+                       !suppressPopup,
                        (latestPreview == nil || msgTime > latestPreview!.timestamp) {
                         latestPreview = notif
                     }
@@ -683,6 +706,11 @@ enum ScanEngine {
 
     /// First whitelist scan classifies unread for the inbox. Those messages
     /// must not enter Autopilot — they can be days old.
+    /// How long after your last outbound message a chat still counts as a
+    /// live exchange. Inside the window, inbound replies don't re-pop the
+    /// banner — you're literally in that conversation.
+    static let activeConversationWindow: Int = 120
+
     static func shouldEnqueueAutopilotInbound(isFirstWhitelistScan: Bool) -> Bool {
         !isFirstWhitelistScan
     }
