@@ -484,7 +484,7 @@ private struct PendingReviewRow: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                 Spacer()
-                Text(entry.riskLevel.rawValue.uppercased())
+                Text(entry.riskLevel.label)
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(riskColor(entry.riskLevel))
                     .padding(.horizontal, 4)
@@ -574,7 +574,7 @@ private struct PendingReviewRow: View {
         .cornerRadius(5)
         .padding(.horizontal, 8)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("待审核：\(entry.senderName)，风险\(entry.riskLevel.rawValue)，信心\(Int(entry.confidence * 100))%")
+        .accessibilityLabel("待审核：\(entry.senderName)，风险\(entry.riskLevel.label)，信心\(Int(entry.confidence * 100))%")
     }
 
     private func riskColor(_ risk: AutopilotRisk) -> Color {
@@ -649,7 +649,7 @@ private struct ActivityRow: View {
                     }
                     HStack(spacing: 10) {
                         detailRow("信心", value: "\(Int(entry.confidence * 100))%")
-                        detailRow("风险", value: entry.riskLevel.rawValue)
+                        detailRow("风险", value: entry.riskLevel.label)
                         detailRow("动作", value: actionLabel)
                     }
                 }
@@ -675,7 +675,7 @@ private struct ActivityRow: View {
     private var actionLabel: String {
         switch entry.action {
         case .sent: return "已发送"
-        case .stall: return "缓兵之计"
+        case .stall: return "暂缓"
         case .queued: return "待发送"
         case .vipNotified: return "VIP通知"
         case .skipped: return "跳过"
@@ -737,7 +737,7 @@ struct PendingSendRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
-                Text(item.risk.rawValue.uppercased())
+                Text(item.risk.label)
                     .font(.system(size: 8, weight: .bold))
                     .foregroundColor(riskColor(item.risk))
                 // Countdown
@@ -746,7 +746,7 @@ struct PendingSendRow: View {
                     .monospacedDigit()
                     .foregroundColor(.cyan)
                 // Style score badge
-                Text("S:\(item.styleScore)")
+                Text("风格 \(item.styleScore)")
                     .font(.system(size: 8))
                     .foregroundColor(item.styleScore >= 70 ? .green : .orange)
             }
@@ -793,14 +793,14 @@ struct PendingSendRow: View {
             }
 
             if let trigger = item.peerLastMessage, !trigger.isEmpty {
-                Text("收到: \(trigger)")
+                Text("收到：\(trigger)")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
 
             if let manualReason = item.manualOnlyReason {
-                Text("需人工确认: \(manualReason)")
+                Text("需人工确认：\(manualReason)")
                     .font(.system(size: 11))
                     .foregroundColor(.orange)
                     .lineLimit(2)

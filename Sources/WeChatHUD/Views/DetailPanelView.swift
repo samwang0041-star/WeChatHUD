@@ -56,6 +56,7 @@ struct DetailPanelView: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭")
             .padding(10)
         }
     }
@@ -75,13 +76,13 @@ struct DetailPanelView: View {
                     .foregroundColor(.red)
             }
             Spacer()
-            Button("[查看]") {
+            Button("查看") {
                 // Switch to .extended directly — the old "collapse
                 // then mouseEntered 0.3s later" dance produced a
                 // visible shrink-then-grow flicker.
                 panelState.goExtended()
             }
-            .font(.system(size: 10))
+            .font(.system(size: 10, weight: .semibold))
             .buttonStyle(.plain)
             .foregroundColor(.blue)
         }
@@ -127,6 +128,7 @@ struct AutopilotDetailPane: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("返回收件箱")
 
             Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
                 .font(.system(size: 11))

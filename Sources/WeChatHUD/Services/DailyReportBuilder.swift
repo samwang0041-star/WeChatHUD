@@ -301,7 +301,7 @@ struct DailyReportBuilder {
         if metrics.unreadMessageCount > 0 { facts.append("未读 \(metrics.unreadMessageCount) 条") }
         if metrics.replyDebtCount > 0 { facts.append("待回复 \(metrics.replyDebtCount) 项") }
         if metrics.pendingAskCount > 0 { facts.append("待处理请求 \(metrics.pendingAskCount) 项") }
-        if metrics.pendingTodoCount > 0 { facts.append("复盘待办 \(metrics.pendingTodoCount) 项") }
+        if metrics.pendingTodoCount > 0 { facts.append("回顾待办 \(metrics.pendingTodoCount) 项") }
         if metrics.pendingCommitmentCount > 0 { facts.append("进行中承诺 \(metrics.pendingCommitmentCount) 项") }
         if metrics.overdueCommitmentCount > 0 { facts.append("超期承诺 \(metrics.overdueCommitmentCount) 项") }
         if metrics.highlightCount > 0 { facts.append("今日高亮 \(metrics.highlightCount) 条") }

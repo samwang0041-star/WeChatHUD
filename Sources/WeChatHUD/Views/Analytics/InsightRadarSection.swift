@@ -25,7 +25,7 @@ struct InsightRadarSection: View {
                     .foregroundColor(.accentColor)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("洞察雷达")
+                    Text("需要留意")
                         .font(.system(size: 14, weight: .semibold))
                     Text("先看谁需要回应、哪段关系要补一句、哪些信号值得确认")
                         .font(.system(size: 10))
@@ -212,7 +212,7 @@ struct InsightRadarSection: View {
         case .relationship:
             return "来自互动频率或关系分布，不是单句原话。"
         case .blindSpot:
-            return "来自简报检查项，点击可看概览。"
+            return "来自总结里的检查项，点击可看概览。"
         default:
             return "来自多条消息里的弱信号，建议先确认上下文。"
         }

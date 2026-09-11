@@ -851,7 +851,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 notchHeight: notch.notchHeight,
                 fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
             )
-            return (max(IslandChrome.notificationMinWidth, notch.notchWidth + 240), height)
+            return (IslandNotificationLayout.panelWidth(notchWidth: notch.notchWidth), height)
         case .detail:
             return (PanelState.width(for: state), PanelState.height(for: state))
         }

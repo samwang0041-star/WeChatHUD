@@ -885,6 +885,26 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(afterUpdate.count, 0)  // no longer pending
     }
 
+    func testAutopilotLogUpdateReply() throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "c", chatName: "C",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "m", triggerText: "t",
+            generatedReply: "r", confidence: 0.7,
+            riskLevel: .medium, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+
+        let logId = store.loadPendingAutopilotItems(sessionId: sessionId)[0].id
+        try store.updateAutopilotLogReply(id: logId, reply: "改成这样说")
+
+        let log = store.loadAutopilotLog(sessionId: sessionId)
+        XCTAssertEqual(log[0].generatedReply, "改成这样说")
+        XCTAssertEqual(log[0].action, .pending)  // still pending — edit ≠ send
+    }
+
     func testAutopilotMarkLogSent() throws {
         let sessionId = try store.startAutopilotSession()
         try store.insertAutopilotLog(AutopilotLogEntry(

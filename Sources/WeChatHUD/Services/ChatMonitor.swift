@@ -2861,6 +2861,19 @@ final class ChatMonitor: ObservableObject {
         return success
     }
 
+    /// Persist a manual edit to a pending draft without sending it.
+    func saveAutopilotDraftReply(logId: Int64, reply: String) -> Bool {
+        do {
+            try store.updateAutopilotLogReply(id: logId, reply: reply)
+            if let index = autopilotLog.firstIndex(where: { $0.id == logId }) {
+                autopilotLog[index].generatedReply = reply
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Reject a pending autopilot item.
     func rejectAutopilotItem(logId: Int64) {
         Task { @MainActor in

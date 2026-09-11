@@ -17,9 +17,11 @@ import AppKit
 @MainActor
 final class NotificationBannerLayoutTests: XCTestCase {
 
-    /// Width the panel gives the banner: `max(IslandChrome.notificationMinWidth,
-    /// notchWidth + 240)` with a 200 pt notch placeholder.
-    private let bannerWidth: CGFloat = max(IslandChrome.notificationMinWidth, 200 + 240)
+    /// Width the panel gives the banner: the shared
+    /// `IslandNotificationLayout.panelWidth` with a 200 pt notch
+    /// placeholder. Using the same source the view and AppDelegate read
+    /// keeps this harness honest if the formula ever changes.
+    private let bannerWidth: CGFloat = IslandNotificationLayout.panelWidth(notchWidth: 200)
 
     /// What the pre-fix `panelSize(for: .notification)` budgeted below the
     /// notch before any measurement was plumbed through.
@@ -332,6 +334,16 @@ final class NotificationBannerLayoutTests: XCTestCase {
             IslandNotificationLayout.minBelowNotch, IslandChrome.notificationBaseBelowNotch, accuracy: 0.001,
             "the clamp floor is documented as the historical static budget"
         )
+    }
+
+    /// `panelWidth` is the single source for both the NSPanel's frame and
+    /// the banner's own layout width — pin the contract so the two can
+    /// never drift apart again (that drift was the first-frame re-wrap).
+    func testPanelWidthHonoursFloorAndNotch() {
+        XCTAssertEqual(IslandNotificationLayout.panelWidth(notchWidth: 200), 580)
+        XCTAssertEqual(IslandNotificationLayout.panelWidth(notchWidth: 0), IslandChrome.notificationMinWidth)
+        XCTAssertEqual(IslandNotificationLayout.panelWidth(notchWidth: 500), 740,
+                       "a wide notch grows the banner past the minimum")
     }
 
     /// End-to-end version of the same pin: host the banner the way

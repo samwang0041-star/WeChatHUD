@@ -3,40 +3,18 @@ import Foundation
 /// First-launch copy and empty-state policy. Views render this; tests lock
 /// the new-user contract so a first install stays explainable in plain language.
 enum FirstLaunchGuide {
-    static let productName = "不漏事"
-    static let productPitch = "从你选中的微信对话里，找出该回、该做、该记住的事，并在本机整理好。"
-    static let neverAutoSend = "不会替你发送任何消息。回复草稿都要你自己确认。"
-    static let timeEstimate = "大约 3 分钟"
     static let finishCTA = "开始使用"
     static let skipCTA = "稍后设置"
-    static let startCTA = "开始设置"
     static let nextCTA = "下一步"
     static let backCTA = "上一步"
 
+    /// Two content pages (连接微信 / 选择关注); the third stepper label is
+    /// the start CTA on page 2.
     static let stepTitles = ["连接微信", "选择关注", "开始使用"]
-    /// Two content pages; the third stepper label is the start CTA on page 2.
-    static let contentPageCount = 2
 
     static func primaryCTA(forStep step: Int) -> String {
         step == 0 ? nextCTA : finishCTA
     }
-
-    static let welcomeNeeds = [
-        "这台 Mac 已安装并登录微信",
-        "可选：一个 AI 服务的访问密钥，用来写摘要和回复草稿"
-    ]
-
-    static let welcomeCapabilities: [(icon: String, title: String, detail: String)] = [
-        ("bubble.left.and.text.bubble.right", "群里有人 @ 你", "用一句话说清发生了什么、为什么找你。"),
-        ("checkmark.bubble", "有人让你办事", "记下承诺和截止时间，避免忘掉。"),
-        ("square.and.pencil", "需要回复时", "先写好草稿，由你确认后再发。")
-    ]
-
-    static let finishRecipe: [(icon: String, title: String, detail: String)] = [
-        ("sun.max", "先看「今天」", "该回、该做的事会列在最上面。"),
-        ("text.bubble", "点开一条消息", "先看摘要和原文，再决定回不回。"),
-        ("hand.raised", "发送前再确认一次", "助手不会自动发出任何内容。")
-    ]
 
     /// Words a first-run screen must not show. Technical recovery stays in
     /// diagnostics, not in the guided path.
@@ -213,11 +191,6 @@ enum FirstLaunchGuide {
     }
 
     // MARK: - AI / contacts
-
-    static let aiTitle = "让助手读懂消息"
-    static let aiSubtitle = "没有 AI 也能看微信原文。摘要、@你的原因和回复草稿，需要一个可用的 AI 服务。"
-    static let aiPrivacy = "相关聊天片段会发送给这个服务。连接测试只发送测试文本，不含聊天记录。"
-    static let aiSkipHint = "可以先跳过，稍后再设。"
 
     static let contactsTitle = "从一个人或一个群开始"
     static let contactsSubtitle = "先选择你想让不漏事帮你整理的对话，之后可以随时调整。"

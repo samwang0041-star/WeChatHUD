@@ -112,8 +112,4 @@ enum CompanionProductCopy {
 
     static let compactHoverHint = "移入查看，平时不打扰。"
     static let forbiddenChrome = ["工作台", "洞察", "简报", "白名单", "db_storage"]
-
-    static func compactStatus(count: Int, sync: String) -> String {
-        "收起 · \(count) 项待处理。\(compactHoverHint) \(sync)"
-    }
 }

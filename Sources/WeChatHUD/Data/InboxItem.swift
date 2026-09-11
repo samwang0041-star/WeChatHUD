@@ -331,7 +331,7 @@ extension InboxItem {
         return reasons.contains { actionCodes.contains($0.code) }
     }
 
-    /// Convert to ReplyDebtItem for compatibility with ReplyDebtExpandedView.
+    /// Convert to the legacy ReplyDebtItem shape (kept for test round-trips).
     func toReplyDebtItem() -> ReplyDebtItem {
         ReplyDebtItem(
             id: chatUsername,

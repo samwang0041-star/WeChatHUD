@@ -1725,6 +1725,16 @@ enum AutopilotRisk: String, Codable {
     case low
     case medium
     case high
+
+    /// User-facing Chinese label — the rawValue is English and leaks
+    /// "HIGH"/"MEDIUM" into the UI if displayed verbatim.
+    var label: String {
+        switch self {
+        case .low: return "低"
+        case .medium: return "中"
+        case .high: return "高"
+        }
+    }
 }
 
 /// One autopilot log entry — every message processed during autopilot mode.
@@ -1737,7 +1747,7 @@ struct AutopilotLogEntry: Identifiable {
     let senderName: String
     let triggerMsgUID: String
     let triggerText: String
-    let generatedReply: String?
+    var generatedReply: String?
     let confidence: Double
     let riskLevel: AutopilotRisk
     let action: AutopilotAction

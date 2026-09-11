@@ -38,16 +38,24 @@ struct InboxRowView: View {
                         inlineBriefingLine
                     }
                 }
-
-                if hovered || showSnoozeMenu {
-                    hoverButtons
-                        .padding(.top, 2)
-                        .transition(.opacity)
-                }
             }
             .padding(.horizontal, islandCatalog ? 18 : 14)
             .padding(.vertical, islandCatalog ? 10 : 6)
             .background(hovered || showSnoozeMenu ? Color.white.opacity(0.06) : Color.clear)
+            .overlay(alignment: .topTrailing) {
+                // Overlay, not in-flow: hover actions slide in over the
+                // timestamp/chevron they replace instead of pushing the
+                // whole row left — in-flow placement re-laid-out the row
+                // on every hover and read as a flicker.
+                if hovered || showSnoozeMenu {
+                    hoverButtons
+                        .padding(.leading, 8)
+                        .background(CompanionPalette.island, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .padding(.top, islandCatalog ? 8 : 4)
+                        .padding(.trailing, islandCatalog ? 18 : 14)
+                        .transition(.opacity)
+                }
+            }
             .contentShape(Rectangle())
             .onTapGesture {
                 withMotion(CompanionMotion.ease(0.2)) {
@@ -345,8 +353,11 @@ struct InboxRowView: View {
                 Button(action: {
                     showSnoozeMenu.toggle()
                 }) {
-                    Text("\u{23F0}")
-                        .font(.system(size: 12))
+                    // SF Symbol, not the ⏰ emoji — the emoji renders in
+                    // full colour and fights the monochrome chrome.
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(showSnoozeMenu ? 0.9 : 0.55))
                 }
                 .buttonStyle(.plain)
                 .help("稍后提醒")

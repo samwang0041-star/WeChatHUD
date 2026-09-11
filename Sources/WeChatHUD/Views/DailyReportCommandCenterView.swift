@@ -213,14 +213,6 @@ struct DailyReportCommandCenterView: View {
         .padding(.vertical, 18)
     }
 
-    private func emptyState(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(Color.primary.opacity(0.4))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 14)
-    }
-
     private func emptyStateWithRetry(_ text: String) -> some View {
         VStack(spacing: 8) {
             Text(text)
@@ -275,13 +267,6 @@ struct DailyReportCommandCenterView: View {
         .cornerRadius(6)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-    }
-
-    private func progressColor(_ ratio: Double) -> Color {
-        if ratio >= 1.0 { return .green }
-        if ratio >= 0.6 { return .cyan }
-        if ratio >= 0.3 { return .orange }
-        return .red
     }
 
     private func statLabel(_ label: String, value: Int, color: Color) -> some View {
@@ -413,7 +398,9 @@ struct DailyReportCommandCenterView: View {
     }
 
     private func highlightsSection(_ highlights: [DailyReportHighlight], expandedByDefault: Bool = false) -> some View {
-        let isExpanded = expandedByDefault || showHighlights
+        // Historical reports start expanded but stay collapsible — the
+        // collapsed flag must gate `expandedByDefault`, not be ignored by it.
+        let isExpanded = expandedByDefault ? !historicalHighlightsCollapsed : showHighlights
         return VStack(alignment: .leading, spacing: 0) {
             Button(action: {
                 if expandedByDefault {
@@ -431,7 +418,7 @@ struct DailyReportCommandCenterView: View {
                     Image(systemName: "star.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.yellow.opacity(0.85))
-                    Text("今日高亮")
+                    Text(expandedByDefault ? "当日高亮" : "今日高亮")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(highlights.count)")
@@ -544,7 +531,7 @@ struct DailyReportCommandCenterView: View {
                 Text(highlight.category.label)
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundColor(categoryColor(highlight.category))
-                Text(highlight.sourceChatName)
+                Text(resolvedChatName(highlight.sourceChatName, username: highlight.sourceChatUsername))
                     .font(.system(size: 9))
                     .foregroundColor(.secondary)
                 Spacer()

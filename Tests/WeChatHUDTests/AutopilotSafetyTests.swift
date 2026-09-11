@@ -478,4 +478,17 @@ final class AutopilotSafetyTests: XCTestCase {
         )
         XCTAssertEqual(result.action, .skipped)
     }
+
+    // MARK: - Display labels
+
+    /// The UI must never render rawValue ("high"/"medium") — `label`
+    /// is the user-facing Chinese form.
+    func testRiskLabelIsChinese() {
+        XCTAssertEqual(AutopilotRisk.low.label, "低")
+        XCTAssertEqual(AutopilotRisk.medium.label, "中")
+        XCTAssertEqual(AutopilotRisk.high.label, "高")
+        for risk in [AutopilotRisk.low, .medium, .high] {
+            XCTAssertNotEqual(risk.label, risk.rawValue)
+        }
+    }
 }

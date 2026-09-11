@@ -245,7 +245,7 @@ actor AIWhitelistCategorizer {
 
     private func call(_ userPrompt: String) async -> ModelResponse {
         let trackID = "categorizer:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "白名单分类")
+        AIActivityTracker.shared.begin(trackID, label: "关注建议")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {

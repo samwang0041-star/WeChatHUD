@@ -92,7 +92,7 @@ struct InsightOverviewDashboard: View {
                             .font(.system(size: 11))
                     }
                     .disabled((insightStore.overview?.totalMessages ?? 0) == 0)
-                    .help("复制为 Markdown 简报")
+                    .help("复制为 Markdown 总结")
                 }
                 Picker("", selection: $insightStore.selectedWindow) {
                     ForEach(InsightTimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -398,7 +398,7 @@ struct InsightOverviewDashboard: View {
     private func isConcreteFocusSource(_ source: String) -> Bool {
         let text = source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty else { return false }
-        let nonConcreteSources: Set<String> = ["全局", "系统", "简报", "未知", "无", "n/a", "null"]
+        let nonConcreteSources: Set<String> = ["全局", "系统", "简报", "总结", "未知", "无", "n/a", "null"]
         return !nonConcreteSources.contains(text)
     }
 

@@ -129,6 +129,16 @@ enum IslandNotificationLayout {
     /// which fits comfortably inside this.
     static let maxBelowNotch: CGFloat = 560
 
+    /// Width the panel gives the banner. Single source of truth shared by
+    /// `AppDelegate.panelSize(for:)` (which sizes the NSPanel) and
+    /// `NotificationBannerView.bannerWidth` (which lays the content out at
+    /// this width from the first frame so text never re-wraps mid-grow) —
+    /// if the two ever disagree, the banner either clips sideways or the
+    /// first-frame wrapping bug returns.
+    static func panelWidth(notchWidth: CGFloat) -> CGFloat {
+        max(IslandChrome.notificationMinWidth, notchWidth + 240)
+    }
+
     /// Panel height for a banner whose content measured `contentHeight`
     /// (the banner's own rendered height, notch padding included).
     /// `contentHeight <= 1` means "no measurement yet" — fall back to the

@@ -20,7 +20,7 @@ struct InsightHeroSection: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11))
                     .foregroundColor(.accentColor)
-                Text("AI 全景简报 · \(briefing.date)")
+                Text("AI 全景总结 · \(briefing.date)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.accentColor)
                 Spacer()
@@ -90,7 +90,7 @@ struct InsightHeroSection: View {
                 .font(.system(size: 20))
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("生成 AI 全景简报")
+                Text("生成 AI 全景总结")
                     .font(.system(size: 13, weight: .semibold))
                 Text("基于 \(overview.totalMessages) 条消息，AI 会提炼需要你行动的事、跨对话话题、暗信号等")
                     .font(.system(size: 11))

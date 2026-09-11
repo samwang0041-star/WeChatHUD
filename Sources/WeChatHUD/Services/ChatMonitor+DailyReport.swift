@@ -183,7 +183,7 @@ extension ChatMonitor {
 
         // Whitelist stats
         let whitelist = store.getWhitelist()
-        md += "## 白名单 (\(whitelist.count))\n\n"
+        md += "## 关注对象 (\(whitelist.count))\n\n"
         let vips = whitelist.filter { $0.attentionLevel == .vip }
         let watches = whitelist.filter { $0.attentionLevel == .watch }
         md += "- VIP: \(vips.count) 人\n"

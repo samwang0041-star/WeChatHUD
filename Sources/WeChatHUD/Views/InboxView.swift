@@ -44,6 +44,25 @@ func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
     return .idle
 }
 
+/// The expanded island's greeting line, keyed to what's actually inside.
+/// A flat "N 件事需要你" for every queue overstated passive updates — a
+/// "发来一个表情" row is not something the user must handle. Nil means
+/// the state carries no headline (idle inbox).
+func inboxHeadlineCopy(_ state: InboxHeaderState) -> String? {
+    switch state {
+    case .urgent(let count):
+        return "\(count) 件事需要尽快处理"
+    case .replyNeeded(let count):
+        return "\(count) 条消息等你回复"
+    case .mentioned(let count):
+        return "有 \(count) 条 @ 你的消息"
+    case .updates(let count):
+        return "收到 \(count) 条新消息"
+    case .idle:
+        return nil
+    }
+}
+
 /// Unified inbox — shows all messages in a single priority-sorted list
 /// with action items on top, an undo bar, and a collapsible handled section.
 struct InboxView: View {
@@ -67,7 +86,7 @@ struct InboxView: View {
             }
             if panelState.islandSurface == .inbox {
                 islandBrandStrip
-                hoverHeadline(count: visibleItems.count)
+                hoverHeadline
                 islandStatusBanner
             }
 
@@ -123,7 +142,7 @@ struct InboxView: View {
                     let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
                     if hiddenTotalCount > 0 {
                         Button(action: { panelState.showDetail() }) {
-                            Text("+\(hiddenTotalCount) 更多 — 查看详情")
+                            Text("还有 \(hiddenTotalCount) 条 — 在不漏事里查看")
                                 .font(.system(size: 10))
                                 .foregroundColor(.white.opacity(0.55))
                                 .padding(.horizontal, 14)
@@ -155,10 +174,10 @@ struct InboxView: View {
         }
     }
 
-    private func hoverHeadline(count: Int) -> some View {
+    private var hoverHeadline: some View {
         Group {
-            if count > 0 {
-                Text("现在有 \(count) 件事需要你")
+            if let copy = inboxHeadlineCopy(inboxHeaderState(monitor.inboxItems)) {
+                Text(copy)
                     .companionFont(size: 24, weight: .bold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 18)
@@ -382,7 +401,7 @@ struct InboxView: View {
 
     private func undoBar(item: InboxItem, action: String) -> some View {
         HStack(spacing: 8) {
-            Text("\(item.chatName) \(action)")
+            Text("\(item.chatName) · \(action)")
                 .font(.system(size: 10))
                 .foregroundColor(.white.opacity(0.6))
                 .lineLimit(1)
@@ -600,14 +619,21 @@ private struct IslandTaskPreview: View {
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
+                // Back chevron returns to the inbox; "待办" is the title
+                // of THIS surface — labelling the back button with the
+                // current page's name read as navigating to itself.
                 Button {
                     panelState.islandSurface = .inbox
                 } label: {
-                    Label("待办", systemImage: "chevron.left")
+                    Image(systemName: "chevron.left")
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(.white)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+                .accessibilityLabel("返回收件箱")
+                Text("待办")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(.white)
                 Spacer()
                 Text("还有 \(items.count) 件事")
                     .font(.system(size: 12))

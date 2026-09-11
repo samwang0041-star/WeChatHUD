@@ -628,13 +628,6 @@ struct ActionPanelView: View {
         .padding(.vertical, 2)
     }
 
-    private func errorRow(label: String) -> some View {
-        Text(label)
-            .font(.system(size: 10))
-            .foregroundColor(.red.opacity(0.6))
-            .padding(.vertical, 2)
-    }
-
     private func errorRowWithRetry(label: String, retry: @escaping () -> Void) -> some View {
         HStack(spacing: 6) {
             Text(label)
