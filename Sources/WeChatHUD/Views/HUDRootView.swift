@@ -56,7 +56,8 @@ struct HUDRootView: View {
                     notchWidth: islandNotchWidth,
                     notchHeight: islandNotchHeight,
                     pillCornerRadius: 22,
-                    notchCornerRadius: 10
+                    notchCornerRadius: 10,
+                    topCornerRadius: 16
                 )
                 .fill(CompanionPalette.island)
             }
