@@ -245,15 +245,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.panel.allowsBecomeKey = true
                     NSApp.activate(ignoringOtherApps: true)
                     self.panel.makeKeyAndOrderFront(nil)
-                    // Use light appearance for settings, dark for conversation detail
                     let isSettings = self.panelState.selectedChatUsername == nil
-                    self.panel.setDetailAppearance(isSettings)
+                    // Settings pages follow the system scheme; a conversation is
+                    // white ink on dark.
+                    self.panel.setSurface(isSettings ? .systemSettings : .conversation)
                 case .extended:
                     self.panel.allowsBecomeKey = false
-                    self.panel.setDetailAppearance(false)
+                    self.panel.setSurface(.island)
                 case .compact, .notification:
                     self.panel.allowsBecomeKey = false
-                    self.panel.setDetailAppearance(false)
+                    self.panel.setSurface(.island)
                 }
             }
             .store(in: &cancellables)
@@ -363,6 +364,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Start the monitor (includes initial scan + WeChat process observer).
         if PreviewRuntime.isEnabled {
             PreviewRuntime.applyAccessibilityOverrides()
+            PreviewRuntime.applyAppearanceOverride()
             PreviewRuntime.installCaptureBridge()
             PreviewRuntime.seed(store: store, monitor: monitor)
         } else {
