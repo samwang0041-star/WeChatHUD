@@ -30,6 +30,17 @@ struct IslandShape: Shape {
     /// read as the same object regardless of display.
     let notchCornerRadius: CGFloat
 
+    /// Radius of the fillet where the pill's top edge meets the screen's top
+    /// edge — a curve opening *outward*, the same gesture Apple uses where the
+    /// notch's sides meet the bezel.
+    ///
+    /// 0 keeps the historical hard 90° corner, which read as a rectangle
+    /// pasted onto the top of the screen. The fillet makes the body meet the
+    /// top edge tangentially instead, so the panel looks hung from it. It is
+    /// clamped to the gap beside the notch so it can never eat into the
+    /// cutout, and it never changes the shape's bounds.
+    let topCornerRadius: CGFloat
+
     func path(in rect: CGRect) -> Path {
         var p = Path()
         let w = rect.width
@@ -41,9 +52,27 @@ struct IslandShape: Shape {
 
         let notchLeft = (w - nW) / 2
         let notchRight = (w + nW) / 2
+        // The fillet lives in the gap between the screen edge and the notch
+        // lip, so on a narrow compact pill it shrinks rather than colliding.
+        let tCR = max(0, min(topCornerRadius, min(w, h) / 2, nW > 0 ? notchLeft : w / 2))
 
-        // Start at the top-left corner (flat — no rounding).
-        p.move(to: CGPoint(x: 0, y: 0))
+        // Start where the left edge meets the top fillet.
+        p.move(to: CGPoint(x: 0, y: tCR))
+        if tCR > 0 {
+            // Concave quarter-turn: the shape *gives way* toward the corner
+            // instead of filling it, so the top edge approaches the screen
+            // edge with a curve.
+            p.addArc(
+                center: CGPoint(x: tCR, y: tCR),
+                radius: tCR,
+                startAngle: .degrees(180),
+                endAngle: .degrees(270),
+                clockwise: false
+            )
+        }
+        if tCR == 0 {
+            p.addLine(to: CGPoint(x: 0, y: 0))
+        }
 
         // Top edge, heading right, stops at the notch's left lip.
         if nW > 0 {
@@ -73,8 +102,19 @@ struct IslandShape: Shape {
             p.addLine(to: CGPoint(x: notchRight, y: 0))
         }
 
-        // Top edge from the notch's right lip to the pill's top-right.
-        p.addLine(to: CGPoint(x: w, y: 0))
+        // Top edge from the notch's right lip to the pill's top-right fillet.
+        p.addLine(to: CGPoint(x: w - tCR, y: 0))
+        if tCR > 0 {
+            p.addArc(
+                center: CGPoint(x: w - tCR, y: tCR),
+                radius: tCR,
+                startAngle: .degrees(270),
+                endAngle: .degrees(360),
+                clockwise: false
+            )
+        } else {
+            p.addLine(to: CGPoint(x: w, y: 0))
+        }
         // Right edge down to where the bottom-right corner starts.
         p.addLine(to: CGPoint(x: w, y: h - pCR))
         // Bottom-right corner.
