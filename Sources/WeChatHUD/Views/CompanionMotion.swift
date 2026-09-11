@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import simd
 
 /// Central motion gate for "respect system reduce motion" (ui-language.md
 /// invariant 5). Every animation in the app flows through this enum so the
@@ -216,5 +217,63 @@ enum IslandMotion {
 
     static func isExpanding(from: NSRect, to: NSRect) -> Bool {
         to.height > from.height + 1 || to.width > from.width + 1
+    }
+}
+
+/// Integrator state for the window-frame spring.
+///
+/// `FloatingPanel` owns *when* a run starts, retargets and finishes; the
+/// arithmetic and the "has it settled?" rule live here because the panel
+/// needs a live `NSPanel` that a test cannot step per vsync.
+///
+/// `position` is the spring's own, continuous state. It must never be
+/// re-seeded from the window's `frame` on every tick: AppKit stores window
+/// rects as whole points, so reading the frame back re-injects the
+/// quantizer's error, and the run freezes 1–3 pt short of its target with a
+/// permanent `k · offset / c` velocity (≈51 pt/s at our 2–3 pt residual).
+/// That is above `settleVelocity`, so the settle test can never pass — the
+/// bug behind the panel snapping a few pixels toward the notch corner
+/// seconds after the hover expansion had already looked finished.
+struct IslandFrameSpring {
+    /// x, y, width, height of the window, in screen points.
+    var position: SIMD4<Double>
+    /// pt/s, per component.
+    var velocity: SIMD4<Double>
+    /// x, y, width, height the run is heading to.
+    var target: SIMD4<Double>
+    /// Expand is underdamped (a pop out of the notch); collapse is
+    /// critically damped.
+    var expanding: Bool
+
+    init(position: SIMD4<Double>, target: SIMD4<Double>, expanding: Bool) {
+        self.position = position
+        self.velocity = .zero
+        self.target = target
+        self.expanding = expanding
+    }
+
+    /// One vsync step of semi-implicit Euler: velocity integrates
+    /// acceleration, position integrates the new velocity. Stable for our
+    /// stiffness range and cheap enough to run inside a display-link tick.
+    mutating func step(dt: TimeInterval) {
+        let (k, c) = IslandMotion.spring(expanding: expanding)
+        let accel = -k * (position - target) - c * velocity
+        velocity += accel * dt
+        position += velocity * dt
+    }
+
+    /// The rect to hand to `setFrame`. Any rounding AppKit does to this is
+    /// confined to what is painted; `position` stays continuous.
+    var frame: NSRect {
+        NSRect(x: position.x, y: position.y, width: position.z, height: position.w)
+    }
+
+    /// True once the run is close enough and slow enough to end. Both
+    /// thresholds must be clear: distance alone would stop the spring at
+    /// the instant it passes the target mid-flight, and velocity alone
+    /// would stop a run that is momentarily still but far away.
+    var hasSettled: Bool {
+        simd_distance(position, target) < IslandMotion.settleDistance
+            && simd_length(velocity) < IslandMotion.settleVelocity
     }
 }

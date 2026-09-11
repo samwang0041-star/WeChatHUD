@@ -273,14 +273,24 @@ class FloatingPanel: NSPanel {
     /// retargets: when a new target arrives mid-flight we swap `target`
     /// and keep integrating from the live velocity, so the trajectory
     /// bends smoothly instead of stopping and restarting from zero.
+    ///
+    /// The numeric state lives in `IslandFrameSpring`, which integrates its
+    /// own continuous position rather than re-reading the window's frame.
+    /// Re-reading would re-inject AppKit's whole-point quantization every
+    /// tick and freeze the run short of its target — see that type's `step`
+    /// for the mechanism behind the post-expansion "flash + shift".
     private struct SpringRun {
-        var target: NSRect
-        var velocity: SIMD4<Double>   // x, y, w, h — pt per second
-        var expanding: Bool
+        var spring: IslandFrameSpring
+        /// Last display-link timestamp, for the per-tick `dt`.
         var lastTimestamp: CFTimeInterval
         /// Refreshed on retarget: the wedge cap protects a wedged run,
         /// not a healthy one that just received a new goal.
         var startedWallClock: Date
+
+        /// The goal as an `NSRect`, read from the spring's own target
+        /// components so the integrator and the window can never disagree
+        /// about where the run is heading.
+        var target: NSRect { FloatingPanel.rect(from: spring.target) }
     }
 
     private static func components(of rect: NSRect) -> SIMD4<Double> {
@@ -367,8 +377,11 @@ class FloatingPanel: NSPanel {
             // spring bends toward the new goal without a velocity zero.
             // The wedge clock restarts too — it exists to unstick a run
             // that never settles, not to truncate a healthy retarget.
-            run.target = target
-            run.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+            run.spring.target = FloatingPanel.components(of: target)
+            // Re-seed the integrator from the live frame so a retarget can
+            // never inherit a stale position.
+            run.spring.position = FloatingPanel.components(of: frame)
+            run.spring.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
             run.startedWallClock = Date()
             animationRun = run
             return
@@ -377,9 +390,11 @@ class FloatingPanel: NSPanel {
         onFrameAnimationStarted?()
 
         animationRun = SpringRun(
-            target: target,
-            velocity: .zero,
-            expanding: IslandMotion.isExpanding(from: self.frame, to: target),
+            spring: IslandFrameSpring(
+                position: FloatingPanel.components(of: frame),
+                target: FloatingPanel.components(of: target),
+                expanding: IslandMotion.isExpanding(from: self.frame, to: target)
+            ),
             lastTimestamp: 0,
             startedWallClock: Date()
         )
@@ -437,17 +452,12 @@ class FloatingPanel: NSPanel {
             : 1.0 / 60.0
         run.lastTimestamp = mediaTime
 
-        // Semi-implicit Euler: velocity integrates acceleration, position
-        // integrates the new velocity. Stable for our stiffness range and
-        // cheap enough to run inside a vsync tick.
-        let (k, c) = IslandMotion.spring(expanding: run.expanding)
-        var pos = FloatingPanel.components(of: frame)
-        let targetV = FloatingPanel.components(of: run.target)
-        let accel = -k * (pos - targetV) - c * run.velocity
-        run.velocity += accel * dt
-        pos += run.velocity * dt
+        // One vsync step of the frame spring. The spring integrates its own
+        // continuous position — never the window's read-back frame, which
+        // AppKit has already rounded to whole points (see `SpringRun`).
+        run.spring.step(dt: dt)
 
-        let stepped = FloatingPanel.rect(from: pos)
+        let stepped = run.spring.frame
         // `display: false` — the window server composites the resized
         // window at its own display cycle. Forcing a synchronous redraw
         // here re-laid-out the whole SwiftUI tree inside the tick, which is
@@ -467,10 +477,11 @@ class FloatingPanel: NSPanel {
                                             cost * 1000, stepped.width, stepped.height))
         }
 
-        let settled = simd_distance(pos, targetV) < IslandMotion.settleDistance
-            && simd_length(run.velocity) < IslandMotion.settleVelocity
+        // The wedge cap is a safety net for a run that cannot converge; a
+        // healthy run settles well inside it (measured ~0.44 s expand,
+        // ~0.50 s collapse).
         let wedged = Date().timeIntervalSince(run.startedWallClock) > IslandMotion.maxRunDuration
-        if settled || wedged {
+        if run.spring.hasSettled || wedged {
             finishFrameAnimation()
         }
     }
