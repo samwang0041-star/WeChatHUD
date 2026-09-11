@@ -72,12 +72,18 @@ final class InsightStore: ObservableObject {
 
         repairStaleDisplayNames(store: store, reader: reader)
 
-        let result = dataLoader.load(
-            store: store,
-            reader: reader,
-            replyDebtItems: replyDebtItems,
-            window: selectedWindow,
-            scope: selectedScope
+        // `load` walks every `message_*.db` table row by row — measured on this
+        // machine: 4648 table/shard pairs, ~288k rows, ~550 MB of page cache,
+        // and the "全部" window applies no time filter at all. Running it on the
+        // main actor froze the window on every open, every window switch, and
+        // once per completed scan (`onChange(of: monitor.stats.lastSyncAt)`).
+        // The load is read-only against lock-protected stores; only the
+        // published writes below stay on the main actor.
+        let window = selectedWindow
+        let scope = selectedScope
+        let result = await Self.loadInBackground(
+            loader: dataLoader, store: store, reader: reader,
+            replyDebtItems: replyDebtItems, window: window, scope: scope
         )
 
         guard let result else {
@@ -120,6 +126,63 @@ final class InsightStore: ObservableObject {
                                           isGroup: isGroup, category: category, date: date, reader: reader)
         detailStatsCache[key] = stats
         return stats
+    }
+
+    // MARK: - Day stats without the main actor
+
+    /// Detail stats for one calendar day, computed on a background executor.
+    ///
+    /// A single entry decodes that chat's whole day (`limit: Int.max`); the
+    /// sidebar asks for this once per row, so doing it inside SwiftUI body
+    /// evaluation meant hundreds of full-day reads on the main thread.
+    nonisolated static func computeDayStats(
+        requests: [(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory)],
+        date: Date,
+        reader: WeChatReader
+    ) async -> [String: ChatStatsData] {
+        await Task.detached(priority: .utility) {
+            let loader = InsightDataLoader()
+            var out: [String: ChatStatsData] = [:]
+            for request in requests {
+                if let stats = loader.statsForDay(
+                    chatUsername: request.username,
+                    chatName: request.displayName,
+                    isGroup: request.isGroup,
+                    category: request.category,
+                    date: date,
+                    reader: reader
+                ) {
+                    out[request.username] = stats
+                }
+            }
+            return out
+        }.value
+    }
+
+    /// Store finished day stats so the single-chat detail view can read them
+    /// synchronously from its body instead of re-reading the day itself.
+    func primeDayStats(_ stats: [String: ChatStatsData], date: Date) {
+        let dayStart = InsightDataLoader.dayRange(for: date).start
+        for (username, value) in stats {
+            detailStatsCache["\(username):\(dayStart)"] = value
+        }
+    }
+
+    /// Runs `InsightDataLoader.load` off the main actor. Kept as a single
+    /// `nonisolated` hop so the heavy call cannot accidentally be awaited in a
+    /// main-actor context.
+    nonisolated private static func loadInBackground(
+        loader: InsightDataLoader,
+        store: HUDStore,
+        reader: WeChatReader,
+        replyDebtItems: [ReplyDebtItem],
+        window: InsightTimeWindow,
+        scope: InsightScope
+    ) async -> InsightDataLoader.LoadResult? {
+        await Task.detached(priority: .userInitiated) {
+            loader.load(store: store, reader: reader, replyDebtItems: replyDebtItems,
+                        window: window, scope: scope)
+        }.value
     }
 
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {

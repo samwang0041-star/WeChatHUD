@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @testable import WeChatHUD
 
 final class NewSchemaTests: XCTestCase {
@@ -472,13 +473,25 @@ final class NewSchemaTests: XCTestCase {
 
     // MARK: - Whitelist Migration
 
-    func testWhitelistMigrationToContacts() {
-        try! store.addToWhitelist(username: "boss1", displayName: "王总", isGroup: false,
-                                  category: .work, attentionLevel: .vip)
-        try! store.addToWhitelist(username: "coworker1", displayName: "李四", isGroup: false,
-                                  category: .work, attentionLevel: .watch)
-        try! store.addToWhitelist(username: "friend1", displayName: "小红", isGroup: false,
-                                  category: .life, attentionLevel: .watch)
+    /// Constructs the real pre-migration state: whitelist rows written by an
+    /// older build, with no contacts rows.
+    ///
+    /// The previous version built its fixture with `addToWhitelist`, which
+    /// already writes the contacts row using exactly the rules the migration
+    /// applies. The migration's `getContact(...) == nil` guard was therefore
+    /// false for every entry and the loop was a no-op — the test could not fail,
+    /// and the upgrade path it claims to cover was never exercised.
+    func testWhitelistMigrationToContacts() throws {
+        try execMigrationFixture("""
+            INSERT INTO whitelist(username, display_name, is_group, category,
+                                  attention_level, added_at, auto_suggested)
+            VALUES ('boss1', '王总', '0', 'work', 'vip', 1, 0),
+                   ('coworker1', '李四', '0', 'work', 'watch', 1, 0),
+                   ('friend1', '小红', '0', 'life', 'watch', 1, 0),
+                   ('other1', '老同学', '0', 'other', 'watch', 1, 0);
+            """)
+        XCTAssertNil(store.getContact(username: "boss1"), "fixture must start without contacts rows")
+        XCTAssertEqual(store.getWhitelist().count, 4)
 
         store.migrateWhitelistToContacts()
 
@@ -486,6 +499,7 @@ final class NewSchemaTests: XCTestCase {
         XCTAssertNotNil(boss)
         XCTAssertEqual(boss?.attentionLevel, .vip)
         XCTAssertEqual(boss?.role, .colleague) // default for work category
+        XCTAssertEqual(boss?.displayName, "王总")
 
         let coworker = store.getContact(username: "coworker1")
         XCTAssertNotNil(coworker)
@@ -494,5 +508,42 @@ final class NewSchemaTests: XCTestCase {
         let friend = store.getContact(username: "friend1")
         XCTAssertNotNil(friend)
         XCTAssertEqual(friend?.role, .friend) // life → friend
+
+        XCTAssertEqual(store.getContact(username: "other1")?.role, .acquaintance)
+    }
+
+    /// The migration must not clobber a contact the user already configured.
+    func testWhitelistMigrationKeepsExistingContactRow() throws {
+        try store.upsertContact(
+            username: "boss1",
+            displayName: "王总",
+            attentionLevel: .vip,
+            role: .boss,
+            roleNote: "直属上级",
+            replyWindowMinutes: 15
+        )
+        try execMigrationFixture("""
+            INSERT INTO whitelist(username, display_name, is_group, category,
+                                  attention_level, added_at, auto_suggested)
+            VALUES ('boss1', '王总', '0', 'work', 'watch', 1, 0);
+            """)
+
+        store.migrateWhitelistToContacts()
+
+        XCTAssertEqual(store.getContact(username: "boss1")?.role, .boss)
+        XCTAssertEqual(store.getContact(username: "boss1")?.replyWindowMinutes, 15)
+    }
+
+    /// Writes rows with raw SQL so the fixture can represent a database from a
+    /// build that predates the contacts table's writers.
+    private func execMigrationFixture(_ sql: String) throws {
+        var error: UnsafeMutablePointer<Int8>?
+        let result = sqlite3_exec(store.rawDB, sql, nil, nil, &error)
+        defer { sqlite3_free(error) }
+        guard result == SQLITE_OK else {
+            throw NSError(domain: "NewSchemaTests", code: Int(result), userInfo: [
+                NSLocalizedDescriptionKey: error.map { String(cString: $0) } ?? "sqlite error"
+            ])
+        }
     }
 }

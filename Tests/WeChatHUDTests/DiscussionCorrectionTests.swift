@@ -69,4 +69,31 @@ final class DiscussionCorrectionTests: XCTestCase {
         XCTAssertEqual(DiscussionCorrection.hint(entries: entries, chatUsername: "peer"), "确认忽略；责任人改为对方")
         XCTAssertEqual(DiscussionCorrection.hint(entries: entries, chatUsername: "missing"), "暂无")
     }
+
+    /// The hint is meant to carry the *most recent* corrections from this chat.
+    /// `hint` sorted newest-first and then took `.suffix(limit)`, i.e. the
+    /// limit oldest rows — the opposite. With four entries and the default limit
+    /// of 8 the difference was invisible; with more entries than the limit it
+    /// fed the model the user's oldest feedback.
+    func testHintKeepsTheMostRecentCorrections() {
+        func feedback(_ id: Int64, action: String) -> AIFeedbackEntry {
+            AIFeedbackEntry(
+                id: id,
+                ts: Date(timeIntervalSince1970: TimeInterval(id)),
+                msgUID: "discussion_item:\(id)",
+                feedbackType: .falsePositive,
+                originalOutput: "{}",
+                userAction: action,
+                note: "peer"
+            )
+        }
+        // Ten corrections; only the newest two fit the limit.
+        let entries = (1...10).map { id in
+            feedback(Int64(id), action: id == 10 ? "marked_done" : "owner_corrected_theirs")
+        }
+
+        let hint = DiscussionCorrection.hint(entries: entries, chatUsername: "peer", limit: 2)
+
+        XCTAssertEqual(hint, "确认完成；责任人改为对方")
+    }
 }

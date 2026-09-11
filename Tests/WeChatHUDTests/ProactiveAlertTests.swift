@@ -262,6 +262,46 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertEqual(sends, 1)
     }
 
+    /// An overdue commitment stays overdue until the user resolves it, so its
+    /// alert needs its own quiet period: with the one-hour default it re-fired
+    /// every hour, forever, and consumed the shared 5/hour budget that the P0
+    /// and VIP rules need for new signals.
+    @MainActor
+    func testOverdueCommitmentDoesNotReAlertEveryHour() async {
+        let start = Date(timeIntervalSince1970: 5_000_000)
+        var current = start
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { current },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        let commitment = Commitment(
+            id: 1, msgUID: "late", chatUsername: "chat", chatName: "聊天",
+            content: "发报告", commitTo: "同事",
+            deadlineAt: start.addingTimeInterval(-3_600),
+            confidence: 0.9, status: .overdue, promptVersion: "v1",
+            createdAt: start, updatedAt: start
+        )
+
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"])
+
+        current = start.addingTimeInterval(3_600)
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"], "an unresolved commitment must not re-alert every hour")
+
+        current = start.addingTimeInterval(24 * 3_600 + 1)
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles.count, 2, "the daily reminder is still allowed")
+    }
+
     // MARK: - Rule 3: Burst messages
 
     func testBurstDetection() {

@@ -61,9 +61,22 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(template.contains("wechat_daily_report"))
     }
 
-    // MARK: - Live integration tests (skipped if endpoint unreachable)
+    // MARK: - Live integration tests (opt-in, skipped if endpoint unreachable)
+    //
+    // These were named `disabled_test…Live`, which XCTest does not collect at
+    // all: not run, not skipped, invisible in the report. Two of the four
+    // services therefore had no local coverage of any kind. They now follow the
+    // same opt-in gate as the other live acceptance tests
+    // (`WCHUD_LIVE_COMPANION_AI=1`) and skip cleanly when it is not set.
 
-    func disabled_testReplySuggesterLive() async throws {
+    private func requireLiveAIOptIn() throws {
+        guard ProcessInfo.processInfo.environment["WCHUD_LIVE_COMPANION_AI"] == "1" else {
+            throw XCTSkip("opt-in only: set WCHUD_LIVE_COMPANION_AI=1 to call the configured provider")
+        }
+    }
+
+    func testReplySuggesterLive() async throws {
+        try requireLiveAIOptIn()
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
@@ -89,7 +102,8 @@ final class AIServicesTests: XCTestCase {
         }
     }
 
-    func disabled_testWhitelistCategorizerLive() async throws {
+    func testWhitelistCategorizerLive() async throws {
+        try requireLiveAIOptIn()
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
@@ -113,7 +127,8 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(suggestion.shouldWhitelist, "boss giving work orders → should whitelist")
     }
 
-    func disabled_testGroupCatchupLive() async throws {
+    func testGroupCatchupLive() async throws {
+        try requireLiveAIOptIn()
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 
@@ -138,7 +153,8 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(summary.needsUserAction, "explicit @ should trigger needsUserAction=true")
     }
 
-    func disabled_testDailyRetrospectorLive() async throws {
+    func testDailyRetrospectorLive() async throws {
+        try requireLiveAIOptIn()
         let cfg = store.loadAIConfig()
         try await skipIfModelUnavailable(config: cfg)
 

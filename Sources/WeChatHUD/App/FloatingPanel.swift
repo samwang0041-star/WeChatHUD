@@ -204,7 +204,13 @@ class FloatingPanel: NSPanel {
     var displayScreen: DisplayScreen = .builtIn
 
     /// Resolve the target screen based on the displayScreen preference.
-    var targetScreen: NSScreen {
+    ///
+    /// Optional on purpose: `NSScreen.screens` is empty in clamshell mode with
+    /// no external display and momentarily during a hot-plug reconfiguration.
+    /// The old `?? NSScreen.screens[0]` therefore trapped on the launch path
+    /// (`AppDelegate` calls `positionAtTop()`), taking the whole app down for
+    /// a display event. Callers fall back to the panel's current frame.
+    var targetScreen: NSScreen? {
         let mapped = NSScreen.screens.map { screen -> (NSScreen, IslandScreenPolicy.Candidate) in
             let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
             let isBuiltIn = number.map { CGDisplayIsBuiltin(CGDirectDisplayID($0.uint32Value)) != 0 } ?? false
@@ -216,7 +222,7 @@ class FloatingPanel: NSPanel {
             ))
         }
         let picked = IslandScreenPolicy.pick(preference: displayScreen, screens: mapped.map(\.1))
-        return mapped.first(where: { $0.1 == picked })?.0 ?? NSScreen.main ?? NSScreen.screens[0]
+        return mapped.first(where: { $0.1 == picked })?.0 ?? NSScreen.main ?? NSScreen.screens.first
     }
 
     /// Cached geometry of the target screen's notch. Refreshed on
@@ -229,7 +235,13 @@ class FloatingPanel: NSPanel {
 
     /// Refresh `notch` from the current `targetScreen`. Cheap.
     func refreshNotchGeometry(caller: String = #function) {
-        notch = NotchGeometry.detect(on: targetScreen)
+        guard let screen = targetScreen else {
+            // No display attached. Keep the placeholder metrics so geometry
+            // math stays total; `positionAtTop`/animation are skipped below.
+            notch = NotchGeometry(hasRealNotch: false, notchWidth: 200, notchHeight: 32, notchCenterX: 0)
+            return
+        }
+        notch = NotchGeometry.detect(on: screen)
     }
 
     /// Position the panel with its top edge flush against the
@@ -241,16 +253,17 @@ class FloatingPanel: NSPanel {
     /// locked, so the animation visually "drops out" of the island.
     func positionAtTop() {
         refreshNotchGeometry()
+        guard let screen = targetScreen else { return }
         let panelWidth = frame.width
         let x = notch.notchCenterX - panelWidth / 2
-        let y = targetScreen.frame.maxY - frame.height
+        let y = screen.frame.maxY - frame.height
         setFrameOrigin(NSPoint(x: x, y: y))
         recordIslandScreenIfPreviewing()
     }
 
     private func recordIslandScreenIfPreviewing() {
         guard PreviewRuntime.isEnabled else { return }
-        let screen = targetScreen
+        guard let screen = targetScreen else { return }
         let payload: [String: Any] = [
             "screen": screen.localizedName,
             "hasRealNotch": notch.hasRealNotch,
@@ -358,7 +371,7 @@ class FloatingPanel: NSPanel {
         let newWidth = width ?? frame.width
         refreshNotchGeometry(caller: caller)
         let x = notch.notchCenterX - newWidth / 2
-        let y = targetScreen.frame.maxY - newHeight
+        let y = (targetScreen?.frame.maxY ?? frame.maxY) - newHeight
         let target = NSRect(x: x, y: y, width: newWidth, height: newHeight)
 
         // Already heading exactly there? Keep the spring in flight —
@@ -423,7 +436,7 @@ class FloatingPanel: NSPanel {
         // rate reads as jank next to the rest of the system UI.
         if let contentView, contentView.window != nil {
             let link = contentView.displayLink(target: self, selector: #selector(stepFrameAnimation(_:)))
-            let maxFPS = Double(targetScreen.maximumFramesPerSecond)
+            let maxFPS = Double(targetScreen?.maximumFramesPerSecond ?? 60)
             let ceiling = max(60, maxFPS)
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: Float(ceiling), preferred: Float(ceiling))
             link.add(to: .main, forMode: .common)
@@ -541,7 +554,7 @@ class FloatingPanel: NSPanel {
         refreshNotchGeometry()
         let newWidth = width ?? frame.width
         let x = notch.notchCenterX - newWidth / 2
-        let y = targetScreen.frame.maxY - newHeight
+        let y = (targetScreen?.frame.maxY ?? frame.maxY) - newHeight
         return NSRect(x: x, y: y, width: newWidth, height: newHeight)
     }
 

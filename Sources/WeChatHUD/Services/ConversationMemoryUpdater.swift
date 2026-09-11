@@ -21,15 +21,48 @@ actor ConversationMemoryUpdater {
         self.promptLoader = promptLoader
     }
 
-    /// Update conversation memories for the top `maxChats` whitelist
-    /// entries whose memory is older than `stalenessSeconds`.
+    /// Update conversation memories for up to `maxChats` whitelist entries
+    /// whose memory is older than `stalenessSeconds`, stalest first.
     /// Called after each scan and after autopilot sends.
     func updateStaleMemories(maxChats: Int = 5, stalenessSeconds: TimeInterval = 1800) async {
         guard await aiService.isConfigured() else { return }
         let whitelist = store.getWhitelist()
-        for entry in whitelist.prefix(maxChats) {
+        let stale = Self.staleChats(
+            whitelist: whitelist,
+            lastUpdated: { store.loadConversationMemory(chatUsername: $0)?.lastUpdated },
+            now: Date(),
+            maxChats: maxChats,
+            stalenessSeconds: stalenessSeconds
+        )
+        for entry in stale {
             await updateMemoryIfNeeded(chatUsername: entry.id, chatName: entry.displayName, stalenessSeconds: stalenessSeconds)
         }
+    }
+
+    /// The chats a memory refresh should touch, stalest first.
+    ///
+    /// `whitelist.prefix(maxChats)` used to truncate *before* the staleness
+    /// check inside `updateMemoryIfNeeded`, so the 6th whitelist entry onward
+    /// could never be chosen while the first five stayed fresh — their
+    /// conversation memory was never generated at all. Autopilot's proactive
+    /// path requires a memory (`guard let memory ... else { continue }`), so
+    /// proactive outreach was silently dead for those chats. Pure and
+    /// injectable so the selection rule itself is testable.
+    static func staleChats(
+        whitelist: [WhitelistEntry],
+        lastUpdated: (String) -> Date?,
+        now: Date,
+        maxChats: Int,
+        stalenessSeconds: TimeInterval
+    ) -> [WhitelistEntry] {
+        whitelist
+            .map { entry in
+                (entry: entry, updated: lastUpdated(entry.id) ?? .distantPast)
+            }
+            .filter { now.timeIntervalSince($0.updated) >= stalenessSeconds }
+            .sorted { $0.updated < $1.updated }
+            .prefix(max(0, maxChats))
+            .map(\.entry)
     }
 
     /// Update memory for a single chat if stale. Used by AutopilotService

@@ -40,4 +40,30 @@ final class AISettingsValidationTests: XCTestCase {
         XCTAssertTrue(AISettingsValidation.connectionFailure(URLError(.cannotConnectToHost)).contains("本地服务"))
         XCTAssertTrue(AISettingsValidation.connectionFailure(URLError(.timedOut)).contains("超时"))
     }
+
+    /// Every server rejection used to be reported as "check your API Key",
+    /// which contradicted the credential check that had just passed. The
+    /// guidance is now chosen from the HTTP status, without echoing the body.
+    func testRequestFailureGuidanceDistinguishesStatusCodes() {
+        let modelNotFound = AISettingsValidation.requestFailureGuidance(
+            #"HTTP 404: {"error":{"message":"model not found"}}"#
+        )
+        XCTAssertTrue(modelNotFound.contains("404"))
+        XCTAssertFalse(modelNotFound.contains("API Key"), "a wrong model name is not a credential problem")
+
+        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 429: slow down").contains("429"))
+        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 401: unauthorized").contains("API Key"))
+        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 500: oops").contains("500"))
+        XCTAssertFalse(
+            AISettingsValidation.requestFailureGuidance(#"HTTP 400: {"error":"bad params"}"#).contains("bad params"),
+            "server bodies must not be echoed — they can carry credentials or message text"
+        )
+        XCTAssertEqual(
+            AISettingsValidation.requestFailureGuidance("AI model is empty for provider deepseek"),
+            "请选择一个模型。"
+        )
+        XCTAssertTrue(
+            AISettingsValidation.requestFailureGuidance("something unexpected").contains("服务返回错误")
+        )
+    }
 }
