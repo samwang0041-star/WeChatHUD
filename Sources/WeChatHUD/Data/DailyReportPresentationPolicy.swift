@@ -228,7 +228,7 @@ enum DailyReportPresentationPolicy {
 
         // AI / local insight
         if let narrative = viewModel.narrative, !narrative.isEmpty {
-            lines.append("## 💡 \(viewModel.isAIEnhanced ? "AI 洞察" : "规则整理")")
+            lines.append("## 💡 \(viewModel.isAIEnhanced ? "AI 总结" : "规则整理")")
             lines.append(narrative)
             lines.append("")
         }

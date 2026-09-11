@@ -97,7 +97,7 @@ enum InsightRadar {
                 source: item.source,
                 title: item.what,
                 evidence: item.waitingHours > 0 ? "已等待 \(formatHours(item.waitingHours))" : nil,
-                reason: "简报从聊天里标出了一个需要确认的事项",
+                reason: "总结从聊天里标出了一个需要确认的事项",
                 actionLabel: chatUsername == nil ? "看处理建议" : "打开对话",
                 chatUsername: chatUsername,
                 route: chatUsername.map(InsightRadarFinding.Route.openChat) ?? .expandExplanation
@@ -216,7 +216,7 @@ enum InsightRadar {
     private static func isConcreteRadarSource(_ source: String) -> Bool {
         let text = source.trimmed.lowercased()
         guard !text.isEmpty else { return false }
-        let nonConcreteSources: Set<String> = ["全局", "系统", "简报", "未知", "无", "n/a", "null"]
+        let nonConcreteSources: Set<String> = ["全局", "系统", "简报", "总结", "未知", "无", "n/a", "null"]
         return !nonConcreteSources.contains(text)
     }
 

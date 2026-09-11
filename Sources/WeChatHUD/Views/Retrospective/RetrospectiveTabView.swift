@@ -23,7 +23,7 @@ struct RetrospectiveTabView: View {
             if let errorText {
                 messagePanel(
                     icon: "exclamationmark.triangle.fill",
-                    title: "复盘没有完成",
+                    title: "回顾没有完成",
                     detail: errorText,
                     tint: .orange
                 )
@@ -52,7 +52,7 @@ struct RetrospectiveTabView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("复盘")
+                Text("回顾结果")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(.white.opacity(0.94))
                 Text(statusLine)
@@ -105,10 +105,10 @@ struct RetrospectiveTabView: View {
                 .foregroundColor(.cyan.opacity(0.9))
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("还没有复盘结果")
+                Text("还没有回顾结果")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.white.opacity(0.9))
-                Text("点击“重新生成”，会从上次复盘之后的白名单对话里提取重点、待办和风险。第一次使用会默认复盘本周。")
+                Text("点“重新生成”后，会从上次回顾到现在、你关注的对话里提取重点、待办和风险。第一次使用默认回顾本周。")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.56))
                     .fixedSize(horizontal: false, vertical: true)
@@ -117,7 +117,7 @@ struct RetrospectiveTabView: View {
             Button {
                 runJob()
             } label: {
-                Label("生成本次复盘", systemImage: "sparkles")
+                Label("生成本次回顾", systemImage: "sparkles")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
@@ -176,7 +176,7 @@ struct RetrospectiveTabView: View {
 
             let summaryItems = run.summaryTop3.enumerated().map { ("重点 \($0.offset + 1)", $0.element) }
             if summaryItems.isEmpty, run.summaryRisk == nil, run.summaryMissed == nil {
-                placeholderLine("这次复盘没有提取到摘要。")
+                placeholderLine("这次回顾没有提取到摘要。")
             } else {
                 ForEach(summaryItems, id: \.0) { label, item in
                     summaryRow(label: label, text: item.text)
@@ -342,13 +342,13 @@ struct RetrospectiveTabView: View {
             let status = run.status == .partial ? "部分完成" : "已完成"
             return "\(status) · \(run.generatedAt.formatted(date: .abbreviated, time: .shortened))"
         }
-        return "从白名单对话生成工作复盘"
+        return "从你关注的对话生成回顾"
     }
 
     private var runningText: String {
         switch currentState {
         case .resolvingScope:
-            return "正在确定复盘范围"
+            return "正在确定回顾范围"
         case .screeningGroups:
             return "正在筛选相关群聊"
         case .analyzingChats(let progress, let total):
@@ -358,7 +358,7 @@ struct RetrospectiveTabView: View {
         case .detectingRedBanner:
             return "正在检查高风险待办"
         default:
-            return "正在生成复盘"
+            return "正在生成回顾"
         }
     }
 

@@ -121,7 +121,7 @@ actor AIBriefingGenerator {
 
     private func call(_ userPrompt: String) async -> ModelResponse {
         let trackID = "brief:\(UUID().uuidString.prefix(8))"
-        AIActivityTracker.shared.begin(trackID, label: "简报")
+        AIActivityTracker.shared.begin(trackID, label: "聊天总结")
         defer { AIActivityTracker.shared.end(trackID) }
 
         do {

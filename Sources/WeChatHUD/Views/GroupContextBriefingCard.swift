@@ -1,70 +1,8 @@
 import SwiftUI
 
-struct GroupContextBriefingButton: View {
-    @EnvironmentObject var monitor: ChatMonitor
-    @EnvironmentObject var panelState: PanelState
-
-    let notification: HUDNotification
-    let compact: Bool
-
-    init(notification: HUDNotification, compact: Bool = false) {
-        self.notification = notification
-        self.compact = compact
-    }
-
-    var body: some View {
-        let state = monitor.groupContextState(for: notification)
-
-        Button {
-            let target = !panelState.briefingExpanded
-            withMotion(CompanionMotion.spring) {
-                panelState.setBriefingExpanded(target)
-            }
-            if target {
-                monitor.loadGroupContextBriefing(for: notification)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if state.isLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.7)
-                }
-                Text(state.isLoading ? "分析中…" : "看看什么事")
-                    .font(.system(size: compact ? 10 : 9, weight: .semibold))
-                    .lineLimit(1)
-            }
-            .foregroundColor(.white.opacity(0.86))
-            .padding(.horizontal, compact ? 8 : 7)
-            .padding(.vertical, compact ? 4 : 3)
-            .background(buttonBackground(state: state))
-            .overlay(
-                RoundedRectangle(cornerRadius: compact ? 7 : 6, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-            )
-            .cornerRadius(compact ? 7 : 6)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(panelState.briefingExpanded ? "收起群聊上下文" : "看看什么事")
-    }
-
-    private func buttonBackground(state: GroupContextBriefingLoadState) -> Color {
-        if state.isLoading {
-            return Color.orange.opacity(0.22)
-        }
-        if let briefing = state.briefing {
-            return briefing.source == .ai
-                ? Color.accentColor.opacity(0.22)
-                : Color.white.opacity(0.12)
-        }
-        return Color.white.opacity(0.08)
-    }
-}
-
 /// The in-place context-briefing card, rendered inline by the surface
-/// that hosts the trigger button (notification banner below the action
-/// row, conversation detail inside the context section). Lives inside
-/// the panel's AX tree, unlike the removed anchored popover.
+/// that hosts the trigger (notification banner below the action row).
+/// Lives inside the panel's AX tree, unlike the removed anchored popover.
 struct GroupContextBriefingCard: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
@@ -103,7 +41,7 @@ struct GroupContextBriefingCard: View {
             Text(notification.chatName)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(.white.opacity(0.55))
-            Text("为什么 @ 你?")
+            Text("为什么 @ 你？")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(.white)
             Text("AI 解读 · 根据最近消息")
@@ -136,8 +74,14 @@ struct GroupContextBriefingCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
-                Button("查看完整上下文 >") {
+                Button {
                     panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("查看完整上下文")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
@@ -188,8 +132,9 @@ struct GroupContextBriefingCard: View {
             .buttonStyle(.plain)
 
             Button {
+                // onChange below is the single place that syncs panelState —
+                // calling setSnoozeMenuExpanded here too would double-fire it.
                 showSnooze.toggle()
-                panelState.setSnoozeMenuExpanded(showSnooze)
             } label: {
                 Label("稍后提醒", systemImage: "clock")
                     .font(.system(size: 13, weight: .medium))

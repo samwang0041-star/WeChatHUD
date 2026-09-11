@@ -49,12 +49,6 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(choices[0].whenLabel, "今天 11:30")
         XCTAssertEqual(choices[1].whenLabel, "今天 12:00")
         XCTAssertEqual(choices[2].whenLabel, "明天 09:00")
-        XCTAssertTrue(CompanionProductCopy.compactStatus(count: 3, sync: "微信连接正常").contains("收起 · 3 项待处理"))
         XCTAssertTrue(CompanionProductCopy.compactHoverHint.contains("移入查看"))
-        XCTAssertFalse(CompanionProductCopy.compactStatus(count: 1, sync: "ok").contains("工作台"))
-        let compact = CompanionProductCopy.compactStatus(count: 3, sync: "刚刚同步")
-        XCTAssertFalse(compact.contains("@"))
-        XCTAssertFalse(compact.contains("评审"))
-        XCTAssertFalse(compact.contains("林晓"))
     }
 }

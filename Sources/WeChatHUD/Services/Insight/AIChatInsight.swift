@@ -93,7 +93,7 @@ actor AIChatInsight {
                 auditRole: .contextAnalyzer,
                 promptVersion: "chat_insight_v3",
                 inputSummary: "[\(chatUsername)] \(prompt.prefix(100))",
-                trackLabel: "对话洞察"
+                trackLabel: "对话分析"
             ),
             decodeAs: ChatInsightResult.self
         )
@@ -182,7 +182,7 @@ actor AIChatInsight {
                 auditRole: .briefer,
                 promptVersion: "chat_insight_global_v2",
                 inputSummary: "[global briefing] \(prompt.prefix(100))",
-                trackLabel: "全局简报",
+                trackLabel: "全景总结",
                 enableRetry: false
             )
         )

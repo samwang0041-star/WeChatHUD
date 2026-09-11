@@ -193,7 +193,7 @@ struct ApprovalWorkspaceView: View {
         case .sent, .vipNotified: return "已发送"
         case .failed: return "发送失败"
         case .pending: return "待确认回复"
-        default: return action.rawValue
+        default: return "已记录"
         }
     }
 
@@ -257,7 +257,9 @@ struct ApprovalWorkspaceView: View {
                             .buttonStyle(.borderedProminent)
                             .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                         Button("保存修改") {
-                            receipt = "已保存草稿"
+                            receipt = monitor.saveAutopilotDraftReply(logId: selected.id, reply: editedReply)
+                                ? "已保存草稿"
+                                : "保存失败，修改仍保留在编辑框中，请重试。"
                         }
                         .buttonStyle(.bordered)
                         Button("取消本条") {

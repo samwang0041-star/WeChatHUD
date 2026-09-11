@@ -134,28 +134,6 @@ struct ConversationDetailView: View {
         panelState.previewSendReceipt = nil
     }
 
-    @ViewBuilder private var currentContextSection: some View {
-        if let item = monitor.inboxItems.first(where: { $0.chatUsername == chatUsername }) {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(item.isAtMention ? "这次 @ 你" : "这次找你", systemImage: item.isAtMention ? "at" : "bubble.left")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.blue)
-                if let summary = item.aiSummary, !summary.isEmpty {
-                    Text(summary).font(.system(size: 15, weight: .medium)).foregroundStyle(.white)
-                }
-                Text(item.preview).font(.system(size: 13)).foregroundStyle(.white.opacity(0.7)).textSelection(.enabled)
-                if let notification = item.contextNotification, notification.canExplainContext {
-                    GroupContextBriefingButton(notification: notification)
-                    if panelState.briefingExpanded {
-                        GroupContextBriefingCard(notification: notification)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-            }
-            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.04))
-        }
-    }
-
     // MARK: - Reply Composer
 
     private var replyComposer: some View {
@@ -251,10 +229,13 @@ struct ConversationDetailView: View {
                         needsOperationPermission = false
                         do {
                             try monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText, replacingDraftID: sourceSavedDraftID)
-                            sendResult = "已存为草稿"
-                            sendSucceeded = true
+                            // Saving a draft is not a send — the receipt goes
+                            // through the toast channel so the composer status
+                            // never reads "已发送" for text still in 草稿.
+                            sendSucceeded = false
                             sourceSavedDraftID = nil
                             replyText = ""
+                            panelState.showToast("已存为草稿")
                         } catch {
                             if case HUDStoreError.draftNotFound = error {
                                 sendResult = "这条草稿已被删除，回复内容仍保留"
@@ -263,7 +244,6 @@ struct ConversationDetailView: View {
                             }
                             sendSucceeded = false
                         }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { sendResult = nil }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -273,8 +253,10 @@ struct ConversationDetailView: View {
                     Button("复制") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(replyText, forType: .string)
+                        // Copy is not a send — marking sendSucceeded would flip
+                        // the composer status to "已发送" for unsent text.
                         sendResult = "回复已复制，发送前请核对收件人。"
-                        sendSucceeded = true
+                        sendSucceeded = false
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -423,65 +405,6 @@ struct ConversationDetailView: View {
         .padding(.vertical, 8)
     }
 
-    // MARK: - Conversation Memory Card
-
-    @ViewBuilder
-    private var memoryCard: some View {
-        if let memory = monitor.loadConversationMemory(chatUsername: chatUsername),
-           !memory.summary.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                sectionLabel("🧠 上下文记忆")
-                Text(memory.summary)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineSpacing(2)
-
-                if !memory.keyTopics.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(memory.keyTopics.prefix(5), id: \.self) { topic in
-                            Text(topic)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.white.opacity(0.6))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.08))
-                                .cornerRadius(3)
-                        }
-                    }
-                }
-
-                if !memory.sharedContext.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(memory.sharedContext.prefix(3), id: \.self) { ctx in
-                            Text(ctx)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(.white.opacity(0.6))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.15))
-                                .cornerRadius(3)
-                        }
-                    }
-                }
-
-                if !memory.moodTrend.isEmpty {
-                    HStack(spacing: 4) {
-                        Text("情绪:")
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
-                        Text(memory.moodTrend)
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.6))
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 6)
-            .padding(.bottom, 8)
-        }
-    }
-
     // MARK: - Messages
 
     private var messagesSection: some View {
@@ -532,47 +455,6 @@ struct ConversationDetailView: View {
         }
     }
 
-    // MARK: - Pending asks
-
-    private var pendingAsksSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            let asks = monitor.pendingAsksForChat(chatUsername)
-            sectionLabel("待处理事项", count: asks.count)
-            if asks.isEmpty {
-                Text("暂无待处理事项")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.35))
-                    .padding(.vertical, 4)
-            } else {
-                ForEach(asks, id: \.msgUID) { ask in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(ask.bucket == .main ? Color.orange : Color.white.opacity(0.3))
-                            .frame(width: 5, height: 5)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(ask.summary)
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.82))
-                                .lineLimit(1)
-                            HStack(spacing: 4) {
-                                Text(ask.senderName)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white.opacity(0.4))
-                                Text(ask.askType.rawValue)
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white.opacity(0.3))
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-
     // MARK: - Reply suggestions
 
     private var replySuggestionsSection: some View {
@@ -602,7 +484,7 @@ struct ConversationDetailView: View {
             if isLoadingSuggestions {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.6)
-                    Text("正在生成...")
+                    Text("正在生成…")
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.4))
                 }
@@ -653,58 +535,17 @@ struct ConversationDetailView: View {
             .padding(.horizontal, 10)
     }
 
-    private func sectionLabel(_ label: String, count: Int? = nil) -> some View {
+    private func sectionLabel(_ label: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundColor(.white.opacity(0.45))
-            if let count = count, count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.3))
-                    .monospacedDigit()
-            }
             Spacer()
         }
     }
 }
 
 // MARK: - Suggestion Row
-
-/// A single message row in the recent-messages section — hover to
-/// reveal copy action, long text expands on click.
-private struct MessageRow: View {
-    let msg: (sender: String, body: String)
-    @State private var expanded = false
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(msg.sender)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.6))
-                .frame(width: 60, alignment: .trailing)
-                .lineLimit(1)
-            Text(msg.body)
-                .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.82))
-                .lineLimit(expanded ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .onTapGesture { withMotion(CompanionMotion.ease(0.15)) { expanded.toggle() } }
-        .contextMenu {
-            Button("复制消息") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(msg.body, forType: .string)
-            }
-            Button("复制整行（含发送者）") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("\(msg.sender): \(msg.body)", forType: .string)
-            }
-        }
-    }
-}
 
 /// A single AI reply suggestion — hover-highlighted, tap to adopt into
 /// the composer, copy button with green checkmark feedback.

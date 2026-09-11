@@ -153,6 +153,10 @@ struct AssistantTodayView: View {
         }
     }
 
+    private func collapsedSummary(_ summary: String) -> String {
+        summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
+    }
+
     private func snooze(_ item: InboxItem, until: Date) {
         guard monitor.snoozeInboxItem(item, until: until) else { return }
         snoozeReceipt = CompanionProductCopy.snoozeReceipt(until: until)
@@ -325,7 +329,7 @@ struct AssistantTodayView: View {
             }
             .buttonStyle(.plain)
 
-            Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : String(item.aiSummary!.prefix(28))) : item.preview)
+            Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : collapsedSummary(item.aiSummary!)) : item.preview)
                 .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
                 .lineSpacing(4).textSelection(.enabled).lineLimit(expanded ? 6 : 1)
 
@@ -337,10 +341,6 @@ struct AssistantTodayView: View {
                             Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
                         }
                         Spacer(minLength: 8)
-                        Button("查看原文") { expandedID = item.id }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(CompanionPalette.jade)
                     }
                     .padding(12)
                     .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

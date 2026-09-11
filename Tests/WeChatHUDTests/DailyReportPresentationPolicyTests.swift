@@ -149,7 +149,7 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         let md = DailyReportPresentationPolicy.markdown(for: report, viewModel: vm)
 
         XCTAssertTrue(md.contains("## 💡 规则整理"))
-        XCTAssertFalse(md.contains("## 💡 AI 洞察"))
+        XCTAssertFalse(md.contains("## 💡 AI 总结"))
     }
 
     func testActionInsightsExposedThroughViewModel() {

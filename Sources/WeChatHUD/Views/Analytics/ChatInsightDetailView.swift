@@ -537,7 +537,7 @@ struct ChatInsightDetailView: View {
                     Image(systemName: "person.crop.circle")
                         .font(.system(size: 9))
                         .foregroundColor(.blue)
-                    Text("你: \(involvement)")
+                    Text("你：\(involvement)")
                         .font(.system(size: 10))
                         .foregroundColor(.blue)
                 }
@@ -547,7 +547,7 @@ struct ChatInsightDetailView: View {
                     Image(systemName: "link")
                         .font(.system(size: 9))
                         .foregroundColor(.purple)
-                    Text("也在: \(cross.joined(separator: ", "))")
+                    Text("也在：\(cross.joined(separator: ", "))")
                         .font(.system(size: 10))
                         .foregroundColor(.purple)
                 }

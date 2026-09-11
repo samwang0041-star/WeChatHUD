@@ -19,7 +19,7 @@ final class InsightCoordinator: ObservableObject {
     @Published var globalBriefing: GlobalBriefing? = nil
     /// True while insight analysis is running.
     @Published var insightLoading: Bool = false
-    /// Insight progress: "正在分析 3/12..."
+    /// Insight progress: "正在分析 3/12…"
     @Published var insightProgress: String = ""
     /// Insight progress fraction 0-1
     @Published var insightProgressFraction: Double = 0
@@ -69,7 +69,7 @@ final class InsightCoordinator: ObservableObject {
         requestVersions[chatUsername] = request
         chatInsightLoading.insert(chatUsername)
         chatInsightErrors[chatUsername] = nil
-        insightProgress = "正在分析单聊..."
+        insightProgress = "正在分析单聊…"
 
         defer {
             if requestVersions[chatUsername] == request {
@@ -126,7 +126,7 @@ final class InsightCoordinator: ObservableObject {
         }
 
         insightLoading = true
-        insightProgress = "正在准备..."
+        insightProgress = "正在准备…"
         insightProgressFraction = 0
 
         let whitelist = store.getWhitelist()
@@ -152,7 +152,7 @@ final class InsightCoordinator: ObservableObject {
             // Cooperative cancellation
             guard !Task.isCancelled else { break }
 
-            insightProgress = "正在分析 \(i + 1)/\(total) \(entry.displayName)..."
+            insightProgress = "正在分析 \(i + 1)/\(total) \(entry.displayName)…"
             insightProgressFraction = Double(i) / Double(max(total, 1))
 
             if let result = await chatInsightService.analyzeEntry(
@@ -177,7 +177,7 @@ final class InsightCoordinator: ObservableObject {
             return
         }
 
-        insightProgress = "正在生成整体简报..."
+        insightProgress = "正在生成整体总结…"
         insightProgressFraction = 0.95
 
         // Global briefing

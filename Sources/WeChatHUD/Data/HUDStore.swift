@@ -2790,6 +2790,10 @@ final class HUDStore: ObservableObject {
         try exec("UPDATE autopilot_log SET action=? WHERE id=?", params: [action.rawValue, String(id)])
     }
 
+    func updateAutopilotLogReply(id: Int64, reply: String) throws {
+        try exec("UPDATE autopilot_log SET generated_reply=? WHERE id=?", params: [reply, String(id)])
+    }
+
     func markAutopilotLogSent(id: Int64) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?", params: [String(now), String(id)])

@@ -281,7 +281,13 @@ struct SyncSettingsView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ready ? CompanionPalette.jade : .secondary)
                 if let actionTitle, let action {
-                    Button("\(actionTitle) >", action: action)
+                    Button(action: action) {
+                        HStack(spacing: 3) {
+                            Text(actionTitle)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                    }
                         .buttonStyle(.plain)
                         .foregroundStyle(CompanionPalette.jade)
                         .font(.system(size: 12, weight: .medium))

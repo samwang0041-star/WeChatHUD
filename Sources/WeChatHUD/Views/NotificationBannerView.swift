@@ -18,7 +18,7 @@ struct NotificationBannerView: View {
     /// text on each resize step was the stutter in the banner transition.
     private var bannerWidth: CGFloat {
         let notchWidth = (NSApp.delegate as? AppDelegate)?.panel?.notch.notchWidth ?? 200
-        return max(IslandChrome.notificationMinWidth, notchWidth + 240)
+        return IslandNotificationLayout.panelWidth(notchWidth: notchWidth)
     }
 
     var body: some View {
@@ -55,26 +55,31 @@ struct NotificationBannerView: View {
 
     private var notificationSurface: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+            // One-line brand strip: a transient banner's top edge is its
+            // most expensive real estate, so identity compresses to a
+            // single row instead of a two-line block.
+            HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(CompanionPalette.islandMint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(CompanionProductCopy.brandName)
-                        .font(.system(size: 16, weight: .semibold))
-                    Text(CompanionProductCopy.brandPromise)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.45))
-                        .lineLimit(2)
-                }
+                Text(CompanionProductCopy.brandName)
+                    .font(.system(size: 13, weight: .semibold))
+                Text("·")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.25))
+                Text(CompanionProductCopy.brandPromise)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .lineLimit(1)
                 Spacer(minLength: 4)
                 closeButton
             }
 
             HStack(alignment: .top, spacing: 10) {
-                Circle()
-                    .fill(CompanionPalette.jade)
-                    .frame(width: 36, height: 36)
-                    .overlay(Image(systemName: "person.fill").font(.system(size: 14)).foregroundStyle(.white))
+                // Same avatar vocabulary as the inbox rows — the first
+                // character of the chat name — instead of a generic
+                // person glyph that can't tell a group from a contact.
+                CompanionAvatar(name: notification.chatName, size: 36)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
                         .font(.system(size: 15, weight: .semibold))
@@ -86,13 +91,13 @@ struct NotificationBannerView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 4)
-                Button("原文") {
+                Button("查看对话") {
                     panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(CompanionPalette.islandMint)
-                .accessibilityLabel("查看原文")
+                .accessibilityLabel("查看对话")
             }
 
             HStack(spacing: 8) {
@@ -154,13 +159,15 @@ struct NotificationBannerView: View {
     }
 
     private var snoozeButton: some View {
+        // onChange below is the single place that syncs panelState —
+        // calling setSnoozeMenuExpanded here too would double-fire it.
         Button {
             showSnooze.toggle()
-            panelState.setSnoozeMenuExpanded(showSnooze)
         } label: {
             Label("稍后提醒", systemImage: "clock")
         }
         .buttonStyle(BannerChromeStyle(emphasized: showSnooze))
+        .help("稍后提醒")
         .accessibilityHint("打开稍后提醒时间")
         .onChange(of: showSnooze) { _, isOpen in
             panelState.setSnoozeMenuExpanded(isOpen)
@@ -207,17 +214,5 @@ private struct BannerChromeStyle: ButtonStyle {
                     : Color.white.opacity(configuration.isPressed ? 0.22 : 0.10)
             )
             .clipShape(Capsule())
-    }
-}
-
-private struct BannerPrimaryStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        BannerChromeStyle(emphasized: true).makeBody(configuration: configuration)
-    }
-}
-
-private struct BannerActionStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        BannerChromeStyle(emphasized: false).makeBody(configuration: configuration)
     }
 }

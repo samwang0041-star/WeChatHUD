@@ -196,7 +196,9 @@ enum CompactIslandPolicy {
         case .working(.syncing):
             return "正在同步微信。移入查看，平时不打扰。"
         case .waiting(let count):
-            return "收起 · \(count) 项待处理。移入查看，平时不打扰。"
+            // "收起" is internal state vocabulary — a spoken/tooltip
+            // label should just say what's inside.
+            return "\(count) 项待处理。移入查看，平时不打扰。"
         case .notices(let count):
             return "有 \(count) 条群里的新消息。移入查看，平时不打扰。"
         case .quiet:

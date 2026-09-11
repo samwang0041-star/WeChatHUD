@@ -1210,13 +1210,15 @@ actor AutopilotService {
         sensitiveKeywords: [String]
     ) -> String? {
         if risk != .low {
-            return "风险等级为 \(risk.rawValue)"
+            return "风险等级为 \(risk.label)"
         }
         let dangerousReasonCodes: Set<String> = [
             "money", "decision", "needs_user_judgment", "media", "unclear", "style_low_confidence"
         ]
         if let reasonCode, dangerousReasonCodes.contains(reasonCode) {
-            return "reason_code=\(reasonCode)"
+            // This string lands in the pending-send queue's "需人工确认"
+            // line — the raw code would leak English jargon into the UI.
+            return Self.safetyHoldLabel(for: reasonCode)
         }
         guard !sensitiveKeywords.isEmpty else { return nil }
         let haystack = "\(triggerText)\n\(replyText ?? "")".lowercased()
@@ -1224,6 +1226,19 @@ actor AutopilotService {
             return "命中敏感词「\(keyword)」"
         }
         return nil
+    }
+
+    /// User-facing label for an AI reason_code (autopilot_reply_v4 schema).
+    nonisolated private static func safetyHoldLabel(for reasonCode: String) -> String {
+        switch reasonCode {
+        case "money": return "涉及转账或金钱内容"
+        case "decision": return "需要本人做决定"
+        case "needs_user_judgment": return "需要本人判断"
+        case "media": return "包含图片等媒体内容"
+        case "unclear": return "消息意图不明确"
+        case "style_low_confidence": return "回复风格把握不足"
+        default: return "命中安全检查"
+        }
     }
 
     // MARK: - Proactive messaging

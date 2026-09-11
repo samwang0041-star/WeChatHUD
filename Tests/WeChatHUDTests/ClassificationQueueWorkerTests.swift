@@ -13,8 +13,13 @@ final class ClassificationQueueWorkerTests: XCTestCase {
         }
         // Use the detected account path only for the account-change guard. No keys
         // are loaded, so no real WeChat databases can be decrypted/read by this test.
+        // The fallback directory must exist: a missing dbDir reads as an account
+        // switch, which makes the worker bail before ever consulting the model.
+        let dbDir = WeChatReader.autoDetectDBDir()
+            ?? NSTemporaryDirectory() + "classification-worker-\(UUID())/db_storage"
+        try? FileManager.default.createDirectory(atPath: dbDir, withIntermediateDirectories: true)
         let reader = WeChatReader(keysPath: "/nonexistent/test-keys.json",
-                                  dbDir: WeChatReader.autoDetectDBDir() ?? "/tmp/test_me/db_storage", cacheStrategy: .memory)
+                                  dbDir: dbDir, cacheStrategy: .memory)
         let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: config))
         let ai = MockAIService()
         await ai.setConfig(config)

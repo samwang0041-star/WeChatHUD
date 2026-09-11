@@ -2,25 +2,21 @@ import XCTest
 @testable import WeChatHUD
 
 final class FirstLaunchGuideTests: XCTestCase {
-    func testWelcomeTellsANewUserWhatTheProductDoesAndWillNotDo() {
-        XCTAssertEqual(FirstLaunchGuide.productName, "不漏事")
-        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("该回"))
-        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("本机"))
-        XCTAssertTrue(FirstLaunchGuide.neverAutoSend.contains("不会替你发送"))
-        XCTAssertTrue(FirstLaunchGuide.welcomeNeeds.contains { $0.contains("登录微信") })
-        XCTAssertEqual(FirstLaunchGuide.welcomeCapabilities.count, 3)
+    /// The two-page onboarding contract: connect WeChat, pick who to
+    /// follow, start. Step titles and CTAs stay in plain language.
+    func testOnboardingStepsStayInPlainLanguageWithASingleNextStep() {
         XCTAssertEqual(FirstLaunchGuide.stepTitles, ["连接微信", "选择关注", "开始使用"])
-        XCTAssertEqual(FirstLaunchGuide.contentPageCount, 2)
         XCTAssertEqual(FirstLaunchGuide.primaryCTA(forStep: 0), "下一步")
         XCTAssertEqual(FirstLaunchGuide.primaryCTA(forStep: 1), "开始使用")
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
         XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
-        assertNoFirstRunJargon(FirstLaunchGuide.productPitch)
-        assertNoFirstRunJargon(FirstLaunchGuide.neverAutoSend)
-        for capability in FirstLaunchGuide.welcomeCapabilities {
-            assertNoFirstRunJargon(capability.title)
-            assertNoFirstRunJargon(capability.detail)
+        for title in FirstLaunchGuide.stepTitles {
+            assertNoFirstRunJargon(title)
         }
+        assertNoFirstRunJargon(FirstLaunchGuide.contactsTitle)
+        assertNoFirstRunJargon(FirstLaunchGuide.contactsSubtitle)
+        assertNoFirstRunJargon(FirstLaunchGuide.contactsSkipHint)
+        assertNoFirstRunJargon(FirstLaunchGuide.contactsFooter)
     }
 
     func testConnectionCopyStaysInPlainLanguageAndKeepsASingleNextStep() {
