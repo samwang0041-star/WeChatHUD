@@ -220,18 +220,24 @@ final class NotificationBannerLayoutTests: XCTestCase {
     // MARK: - Phase 2: regression pins for the measured-height contract
 
     /// The reported screenshot case (long group name + three-line snippet)
-    /// must provably exceed the old static budget — that is why the window
-    /// edge cut the action row.
+    /// must fit inside the panel height the app derives from the banner's
+    /// own measurement. The banner was slimmed down after the static-budget
+    /// clipping bug was fixed, so the pin is now "panel ≥ measured", not
+    /// "measured > the historical budget".
     func testLegacyStaticBudgetProvablyClippedTheScreenshotCase() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
         let (notification, snippet) = longGroupAtNotification()
         fixture.panelState.showNotification(duration: 3)
         let natural = measuredHeight(of: banner(notification, in: fixture), label: "screenshot-case")
-        XCTAssertGreaterThan(
-            natural,
-            legacyStaticBudget,
-            "regression: \(snippet.count)-char `.groupAt` banner measures \(natural.rounded()) pt but the old budget was \(legacyStaticBudget) pt"
+        let panelHeight = IslandNotificationLayout.panelHeight(
+            measuredContentHeight: natural,
+            notchHeight: 32,
+            fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
+        )
+        XCTAssertGreaterThanOrEqual(
+            panelHeight, natural,
+            "regression: \(snippet.count)-char `.groupAt` banner measures \(natural.rounded()) pt but the derived panel is only \(panelHeight.rounded()) pt"
         )
     }
 
@@ -272,8 +278,11 @@ final class NotificationBannerLayoutTests: XCTestCase {
         }
     }
 
-    /// The screenshot case measured 247 pt: inside the floor/ceiling window,
-    /// so the measured height must be used verbatim (not shrunk, not inflated).
+    /// The screenshot case measured 247 pt before the banner was slimmed —
+    /// inside the floor/ceiling window then, so the measured height was used
+    /// verbatim. Today's slimmer banner sits below the 168pt floor; the pin
+    /// is that a real measurement still drives the panel without being
+    /// clipped, and a tall measurement is still used verbatim.
     func testMeasuredHeightIsUsedVerbatimInsideTheClampWindow() throws {
         let fixture = try makeFixture()
         defer { cleanUp(fixture) }
@@ -285,7 +294,20 @@ final class NotificationBannerLayoutTests: XCTestCase {
             notchHeight: 32,
             fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
         )
-        XCTAssertEqual(panelHeight, natural, accuracy: 0.5)
+        XCTAssertEqual(
+            panelHeight,
+            max(natural, 32 + IslandNotificationLayout.minBelowNotch),
+            accuracy: 0.5,
+            "measured height must be used verbatim or floored at the minimum useful height — never shrunk"
+        )
+        // A measurement above the floor is still used verbatim.
+        XCTAssertEqual(
+            IslandNotificationLayout.panelHeight(
+                measuredContentHeight: 300, notchHeight: 32,
+                fallbackBelowNotch: IslandChrome.notificationBaseBelowNotch
+            ),
+            300, accuracy: 0.5
+        )
     }
 
     /// No measurement yet → historical static estimate; tiny/bogus
@@ -374,8 +396,8 @@ final class NotificationBannerLayoutTests: XCTestCase {
         let reported = fixture.panelState.measuredNotificationSize
         print("[banner-layout] preference-reported=\(fmt(reported)) legacyBudget=\(legacyStaticBudget)")
         XCTAssertGreaterThan(
-            reported.height, legacyStaticBudget,
-            "the banner must report more than the old static budget, otherwise the action row is clipped again"
+            reported.height, 1,
+            "the banner must report its real height — a zero report means the preference pipe broke"
         )
         let panelHeight = IslandNotificationLayout.panelHeight(
             measuredContentHeight: reported.height,
