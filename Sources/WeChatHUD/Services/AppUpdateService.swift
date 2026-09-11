@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Security
 
 protocol AppUpdateHTTPClient: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
@@ -30,6 +31,9 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
     case bundleIdentityMismatch
     case destinationNotReplaceable
     case checksumMismatch
+    case unsignedArchive
+    case signatureMismatch
+    case signingIdentityUnavailable
     case replaceFailed
     case restartFailed(String)
 
@@ -61,6 +65,12 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
             return "请从完整的应用打开后再安装更新"
         case .checksumMismatch:
             return "安装包校验失败，已取消替换"
+        case .unsignedArchive:
+            return "安装包没有通过代码签名校验，已取消替换"
+        case .signatureMismatch:
+            return "安装包的签名与当前应用不一致，已取消替换"
+        case .signingIdentityUnavailable:
+            return "无法确认当前应用的签名身份，请到发布页手动下载新版"
         case .replaceFailed:
             return "未能替换当前应用，原应用仍可使用"
         case .restartFailed:
@@ -90,6 +100,12 @@ struct AppUpdateService {
     var fileManager: FileManager
     /// Tests install into temp folders. Production only replaces /Applications.
     var allowsNonApplicationDestination: Bool
+    /// Returns the downloaded app's Team ID, throwing when it is not validly
+    /// signed. Injectable so the download/replace tests can run without a
+    /// Developer ID-signed fixture; the real implementation is the default.
+    var signatureTeamIdentifier: @Sendable (URL) throws -> String?
+    /// Team ID of the running app, nil when this build carries none.
+    var runningTeamIdentifier: @Sendable () -> String?
 
     init(
         http: any AppUpdateHTTPClient = URLSessionAppUpdateClient(),
@@ -102,7 +118,13 @@ struct AppUpdateService {
             try AppUpdateUnzip.ditto(archive: archive, destination: destination)
         },
         fileManager: FileManager = .default,
-        allowsNonApplicationDestination: Bool = false
+        allowsNonApplicationDestination: Bool = false,
+        signatureTeamIdentifier: @escaping @Sendable (URL) throws -> String? = { url in
+            try AppUpdateSignature.teamIdentifier(ofAppAt: url)
+        },
+        runningTeamIdentifier: @escaping @Sendable () -> String? = {
+            AppUpdateSignature.runningTeamIdentifier()
+        }
     ) {
         self.http = http
         self.currentVersion = currentVersion
@@ -113,6 +135,8 @@ struct AppUpdateService {
         self.unzip = unzip
         self.fileManager = fileManager
         self.allowsNonApplicationDestination = allowsNonApplicationDestination
+        self.signatureTeamIdentifier = signatureTeamIdentifier
+        self.runningTeamIdentifier = runningTeamIdentifier
     }
 
     static func defaultUserAgent(version: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) -> String {
@@ -202,6 +226,7 @@ struct AppUpdateService {
 
         let incoming = try findApp(in: extract)
         try verifyIncomingApp(incoming, expectedVersion: offer.version)
+        try verifyIncomingSignature(of: incoming)
 
         try replace(destination: dest, with: incoming)
         return dest.standardizedFileURL
@@ -315,6 +340,26 @@ struct AppUpdateService {
         }
     }
 
+    /// Pin the downloaded app to this build's signing identity.
+    ///
+    /// Nothing else here proves who built the archive: `verifyIncomingApp` reads
+    /// bundle identity and version out of the bundle being installed, so a
+    /// tampered release satisfies them, and the optional `.sha256` sidecar
+    /// travels in the same release as the archive it validates (it detects a
+    /// truncated download, not a substituted release). The archive must
+    /// therefore be validly signed, and when this build carries a Team ID the
+    /// two must match. A build with no identity of its own cannot pin anything,
+    /// and refuses rather than accepting an unknown archive.
+    func verifyIncomingSignature(of app: URL) throws {
+        let incomingTeam = try signatureTeamIdentifier(app)
+        guard let runningTeam = runningTeamIdentifier() else {
+            throw AppUpdateError.signingIdentityUnavailable
+        }
+        guard incomingTeam == runningTeam else {
+            throw AppUpdateError.signatureMismatch
+        }
+    }
+
     func replace(destination dest: URL, with incoming: URL) throws {
         let parent = dest.deletingLastPathComponent()
         let backup = parent.appendingPathComponent(".\(dest.lastPathComponent).update-backup")
@@ -369,5 +414,52 @@ enum AppUpdateUnzip {
         guard process.terminationStatus == 0 else {
             throw AppUpdateError.invalidArchive
         }
+    }
+}
+
+/// Static code-signature checks for the self-updater.
+enum AppUpdateSignature {
+    /// Team identifier of the running process's code, or nil when this build
+    /// has no Developer ID signature (locally built or ad-hoc signed).
+    static func runningTeamIdentifier() -> String? {
+        var selfCode: SecCode?
+        guard SecCodeCopySelf([], &selfCode) == errSecSuccess, let selfCode else { return nil }
+        // SecCodeRef and SecStaticCodeRef are the same C struct
+        // (struct __SecCode); the signing-information accessor is only declared
+        // for the static variant, so reinterpret the reference.
+        return teamIdentifier(of: unsafeBitCast(selfCode, to: SecStaticCode.self))
+    }
+
+    /// Validates `app` as a static code object and returns its Team ID
+    /// (`nil` for an ad-hoc signature).
+    ///
+    /// `SecStaticCodeCheckValidity` verifies the signature over the main
+    /// executable and every sealed resource in the bundle, so an edited binary
+    /// or an injected component fails here even though the Info.plist still
+    /// looks right. `kSecCSCheckAllArchitectures` validates the universal
+    /// binary as a whole instead of one slice, and `kSecCSStrictValidate`
+    /// rejects a bundle that carries unsealed content where the signature says
+    /// there should be none.
+    static func teamIdentifier(ofAppAt url: URL) throws -> String? {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else {
+            throw AppUpdateError.unsignedArchive
+        }
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate)
+        guard SecStaticCodeCheckValidity(staticCode, flags, nil) == errSecSuccess else {
+            throw AppUpdateError.unsignedArchive
+        }
+        guard let team = teamIdentifier(of: staticCode), !team.isEmpty else { return nil }
+        return team
+    }
+
+    private static func teamIdentifier(of code: SecStaticCode) -> String? {
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any],
+              let team = dict[kSecCodeInfoTeamIdentifier as String] as? String else { return nil }
+        let trimmed = team.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
