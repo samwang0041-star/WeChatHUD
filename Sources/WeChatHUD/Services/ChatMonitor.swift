@@ -261,9 +261,6 @@ final class ChatMonitor: ObservableObject {
     lazy var dailyReportActionInsightGenerator: AIDailyReportActionInsightGenerator = {
         AIDailyReportActionInsightGenerator(aiService: aiService, store: store)
     }()
-    private lazy var briefingGenerator: AIBriefingGenerator = {
-        AIBriefingGenerator(store: store, aiService: aiService)
-    }()
     lazy var chatAnalyzer: ChatAnalyzer = {
         ChatAnalyzer(store: store, aiService: aiService)
     }()
@@ -2309,8 +2306,15 @@ final class ChatMonitor: ObservableObject {
 
     /// Generate reply suggestions for a reply debt item.
     func loadReplySuggestions(for item: ReplyDebtItem) async -> [AIReplySuggester.Suggestion] {
-        // Fetch style profile to make suggestions match user's writing style
-        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
+        // Fetch style profile to make suggestions match user's writing style.
+        // Autopilot-sent messages are excluded: they are the app's wording, not
+        // the user's, and without this filter the manual suggestions learn to
+        // imitate the bot — which then gets fed back as "the user's style" on
+        // the next pass.
+        let style = await styleProfiler.getProfile(
+            chatUsername: item.chatUsername,
+            excludeMsgUIDs: autopilotService?.autopilotSentMsgUIDs() ?? []
+        )
         let profile = store.getRelationshipProfile(username: item.chatUsername)
         let pendingAsk = store.loadPendingAsks(
             status: .pending,
@@ -2742,36 +2746,6 @@ final class ChatMonitor: ObservableObject {
     private func cleanSummaryCache() {
         let activeKeys = Set(inboxItems.map(\.generationKey)).union(handledItems.map(\.generationKey))
         summaryCache = summaryCache.filter { activeKeys.contains($0.key) }
-    }
-
-    /// Generate a structured AI briefing for an inbox item (situation + suggestion + replies).
-    /// Called when the user expands an inbox row. Returns nil on failure.
-    func loadBriefing(for item: InboxItem) async -> InboxBriefing? {
-        // Re-fetch the latest message from the reader to build full context
-        guard let latestMessage = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 1))?.first else {
-            return nil
-        }
-
-        let contactEntry = store.getContact(username: item.chatUsername)
-        let whitelistEntry = store.getWhitelistEntry(username: item.chatUsername)
-
-        let context = InboxContextBuilder.build(
-            chatUsername: item.chatUsername,
-            triggerMessage: latestMessage,
-            reader: reader,
-            store: store,
-            myUsername: reader.myUsername(),
-            contactEntry: contactEntry,
-            whitelistEntry: whitelistEntry
-        )
-
-        // Get style profile for personalized replies
-        let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
-        let styleHint = style.isEmpty
-            ? nil
-            : "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
-
-        return await briefingGenerator.generate(context, styleHint: styleHint)
     }
 
     // MARK: - Autopilot

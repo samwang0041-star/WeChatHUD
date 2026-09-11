@@ -160,6 +160,22 @@ struct MessageInfo: Identifiable, Codable {
         fmt.dateFormat = "MM-dd"
         return fmt.string(from: date)
     }
+
+    /// Absolute local timestamp with its weekday, for prompts that have to
+    /// interpret relative wording.
+    ///
+    /// `formatRelative` deliberately says "3小时前" — perfect for a human,
+    /// useless to a model that is being asked what "下周三" or "明天" means.
+    /// Chinese deadlines are mostly weekday- or day-relative, so the model
+    /// needs the message's own wall-clock date *and* which day of the week
+    /// that date was; without the weekday it cannot count to "下周三" at all.
+    static func formatAbsoluteForPrompt(_ ts: Int, timeZone: TimeZone = .current) -> String {
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.timeZone = timeZone
+        fmt.dateFormat = "yyyy年M月d日 EEEE HH:mm"
+        return fmt.string(from: Date(timeIntervalSince1970: Double(ts)))
+    }
 }
 
 // MARK: - Session (per-chat WeChat state)

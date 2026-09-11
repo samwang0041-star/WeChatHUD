@@ -15,10 +15,14 @@ import Foundation
 ///
 /// See `docs/superpowers/plans/2026-04-12-wechathud-ai-subsystem.md`.
 actor AIClassifier {
+    /// The prompt this classifier sends. Exposed so tests and the bundle
+    /// self-check validate the live prompt instead of a stale version string.
+    static let promptVersion = "classifier_v4"
+
     private let store: HUDStore
     private let aiService: any AIServiceProtocol
     private let promptLoader: PromptLoader
-    private let promptVersion: String = "classifier_v4"
+    private let promptVersion: String = AIClassifier.promptVersion
 
     struct RecipientContext {
         var myUsername: String = ""

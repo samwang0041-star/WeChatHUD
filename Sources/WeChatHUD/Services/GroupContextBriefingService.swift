@@ -59,6 +59,7 @@ actor GroupContextBriefingService {
 
     func explain(
         notification: HUDNotification,
+        readerNames: [String] = [],
         forceRefresh: Bool = false
     ) async -> GroupContextBriefingResult {
         // Keep the prompt resource name stable while invalidating summaries
@@ -122,7 +123,12 @@ actor GroupContextBriefingService {
 
         let payload: String
         do {
-            payload = try makePayload(notification: notification, contextMessages: contextWindow)
+            payload = try makePayload(
+                notification: notification,
+                contextMessages: contextWindow,
+                readerNames: readerNames,
+                now: Date()
+            )
         } catch {
             return GroupContextBriefingResult(
                 briefing: fallbackBriefing(notification: notification, contextMessages: contextWindow),
@@ -306,16 +312,27 @@ actor GroupContextBriefingService {
 
     private struct PromptPayload: Encodable {
         let chatName: String
+        /// Who the briefing is FOR. Without this the prompt asks "why was the
+        /// user mentioned" while only ever showing the @ token, so the model
+        /// had to guess whether "@老王" was the reader or somebody else.
+        let readerNames: [String]
         let targetSender: String
         let targetMessage: String
+        let now: String
         let contextMessages: [PromptMessage]
     }
 
     private struct PromptMessage: Encodable {
-        let timestamp: Int
+        /// Local wall-clock time with weekday, not a raw unix second count:
+        /// the model cannot interpret "刚刚发生了什么" from an integer, and
+        /// weekday wording ("周五的会上") is unrecoverable without it.
+        let time: String
         let sender: String
         let text: String
         let isTarget: Bool
+        /// True when this line was sent by the reader, so the model can tell
+        /// "someone asking me" from "me answering them".
+        let isReader: Bool
     }
 
     private struct ModelResponse {
@@ -344,18 +361,24 @@ actor GroupContextBriefingService {
 
     private func makePayload(
         notification: HUDNotification,
-        contextMessages: [MessageInfo]
+        contextMessages: [MessageInfo],
+        readerNames: [String],
+        now: Date
     ) throws -> String {
+        let readerKeys = Set(readerNames.map { $0.lowercased() })
         let payload = PromptPayload(
             chatName: notification.chatName,
+            readerNames: readerNames,
             targetSender: notification.senderName,
             targetMessage: notification.rawText,
+            now: MessageInfo.formatAbsoluteForPrompt(Int(now.timeIntervalSince1970)),
             contextMessages: contextMessages.map { msg in
                 PromptMessage(
-                    timestamp: msg.createTime,
+                    time: MessageInfo.formatAbsoluteForPrompt(msg.createTime),
                     sender: msg.senderName,
                     text: trim(AIService.sanitizeForAI(msg.text), limit: 140),
-                    isTarget: msg.id == notification.messageID
+                    isTarget: msg.id == notification.messageID,
+                    isReader: readerKeys.contains(msg.senderName.lowercased())
                 )
             }
         )

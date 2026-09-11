@@ -135,13 +135,18 @@ actor CommitmentTracker {
         let signals = CommitmentTracker.hasCommitmentSignal(yourMessage.text)
             ? "算法检测到承诺信号词" : "算法未检测到明显信号词"
 
+        // Absolute time with weekday, not "3小时前": the model has to decide
+        // what "下周三" and "明天" mean, and it can only do that if it knows
+        // the message's own calendar day. Relative wording was the only anchor
+        // before, which left every weekday deadline unresolvable.
         let contextText = contextMessages.map {
-            "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
+            "[\(MessageInfo.formatAbsoluteForPrompt($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
         }.joined(separator: "\n")
 
         let prompt = template
             .replacingOccurrences(of: "{recipient_name}", with: recipientName)
             .replacingOccurrences(of: "{recipient_role}", with: recipientRole.label)
+            .replacingOccurrences(of: "{message_time}", with: MessageInfo.formatAbsoluteForPrompt(yourMessage.createTime))
             .replacingOccurrences(of: "{commitment_signals}", with: signals)
             .replacingOccurrences(of: "{context_messages}", with: contextText)
             .replacingOccurrences(of: "{user_message}", with: AIService.sanitizeForAI(yourMessage.text))

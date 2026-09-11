@@ -87,6 +87,18 @@ struct ContextWindow {
 enum ContextWindowBuilder {
     typealias ContactLookup = (String) -> (AttentionLevel, ContactRole)?
 
+    /// Build a window around `target`.
+    ///
+    /// `allMessages` may arrive in EITHER order. `WeChatReader.getMessages`
+    /// defaults to `oldestFirst: false`, i.e. newest-first, while this builder
+    /// slices by *index* around the target (`targetIdx - lookBehind` …
+    /// `targetIdx + lookAhead`) and `serialize()` renders that slice in array
+    /// order — both of which only mean "before/after" and "chronological" if
+    /// the input is oldest-first. Callers that skipped the sort silently got a
+    /// reversed window: the reply generator asked for 15 messages behind the
+    /// target and received the newest few in reverse order, and the commitment
+    /// extractor saw its look-behind as look-ahead. Sorting here makes the
+    /// contract structural instead of a convention each caller has to remember.
     static func build(
         target: MessageInfo,
         role: ContextRole,
@@ -98,10 +110,16 @@ enum ContextWindowBuilder {
             return ContextWindow(messages: [], chatType: chatType, role: role)
         }
 
-        let targetIdx = allMessages.firstIndex(where: { $0.id == target.id }) ?? allMessages.count - 1
+        // Same tie-break as the reader's own `ORDER BY create_time, local_id`,
+        // so messages sharing a second keep their real sequence.
+        let ordered = allMessages.sorted {
+            $0.createTime == $1.createTime ? $0.localId < $1.localId : $0.createTime < $1.createTime
+        }
+
+        let targetIdx = ordered.firstIndex(where: { $0.id == target.id }) ?? ordered.count - 1
         let start = max(0, targetIdx - role.lookBehind)
-        let end = min(allMessages.count - 1, targetIdx + role.lookAhead)
-        let slice = Array(allMessages[start...end])
+        let end = min(ordered.count - 1, targetIdx + role.lookAhead)
+        let slice = Array(ordered[start...end])
 
         let annotated = slice.map { msg -> AnnotatedMessage in
             let lookup = contactLookup(msg.senderUsername)
