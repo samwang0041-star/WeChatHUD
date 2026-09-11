@@ -22,7 +22,7 @@ struct NotificationBannerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             if panelState.briefingExpanded, notification.canExplainContext {
                 briefingSurface
             } else {
@@ -30,9 +30,9 @@ struct NotificationBannerView: View {
             }
         }
         .foregroundColor(.white)
-        .padding(.horizontal, 20)
-        .padding(.top, notchHeight + 12)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 18)
+        .padding(.top, notchHeight + 10)
+        .padding(.bottom, 14)
         // Fixed layout width: the panel animates its width around this
         // content, and a width-stable subtree re-renders without
         // re-running text layout.
@@ -55,22 +55,20 @@ struct NotificationBannerView: View {
 
     private var notificationSurface: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // One-line brand strip: a transient banner's top edge is its
-            // most expensive real estate, so identity compresses to a
-            // single row instead of a two-line block.
             HStack(spacing: 6) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(CompanionPalette.islandMint)
-                Text(CompanionProductCopy.brandName)
-                    .font(.system(size: 13, weight: .semibold))
-                Text("·")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.25))
-                Text(CompanionProductCopy.brandPromise)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CompanionProductCopy.brandName)
+                        .islandBrand()
+                    if !CompanionProductCopy.brandPromise.isEmpty {
+                        Text(CompanionProductCopy.brandPromise)
+                            .islandMeta()
+                            .foregroundStyle(IslandInk.tertiary)
+                            .lineLimit(2)
+                    }
+                }
                 Spacer(minLength: 4)
                 closeButton
             }
@@ -79,14 +77,14 @@ struct NotificationBannerView: View {
                 // Same avatar vocabulary as the inbox rows — the first
                 // character of the chat name — instead of a generic
                 // person glyph that can't tell a group from a contact.
-                CompanionAvatar(name: notification.chatName, size: 36)
+                CompanionAvatar(name: notification.chatName, size: IslandMetrics.avatar)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
-                        .font(.system(size: 15, weight: .semibold))
+                        .islandRowTitle()
                         .fixedSize(horizontal: false, vertical: true)
                     Text("“\(notification.snippet)”")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundColor(.white)
+                        .islandDisplay()
+                        .foregroundColor(IslandInk.primary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -95,7 +93,7 @@ struct NotificationBannerView: View {
                     panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
+                .islandMeta()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("查看对话")
             }
@@ -113,7 +111,7 @@ struct NotificationBannerView: View {
                         panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
                     }
                 }
-                .buttonStyle(BannerChromeStyle(emphasized: !showSnooze))
+                .buttonStyle(IslandPillButtonStyle(emphasized: !showSnooze))
                 snoozeButton
                 Spacer(minLength: 0)
             }
@@ -136,8 +134,8 @@ struct NotificationBannerView: View {
                     }
                 } label: {
                     Label(notification.chatName, systemImage: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .islandRowTitle()
+                        .foregroundStyle(IslandInk.primary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("返回通知")
@@ -151,6 +149,7 @@ struct NotificationBannerView: View {
     private var closeButton: some View {
         Button { panelState.collapseAndYield() } label: {
             Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(IslandInk.tertiary)
                 .frame(width: 24, height: 22)
         }
         .buttonStyle(.plain)
@@ -166,7 +165,7 @@ struct NotificationBannerView: View {
         } label: {
             Label("稍后提醒", systemImage: "clock")
         }
-        .buttonStyle(BannerChromeStyle(emphasized: showSnooze))
+        .buttonStyle(IslandPillButtonStyle(emphasized: showSnooze))
         .help("稍后提醒")
         .accessibilityHint("打开稍后提醒时间")
         .onChange(of: showSnooze) { _, isOpen in
@@ -188,31 +187,12 @@ struct NotificationBannerView: View {
     }
 
     private func snooze(_ date: Date) {
-        let item = monitor.inboxItems.first(where: { $0.chatUsername == notification.chatUsername })
-            ?? notification.actionInboxItem()
+        let item = notification.actionInboxItem()
         if monitor.snoozeInboxItem(item, until: date) {
             panelState.islandSnoozeUndo = (item, date)
             panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
         }
         panelState.islandSurface = .inbox
         panelState.goExtended()
-    }
-}
-
-private struct BannerChromeStyle: ButtonStyle {
-    var emphasized: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 15, weight: emphasized ? .semibold : .medium))
-            .foregroundColor(.white.opacity(emphasized ? 1 : 0.9))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                emphasized
-                    ? CompanionPalette.jade.opacity(configuration.isPressed ? 0.82 : 1)
-                    : Color.white.opacity(configuration.isPressed ? 0.22 : 0.10)
-            )
-            .clipShape(Capsule())
     }
 }

@@ -10,19 +10,19 @@ extension Notification.Name {
     static let hudIslandNeedsResize = Notification.Name("WeChatHUD.IslandNeedsResize")
 }
 
-/// Customer-facing chrome for the companion window. First-run and everyday
-/// navigation should read like a chat helper, not an internal console.
+/// Customer-facing chrome. Keep labels short; no slogans.
 enum CompanionProductCopy {
-    static let brandName = "不漏事"
-    static let brandPromise = "安静地替你记住，需要你时把事情说清楚。"
-    static let sidebarFooter = "本机资料 · 按需使用 AI"
-    static let openCompanion = "打开不漏事"
-    static let collapseCompanion = "收起不漏事"
+    static let brandName = "WeChatHUD"
+    /// Intentionally empty. The product name is enough; no slogan under it.
+    static let brandPromise = ""
+    static let sidebarFooter = "本机数据"
+    static var openCompanion: String { "打开 \(brandName)" }
+    static var collapseCompanion: String { "收起 \(brandName)" }
     static let checkNewMessages = "查看新消息"
     static let timeReview = "按时间回顾"
     static let howToUse = "怎么用"
     static let checkUpdates = "检查更新…"
-    static let quitCompanion = "退出不漏事"
+    static var quitCompanion: String { "退出 \(brandName)" }
 
     static func companionToggleTitle(isOpen: Bool) -> String {
         isOpen ? collapseCompanion : openCompanion
@@ -110,6 +110,10 @@ enum CompanionProductCopy {
         "已安排在\(clockLabel(until, now: now, calendar: calendar)) 提醒"
     }
 
-    static let compactHoverHint = "移入查看，平时不打扰。"
+    static let compactHoverHint = "移入查看。"
     static let forbiddenChrome = ["工作台", "洞察", "简报", "白名单", "db_storage"]
+
+    static func compactStatus(count: Int, sync: String) -> String {
+        "收起 · \(count) 项待处理。\(compactHoverHint) \(sync)"
+    }
 }

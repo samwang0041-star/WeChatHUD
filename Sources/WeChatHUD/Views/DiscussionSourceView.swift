@@ -63,7 +63,7 @@ struct DiscussionSourceView: View {
             }
             HStack(spacing: 10) {
                 Button {
-                    WeChatLauncher.openChat(named: monitor.displayName(for: item.chatUsername))
+                    monitor.openWeChatChat(item.chatUsername)
                 } label: {
                     Label("在微信中查看", systemImage: "arrow.up.right")
                         .frame(maxWidth: .infinity)

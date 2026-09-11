@@ -345,6 +345,33 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("需要支持：暂无") == true)
     }
 
+    func testBuildSurfacesLiveDiscussionTodosAndDedupesTheSameAsk() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let now = Date()
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "wxid_boss", chatName: "林总", kind: .todo, owner: .mine,
+            content: "把预算单发过去", detail: nil, anchorMsgUID: "ask-local-2",
+            sourceTimestamp: Int(now.timeIntervalSince1970),
+            dueAt: now.addingTimeInterval(3_600), confidence: 0.9, promptVersion: "test"
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-local-2", chatUsername: "wxid_boss", chatName: "林总",
+            senderName: "林总", rawText: "把预算单发我", summary: "发送预算单",
+            askType: .sendFile, deadlineAt: now.addingTimeInterval(3_600),
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build()
+        XCTAssertEqual(report.metrics.pendingTodoCount, 1)
+        XCTAssertEqual(report.metrics.pendingAskCount, 0)
+        XCTAssertTrue(report.actions.contains { $0.type == .todo && $0.content == "把预算单发过去" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask })
+    }
+
     func testCommitmentFallbackDescribesRecordAndReviewWithoutClaimingCompletion() throws {
         let (store, path) = try makeTempStore()
         defer {
@@ -438,6 +465,84 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertEqual(report.metrics.replyDebtCount, 0)
         XCTAssertFalse(report.actions.contains { $0.content.contains("今天新增承诺") })
         XCTAssertTrue(report.wechatDraft?.contains("没有历史快照") == true)
+    }
+
+    func testTodayReportKeepsDueTodayAsksAndDropsOverdueReviewBacklog() throws {
+        let (store, path) = try makeTempStore()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        let now = Date()
+        let yesterday = now.addingTimeInterval(-86_400)
+        let twentyDaysAgo = now.addingTimeInterval(-20 * 86_400)
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-yesterday", chatUsername: "wxid_live", chatName: "同事",
+            senderName: "同事", rawText: "昨天那份还没给", summary: "补发昨天的材料",
+            askType: .sendFile, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-stale", chatUsername: "wxid_old", chatName: "旧事",
+            senderName: "旧事", rawText: "二十天前", summary: "过期请求",
+            askType: .info, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: twentyDaysAgo, updatedAt: twentyDaysAgo, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-overdue", chatUsername: "wxid_due", chatName: "同事",
+            senderName: "同事", rawText: "昨天截止", summary: "过期仍要交",
+            askType: .sendFile, deadlineAt: yesterday,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-today", chatUsername: "wxid_new", chatName: "同事",
+            senderName: "同事", rawText: "今天新建", summary: "今天的请求",
+            askType: .info, deadlineAt: nil,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-due-today", chatUsername: "wxid_today_due", chatName: "同事",
+            senderName: "同事", rawText: "今天截止", summary: "今天到期的材料",
+            askType: .sendFile, deadlineAt: now,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: yesterday, updatedAt: yesterday, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-review-today", chatUsername: "wxid_review", chatName: "班级群",
+            senderName: "老师", rawText: "明天带被子", summary: "待确认归属：明天带被子到校",
+            askType: .sendFile, deadlineAt: now,
+            confidence: 0.7, bucket: .review, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        let later = Calendar.current.date(byAdding: .day, value: 3, to: now)!
+        try store.upsertPendingAsk(PendingAsk(
+            id: 0, msgUID: "ask-created-today-due-later", chatUsername: "wxid_later", chatName: "同事",
+            senderName: "同事", rawText: "下周见面", summary: "确认下周见面时间",
+            askType: .info, deadlineAt: later,
+            confidence: 0.9, bucket: .main, status: .pending, promptVersion: "test",
+            createdAt: now, updatedAt: now, senderLevel: nil, senderRole: nil, urgency: nil
+        ))
+        XCTAssertTrue(try store.insertDiscussionItem(
+            chatUsername: "wxid_due", chatName: "同事", kind: .todo, owner: .mine,
+            content: "过期仍要交的我要做", detail: nil, anchorMsgUID: "discussion-overdue",
+            sourceTimestamp: Int(yesterday.timeIntervalSince1970),
+            dueAt: yesterday, confidence: 0.9, promptVersion: "test"
+        ))
+        let report = DailyReportBuilder(store: store, replyDebtItems: [], stats: HUDStats()).build(for: now, now: now)
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-yesterday" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-stale" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-overdue" })
+        XCTAssertFalse(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-review-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-due-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-today" })
+        XCTAssertTrue(report.actions.contains { $0.type == .ask && $0.relatedID == "ask-created-today-due-later" })
+        XCTAssertTrue(report.actions.contains { $0.type == .todo && $0.content == "过期仍要交的我要做" })
+        XCTAssertEqual(report.metrics.pendingAskCount, 3)
+        XCTAssertEqual(report.metrics.pendingTodoCount, 1)
     }
 
     private func makeTempStore() throws -> (HUDStore, String) {

@@ -52,12 +52,6 @@ final class ProactiveAlertEngine {
     /// of the view tree.
     var onTiersChanged: (([String: VIPAlertTier]) -> Void)?
 
-    /// Fires once per tier-advance with (chatName, tier) so UI can
-    /// show a transient banner (e.g. at T3: "张三已等你 2 小时"). The
-    /// engine's internal cache ensures this is NOT called repeatedly
-    /// for the same tier.
-    var onTierAdvanced: ((_ chatName: String, _ tier: VIPAlertTier) -> Void)?
-
     init(store: HUDStore) {
         self.store = store
         self.now = Date.init
@@ -191,7 +185,6 @@ final class ProactiveAlertEngine {
             // still bumps the system Notification Center list which
             // we don't want at this tier.
             lastPushedTier[item.chatUsername] = max(lastPushedTier[item.chatUsername] ?? .none, tier)
-            onTierAdvanced?(item.senderName, tier)
             return
         case .t3:
             title = "VIP 等你 2 小时了"
@@ -215,7 +208,6 @@ final class ProactiveAlertEngine {
                       currentTier >= tier else { return }
                 guard tier > (self.lastPushedTier[item.chatUsername] ?? .none) else { return }
                 self.lastPushedTier[item.chatUsername] = tier
-                self.onTierAdvanced?(item.senderName, tier)
             }
         )
     }

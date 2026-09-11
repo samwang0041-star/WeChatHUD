@@ -328,7 +328,7 @@ actor AutopilotService {
             }
 
             // Group messages and non-text messages are handled immediately (no batching needed)
-            if msg.isGroup {
+            if !config.shouldQueue(isGroup: msg.isGroup, isAtMention: msg.isAtMention) {
                 let entry = makeLogEntry(
                     sessionId: sid, msg: msg, action: .groupLogged,
                     reply: nil, confidence: 0, risk: .low, reasoning: "群消息仅记录"
@@ -674,8 +674,9 @@ actor AutopilotService {
                     reasoning: "已读不回延迟期间状态变更，跳过"
                 )
             }
+            let names = searchNames(for: representative.chatUsername, fallback: representative.chatName)
             await MainActor.run {
-                WeChatLauncher.openChat(named: representative.chatName)
+                WeChatLauncher.openChat(named: representative.chatName, searchNames: names)
             }
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .readNoReply,
@@ -746,8 +747,9 @@ actor AutopilotService {
                         reasoning: "避免重复缓兵之计延迟期间状态变更，跳过"
                     )
                 }
+                let names = searchNames(for: representative.chatUsername, fallback: representative.chatName)
                 await MainActor.run {
-                    WeChatLauncher.openChat(named: representative.chatName)
+                    WeChatLauncher.openChat(named: representative.chatName, searchNames: names)
                 }
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .readNoReply,
@@ -839,6 +841,17 @@ actor AutopilotService {
 
     // MARK: - Serial send queue
 
+    private func searchNames(for username: String, fallback: String) -> [String] {
+        _ = try? reader.refreshContactsIfChanged()
+        return WeChatOpenSearch.names(
+            liveRemark: reader.weChatRemark(for: username),
+            liveNick: reader.weChatNickName(for: username),
+            hudAlias: store.chatAlias(for: username),
+            stored: [fallback, store.getContact(username: username)?.displayName].compactMap { $0 },
+            username: username
+        )
+    }
+
     /// Serialize all sends through a single point. Only one send at a time.
     /// Includes clipboard save/restore, frontmost check, and post-send verification.
     /// On `verified == true`, fires `ledgerWrite` so ChatMonitor can append
@@ -873,7 +886,8 @@ actor AutopilotService {
             chatName: chatName,
             text: text,
             typingDelay: typingDelay,
-            sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey
+            sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey,
+            searchNames: searchNames(for: chatUsername, fallback: chatName)
         )
         guard uiResult.succeeded else {
             lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"

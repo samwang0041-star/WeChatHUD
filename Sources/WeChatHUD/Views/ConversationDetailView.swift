@@ -147,12 +147,12 @@ struct ConversationDetailView: View {
                     HStack(spacing: 10) {
                         if sendSucceeded {
                             Button("查看微信") {
-                                WeChatLauncher.openChat(named: chatName)
+                                monitor.openWeChatChat(chatUsername)
                             }
                             .buttonStyle(.link)
                         } else {
                             Button("去微信核对") {
-                                WeChatLauncher.openChat(named: chatName)
+                                monitor.openWeChatChat(chatUsername)
                             }
                             .buttonStyle(.link)
                             Button("复制回复") {

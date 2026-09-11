@@ -2,21 +2,25 @@ import XCTest
 @testable import WeChatHUD
 
 final class FirstLaunchGuideTests: XCTestCase {
-    /// The two-page onboarding contract: connect WeChat, pick who to
-    /// follow, start. Step titles and CTAs stay in plain language.
-    func testOnboardingStepsStayInPlainLanguageWithASingleNextStep() {
+    func testWelcomeTellsANewUserWhatTheProductDoesAndWillNotDo() {
+        XCTAssertEqual(FirstLaunchGuide.productName, "WeChatHUD")
+        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("待回"))
+        XCTAssertTrue(FirstLaunchGuide.productPitch.contains("本机"))
+        XCTAssertTrue(FirstLaunchGuide.neverAutoSend.contains("不会自动发消息"))
+        XCTAssertTrue(FirstLaunchGuide.welcomeNeeds.contains { $0.contains("登录微信") })
+        XCTAssertEqual(FirstLaunchGuide.welcomeCapabilities.count, 3)
         XCTAssertEqual(FirstLaunchGuide.stepTitles, ["连接微信", "选择关注", "开始使用"])
+        XCTAssertEqual(FirstLaunchGuide.contentPageCount, 2)
         XCTAssertEqual(FirstLaunchGuide.primaryCTA(forStep: 0), "下一步")
         XCTAssertEqual(FirstLaunchGuide.primaryCTA(forStep: 1), "开始使用")
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
         XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
-        for title in FirstLaunchGuide.stepTitles {
-            assertNoFirstRunJargon(title)
+        assertNoFirstRunJargon(FirstLaunchGuide.productPitch)
+        assertNoFirstRunJargon(FirstLaunchGuide.neverAutoSend)
+        for capability in FirstLaunchGuide.welcomeCapabilities {
+            assertNoFirstRunJargon(capability.title)
+            assertNoFirstRunJargon(capability.detail)
         }
-        assertNoFirstRunJargon(FirstLaunchGuide.contactsTitle)
-        assertNoFirstRunJargon(FirstLaunchGuide.contactsSubtitle)
-        assertNoFirstRunJargon(FirstLaunchGuide.contactsSkipHint)
-        assertNoFirstRunJargon(FirstLaunchGuide.contactsFooter)
     }
 
     func testConnectionCopyStaysInPlainLanguageAndKeepsASingleNextStep() {
@@ -67,7 +71,7 @@ final class FirstLaunchGuideTests: XCTestCase {
     func testPreparationErrorsAreMappedToSomethingACustomerCanDo() {
         XCTAssertEqual(
             FirstLaunchGuide.userFacingPreparationError("密钥提取工具不存在: /tmp/tool"),
-            "这次安装不完整，请重新安装助手后再试。"
+            "这次安装不完整，请重新安装 WeChatHUD 后再试。"
         )
         XCTAssertEqual(
             FirstLaunchGuide.userFacingPreparationError("提取的密钥均未通过数据库页 HMAC 校验"),
@@ -98,12 +102,48 @@ final class FirstLaunchGuideTests: XCTestCase {
             wechatConnected: true, hasTrackedConversations: true,
             aiConfigured: false, aiTested: false, searching: false
         )
+        XCTAssertEqual(noAI.title, "摘要和草稿还没准备好")
+        XCTAssertFalse(noAI.title.contains("暂时没有需要处理"))
         XCTAssertTrue(noAI.detail.contains("原文"))
         XCTAssertTrue(noAI.detail.contains("AI"))
 
         XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: false, hasTrackedConversations: false), "还没连接微信")
         XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: false), "还没选择对话")
-        XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: true), "现在没有需要你处理的事。")
+        XCTAssertEqual(FirstLaunchGuide.compactEmpty(wechatConnected: true, hasTrackedConversations: true), "没有待处理的事")
+    }
+
+    func testTodayEmptyDoesNotHideOpenTasksBehindNoWorkCopy() {
+        let empty = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: true, searching: false, hasOpenTasks: true
+        )
+        XCTAssertEqual(empty.title, "没有需要回复的消息")
+        XCTAssertTrue(empty.detail.contains("我要做"))
+        XCTAssertTrue(empty.detail.contains("等对方"))
+        XCTAssertFalse(empty.title.contains("没有需要你处理的事"))
+    }
+
+    func testTodayEmptyDoesNotPretendAIIsWorkingWhenOnlyConfigured() {
+        let untested = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: false, searching: false
+        )
+        XCTAssertEqual(untested.title, "还差一次 AI 连接测试")
+        XCTAssertTrue(untested.detail.contains("测通"))
+        XCTAssertFalse(untested.title.contains("暂时没有需要处理"))
+        XCTAssertFalse(untested.detail.contains("原文已经可以查看"))
+    }
+
+    func testTodayEmptyPointsAtAllUpdatesWhenReplyQueueIsEmpty() {
+        let empty = FirstLaunchGuide.todayEmpty(
+            wechatConnected: true, hasTrackedConversations: true,
+            aiConfigured: true, aiTested: true, searching: false,
+            hasOpenTasks: false, hasOtherInboxItems: true
+        )
+        XCTAssertEqual(empty.title, "没有需要回复的消息")
+        XCTAssertTrue(empty.detail.contains("全部"))
+        XCTAssertTrue(empty.detail.contains("知会"))
+        XCTAssertFalse(empty.title.contains("没有需要你处理的事"))
     }
 
     func testSuggestedConversationsHideOfficialAccountsAndKeepRecentChats() {

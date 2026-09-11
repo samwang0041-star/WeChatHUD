@@ -516,7 +516,7 @@ struct AISettingsView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                     }
-                    Text("配置并测试一个服务后，消息摘要和回复建议才会开始工作。")
+                    Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
@@ -695,19 +695,19 @@ struct AISettingsView: View {
     private var behaviorSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsSection("分析与建议") {
-                SettingsToggleRow("消息摘要", subtitle: "帮你快速了解对方在说什么。", isOn: $summaryEnabled)
+                SettingsToggleRow("消息摘要", subtitle: "显示消息摘要。", isOn: $summaryEnabled)
                 SettingsRowDivider()
-                SettingsToggleRow("回复建议", subtitle: "先替你起草，由你决定怎么回。", isOn: $suggestionsEnabled)
+                SettingsToggleRow("回复建议", subtitle: "起草回复，由你发送。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
-                SettingsRow("整理待办", subtitle: "从聊天中找出需要跟进的事。未设 AI 时仍可查看原文。") {
-                    Text("已开启").font(.system(size: 12)).foregroundStyle(.secondary)
+                SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
+                    Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             originalExampleCard
             SettingsSection("更多帮助") {
                 SettingsToggleRow("重点联系人的语气提示", subtitle: "整理重点联系人在群聊中的表达，结合原话提示语气，供你参考。", isOn: $moodDetectionEnabled)
                 SettingsRowDivider()
-                SettingsToggleRow("今日小结里的下一步建议", subtitle: "把紧急的事说清楚，并建议你接下来怎么做。", isOn: $dailyReportActionInsightsEnabled)
+                SettingsToggleRow("今日小结里的下一步建议", subtitle: "给紧急事项加下一步建议。", isOn: $dailyReportActionInsightsEnabled)
             }
         }
         .onChange(of: summaryEnabled) { _, _ in debouncedSave() }

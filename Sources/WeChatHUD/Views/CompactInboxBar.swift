@@ -13,9 +13,9 @@ import AppKit
 /// belongs in the hover-expanded inbox.
 enum CompactInboxMetrics {
     static let wingWidth: CGFloat = 56
-    static let markSize: CGFloat = 9
-    static let quietMarkSize: CGFloat = 7
-    static let badgeSize: CGFloat = 12
+    static let markSize: CGFloat = 8
+    static let quietMarkSize: CGFloat = 6
+    static let badgeSize: CGFloat = 11
 }
 
 struct CompactInboxBar: View {
@@ -154,9 +154,9 @@ struct CompactInboxBar: View {
             leftMark(snap.mark)
             if let badge = snap.badge {
                 Text(badge)
-                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .bold))
+                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundColor(.white.opacity(0.88))
+                    .foregroundColor(IslandInk.primary)
                     .lineLimit(1)
             }
         }

@@ -110,6 +110,7 @@ private struct HUDMonitorSurface: View {
         case .notification:
             if let notif = monitor.latestNotification {
                 StableNotificationBanner(notification: notif)
+                    .id(notif.messageID)
                     .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
                     .onPreferenceChange(SizePreferenceKey.self) { size in
                         panelState.reportNotificationSize(size)
@@ -145,17 +146,24 @@ private struct HUDToastLayer: View {
         .onReceive(monitor.$inboxActionError) { message in
             if let message { panelState.showToast(message) }
         }
+        .onReceive(monitor.$discussionArchiveNotice) { message in
+            if let message {
+                panelState.showToast(message, duration: 8)
+                monitor.discussionArchiveNotice = nil
+            }
+        }
+
     }
 
     private func toastView(_ message: String) -> some View {
         let snoozeUndo = panelState.islandSnoozeUndo
         return HStack(spacing: 6) {
             Image(systemName: snoozeUndo == nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 10))
+                .font(.system(size: 10, weight: .medium))
                 .foregroundColor(snoozeUndo == nil ? .orange : CompanionPalette.islandMint)
             Text(message)
-                .font(.system(size: 11))
-                .foregroundColor(.white)
+                .islandMeta()
+                .foregroundColor(IslandInk.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
             Spacer(minLength: 0)
@@ -168,14 +176,14 @@ private struct HUDToastLayer: View {
                     panelState.toastMessage = nil
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
+                .islandSection()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("撤销")
             }
             Button(action: { panelState.toastMessage = nil }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.6))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(IslandInk.tertiary)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("关闭提示")
@@ -185,10 +193,10 @@ private struct HUDToastLayer: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.black.opacity(0.92))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.orange.opacity(0.4), lineWidth: 0.5)
                 )
         )
@@ -197,27 +205,33 @@ private struct HUDToastLayer: View {
     }
 }
 
-/// Size of the inbox panel. Width is fixed-compact; height is a sum of the
-/// parts actually rendered so the panel hugs its content instead of leaving
-/// a large empty tail. Caller passes the count of action-required rows (the
+/// Size of the inbox panel. Width is fixed; height is a sum of the parts
+/// actually rendered so the panel hugs its content instead of leaving a
+/// large empty tail. Caller passes the count of action-required rows (the
 /// only rows drawn in the top list) and whether the handled footer is shown.
+///
+/// SwiftUI reports the real rendered height through `SizePreferenceKey`, and
+/// that measurement is what the panel animates to — this is the starting
+/// estimate, so it only has to be close. The row height comes from
+/// `IslandMetrics` so the estimate cannot drift away from the rows again.
 func inboxSize(actionCount: Int, hasHandled: Bool) -> (CGFloat, CGFloat) {
     let width = IslandChrome.expandedWidth
 
-    // Empty inbox — brand + status + empty copy + workspace bar.
+    // Empty inbox — brand block + empty copy + workspace bar.
     if actionCount == 0 && !hasHandled {
-        return (width, 220)
+        return (width, 236)
     }
 
     let rows = min(max(actionCount, 1), 10)
-    let headerHeight: CGFloat = 52
+    // Notch band + section row.
+    let headerHeight: CGFloat = 44
     let dividerHeight: CGFloat = 1
-    let rowHeight: CGFloat = 88
-    let handledHeaderHeight: CGFloat = hasHandled ? 32 : 0
-    let bottomPadding: CGFloat = 12
+    let rowHeight = IslandMetrics.rowHeight
+    let handledHeaderHeight: CGFloat = hasHandled ? 30 : 0
+    let bottomBarHeight: CGFloat = 46
 
     let bodyHeight = CGFloat(rows) * rowHeight
-    let total = headerHeight + dividerHeight + bodyHeight + handledHeaderHeight + bottomPadding
+    let total = headerHeight + dividerHeight + bodyHeight + handledHeaderHeight + bottomBarHeight
     return (width, min(total, 720))
 }
 

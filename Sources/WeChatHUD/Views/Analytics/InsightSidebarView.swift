@@ -4,9 +4,11 @@ struct InsightSidebarView: View {
     @ObservedObject var insightStore: InsightStore
     @ObservedObject var insightCoordinator: InsightCoordinator
     @ObservedObject var store: HUDStore
+    @ObservedObject var reader: WeChatReader
     @Binding var selectedChat: String?
     @Binding var searchText: String
     let onAnalyzeChat: (String) -> Void
+    var selectedDate: Date = Date()
     @State private var filter: ChatReviewFilter = .all
 
     private enum ChatReviewFilter: String, CaseIterable {
@@ -74,7 +76,17 @@ struct InsightSidebarView: View {
                 }
 
                 let others = insightStore.filteredOtherSessions(searchText: searchText).filter { session in
-                    matchesFilter(isGroup: session.isGroup, id: session.id, messageCount: session.messageCount)
+                    matchesFilter(
+                        isGroup: session.isGroup,
+                        id: session.id,
+                        messageCount: dayMessageCount(
+                            username: session.id,
+                            displayName: session.displayName,
+                            isGroup: session.isGroup,
+                            category: .other,
+                            fallback: session.messageCount
+                        )
+                    )
                 }
                 if !others.isEmpty && filter != .updated {
                     sidebarSection("其他最近聊天", icon: "clock", count: others.count)
@@ -107,10 +119,16 @@ struct InsightSidebarView: View {
 
     private func whitelistRow(_ entry: WhitelistEntry) -> some View {
         let isSelected = selectedChat == entry.id
-        let hasInsight = insightCoordinator.chatInsights[entry.id] != nil
+        let insight = insightCoordinator.result(for: entry.id, date: selectedDate)
+        let hasInsight = insight != nil
         let isAnalyzing = insightCoordinator.chatInsightLoading.contains(entry.id)
-        let insight = insightCoordinator.chatInsights[entry.id]
-        let stats = insightStore.allStats[entry.id]
+        let stats = dayStats(
+            username: entry.id,
+            displayName: entry.displayName,
+            isGroup: entry.isGroup,
+            category: entry.category,
+            fallback: insightStore.allStats[entry.id]
+        )
 
         return Button(action: {
             selectedChat = entry.id
@@ -186,6 +204,13 @@ struct InsightSidebarView: View {
 
     private func otherSessionRow(_ session: InsightSessionEntry) -> some View {
         let isSelected = selectedChat == session.id
+        let count = dayMessageCount(
+            username: session.id,
+            displayName: session.displayName,
+            isGroup: session.isGroup,
+            category: .other,
+            fallback: session.messageCount
+        )
 
         return Button(action: {
             selectedChat = session.id
@@ -205,14 +230,14 @@ struct InsightSidebarView: View {
                         .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                         .foregroundColor(.primary)
                         .lineLimit(1)
-                    Text("\(session.messageCount)条消息")
+                    Text("\(count)条消息")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
 
                 Spacer()
 
-                Text("\(session.messageCount)")
+                Text("\(count)")
                     .font(.system(size: 9, weight: .medium).monospacedDigit())
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 5)
@@ -230,7 +255,17 @@ struct InsightSidebarView: View {
     }
 
     private func matchesFilter(_ entry: WhitelistEntry) -> Bool {
-        matchesFilter(isGroup: entry.isGroup, id: entry.id, messageCount: insightStore.allStats[entry.id]?.messageCount ?? 0)
+        matchesFilter(
+            isGroup: entry.isGroup,
+            id: entry.id,
+            messageCount: dayMessageCount(
+                username: entry.id,
+                displayName: entry.displayName,
+                isGroup: entry.isGroup,
+                category: entry.category,
+                fallback: insightStore.allStats[entry.id]?.messageCount ?? 0
+            )
+        )
     }
 
     private func matchesFilter(isGroup: Bool, id: String, messageCount: Int) -> Bool {
@@ -239,8 +274,44 @@ struct InsightSidebarView: View {
         case .groups: return isGroup
         case .direct: return !isGroup
         case .updated:
-            return insightCoordinator.chatInsights[id] != nil || messageCount > 0
+            return insightCoordinator.result(for: id, date: selectedDate) != nil || messageCount > 0
         }
+    }
+
+    private func dayStats(
+        username: String,
+        displayName: String,
+        isGroup: Bool,
+        category: WhitelistCategory,
+        fallback: ChatStatsData?
+    ) -> ChatStatsData? {
+        if Calendar.current.isDateInToday(selectedDate) { return fallback }
+        return insightStore.statsForDay(
+            chatUsername: username,
+            chatName: displayName,
+            isGroup: isGroup,
+            category: category,
+            date: selectedDate,
+            reader: reader
+        )
+    }
+
+    private func dayMessageCount(
+        username: String,
+        displayName: String,
+        isGroup: Bool,
+        category: WhitelistCategory,
+        fallback: Int
+    ) -> Int {
+        if Calendar.current.isDateInToday(selectedDate) { return fallback }
+        return insightStore.statsForDay(
+            chatUsername: username,
+            chatName: displayName,
+            isGroup: isGroup,
+            category: category,
+            date: selectedDate,
+            reader: reader
+        )?.messageCount ?? 0
     }
 
     private func categoryColor(_ cat: WhitelistCategory) -> Color {

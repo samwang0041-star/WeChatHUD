@@ -3,13 +3,13 @@ import XCTest
 
 final class CompanionProductCopyTests: XCTestCase {
     func testChromeReadsLikeACompanionNotAConsole() {
-        XCTAssertEqual(CompanionProductCopy.brandName, "不漏事")
-        XCTAssertTrue(CompanionProductCopy.brandPromise.contains("记住"))
-        XCTAssertEqual(CompanionProductCopy.openCompanion, "打开不漏事")
-        XCTAssertEqual(CompanionProductCopy.collapseCompanion, "收起不漏事")
+        XCTAssertEqual(CompanionProductCopy.brandName, "WeChatHUD")
+        XCTAssertTrue(CompanionProductCopy.brandPromise.isEmpty)
+        XCTAssertEqual(CompanionProductCopy.openCompanion, "打开 WeChatHUD")
+        XCTAssertEqual(CompanionProductCopy.collapseCompanion, "收起 WeChatHUD")
         XCTAssertEqual(CompanionProductCopy.checkNewMessages, "查看新消息")
-        XCTAssertEqual(CompanionProductCopy.quitCompanion, "退出不漏事")
-        XCTAssertEqual(CompanionProductCopy.sidebarFooter, "本机资料 · 按需使用 AI")
+        XCTAssertEqual(CompanionProductCopy.quitCompanion, "退出 WeChatHUD")
+        XCTAssertEqual(CompanionProductCopy.sidebarFooter, "本机数据")
         for word in CompanionProductCopy.forbiddenChrome {
             XCTAssertFalse(CompanionProductCopy.brandName.contains(word))
             XCTAssertFalse(CompanionProductCopy.brandPromise.contains(word))

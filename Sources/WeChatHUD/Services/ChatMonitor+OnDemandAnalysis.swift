@@ -249,7 +249,10 @@ extension ChatMonitor {
         if let memory = store.loadConversationMemory(chatUsername: item.chatUsername)?.formatForPrompt() {
             constraints.append("对话记忆:\n\(memory)")
         }
-        let asks = store.loadPendingAsks(status: .pending)
+        let asks = store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .filter { $0.chatUsername == item.chatUsername }
             .prefix(3)
             .map(\.summary)

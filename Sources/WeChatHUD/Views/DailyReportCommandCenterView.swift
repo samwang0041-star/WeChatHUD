@@ -245,7 +245,7 @@ struct DailyReportCommandCenterView: View {
                 Image(systemName: "target")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.green.opacity(0.85))
-                Text("AI 小结")
+                Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "今日进度")
                     .font(.system(size: isWorkspace ? 15 : 11, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
@@ -261,6 +261,9 @@ struct DailyReportCommandCenterView: View {
                     statLabel("超期", value: progress.overdueCount, color: .red)
                 }
             }
+            Text(DailyReportPresentationPolicy.followUpCaption)
+                .font(.system(size: isWorkspace ? 12 : 10))
+                .foregroundStyle(.secondary)
         }
         .padding(isWorkspace ? 14 : 10)
         .background(Color(NSColor.controlBackgroundColor))

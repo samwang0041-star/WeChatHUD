@@ -203,6 +203,12 @@ final class AdmissionPolicyTests: XCTestCase {
         XCTAssertTrue(AdmissionConfig().atMutedGroups.isEmpty)
     }
 
+    func testAdmissionCopyDoesNotPromiseWholeFollowedGroupsOrAllChatAI() {
+        XCTAssertTrue(AdmissionMode.whitelistOnly.detail.contains("关注一个群不会"))
+        XCTAssertTrue(AdmissionMode.all.detail.contains("摘要和待办仍只整理"))
+        XCTAssertFalse(AdmissionMode.all.detail.contains("AI 用量会明显增加"))
+    }
+
     /// A config written before a field existed must still decode, or an upgrade
     /// would reset the user's rules.
     func testAdmissionConfigToleratesOlderStoredShape() throws {

@@ -71,6 +71,9 @@ final class ChatMonitor: ObservableObject {
     @Published var dailyReport: DailyReport? = nil
     @Published var dailyReportGeneratedAt: Date?
     var dailyReportCache: [String: Date] = [:]  // dateKey -> generatedAt = nil
+    /// Source fingerprint stored with the 30-minute cache. Inbox/todo/debt
+    /// changes must not keep showing a stale 今日小结.
+    var dailyReportCacheStamp: [String: String] = [:]
     @Published var dailyReportError: String? = nil
     @Published var dailyReportIsLoading: Bool = false
     @Published var dailyReportActionInsights: [String: DailyReportActionInsight] = [:]
@@ -213,6 +216,9 @@ final class ChatMonitor: ObservableObject {
     }()
     /// Live pending items only. History is loaded on demand by the 待办 surface.
     @Published var discussionItems: [DiscussionItem] = []
+    /// One-shot copy after stale pending rows are archived. The HUD toast layer
+    /// consumes it so a 2000-row fold is not silent.
+    @Published var discussionArchiveNotice: String?
     let islandPresentation = IslandPresentation()
     let workspaceBadges = WorkspaceBadges()
     /// Per-chat labels resolved for the current process. `displayName(for:)`
@@ -241,13 +247,6 @@ final class ChatMonitor: ObservableObject {
             self?.vipAlertTiers = tiers
             self?.refreshWorkspaceChrome()
         }
-        // A tier advance (e.g. T3: "已等 2 小时") also pops an in-panel
-        // toast so the user sees it even if they dismissed the OS
-        // notification.
-        engine.onTierAdvanced = { [weak self] chatName, tier in
-            guard tier >= .t3 else { return }
-            self?.pendingEscalationBanner = (chatName, tier)
-        }
         return engine
     }()
 
@@ -256,10 +255,6 @@ final class ChatMonitor: ObservableObject {
     /// without needing to traverse into the alert engine directly.
     @Published private(set) var vipAlertTiers: [String: VIPAlertTier] = [:]
 
-    /// Set by the alert engine when a VIP advances to T3+; AppDelegate
-    /// observes and turns it into a one-shot toast. Tuple form so we
-    /// can include both the chat name and the aging label.
-    @Published var pendingEscalationBanner: (chatName: String, tier: VIPAlertTier)?
     lazy var dailyReportGenerator: AIDailyReportGenerator = {
         AIDailyReportGenerator(aiService: aiService, store: store)
     }()
@@ -312,6 +307,7 @@ final class ChatMonitor: ObservableObject {
 
     private var safetyTimer: Timer?
     private var safetyTickCount = 0
+    private var lastSafetyScanAt: Date?
     private var scanInProgress = false
 
     /// Set when an FSEvent or timer tick requests a scan while one is
@@ -417,7 +413,8 @@ final class ChatMonitor: ObservableObject {
         // Safety fallback: cheap mtime-only check at configurable interval.
         // If FSEvents delivers in time, this is a no-op.
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let scanEveryNTicks = max(1, syncCfg.intervalSeconds / 10)
+        let scanInterval = TimeInterval(max(10, syncCfg.intervalSeconds))
+        lastSafetyScanAt = Date()
         safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -452,7 +449,8 @@ final class ChatMonitor: ObservableObject {
 
                 // Full scan every Nth tick (interval from sync settings)
                 self.safetyTickCount += 1
-                if self.safetyTickCount % scanEveryNTicks == 0 {
+                if Date().timeIntervalSince(self.lastSafetyScanAt ?? .distantPast) >= scanInterval {
+                    self.lastSafetyScanAt = Date()
                     await self.scan()
                 }
                 // Proactive outreach every 60th tick (~10 min)
@@ -1217,6 +1215,10 @@ final class ChatMonitor: ObservableObject {
         // Build unified inbox from scan results
         rebuildInbox()
         reader.purgeEphemeralCache()
+        let refreshedNames = refreshLiveWeChatDisplayNames()
+        if refreshedNames > 0 {
+            print("[WCHUD] refreshed \(refreshedNames) WeChat display names")
+        }
         // Rows written before the naming fallback existed still carry raw
         // `…@chatroom` ids. Repair before reloading so the published lists
         // already show readable names.
@@ -1285,7 +1287,16 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotManuallyPaused = manPaused
                     self.autopilotPaused = paused
                     if let session = self.store.currentAutopilotSession() {
-                        self.autopilotLog = self.store.loadAutopilotLog(sessionId: session.id, limit: 50)
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
+                            sessionId: session.id,
+                            limit: 50,
+                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+                        )
+                    } else {
+                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
+                            sessionId: nil,
+                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+                        )
                     }
                 }
                 if result.totalProcessed > 0 {
@@ -1308,6 +1319,7 @@ final class ChatMonitor: ObservableObject {
         reloadLiveCommitments()
         recalledMessages = store.loadRecalledMessages(limit: 50)
         reloadPendingDiscussionItems()
+        reloadAutopilotDisplayLog()
         refreshWorkspaceChrome()
     }
 
@@ -1372,10 +1384,13 @@ final class ChatMonitor: ObservableObject {
     }
 
     private func reloadPendingDiscussionItems() {
-        let next = store.loadDiscussionItems(
-            status: .pending,
-            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-        )
+        let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
+        if archived > 0 {
+            discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+        }
+        _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
+        let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
         refreshWorkspaceChrome()
     }
@@ -1405,9 +1420,9 @@ final class ChatMonitor: ObservableObject {
             vipTiers: vipAlertTiers
         ))
         workspaceBadges.publish(WorkspaceBadgeCounts(
-            tasks: discussionItems.filter { $0.kind != .info }.count,
+            tasks: WorkspaceBadgeCounts.taskCount(discussionItems),
             commitments: commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
-            drafts: store.draftCount(),
+            drafts: store.workspaceDraftCount(),
             pendingReplies: autopilotLog.filter { $0.action == .pending }.count
         ))
     }
@@ -2041,6 +2056,16 @@ final class ChatMonitor: ObservableObject {
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
         try store.updateCommitmentStatus(msgUID: msgUID, status: status)
+        switch status {
+        case .fulfilled:
+            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .done)
+            reloadPendingDiscussionItems()
+        case .cancelled:
+            try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .dismissed)
+            reloadPendingDiscussionItems()
+        case .pending, .overdue:
+            break
+        }
         reloadLiveCommitments()
         refreshWorkspaceChrome()
     }
@@ -2108,13 +2133,19 @@ final class ChatMonitor: ObservableObject {
 
     /// Load pending asks for a specific chat. Used by Person Profile card.
     func pendingAsksForChat(_ chatUsername: String) -> [PendingAsk] {
-        Array(store.loadPendingAsks(status: .pending)
+        Array(store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .filter { $0.chatUsername == chatUsername }
             .prefix(3))
     }
 
     func pendingAsks() -> [PendingAsk] {
-        store.loadPendingAsks(status: .pending)
+        store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
     }
 
     /// Refresh the reply suggester's config from the settings DB.
@@ -2276,7 +2307,10 @@ final class ChatMonitor: ObservableObject {
         // Fetch style profile to make suggestions match user's writing style
         let style = await styleProfiler.getProfile(chatUsername: item.chatUsername)
         let profile = store.getRelationshipProfile(username: item.chatUsername)
-        let pendingAsk = store.loadPendingAsks(status: .pending)
+        let pendingAsk = store.loadPendingAsks(
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
             .first { $0.chatUsername == item.chatUsername }
         let context = buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
 
@@ -2747,6 +2781,14 @@ final class ChatMonitor: ObservableObject {
     }
 
     func startAutopilot() {
+        Task { _ = await startAutopilotAndWait() }
+    }
+
+    /// Approval workspace can send a draft without a prior 「开始整理」 press.
+    /// A missing service is prepared rather than treated as a failed send.
+    nonisolated static func canApproveWithoutRunningSession() -> Bool { true }
+
+    private func makeAutopilotServiceIfNeeded() {
         if autopilotService == nil {
             autopilotService = AutopilotService(
                 store: store,
@@ -2768,30 +2810,58 @@ final class ChatMonitor: ObservableObject {
                 }
             )
         }
-        let service = autopilotService
+    }
+
+    /// Creates the service if needed and starts a session if one is not
+    /// already running. Does not change autoSendEnabled.
+    @discardableResult
+    func startAutopilotAndWait() async -> Bool {
+        makeAutopilotServiceIfNeeded()
+        guard let service = autopilotService else { return false }
+        if await service.isActive {
+            applyAutopilotRunningUI(
+                recoveredQueue: await service.pendingSendQueue,
+                recoveredStats: await service.sessionStats
+            )
+            return true
+        }
         // Clear any stale ledger entries from a previous session before
         // flipping the active flag, so observers never see fresh-active
         // state with stale entries.
         resetSessionLedger()
-        Task {
-            do {
-                try await service?.start()
-                let recoveredQueue = await service?.pendingSendQueue ?? []
-                let recoveredStats = await service?.sessionStats ?? AutopilotService.SessionStats()
-                await MainActor.run {
-                    self.autopilotActive = true
-                    self.autopilotSessionSent = recoveredStats.totalSent
-                    self.autopilotSessionPending = recoveredStats.totalPending
-                    self.autopilotPendingSendQueue = recoveredQueue
-                    self.autopilotSessionStats = recoveredStats
-                    self.autopilotLog = []
-                    self.refreshWorkspaceChrome()
-                }
-                print("[WCHUD] Autopilot: ON")
-            } catch {
-                print("[WCHUD] Autopilot: failed to start: \(error)")
-            }
+        do {
+            try await service.start()
+            applyAutopilotRunningUI(
+                recoveredQueue: await service.pendingSendQueue,
+                recoveredStats: await service.sessionStats
+            )
+            print("[WCHUD] Autopilot: ON")
+            return true
+        } catch {
+            print("[WCHUD] Autopilot: failed to start: \(error)")
+            return false
         }
+    }
+
+    /// Prepares a live service for one-off 确认发送 when the user has not
+    /// pressed 「开始整理」. Does not flip autoSendEnabled.
+    @discardableResult
+    func ensureAutopilotReadyForSend() async -> AutopilotService? {
+        let started = await startAutopilotAndWait()
+        return started ? autopilotService : nil
+    }
+
+    private func applyAutopilotRunningUI(
+        recoveredQueue: [PendingSend],
+        recoveredStats: AutopilotService.SessionStats
+    ) {
+        autopilotActive = true
+        autopilotSessionSent = recoveredStats.totalSent
+        autopilotSessionPending = recoveredStats.totalPending
+        autopilotPendingSendQueue = recoveredQueue
+        autopilotSessionStats = recoveredStats
+        reloadAutopilotDisplayLog()
+        refreshWorkspaceChrome()
     }
 
     func stopAutopilot() {
@@ -2804,6 +2874,7 @@ final class ChatMonitor: ObservableObject {
             }
         }
         autopilotActive = false
+        autopilotPendingSendQueue = []
         refreshWorkspaceChrome()
         // Drop ledger entries after marking inactive — anything accumulated
         // while autopilot was off-by-a-hair shouldn't leak into the next
@@ -2854,38 +2925,49 @@ final class ChatMonitor: ObservableObject {
 
     /// Approve a pending autopilot item and send it.
     func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String) async -> Bool {
-        guard let service = autopilotService else { return false }
+        guard let service = await ensureAutopilotReadyForSend() else { return false }
         let success = await service.approvePending(logId: logId, reply: reply, chatName: chatName, chatUsername: chatUsername)
         // I1 fix: refresh counters from DB session instead of manual adjustment
         refreshAutopilotSessionState()
+        await refreshAutopilotLiveState()
         return success
-    }
-
-    /// Persist a manual edit to a pending draft without sending it.
-    func saveAutopilotDraftReply(logId: Int64, reply: String) -> Bool {
-        do {
-            try store.updateAutopilotLogReply(id: logId, reply: reply)
-            if let index = autopilotLog.firstIndex(where: { $0.id == logId }) {
-                autopilotLog[index].generatedReply = reply
-            }
-            return true
-        } catch {
-            return false
-        }
     }
 
     /// Reject a pending autopilot item.
     func rejectAutopilotItem(logId: Int64) {
         Task { @MainActor in
-            await autopilotService?.rejectPending(logId: logId)
+            if let service = autopilotService {
+                await service.rejectPending(logId: logId)
+            } else {
+                try? store.updateAutopilotLogAction(id: logId, action: .skipped)
+            }
             refreshAutopilotSessionState()
         }
     }
 
+    func syncAutopilotPendingQueue() async {
+        await refreshAutopilotLiveState()
+    }
+
+    func saveAutopilotDraft(logId: Int64, reply: String) throws {
+        try store.updateAutopilotLogReply(id: logId, reply: reply)
+        if let index = autopilotLog.firstIndex(where: { $0.id == logId }) {
+            autopilotLog[index] = autopilotLog[index].replacingReply(reply)
+        }
+    }
+
+    func reloadAutopilotDisplayLog() {
+        autopilotLog = store.loadAutopilotDisplayLog(
+            sessionId: store.currentAutopilotSession()?.id,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
+    }
+
     /// Refresh autopilot UI state from the DB (source of truth for counters).
     private func refreshAutopilotSessionState() {
-        if let session = store.currentAutopilotSession() {
-            autopilotLog = store.loadAutopilotLog(sessionId: session.id, limit: 50)
+        let session = store.currentAutopilotSession()
+        reloadAutopilotDisplayLog()
+        if let session {
             autopilotSessionSent = session.totalSent
             autopilotSessionPending = session.totalPending
         }

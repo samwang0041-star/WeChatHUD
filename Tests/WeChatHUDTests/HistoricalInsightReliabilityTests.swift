@@ -93,6 +93,43 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
         XCTAssertTrue(full.contains("媒体内容未纳入"))
     }
 
+    func testCoverageNoticeSplitsOutOfInsightProse() {
+        let notice = ChatInsightService.coverageNotice(analyzedCount: 12, isTruncated: false)
+        let split = ChatInsightService.splitCoverageNotice(notice + "\n\n这是模型写的摘要。")
+        XCTAssertEqual(split.notice, notice)
+        XCTAssertEqual(split.body, "这是模型写的摘要。")
+        let plain = ChatInsightService.splitCoverageNotice("没有范围前缀的解读")
+        XCTAssertNil(plain.notice)
+        XCTAssertEqual(plain.body, "没有范围前缀的解读")
+    }
+
+    func testRecalledMessagesAreScopedToTheSelectedChatAndDay() {
+        func recall(_ chat: String, at: Int, text: String) -> RecalledMessage {
+            RecalledMessage(
+                id: 0, msgUID: "r-\(at)", senderUsername: "peer", senderName: "对方",
+                senderLevel: .whitelist, senderRole: .colleague, chatUsername: chat,
+                chatName: "群", chatType: .group, originalText: text, sentAt: at - 10,
+                recalledAt: at, recallDelaySeconds: 10, aiReason: nil, aiIntelligenceValue: nil,
+                aiDetail: nil, aiShouldNotify: nil, aiNotifyLevel: nil, aiAnalyzedAt: nil,
+                createdAt: Date()
+            )
+        }
+        let start = 1_000_000
+        let end = start + 86_400
+        let scoped = ChatInsightService.recalledForAnalysis(
+            [
+                recall("chat-a", at: start + 60, text: "当天撤回"),
+                recall("chat-a", at: end, text: "次日撤回"),
+                recall("chat-b", at: start + 60, text: "别的聊天"),
+                recall("chat-a", at: start - 1, text: "前一天")
+            ],
+            chatUsername: "chat-a",
+            dayStart: start,
+            dayEnd: end
+        )
+        XCTAssertEqual(scoped.map(\.content), ["当天撤回"])
+    }
+
     func testStatsForDayReadsOnlyTheSelectedCalendarDayFromReader() throws {
         let fixture = try InsightReaderFixture(messages: [
             .init(localID: 1, timestampOffset: -1, text: "前一天"),

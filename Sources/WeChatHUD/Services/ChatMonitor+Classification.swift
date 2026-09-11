@@ -66,6 +66,19 @@ extension ChatMonitor {
                 completed.insert(msg.id)
                 continue
             }
+            let isAt = MessageHelpers.isAtMe(
+                msg.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: reader.mySelfNames
+            )
+            guard admissionRules.decide(
+                chatUsername: msg.chatUsername,
+                isGroup: msg.chatUsername.contains("@chatroom"),
+                senderUsername: msg.senderUsername,
+                senderName: msg.senderName,
+                isAtMention: isAt
+            ).isAdmitted else {
+                completed.insert(msg.id)
+                continue
+            }
             let input = ClassifierInput(msgUID: msg.id, text: msg.text, senderName: msg.senderName,
                                         chatName: msg.chatName, isGroup: msg.chatUsername.contains("@chatroom"))
             // SQL bounds precede LIMIT: an old queued message gets its own prior
