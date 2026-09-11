@@ -59,7 +59,7 @@ enum CompanionMotion {
     static func islandExpand() -> Animation? { easeOut(IslandMotion.expandDuration) }
     /// Island leave collapse: retract into the notch.
     static func islandCollapse() -> Animation? { easeIn(IslandMotion.collapseDuration) }
-    static let islandLeaveDelay: TimeInterval = 0.40
+
     /// In-row expand (180–220ms).
     static func rowExpand() -> Animation? { ease(0.20) }
     /// Source drawer (200–240ms).

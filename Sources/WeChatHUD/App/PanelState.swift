@@ -215,14 +215,13 @@ final class PanelState: ObservableObject {
         }
     }
 
-    /// Exit debounce: the window resize animation takes ~220 ms, during
-    /// which the sweeping pill edges can cross the cursor and fire
-    /// spurious exited / entered pairs. 400 ms covers the animation window
-    /// plus a small buffer; any real mouse-out is cancelled by a follow-up
-    /// mouseEntered before the timer fires. 400 ms before collapse is also
-    /// forgiving for the user who moves the cursor away briefly to look
-    /// at something else then back.
-    private let exitDebounce: TimeInterval = 0.4
+    /// Exit debounce: the window resize animation sweeps the frame past
+    /// the cursor and fires spurious exited / entered pairs. 220 ms still
+    /// forgives a brief look-away but no longer stacks a perceptible pause
+    /// on top of the animation itself. Exits that arrive mid-animation are
+    /// deferred to `frameAnimationEnded`, where the real hit test decides
+    /// — those skip most of this delay via `scheduleExitCollapse(delay:)`.
+    private let exitDebounce: TimeInterval = 0.22
 
     /// Called when mouse enters the panel area.
     func mouseEntered() {
@@ -294,7 +293,10 @@ final class PanelState: ObservableObject {
         }
         if !mouseInside || exitRequestedDuringFrameAnimation {
             exitRequestedDuringFrameAnimation = false
-            scheduleExitCollapse()
+            // The hit test already confirmed the pointer is outside and the
+            // user has been waiting through the whole animation — collapse
+            // with a minimal re-check delay instead of the full debounce.
+            scheduleExitCollapse(delay: 0.08)
         }
     }
 
@@ -307,13 +309,13 @@ final class PanelState: ObservableObject {
         }
     }
 
-    private func scheduleExitCollapse() {
+    private func scheduleExitCollapse(delay: TimeInterval? = nil) {
         guard collapsesWhenMouseOutside else { return }
         AnimationDebugger.logEvent("scheduleExitCollapse state=\(currentState) mouseInside=\(isMouseInside) exitRequestedDuringAnimation=\(exitRequestedDuringFrameAnimation)")
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         let generation = exitGeneration
-        exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: exitDebounce, repeats: false) { [weak self] _ in
+        exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: delay ?? exitDebounce, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.exitGeneration == generation else { return }
                 // Only collapse if the mouse actually stayed outside AND

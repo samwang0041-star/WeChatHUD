@@ -192,17 +192,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if cached.width > 1, cached.height > 1 {
                         self.panel.animateHeight(to: cached.height, width: cached.width, caller: "AppDelegate.currentState.extended.cached")
                     } else {
-                        // First hover: snap the estimate so the inbox is not
-                        // clipped, then let the measurement sink run the only
-                        // animation. Animating the estimate first was the bounce.
-                        self.panel.setFrameInstantly(height: h, width: w)
+                        // First hover: animate to the estimate — the spring
+                        // driver retargets mid-flight without a velocity
+                        // reset, so when the real measurement arrives the
+                        // trajectory bends instead of snapping. (Snapping
+                        // to the estimate first was only needed when a
+                        // retarget meant a full re-anchored ease restart.)
+                        self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.extended.estimated")
                     }
+                } else if state == .compact {
+                    // The compact frame is fully determined by notch
+                    // geometry (notchWidth + 2·wingWidth × notchHeight) —
+                    // it needs no SwiftUI measurement, so drive the window
+                    // animation NOW. Waiting for the PreferenceKey round
+                    // trip used to add a whole layout pass of dead time
+                    // between "mouse out" and "pill starts retracting".
+                    self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.compact")
                 } else if state == .notification || state == .detail {
                     self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.\(state)")
                 }
-                // compact is left for the measurement sink to drive because
-                // its layout can change while idle/pending/urgent content
-                // updates inside the same state.
+                // In-state compact relayouts (idle → pending → urgent wing
+                // width changes) still come through the measurement sink.
 
                 // Force the next SwiftUI measurement to re-publish by
                 // resetting our locally-held size expectation. Needed

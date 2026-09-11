@@ -43,7 +43,6 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertNotNil(CompanionMotion.systemDefault)
         XCTAssertNotNil(CompanionMotion.hover())
         XCTAssertNotNil(CompanionMotion.islandExpand())
-        XCTAssertEqual(CompanionMotion.islandLeaveDelay, 0.40)
     }
 
     func testIslandFrameTimingReportsSixtyHertzCadence() {
