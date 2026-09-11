@@ -173,7 +173,23 @@ struct InboxView: View {
                 .islandSection()
                 .foregroundStyle(IslandInk.tertiary)
             Spacer(minLength: 8)
-            if let syncAt = monitor.stats.lastSyncAt {
+            // Sync state lives in this fixed slot — the "同步中" indicator
+            // occupies exactly where "刚刚同步" sits, so a refresh starting
+            // or finishing never changes the panel's measured height. The
+            // old syncing banner was a whole row that popped in and out,
+            // and every insertion moved the window.
+            if case .syncing = monitor.stats.syncStatus {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.55)
+                        .frame(width: 8, height: 8)
+                    Text("同步中")
+                        .islandMicro()
+                        .foregroundStyle(IslandInk.quaternary)
+                        .lineLimit(1)
+                }
+            } else if let syncAt = monitor.stats.lastSyncAt {
                 Text(syncLabel(syncAt))
                     .islandMicro()
                     .foregroundStyle(IslandInk.quaternary)
@@ -210,12 +226,6 @@ struct InboxView: View {
     @ViewBuilder
     private var islandStatusBanner: some View {
         switch monitor.stats.syncStatus {
-        case .syncing:
-            Label("正在读取你关注的聊天。你可以先去忙，整理好后在这里查看。", systemImage: "arrow.triangle.2.circlepath")
-                .islandRowBody()
-                .foregroundStyle(CompanionPalette.islandMint)
-                .padding(.horizontal, IslandMetrics.sectionInset)
-                .padding(.vertical, 8)
         case .error, .waitingForWeChat, .accountSwitched:
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -540,7 +550,7 @@ struct InboxView: View {
 
     private var islandStatusBannerShowsCopy: Bool {
         switch monitor.stats.syncStatus {
-        case .syncing, .error, .waitingForWeChat, .accountSwitched: return true
+        case .error, .waitingForWeChat, .accountSwitched: return true
         default: return false
         }
     }
@@ -548,7 +558,7 @@ struct InboxView: View {
     private var islandEmptyCopy: String {
         switch monitor.stats.syncStatus {
         case .syncing:
-            return "正在读取你关注的聊天。你可以先去忙，整理好后在这里查看。"
+            return "正在同步…"
         case .error, .waitingForWeChat, .accountSwitched:
             return "暂时读不到新消息。请确认微信已经打开并登录。"
         default:
