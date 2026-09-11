@@ -4,14 +4,15 @@ macOS 原生吸顶浮窗客户端，配合 wechat-cli 使用。SwiftUI + AppKit�
 
 ## 项目状态
 
-**当前阶段：Production-ready — 多轮进化 + Codex 集成（2026-09-06 实测校准）**
+**当前阶段：Production-ready — 多轮进化 + Codex 集成（2026-09-12 全代码对抗性质检后修正）**
 
-- 981 个 XCTest 函数 + 70 个 swift-testing 用例、119 个测试文件（历史记录中的 519/350/223 均为旧数）
-- 全部通过（9 个用例按设计跳过：无本地微信库 / 无 live AI 端点 / opt-in live 验收）
+- 1174 个 XCTest 函数 + 70 个 swift-testing 用例、141 个测试文件（历史记录中的 981/519/350/223 均为旧数；具体数字以 `swift test` 输出为准，不要写死人肉统计）
+- 全部通过。跳过的用例都是显式门禁：无本地微信库 / 无 live AI 端点 / `WCHUD_LIVE_COMPANION_AI=1` 未设置的 live 验收
 - Xcode 26.6 下 debug/release 双构建通过，release 零警告
-- ChatMonitor 2608 行（从 3311 拆出 703 行到 ConversationMemoryUpdater + ChatMonitor+DailyReport + ChatMonitor+OnDemandAnalysis）；HUDStore 2945 行、Models 1744 行
+- ChatMonitor 2957 行；HUDStore 3627 行、Models 2034 行；2026-09-06 那次拆分实际拆出 936 行到 ConversationMemoryUpdater + ChatMonitor+DailyReport + ChatMonitor+OnDemandAnalysis
 - Codex 集成：读取 codex CLI 本地 OAuth token，蹭 ChatGPT 订阅调 gpt-5.4
-- **Autopilot 方向（2026-09-06 定案）**：full-auto + 多层护栏。默认关闭（enabled=false, autoSendEnabled=false），置信度阈值 0.8，敏感词二级拦截，媒体置信度 0.7x 衰减，金融类（转账/红包/小程序）强制 pending，每会话发送上限 50 条。CONTEXT.md 的"启动后全自动"目标在此框架下实现，文档与代码已对齐。
+- **Autopilot 方向（2026-09-06 定案，2026-09-12 质检修正）**：full-auto + 多层护栏。默认关闭（`autoSendEnabled=false`），置信度阈值 0.8，敏感词二级拦截，媒体置信度 0.7x 衰减，金融类（转账/红包/小程序）强制 pending，**群聊消息（含 @ 提醒）一律人工确认**，每会话发送上限 50 条。这些护栏都在 ChatMonitor→handleNewMessages→executeSend 的真实链路上执行，并有行为测试覆盖（AutopilotSafetyTests / AutopilotGuardrailPipelineTests）。CONTEXT.md 的自动托管条目已按代码修正。
+- **2026-09-12 对抗性质检**：`docs/qa/2026-09-12-adversarial-full-code-audit.md`（报告 + 执行记录）。多分片消息读取、游标积压、外源数值转换崩溃、自更新签名校验、/tmp 隐私日志、回溯脱敏等 P0/P1 已修复并补测试。
 
 ## 架构概述
 
@@ -38,8 +39,8 @@ Sources/WeChatHUD/
 │   │   └── CodexBackend.swift    — chatgpt.com/backend-api SSE 客户端
 │   ├── AIClassifier.swift        — 消息分类 (ask/task/deadline)
 │   ├── ReplyDebtScorer.swift     — 回复债务评分
-│   ├── ReplyDebtJudge.swift      — AI 二次判断 + shadow mode
 │   ├── AutopilotService.swift    — 自动回复编排 (带安全护栏)
+│   ├── SafeNumber.swift          — 外源数值钳制 (AI/HTTP/AX 数值进入 Int 之前)
 │   ├── AutoReplyGenerator.swift  — AI 回复生成
 │   ├── StyleProfiler.swift       — 用户写作风格学习 (集成到回复建议)
 │   └── ... (12 个 AI service 共计)
@@ -80,21 +81,21 @@ Sources/WeChatHUD/
 swift build          # 编译 (debug)
 swift build -c release  # 编译 (release, 零警告)
 make app && make run # 打包成 .app 并运行
-make test            # 跑测试 (194 个, 过滤输出只显示结果)
-swift test           # 跑测试 (完整输出)
+make test            # 跑测试 (swift test，完整输出)
+swift test --filter AutopilotSafetyTests   # 只跑某个套件
 ```
 
 ## 测试
 
-350 个测试覆盖：
-- HUDStore (45): 设置/白名单/PendingAsk/Autopilot/AIAudit/ChatAction
-- NewSchema (24): Contact/VIPTrace/RecalledMessage/Commitment
-- WeChatDecryptor (9): 页解密 + 端到端 DB 解密
-- WeChatParser (8): 内容解码/XML 解析/媒体渲染
-- MessageHelpers (23): 纯函数全覆盖
-- AutopilotSafety (15): 安全护栏配置 + 关键词检测
-- Codex (29): CodexAuth (18) / CodexBackend (6) / CodexTokenStore (5) — OAuth 解析、SSE 解析、HTTP 指纹断言、401 重读、并发 refresh 去重
-- AI Services (70+): Classifier/ReplyDebt/Commitment/VIP/Context 等
+覆盖范围（数量随迭代变化，别在这里写死人肉统计；总数看 `swift test` 输出）：
+- **安全护栏（行为级）**：AutopilotSafetyTests 直接驱动 `applySafetyDowngrades` / `automaticSendHoldReason` / `autopilotSafetyHoldReason`；AutopilotGuardrailPipelineTests 驱动真实 `handleNewMessages`（金融类强制 pending、表情跳过、群聊仅记录、文本只进批处理）
+- **消息读取与扫描**：WeChatShardMergeTests（同一会话跨 `message_N.db` 分片归并、按日查询、游标分页）、ScanBacklogPagingTests（游标积压超页上限时向后翻页）、ScanEngineTests
+- **外源输入健壮性**：SafeNumberTests（`Int(1e30)` 不再崩进程）、AIJSONExtractorTests（围栏/超长/括号风暴）、AIRateLimiterTests（并发限流）
+- **隐私与脱敏**：RetrospectivePrivacyTests（发言前被提及的人名、群名、手机号不出网；瞬时 AI 失败不落永久策略）、RedactorTests
+- **供应链**：AppUpdateSignatureTests（未签名/被篡改/TeamID 不匹配一律拒绝安装）
+- **存储与模型**：HUDStore、NewSchema（含真实「老库有 whitelist 无 contacts」迁移前置）、AutopilotConfig 宽容解码、DailyReportIdentityTests（跨进程稳定 id）
+- **AI 管线**：AIAnalysisPipelineTests（错误详情进审计、空分析不算成功）、Codex 系列（OAuth/SSE/401 重读/refresh token 轮换优先级）、各 AI service 的 prompt 与解析
+- **Live 验收**：设置 `WCHUD_LIVE_COMPANION_AI=1` 才执行，未设置时显式 skip（不是静默不收集）
 
 ## 参考
 
