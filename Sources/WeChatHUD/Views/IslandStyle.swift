@@ -93,11 +93,20 @@ enum IslandMetrics {
 /// Text colours for the island. One ramp, because the surfaces had drifted
 /// into six different white opacities (0.25 / 0.35 / 0.45 / 0.55 / 0.65 /
 /// 0.9) with no rule about which meant what.
+///
+/// The ramp is also a contrast budget. On the island's black, `meta` is the
+/// lightest step that still clears WCAG AA for normal text (0.55 ≈ 6.2:1);
+/// `tertiary` (≈ 3.9:1) and `quaternary` (≈ 2.1:1) are below it, so they are
+/// for chrome and decoration — never for text the user has to read to know
+/// what happened.
 enum IslandInk {
     /// Titles and primary content.
     static let primary = Color.white.opacity(0.92)
     /// Message previews, AI summaries, explanatory text.
     static let secondary = Color.white.opacity(0.66)
+    /// Secondary facts the user still needs — the banner's conversation name
+    /// and arrival stamp. One step below `secondary`, still AA on black.
+    static let meta = Color.white.opacity(0.55)
     /// Timestamps, sync state, hints.
     static let tertiary = Color.white.opacity(0.42)
     /// Disabled / decorative chrome (chevrons, collapsed counts).

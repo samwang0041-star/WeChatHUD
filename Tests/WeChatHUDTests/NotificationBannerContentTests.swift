@@ -72,13 +72,71 @@ final class NotificationBannerContentTests: XCTestCase {
         XCTAssertNil(totallyUnknown.conversation)
     }
 
-    /// `.groupAt` means "the user was @-mentioned"; the chip must not depend on
-    /// a flag that some scan paths set independently of the kind.
-    func testGroupAtKeepsTheChipEvenWhenTheFlagIsUnset() {
+    /// The chip is a group affordance. A private chat can set `isAtMention`
+    /// (the flag is computed from the text whatever the chat type), but nobody
+    /// @-mentions you in a one-to-one chat, so the banner must not claim it.
+    func testPrivateChatNeverShowsTheMentionChip() {
         let content = NotificationBannerContent(notification: makeNotification(
-            kind: .groupAt, isAtMention: false
+            chatName: "林晓", senderName: "林晓", kind: .privateChat, isAtMention: true
         ))
+        XCTAssertFalse(content.showsMention)
+    }
+
+    func testGroupAtShowsTheMentionChip() {
+        let content = NotificationBannerContent(notification: makeNotification(kind: .groupAt))
         XCTAssertTrue(content.showsMention)
+        XCTAssertFalse(content.mentionIsBroadcast)
+    }
+
+    /// `@所有人` is a broadcast and `isAtMention` is true for it — that flag
+    /// answers "does this concern me", which is why it interrupts. Rendering it
+    /// as a personal "@你" would tell the user they were singled out when the
+    /// whole group was addressed, and the mention token itself is stripped from
+    /// the snippet, so nothing else on the card would correct that reading.
+    func testBroadcastMentionIsReportedAsBroadcastNotAsAPersonalMention() {
+        for text in [
+            "@所有人 明天上午十点全员大会",
+            "@All 明天上午十点全员大会",
+            "@all 明天上午十点全员大会"
+        ] {
+            let content = NotificationBannerContent(notification: makeNotification(
+                snippet: text, kind: .groupAt
+            ))
+            XCTAssertTrue(content.showsMention, "\(text): a broadcast still concerns the reader")
+            XCTAssertTrue(content.mentionIsBroadcast, "\(text): must be reported as a broadcast")
+        }
+    }
+
+    /// The mention is read from `rawText`, because the scan strips the leading
+    /// token out of `snippet` before the banner ever sees it.
+    func testBroadcastIsDetectedFromRawTextNotTheStrippedSnippet() {
+        let notification = HUDNotification(
+            chatUsername: "wxid-broadcast",
+            chatName: "项目协作群",
+            senderUsername: "wxid-peer",
+            senderName: "王磊",
+            attentionLevel: .vip,
+            messageID: "broadcast-\(UUID().uuidString)",
+            rawText: "@所有人 明天上午十点全员大会",
+            snippet: "明天上午十点全员大会",
+            isAtMention: true,
+            timestamp: Date(),
+            kind: .groupAt
+        )
+        let content = NotificationBannerContent(notification: notification)
+        XCTAssertTrue(content.mentionIsBroadcast)
+        XCTAssertFalse(content.message.contains("@所有人"), "the token itself is stripped upstream")
+    }
+
+    /// A personal @ must not be mistaken for a broadcast just because the text
+    /// happens to mention a group of people.
+    func testPersonalMentionIsNotReportedAsBroadcast() {
+        for text in ["@我 麻烦看下这个", "明天上午十点全员大会", "@所有人以外的各位"] {
+            let content = NotificationBannerContent(notification: makeNotification(
+                snippet: text, kind: .groupAt
+            ))
+            XCTAssertFalse(content.mentionIsBroadcast, "\(text): this is not @所有人")
+        }
     }
 
     /// A plain group message (no mention) is information, not a summons: no
@@ -89,6 +147,17 @@ final class NotificationBannerContentTests: XCTestCase {
         ))
         XCTAssertFalse(content.showsMention)
         XCTAssertEqual(content.conversation, "项目协作群")
+    }
+
+    /// A group whose name happens to equal a member's name still names itself:
+    /// the "would only repeat the sender" rule exists for private chats, and
+    /// dropping the chat name here would leave the banner unable to say which
+    /// group it came from.
+    func testGroupNamedAfterAPersonStillNamesTheGroup() {
+        let content = NotificationBannerContent(notification: makeNotification(
+            chatName: "张三", senderName: "张三", kind: .groupAt
+        ))
+        XCTAssertEqual(content.conversation, "张三")
     }
 
     // MARK: - Arrival stamp
@@ -123,13 +192,23 @@ final class NotificationBannerContentTests: XCTestCase {
         XCTAssertEqual(NotificationBannerContent.heroMessage(raw), raw)
     }
 
-    /// Media-only messages carry no text. An empty hero line would leave a card
-    /// with nothing to read on the surface that exists to be read.
-    func testMediaOnlyMessageSaysSoInsteadOfRenderingEmpty() {
-        XCTAssertEqual(NotificationBannerContent.heroMessage(""), "收到一条新消息")
-        XCTAssertEqual(NotificationBannerContent.heroMessage("\n \t"), "收到一条新消息")
+    /// An empty body is a parse failure, not a media message: every media type
+    /// already arrives as its own placeholder (`[图片]`, `[语音]`, …) from the
+    /// parser, so those reach the banner as text. The copy must not report a
+    /// message it could not read as a normal arrival.
+    func testUnreadableMessageSaysSoInsteadOfRenderingEmpty() {
+        XCTAssertEqual(NotificationBannerContent.heroMessage(""), "内容无法显示")
+        XCTAssertEqual(NotificationBannerContent.heroMessage("\n \t"), "内容无法显示")
         let content = NotificationBannerContent(notification: makeNotification(snippet: ""))
-        XCTAssertEqual(content.message, "收到一条新消息")
+        XCTAssertEqual(content.message, "内容无法显示")
+    }
+
+    /// …and a real media message is not mistaken for one, because the parser
+    /// gives it a placeholder rather than an empty string.
+    func testMediaPlaceholdersAreShownAsTheMessage() {
+        for placeholder in ["[图片]", "[语音]", "[视频]", "[表情]", "[位置]", "[通话]"] {
+            XCTAssertEqual(NotificationBannerContent.heroMessage(placeholder), placeholder)
+        }
     }
 
     // MARK: - Body action
@@ -137,19 +216,27 @@ final class NotificationBannerContentTests: XCTestCase {
     /// The body click has no visible label any more, so the words it reports
     /// have to match what the click actually does: a group mention opens the
     /// in-place briefing, everything else opens the conversation.
+    ///
+    /// `openLabel` is one string with two consumers — the tooltip the mouse
+    /// user reads and the label VoiceOver announces — so these assertions pin
+    /// what both of them say. They used to be written twice with different
+    /// wording, which meant the tested string was not always the visible one.
     func testOpenLabelMatchesWhatTheBodyClickDoes() {
-        XCTAssertEqual(NotificationBannerContent(notification: makeNotification()).openLabel, "看看前后文")
+        XCTAssertEqual(
+            NotificationBannerContent(notification: makeNotification()).openLabel,
+            "看看这句话的前后文"
+        )
         XCTAssertEqual(
             NotificationBannerContent(notification: makeNotification(
                 chatName: "林晓", senderName: "林晓", kind: .privateChat, isAtMention: false
             )).openLabel,
-            "打开对话"
+            "打开这段对话"
         )
         XCTAssertEqual(
             NotificationBannerContent(notification: makeNotification(
                 kind: .groupMessage, isAtMention: false
             )).openLabel,
-            "打开对话"
+            "打开这段对话"
         )
     }
 }

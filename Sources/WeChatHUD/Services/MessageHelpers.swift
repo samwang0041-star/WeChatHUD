@@ -85,6 +85,20 @@ enum MessageHelpers {
         return false
     }
 
+    /// Whether the message @-mentions the whole group rather than the user.
+    ///
+    /// `isAtMe` answers "should this interrupt me?" and correctly includes
+    /// `@所有人` / `@all` — a broadcast does concern the reader. But that is not
+    /// the same statement as "somebody picked you out", and UI that renders the
+    /// mention has to say which one happened: a group announcement wearing a
+    /// personal "@你" tells the user something false about why they were
+    /// interrupted, and `@所有人` is the common case in a work group.
+    static func isAtEveryone(_ text: String) -> Bool {
+        if containsAtMention(text: text, name: "所有人") { return true }
+        if text.range(of: #"@all\b"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+        return false
+    }
+
     /// Returns true when `text` contains `@<name>` whose trailing
     /// character is a whitespace, punctuation, or end-of-string — the
     /// boundary WeChat uses to terminate an @mention. Iterates all

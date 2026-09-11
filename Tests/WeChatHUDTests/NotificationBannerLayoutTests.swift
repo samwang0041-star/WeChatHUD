@@ -244,6 +244,50 @@ final class NotificationBannerLayoutTests: XCTestCase {
         }
     }
 
+    /// The tallest thing the banner ever renders is the expanded briefing card
+    /// with its own 稍后提醒 menu open underneath. The ceiling has to hold that,
+    /// because whatever it cuts off is clipped — a ceiling is a runaway guard,
+    /// not a design budget.
+    func testCeilingHoldsTheTallestRealContent() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let (notification, _) = longGroupAtNotification()
+        fixture.monitor.groupContextStates[notification.briefingKey] = Self.previewBriefingState()
+        fixture.panelState.showNotification(duration: 3)
+        fixture.panelState.setBriefingExpanded(true)
+        let briefingHeight = measuredHeight(of: banner(notification, in: fixture), label: "ceiling-briefing")
+        let menuHeight = measuredHeight(of: IslandSnoozeMenu { _ in }, label: "ceiling-snooze-menu")
+        // The card stacks its menu under itself with an 8 pt gap
+        // (`GroupContextBriefingButton.footer`).
+        let tallest = briefingHeight + menuHeight + 8
+        let ceilingPanel = 32 + IslandNotificationLayout.maxBelowNotch
+        print("[banner-layout] ceiling: briefing=\(briefingHeight.rounded()) menu=\(menuHeight.rounded()) tallest=\(tallest.rounded()) ceilingPanel=\(ceilingPanel.rounded())")
+        XCTAssertGreaterThanOrEqual(
+            ceilingPanel, tallest,
+            "the ceiling (\(ceilingPanel.rounded()) pt) clips the tallest content the banner can render (\(tallest.rounded()) pt)"
+        )
+    }
+
+    /// The pre-measurement fallback is what the panel uses for the frame before
+    /// the banner reports its own height, and it is also what the panel is left
+    /// with if a measurement never arrives (the banner keeps its `.id` when the
+    /// same message is re-presented, so the preference does not re-fire). It
+    /// must therefore be an upper bound on real content: too small a fallback
+    /// clips the message instead of leaving black.
+    func testPreMeasurementFallbackCannotClipRealContent() throws {
+        let fixture = try makeFixture()
+        defer { cleanUp(fixture) }
+        let (notification, snippet) = longGroupAtNotification()
+        fixture.panelState.showNotification(duration: 3)
+        let natural = measuredHeight(of: banner(notification, in: fixture), label: "fallback-bound")
+        let fallbackPanel = 32 + IslandChrome.notificationBaseBelowNotch
+        print("[banner-layout] fallback: chars=\(snippet.count) natural=\(natural.rounded()) fallbackPanel=\(fallbackPanel.rounded())")
+        XCTAssertGreaterThanOrEqual(
+            fallbackPanel, natural,
+            "a \(snippet.count)-char message renders \(natural.rounded()) pt but the pre-measurement fallback is only \(fallbackPanel.rounded()) pt — if the measurement never arrives, the last line is clipped"
+        )
+    }
+
     private func assertHugs(
         label: String,
         notification: HUDNotification,
@@ -446,8 +490,8 @@ final class NotificationBannerLayoutTests: XCTestCase {
         )
         XCTAssertEqual(
             IslandNotificationLayout.panelHeight(measuredContentHeight: 10_000, notchHeight: 32, fallbackBelowNotch: 168),
-            592, accuracy: 0.001,
-            "clamp ceiling: 10_000 pt clamps to notchHeight + maxBelowNotch = 592 pt"
+            32 + IslandNotificationLayout.maxBelowNotch, accuracy: 0.001,
+            "clamp ceiling: 10_000 pt clamps to notchHeight + maxBelowNotch"
         )
         XCTAssertEqual(
             IslandNotificationLayout.panelHeight(
