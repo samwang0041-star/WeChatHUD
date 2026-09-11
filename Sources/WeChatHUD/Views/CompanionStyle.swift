@@ -4,10 +4,19 @@ import SwiftUI
 enum CompanionPalette {
     /// #16776C — primary actions, current selection, confirmed results.
     static let jade = Color(red: 22 / 255, green: 119 / 255, blue: 108 / 255)
-    /// #F8FAF9 — workspace canvas.
-    static let warmCanvas = Color(red: 248 / 255, green: 250 / 255, blue: 249 / 255)
-    /// Sidebar mist.
-    static let mist = Color(red: 240 / 255, green: 243 / 255, blue: 242 / 255)
+    /// Sidebar mist. Follows the color scheme.
+    ///
+    /// This is a *surface*, so it has to track the scheme the way `canvas` and
+    /// `surface` already do. As a fixed light color it sat under labels drawn
+    /// with `.primary`, which resolves to white in dark mode — a white plate
+    /// with white text, measured 1.05:1 against #F3F5F4 in the reported
+    /// screenshot. The dark value keeps the light design's relationship to the
+    /// canvas (a few steps darker), so the two panes still read as separate.
+    static let mist = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.09, alpha: 1)
+            : NSColor(red: 240 / 255, green: 243 / 255, blue: 242 / 255, alpha: 1)
+    })
     /// Selected row / pill wash. Stays readable when Reduce Transparency is on.
     static var selectedFill: Color {
         jade.opacity(CompanionMotion.reduceTransparency ? 0.28 : 0.16)

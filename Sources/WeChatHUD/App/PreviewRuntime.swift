@@ -18,6 +18,19 @@ enum PreviewRuntime {
     static var hideDemoChromeForCapture = false
     private static var captureBridgeInstalled = false
 
+    /// `--preview-dark` / `--preview-light` pin this preview process to one
+    /// appearance, so a surface that only follows the *system* scheme can be
+    /// rendered in the other one without changing the host Mac's setting.
+    @MainActor static func applyAppearanceOverride() {
+        guard isEnabled else { return }
+        let arguments = CommandLine.arguments
+        if arguments.contains("--preview-dark") {
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        } else if arguments.contains("--preview-light") {
+            NSApp.appearance = NSAppearance(named: .aqua)
+        }
+    }
+
     static func applyAccessibilityOverrides() {
         CompanionMotion.reduceMotionProvider = {
             reduceMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

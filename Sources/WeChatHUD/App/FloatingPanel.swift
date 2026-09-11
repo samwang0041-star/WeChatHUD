@@ -17,6 +17,38 @@ final class PillContainerView: NSView {
     var onEntered: (() -> Void)?
     var onExited: (() -> Void)?
 
+    /// Color painted behind the hosted SwiftUI content, or `nil` for a
+    /// transparent container.
+    ///
+    /// Held as a color rather than a `cgColor`: a dynamic NSColor resolves into
+    /// one concrete CGColor at assignment and a CALayer never re-resolves it, so
+    /// storing the resolved value left the old scheme's plate under the new
+    /// scheme's text — a white plate with white labels. It is resolved again on
+    /// every effective-appearance change.
+    var plateColor: NSColor? {
+        didSet { applyPlate() }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyPlate()
+    }
+
+    private func applyPlate() {
+        guard let plateColor else {
+            layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0)
+            return
+        }
+        // The plate lives on the layer, so make sure there is one: a container
+        // that has never been drawn would otherwise drop the color silently.
+        if layer == nil { wantsLayer = true }
+        var resolved = plateColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            resolved = plateColor.usingColorSpace(.sRGB) ?? plateColor
+        }
+        layer?.backgroundColor = resolved.cgColor
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         installTrackingArea()
@@ -558,31 +590,49 @@ class FloatingPanel: NSPanel {
         return NSRect(x: x, y: y, width: newWidth, height: newHeight)
     }
 
-    /// Switch the panel between the dark pill appearance and the light
-    /// system-settings appearance used in the `.detail` state. The
-    /// dark island silhouette is painted by SwiftUI (IslandShape),
-    /// so the container itself stays transparent in the dark
-    /// states — we only set a solid background for detail/settings
-    /// which uses a standard rounded window instead of the island.
-    func setDetailAppearance(_ isDetail: Bool) {
-        if isDetail {
-            // Use system (light) appearance for the settings panel so SwiftUI
-            // controls render with native macOS System Settings styling.
+    /// What the panel is showing, which decides the surface behind it.
+    ///
+    /// The two panes that fill the panel are styled for opposite schemes — the
+    /// settings pages use scheme-aware colors and system controls, a conversation
+    /// is white ink on dark — so the window appearance and the container plate
+    /// have to be chosen per surface, not per "is this a detail state".
+    enum Surface {
+        /// Island states: transparent, because SwiftUI's IslandShape paints the
+        /// black pill with its notch cutout. An opaque layer here would fill the
+        /// notch region and break the silhouette.
+        case island
+        /// Workspace settings pages: follow the system scheme so SwiftUI
+        /// controls render with native macOS System Settings styling.
+        case systemSettings
+        /// A conversation: `ConversationDetailView` paints white ink and
+        /// white-opacity bubbles, so it needs a dark plate in either system
+        /// scheme. Left to the system scheme, a light-mode Mac drew white text
+        /// on a white plate.
+        case conversation
+    }
+
+    func setSurface(_ surface: Surface) {
+        switch surface {
+        case .island:
+            self.appearance = NSAppearance(named: .darkAqua)
+            pillContainer.plateColor = nil
+            pillContainer.layer?.cornerRadius = 0
+            pillContainer.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            pillContainer.layer?.masksToBounds = false
+        case .systemSettings:
             self.appearance = nil   // inherit system appearance
-            pillContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            pillContainer.plateColor = .windowBackgroundColor
             pillContainer.layer?.cornerRadius = 12
             pillContainer.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             pillContainer.layer?.masksToBounds = true
-        } else {
-            // Island states (compact / extended / notification):
-            // container stays transparent — SwiftUI's IslandShape
-            // paints the black pill with its notch cutout. Reverting
-            // to an opaque black layer here would fill the notch
-            // region too and break the silhouette.
+        case .conversation:
             self.appearance = NSAppearance(named: .darkAqua)
-            pillContainer.layer?.backgroundColor = CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0)
-            pillContainer.layer?.cornerRadius = 0
-            pillContainer.layer?.masksToBounds = false
+            // Fixed dark on purpose: the view on top is white ink in either
+            // system scheme.
+            pillContainer.plateColor = NSColor(white: 0.11, alpha: 1)
+            pillContainer.layer?.cornerRadius = 12
+            pillContainer.layer?.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            pillContainer.layer?.masksToBounds = true
         }
     }
 
