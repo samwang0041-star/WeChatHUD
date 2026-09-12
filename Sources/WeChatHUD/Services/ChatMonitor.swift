@@ -230,6 +230,23 @@ final class ChatMonitor: ObservableObject {
     }()
     /// Live pending items only. History is loaded on demand by the 待办 surface.
     @Published var discussionItems: [DiscussionItem] = []
+    /// How much of the extracted material the task surfaces treat as work.
+    /// Persisted, and read by the workspace, the sidebar badge, 今天 and the
+    /// daily report so all four agree on what counts.
+    @Published private(set) var discussionStrictness: DiscussionStrictness = .default
+
+    func setDiscussionStrictness(_ level: DiscussionStrictness) {
+        guard level != discussionStrictness else { return }
+        discussionStrictness = level
+        try? store.setSettingJSON(
+            DiscussionStrictnessPolicy.settingKey,
+            value: DiscussionStrictnessSetting(level: level)
+        )
+        refreshWorkspaceChrome()
+    }
+
+    /// Loads the stored level. Called during start-up, before the first chrome
+    /// publish, so the badge never flickers between two levels.
     /// One-shot copy after stale pending rows are archived. The HUD toast layer
     /// consumes it so a 2000-row fold is not silent.
     @Published var discussionArchiveNotice: String?
@@ -401,6 +418,12 @@ final class ChatMonitor: ObservableObject {
         self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService)
         self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService)
         self.insightCoordinator = InsightCoordinator(reader: reader, store: store, aiService: aiService)
+        // Read the stored level before anything publishes chrome, so the
+        // sidebar badge is never briefly wrong about how much work exists.
+        discussionStrictness = store.getSettingJSON(
+            DiscussionStrictnessPolicy.settingKey,
+            as: DiscussionStrictnessSetting.self
+        )?.level ?? .default
     }
 
     deinit {
@@ -1512,7 +1535,7 @@ final class ChatMonitor: ObservableObject {
             vipTiers: vipAlertTiers
         ))
         workspaceBadges.publish(WorkspaceBadgeCounts(
-            tasks: WorkspaceBadgeCounts.taskCount(discussionItems),
+            tasks: WorkspaceBadgeCounts.taskCount(discussionItems, strictness: discussionStrictness),
             commitments: commitments.filter { $0.status == .pending || $0.status == .overdue }.count,
             drafts: store.workspaceDraftCount(),
             pendingReplies: autopilotLog.filter { $0.action == .pending }.count

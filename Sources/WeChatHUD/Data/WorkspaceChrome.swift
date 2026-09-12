@@ -79,8 +79,11 @@ struct WorkspaceBadgeCounts: Equatable {
 
     /// Sidebar 待办 badge. Matches the island default and 今天「我要做」:
     /// live pending work assigned to me, not info memos and not the whole dump.
-    static func taskCount(_ items: [DiscussionItem]) -> Int {
-        items.filter { $0.status == .pending && $0.kind != .info && $0.owner == .mine }.count
+    ///
+    /// Honours the strictness level so the badge cannot claim more work than
+    /// the list it is counting for is willing to show.
+    static func taskCount(_ items: [DiscussionItem], strictness: DiscussionStrictness = .default) -> Int {
+        items.filter { $0.status == .pending && $0.kind != .info && $0.owner == .mine && strictness.admits($0) }.count
     }
 }
 

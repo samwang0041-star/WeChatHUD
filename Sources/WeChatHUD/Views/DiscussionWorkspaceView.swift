@@ -16,12 +16,18 @@ struct DiscussionWorkspaceView: View {
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
     @State private var expandArchived = false
+    /// How much of the extracted material counts as work here. Read from the
+    /// monitor so the sidebar badge, 今天 and the daily report all agree.
+    private var strictness: DiscussionStrictness { monitor.discussionStrictness }
     /// Keeps the filter+sort to one pass per changed input instead of one pass
     /// per read. See `DiscussionItemsCache`.
     @State private var itemsCache = DiscussionItemsCache()
 
     private var sourceItems: [DiscussionItem] {
-        showHistory ? historyItems : monitor.discussionItems
+        // History is a review of what was handled, so it is never narrowed by
+        // the level — hiding completed work would make the level look like it
+        // deleted things. The level applies to the live list only.
+        showHistory ? historyItems : monitor.discussionItems.filter { strictness.admits($0) }
     }
 
     /// Resolved once per body evaluation. Never read this from a row: rows
@@ -32,6 +38,74 @@ struct DiscussionWorkspaceView: View {
 
     private func selection(in items: [DiscussionItem]) -> DiscussionItem? {
         items.first(where: { $0.id == selectedID }) ?? items.first
+    }
+
+    /// The strictness control plus its receipt.
+    ///
+    /// A level that silently removes rows is indistinguishable from one that
+    /// ate them, so the bar always says how many it is holding back — and how
+    /// many of those are work assigned to the user, which is the number that
+    /// makes the trade visible.
+    private var strictnessBar: some View {
+        let hidden = strictness.hidden(from: monitor.discussionItems)
+        let hiddenMine = hidden.filter { $0.owner == .mine }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("保留")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Picker("保留", selection: strictnessBinding) {
+                    ForEach(DiscussionStrictness.allCases, id: \.self) { level in
+                        Text(level.label).tag(level)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .accessibilityLabel("保留哪些内容")
+                Spacer(minLength: 8)
+                if !hidden.isEmpty {
+                    Button {
+                        // Reveal by widening, not by a separate "show hidden"
+                        // mode: one mechanism, and it cannot disagree with the
+                        // picker.
+                        monitor.setDiscussionStrictness(.everything)
+                    } label: {
+                        Text(receiptLabel(hidden: hidden.count, mine: hiddenMine))
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jade)
+                    .accessibilityHint("切到「全部都记」，这些内容会回到列表里")
+                }
+            }
+            Text(strictness.explanation)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var strictnessBinding: Binding<DiscussionStrictness> {
+        Binding(
+            get: { strictness },
+            set: { monitor.setDiscussionStrictness($0) }
+        )
+    }
+
+    /// "已收起 N 条（其中 M 条是我要做的） · 展开".
+    ///
+    /// Built as one string so the view body stays cheap to type-check, and so
+    /// a test can pin the exact wording the user is asked to trust.
+    static func receiptLabel(hidden: Int, mine: Int) -> String {
+        let minePart = mine > 0 ? "（其中 \(mine) 条是我要做的）" : ""
+        return "已收起 \(hidden) 条\(minePart) · 展开"
+    }
+
+    private func receiptLabel(hidden: Int, mine: Int) -> String {
+        Self.receiptLabel(hidden: hidden, mine: mine)
     }
 
     var body: some View {
@@ -104,6 +178,7 @@ struct DiscussionWorkspaceView: View {
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
+            strictnessBar
             HStack(spacing: 8) {
                 ForEach(DiscussionScope.allCases) { value in
                     Button {
@@ -123,7 +198,7 @@ struct DiscussionWorkspaceView: View {
                     .font(.system(size: 12))
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .fixedSize()
+                .fixedSize()
             }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -153,15 +228,30 @@ struct DiscussionWorkspaceView: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView(
+        // An empty list has three different meanings and they must not look
+        // alike: nothing to do, nothing matched the search, or the current
+        // level is holding material back. The third case is the dangerous one
+        // — it looks identical to "nothing to do" unless we say otherwise.
+        let hiddenHere = strictness.hidden(from: monitor.discussionItems)
+        let heldBackByLevel = !showHistory && query.isEmpty && !hiddenHere.isEmpty
+        return ContentUnavailableView(
             query.isEmpty ? "还没有待办" : "没有匹配的待办",
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
             description: Text(query.isEmpty
                 ? (showHistory
                     ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。过期太久自动收起的在「较早收起」里。"
-                    : "连上微信并选好对话后，还没做完的事会出现在这里。")
+                    : (heldBackByLevel
+                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全部都记」能看到它们。"
+                        : "连上微信并选好对话后，还没做完的事会出现在这里。"))
                 : "当前搜索：\(query)")
         )
+        .overlay(alignment: .bottom) {
+            if heldBackByLevel, scope == .notes {
+                Button("把信息点放回来") { monitor.setDiscussionStrictness(.everything) }
+                    .buttonStyle(.bordered)
+                    .padding(.bottom, 24)
+            }
+        }
         .frame(maxWidth: .infinity, minHeight: 280)
         .overlay(alignment: .bottom) {
             if !query.isEmpty {

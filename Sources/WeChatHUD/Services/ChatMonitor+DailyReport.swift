@@ -64,7 +64,9 @@ extension ChatMonitor {
     func currentDailyReportFactsStamp() -> String {
         let debts = replyDebtItems.map(\.id).sorted().joined(separator: ",")
         let tasks = discussionItems
-            .filter { $0.status == .pending && $0.kind != .info }
+            // Same level as the 待办 page and 今天: a report that counts work
+            // the list refuses to show would contradict itself.
+            .filter { $0.status == .pending && $0.kind != .info && discussionStrictness.admits($0) }
             .map { String($0.id) }
             .sorted()
             .joined(separator: ",")

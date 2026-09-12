@@ -87,6 +87,15 @@ struct CommitmentTabView: View {
 
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
+            // This page is not governed by 待办's strictness level, and saying
+            // so here is the point: a promise the user made is already the
+            // narrowest category there is (extraction applies a 0.72 gate and
+            // only keeps explicit commitments). Without this line the two
+            // pages look like they disagree about what was promised.
+            Text("这里只记你明确答应过的事 — 不受「待办」页的保留档位影响。")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 CompanionFilterPill(title: "进行中 \(activeCount)", selected: filter == .active) { filter = .active }
                 CompanionFilterPill(title: "已超期 \(overdueCount)", selected: filter == .overdue) { filter = .overdue }

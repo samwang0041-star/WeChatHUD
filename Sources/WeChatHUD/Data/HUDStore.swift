@@ -2297,7 +2297,13 @@ final class HUDStore: ObservableObject {
         promptVersion: String
     ) throws -> Bool {
         let now = Int(Date().timeIntervalSince1970)
-        let dueStr = dueAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        // Store a real NULL when there is no deadline. This used to write an
+        // empty string, which SQLite cannot convert under the column's INTEGER
+        // affinity and therefore keeps as TEXT — and every TEXT value sorts
+        // *after* every number, so `due_at > 0` matched every row while
+        // `due_at IS NULL` matched none. Any "is this dated?" check silently
+        // read as yes. Passing nil binds NULL.
+        let dueValue: String? = dueAt.map { String(Int($0.timeIntervalSince1970)) }
         try exec("""
             INSERT OR IGNORE INTO discussion_items(
                 chat_username, chat_name, kind, owner, content, detail,
@@ -2308,7 +2314,7 @@ final class HUDStore: ObservableObject {
         """, params: [
             chatUsername, chatName, kind.rawValue, owner.rawValue,
             content, detail ?? "",
-            anchorMsgUID, "\(sourceTimestamp)", dueStr,
+            anchorMsgUID, "\(sourceTimestamp)", dueValue,
             DiscussionItemStatus.pending.rawValue,
             String(confidence), promptVersion,
             "\(now)", "\(now)"
@@ -2511,10 +2517,13 @@ final class HUDStore: ObservableObject {
         dueAt: Date?
     ) throws -> Bool {
         let now = Int(Date().timeIntervalSince1970)
-        let dueStr = dueAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        // Cleared deadlines must become NULL for the same reason the insert
+        // path does: an empty string stores as TEXT, which outranks every
+        // number and makes "has a deadline" read as true forever.
+        let dueValue: String? = dueAt.map { String(Int($0.timeIntervalSince1970)) }
         try exec("""
             UPDATE discussion_items SET content=?, owner=?, due_at=?, updated_at=? WHERE id=?
-        """, params: [content, owner.rawValue, dueStr, "\(now)", "\(id)"])
+        """, params: [content, owner.rawValue, dueValue, "\(now)", "\(id)"])
         return sqlite3_changes(db) > 0
     }
 
@@ -3575,7 +3584,7 @@ final class HUDStore: ObservableObject {
         try exec("UPDATE classification_queue SET retry_after=0")
     }
 
-    private func exec(_ sql: String, params: [String] = []) throws {
+    private func exec(_ sql: String, params: [String?] = []) throws {
         try withCachedStatement(sql, params: params) { stmt in
             // Loop to consume any result rows (e.g. PRAGMA journal_mode returns SQLITE_ROW).
             while true {
@@ -3662,7 +3671,7 @@ final class HUDStore: ObservableObject {
     /// recompiles rather than stepping a poisoned statement.
     private func withCachedStatement(
         _ sql: String,
-        params: [String] = [],
+        params: [String?] = [],
         cacheOnSuccess: Bool = true,
         _ body: (OpaquePointer) throws -> Void
     ) throws {
@@ -3690,7 +3699,14 @@ final class HUDStore: ObservableObject {
             }
 
             for (i, p) in params.enumerated() {
-                sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+                // nil binds a real NULL. Writing an empty string instead is
+                // what made `due_at` unreadable to `IS NULL` and to numeric
+                // comparisons — see the note in insertDiscussionItem.
+                if let p {
+                    sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+                } else {
+                    sqlite3_bind_null(stmt, Int32(i + 1))
+                }
             }
             // sqlite3_stmt_readonly distinguishes writes from SELECT/PRAGMA
             // without sniffing the SQL text, so the write counter stays
