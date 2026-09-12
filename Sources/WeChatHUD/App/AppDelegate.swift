@@ -2,6 +2,39 @@ import AppKit
 import Combine
 import SwiftUI
 
+// MARK: - Animation debug logging (lazy)
+
+extension AnimationDebugger {
+    /// Lazy `logEvent`.
+    ///
+    /// `AnimationDebugger.logEvent(_:)` takes an already-built `String`, so
+    /// every call site paid for the interpolation — and, in the panel's hot
+    /// paths, for half a dozen `String(format:)` calls measuring mouse and
+    /// window coordinates — even with `WCHUD_ANIMATION_DEBUG` unset. This
+    /// entry point takes the message as an autoclosure, so when debug is off
+    /// the expression is never evaluated.
+    ///
+    /// A separate name, not an overload: Swift prefers the exact `String`
+    /// overload over an `@autoclosure () -> String` one for both a plain and an
+    /// interpolated literal (measured — an overload here is dead code and the
+    /// message is still built eagerly).
+    static func logLazyEvent(_ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
+        emit(message())
+    }
+
+    /// Timestamp + print, split out so the gating decision is testable without
+    /// a second process.
+    static func emit(_ message: String) {
+        let ms = Date().timeIntervalSince(debugBoot) * 1000
+        print(String(format: "[ANIM] @%08.1fms %@", ms, message))
+    }
+
+    /// Mirrors the private boot stamp the value-taking `logEvent` uses, so the
+    /// two entry points stamp lines on the same clock.
+    private static let debugBoot = Date()
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: FloatingPanel!
     var panelState: PanelState!
@@ -110,7 +143,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // itself right after expanding under a pointer that never
                 // moved.
                 let inside = self.panel.containsMouse()
-                AnimationDebugger.logEvent("frameAnimationEnded mouseInside=\(inside) state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(x:\(String(format: "%.1f", self.panel.frame.minX))…\(String(format: "%.1f", self.panel.frame.maxX)) y:\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                AnimationDebugger.logLazyEvent("frameAnimationEnded mouseInside=\(inside) state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(x:\(String(format: "%.1f", self.panel.frame.minX))…\(String(format: "%.1f", self.panel.frame.maxX)) y:\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
                 self.panelState.frameAnimationEnded(mouseInside: inside)
             }
         }
@@ -122,14 +155,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.pillContainer.onEntered = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                AnimationDebugger.logEvent("mouseEntered state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                AnimationDebugger.logLazyEvent("mouseEntered state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
                 self.panelState.mouseEntered()
             }
         }
         panel.pillContainer.onExited = { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                AnimationDebugger.logEvent("mouseExited state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
+                AnimationDebugger.logLazyEvent("mouseExited state=\(self.panelState.currentState) mouse=(\(String(format: "%.1f", NSEvent.mouseLocation.x)),\(String(format: "%.1f", NSEvent.mouseLocation.y))) frame=(\(String(format: "%.1f", self.panel.frame.minY))…\(String(format: "%.1f", self.panel.frame.maxY)))")
                 self.panelState.mouseExited()
             }
         }
@@ -153,7 +186,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panelState.$currentState
             .sink { [weak self] state in
                 guard let self = self else { return }
-                AnimationDebugger.logEvent("state -> \(state)")
+                AnimationDebugger.logLazyEvent("state -> \(state)")
                 // Re-read display screen preference on every state change
                 let latestSync = self.store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
                 self.panel.displayScreen = latestSync.displayScreen
@@ -280,7 +313,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     targetSize = size
                 }
 
-                AnimationDebugger.logEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
+                AnimationDebugger.logLazyEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
                 // Tolerance — don't re-animate for sub-pixel jitter.
                 let curr = self.panel.frame
                 if abs(targetSize.height - curr.height) < 2, abs(targetSize.width - curr.width) < 2 {
@@ -368,6 +401,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             PreviewRuntime.simulateHover()
             PreviewRuntime.installCaptureBridge()
             PreviewRuntime.seed(store: store, monitor: monitor)
+            PreviewRuntime.applyIslandSnapshotOverrides(monitor: monitor, panelState: panelState)
         } else {
             startMonitoringAfterRelaunch()
         }
@@ -405,16 +439,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // log look like the motion itself was stuttering.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     guard let self else { return }
-                    // Hold the banner long enough to inspect it, then put
-                    // the stored (consumer-facing) duration back so this
-                    // launch flag leaves no trace in the preview settings.
-                    var cfg = self.store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
-                    let savedDuration = cfg.durationSeconds
-                    cfg.durationSeconds = 900
-                    try? self.store.setSettingJSON("notification", value: cfg)
-                    PreviewRuntime.simulateNotification(monitor: self.monitor, panelState: self.panelState, longForm: true)
-                    cfg.durationSeconds = savedDuration
-                    try? self.store.setSettingJSON("notification", value: cfg)
+                    // Hold the banner long enough to inspect it. The hold is
+                    // passed straight to the presentation call instead of
+                    // being written into (and restored from) the stored
+                    // notification setting: when the preview process was
+                    // killed mid-hold, the restore never ran and a
+                    // 900-second duration stayed behind in the preview
+                    // database, making later launches look as if the banner
+                    // ignored further clicks.
+                    PreviewRuntime.simulateNotification(
+                        monitor: self.monitor, panelState: self.panelState,
+                        longForm: true, holdSeconds: 900
+                    )
                     // `--preview-briefing` performs the banner's own body
                     // action (a click anywhere on the card) afterwards, so the
                     // expanded in-place card can be captured in the real panel

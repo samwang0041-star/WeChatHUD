@@ -66,7 +66,8 @@ enum ScanEngine {
             // stays a pure function with no query on the hot path.
             let admissionRules = AdmissionRules.load(store: store)
             let allContacts = store.loadContacts()
-            let contactMap = Dictionary(uniqueKeysWithValues: allContacts.map { ($0.username, $0) })
+            // Duplicate usernames must not trap the process; see contactLookup.
+            let contactMap = Self.contactLookup(allContacts)
 
             // Refresh message DBs before reading — picks up outbound messages
             // the user just sent in WeChat, so reply debt correctly detects replies.
@@ -210,18 +211,10 @@ enum ScanEngine {
                 }
             }
 
-            func rank(_ s: UnreadStatus) -> Int {
-                switch s {
-                case .overdue: return 0
-                case .pending: return 1
-                case .answered: return 2
-                }
-            }
-            let sortedUnread = unreadCollected.sorted { a, b in
-                let ra = rank(a.status), rb = rank(b.status)
-                if ra != rb { return ra < rb }
-                return a.timestamp > b.timestamp
-            }
+            // Deterministic total order; see unreadOrder. Previously an inline
+            // (rank asc, timestamp desc) comparator, which left equal keys in
+            // input order.
+            let sortedUnread = unreadCollected.sorted(by: Self.unreadOrder)
             let sortedSuppressed = suppressedCollected.sorted { $0.timestamp > $1.timestamp }
             let totalUnread = privateUnreadChats + groupAtCount + groupMemberCount
             let debugUnreadExtra: Int
@@ -252,8 +245,9 @@ enum ScanEngine {
             // own private thread. See `deriveVIPPersonUsernames`.
             let vipPersonUsernames = Self.deriveVIPPersonUsernames(whitelist: whitelist)
 
-            // Build session lookup for timestamp correction
-            let sessionMap = Dictionary(uniqueKeysWithValues: sessions.map { ($0.username, $0) })
+            // Build session lookup for timestamp correction. Duplicate
+            // usernames must not trap the process; see sessionLookup.
+            let sessionMap = Self.sessionLookup(sessions)
 
             for entry in whitelist {
                 let isFirstWhitelistScan = store.getWhitelistCursor(username: entry.id) == nil
@@ -616,7 +610,7 @@ enum ScanEngine {
                     mergedRecent.removeAll { $0.chatUsername == username }
                     mergedRecent.append(notif)
                 }
-                mergedRecent.sort { $0.timestamp > $1.timestamp }
+                mergedRecent.sort(by: Self.recentNotificationOrder)
                 if mergedRecent.count > recentLimit {
                     mergedRecent = Array(mergedRecent.prefix(recentLimit))
                 }
@@ -626,97 +620,109 @@ enum ScanEngine {
             // ---- Autopilot: scan non-whitelist private chats ----
             // Private chats that are VIP/关注 but missing from whitelist still
             // reach autopilot. 仅保留资料 and strangers do not.
-            let whitelistUsernames = Set(whitelist.map(\.id))
-            if let allSessions = try? reader.getSessions() {
-                for session in allSessions {
-                    // Skip group chats, already-scanned whitelist chats, and chatrooms
-                    guard !session.username.contains("@chatroom"),
-                          !whitelistUsernames.contains(session.username),
-                          session.unreadCount > 0 else { continue }
+            //
+            // This pass reuses the `sessions` snapshot read at the top of the
+            // scan instead of calling `reader.getSessions()` again, which read
+            // session.db a second time on every scan. A first read that failed
+            // has already been logged and degraded the scan; retrying the
+            // identical read microseconds later cannot plausibly succeed.
+            //
+            // Contacts come from the scan-start `contactMap` snapshot rather
+            // than `store.getContact` per message, turning an O(messages) set of
+            // SQL round trips into dictionary hits. The snapshot is taken before
+            // this loop and nothing in the scan writes contacts, so it observes
+            // the same rows the per-message query would have.
+            for session in sessions {
+                // Skip group chats, already-scanned whitelist chats, and chatrooms
+                guard !session.username.contains("@chatroom"),
+                      !whitelistSet.contains(session.username),
+                      session.unreadCount > 0 else { continue }
 
-                    // Only scan recent private chats with unread messages
-                    let messages: [MessageInfo]
+                // Only scan recent private chats with unread messages
+                let messages: [MessageInfo]
+                do {
+                    messages = try reader.getMessages(chatUsername: session.username, limit: 20, sinceLocalId: nil)
+                } catch { continue }
+
+                guard let baseline = store.getAutopilotCursor(username: session.username) else {
+                    let seed = messages.first.map { ($0.createTime, $0.localId) }
+                        ?? (Int(Date().timeIntervalSince1970), 0)
                     do {
-                        messages = try reader.getMessages(chatUsername: session.username, limit: 20, sinceLocalId: nil)
-                    } catch { continue }
+                        try store.setAutopilotCursor(
+                            username: session.username,
+                            lastCreateTime: seed.0,
+                            lastLocalId: seed.1
+                        )
+                    } catch {
+                        print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
+                    }
+                    continue
+                }
 
-                    guard let baseline = store.getAutopilotCursor(username: session.username) else {
-                        let seed = messages.first.map { ($0.createTime, $0.localId) }
-                            ?? (Int(Date().timeIntervalSince1970), 0)
-                        do {
-                            try store.setAutopilotCursor(
-                                username: session.username,
-                                lastCreateTime: seed.0,
-                                lastLocalId: seed.1
-                            )
-                        } catch {
-                            print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
-                        }
+                let newMessages = messages.filter {
+                    $0.createTime > baseline.lastCreateTime
+                        || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                }
+                var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
+                autopilotMessagesToQueue.reserveCapacity(newMessages.count)
+                for msg in newMessages {
+                    if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
+                    // Indexed against the scan-start contact snapshot; the
+                    // previous per-message `store.getContact` was a SQL
+                    // round trip for every candidate message.
+                    guard let contact = contactMap[msg.senderUsername] else {
                         continue
                     }
-
-                    let newMessages = messages.filter {
-                        $0.createTime > baseline.lastCreateTime
-                            || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                    // 仅保留资料 / 未关注 stay off autopilot. Copy is
+                    // "只记住是谁，不日常提醒。"
+                    guard contact.attentionLevel == .vip || contact.attentionLevel == .whitelist else {
+                        continue
                     }
-                    var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
-                    autopilotMessagesToQueue.reserveCapacity(newMessages.count)
-                    for msg in newMessages {
-                        if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
-                        guard let contact = store.getContact(username: msg.senderUsername) else {
-                            continue
-                        }
-                        // 仅保留资料 / 未关注 stay off autopilot. Copy is
-                        // "只记住是谁，不日常提醒。"
-                        guard contact.attentionLevel == .vip || contact.attentionLevel == .whitelist else {
-                            continue
-                        }
-                        let level: AttentionLevel = contact.attentionLevel
-                        // Strangers (no contact record, no greylist) are skipped.
-                        let inbound = AutopilotService.InboundMessage(
-                            msgUID: msg.id,
-                            chatUsername: msg.chatUsername,
-                            chatName: msg.chatName,
-                            senderUsername: msg.senderUsername,
-                            senderName: msg.senderName,
-                            text: msg.text,
-                            isGroup: false,
-                            isAtMention: false,
-                            attentionLevel: level,
-                            contactRole: contact.role,
-                            timestamp: msg.createTime,
-                            messageType: msg.baseType,
-                            appType: msg.appType
-                        )
-                        if autopilotActive {
-                            // Persist this queue row together with the
-                            // autopilot cursor below. A failed insert must
-                            // leave the cursor behind so the next scan retries.
-                            autopilotMessagesToQueue.append(inbound)
-                        }
-                        autopilotInbound.append(inbound)
+                    let level: AttentionLevel = contact.attentionLevel
+                    // Strangers (no contact record, no greylist) are skipped.
+                    let inbound = AutopilotService.InboundMessage(
+                        msgUID: msg.id,
+                        chatUsername: msg.chatUsername,
+                        chatName: msg.chatName,
+                        senderUsername: msg.senderUsername,
+                        senderName: msg.senderName,
+                        text: msg.text,
+                        isGroup: false,
+                        isAtMention: false,
+                        attentionLevel: level,
+                        contactRole: contact.role,
+                        timestamp: msg.createTime,
+                        messageType: msg.baseType,
+                        appType: msg.appType
+                    )
+                    if autopilotActive {
+                        // Persist this queue row together with the
+                        // autopilot cursor below. A failed insert must
+                        // leave the cursor behind so the next scan retries.
+                        autopilotMessagesToQueue.append(inbound)
                     }
+                    autopilotInbound.append(inbound)
+                }
 
-                    // Update baseline
-                    if let newest = newMessages.first,
-                       newest.createTime > baseline.lastCreateTime
-                       || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
-                        do {
-                            try store.withTransaction {
-                                if autopilotActive {
-                                    for inbound in autopilotMessagesToQueue {
-                                        try store.enqueueAutopilotInbound(inbound)
-                                    }
+                // Update baseline
+                if let newest = newMessages.first,
+                   newest.createTime > baseline.lastCreateTime
+                   || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
+                    do {
+                        try store.withTransaction {
+                            if autopilotActive {
+                                for inbound in autopilotMessagesToQueue {
+                                    try store.enqueueAutopilotInbound(inbound)
                                 }
-                                try store.setAutopilotCursor(
-                                    username: session.username,
-                                    lastCreateTime: newest.createTime,
-                                    lastLocalId: newest.localId
-                                )
                             }
-                        } catch {
-                            print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
+                            try store.setAutopilotCursor(
+                                username: session.username,
+                                lastCreateTime: newest.createTime,
+                                lastLocalId: newest.localId
+                            )
                         }
+                    } catch {
+                        print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
                     }
                 }
             }
@@ -786,6 +792,81 @@ enum ScanEngine {
     /// A failed session.db read must not persist a newest-message cursor.
     static func shouldPersistFirstScanBaseline(sessionsAvailable: Bool) -> Bool {
         sessionsAvailable
+    }
+
+    // MARK: - Username lookup builders (pure, testable)
+
+    /// Username -> contact lookup for the whole scan.
+    ///
+    /// Why duplicates happen: the contacts table has no UNIQUE constraint on
+    /// username, so multi-account rows or leftovers from a re-import can repeat
+    /// the same username. Dictionary(uniqueKeysWithValues:) traps on a
+    /// duplicate, and that trap is uncatchable — it takes the whole app down
+    /// mid-scan. Collapsing duplicates here keeps the scan alive.
+    ///
+    /// Why first-wins: every later contactMap[...] lookup is by username only,
+    /// so it cannot tell the duplicate rows apart anyway. Keeping the first row
+    /// preserves the row this scan would previously have observed, and it
+    /// cannot trap.
+    static func contactLookup(_ contacts: [ContactEntry]) -> [String: ContactEntry] {
+        Dictionary(contacts.map { ($0.username, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Username -> session lookup, same duplicate policy as contactLookup:
+    /// session.db has no UNIQUE constraint on username either (multi-account /
+    /// leftover rows repeat it), and this map is only ever indexed by username,
+    /// so the first row wins instead of trapping the process.
+    static func sessionLookup(_ sessions: [SessionInfo]) -> [String: SessionInfo] {
+        Dictionary(sessions.map { ($0.username, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    // MARK: - Deterministic ordering (pure, testable)
+
+    /// Triage severity used as the primary unread sort key. Lower = more urgent.
+    static func unreadStatusRank(_ status: UnreadStatus) -> Int {
+        switch status {
+        case .overdue: return 0
+        case .pending: return 1
+        case .answered: return 2
+        }
+    }
+
+    /// Total order for the unread list: urgency asc (overdue -> pending ->
+    /// answered), then timestamp desc, then stable identity keys. The old
+    /// comparator stopped at the timestamp, so equal (status, timestamp) pairs
+    /// came out in input-array order; that order changes as rows are re-read,
+    /// which rebuilds whole SwiftUI rows while nothing visible changed. The
+    /// primary semantics are unchanged: rank still dominates, and a newer
+    /// timestamp still wins inside a rank.
+    static func unreadOrder(_ a: UnreadItem, _ b: UnreadItem) -> Bool {
+        let ra = unreadStatusRank(a.status), rb = unreadStatusRank(b.status)
+        if ra != rb { return ra < rb }
+        if a.timestamp != b.timestamp { return a.timestamp > b.timestamp }
+        if a.chatUsername != b.chatUsername { return a.chatUsername < b.chatUsername }
+        if a.senderUsername != b.senderUsername { return a.senderUsername < b.senderUsername }
+        if a.preview != b.preview { return a.preview < b.preview }
+        return kindOrder(a.kind) < kindOrder(b.kind)
+    }
+
+    /// Total order for the recent-notification feed: newest first, then chat
+    /// username, then message id. The old comparator was timestamp-only, so
+    /// equal timestamps kept input order and the feed could reshuffle with no
+    /// visible cause. Timestamp still dominates exactly as before.
+    static func recentNotificationOrder(_ a: HUDNotification, _ b: HUDNotification) -> Bool {
+        if a.timestamp != b.timestamp { return a.timestamp > b.timestamp }
+        if a.chatUsername != b.chatUsername { return a.chatUsername < b.chatUsername }
+        if a.messageID != b.messageID { return a.messageID < b.messageID }
+        return kindOrder(a.kind) < kindOrder(b.kind)
+    }
+
+    /// Final tiebreak for both orders: a fixed kind order so two items that
+    /// agree on every other key still compare deterministically.
+    private static func kindOrder(_ kind: HUDNotificationKind) -> Int {
+        switch kind {
+        case .groupAt: return 0
+        case .privateChat: return 1
+        case .groupMessage: return 2
+        }
     }
 
     // MARK: - Cross-group VIP helpers (pure, testable)
@@ -881,6 +962,35 @@ enum ScanEngine {
             let recentMsgs = (try? reader.getMessages(chatUsername: session.username, limit: 30)) ?? []
             guard !recentMsgs.isEmpty else { return nil }
 
+            // 预先把身份判定结果算好，评分器只消费结论：它不该知道
+            // myUsername/mySelfNames 这套身份体系。窗口保留整个 30 条，评分时
+            // 才能翻回「对方先说正事、我 ack 一句、对方再补个『好』」之前的那条
+            // 正事 —— 只看最新一条时它会消失。
+            func isFromSelf(_ msg: MessageInfo) -> Bool {
+                MessageHelpers.isFromSelf(
+                    msg,
+                    chatUsername: session.username,
+                    myUsername: myUsername,
+                    myDisplayName: myDisplayName,
+                    mySelfNames: mySelfNames
+                )
+            }
+            func isAtMe(_ msg: MessageInfo) -> Bool {
+                MessageHelpers.isAtMe(
+                    msg.text,
+                    myUsername: myUsername,
+                    myDisplayName: myDisplayName,
+                    mySelfNames: mySelfNames
+                )
+            }
+            let timeline = recentMsgs.map { msg in
+                ReplyDebtScorer.TimelineEntry(
+                    message: msg,
+                    isFromSelf: isFromSelf(msg),
+                    isAtMe: isAtMe(msg)
+                )
+            }
+
             let latestInbound = recentMsgs.first {
                 !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
                     && !admissionRules.isMuted(
@@ -940,7 +1050,8 @@ enum ScanEngine {
                 chatAction: chatActions[session.username],
                 now: now,
                 contactReplyWindowMinutes: contactMap[session.username]?.replyWindowMinutes,
-                admission: admission
+                admission: admission,
+                timeline: timeline
             )
         }
 

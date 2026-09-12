@@ -11,6 +11,49 @@ final class HUDStore: ObservableObject {
     private var transactionDepth = 0
     var deviceSettings: DeviceSettingsStore?
 
+    // MARK: - Prepared statement cache
+    //
+    // Why: every call to exec / executeInsert / executeUpdate / queryOne /
+    // queryAll used to run sqlite3_prepare_v2 + sqlite3_finalize. The hot
+    // paths (scan ingest, whitelist lookups, autopilot polling) re-run the
+    // same handful of SQL strings hundreds of times per scan, so the
+    // parse/plan work was pure overhead. Caching the prepared statements
+    // removes the recompile while keeping every failure semantic identical:
+    // a miss still prepares with the same flags and reports the same
+    // HUDStoreError.sqlError / nil / empty-result behavior.
+    //
+    // Concurrency: the cache is a Swift dictionary, and sqlite3's FULLMUTEX
+    // serializes sqlite3 calls but not Swift state. So every cache access
+    // runs inside withDatabaseMutex, which funnels through FULLMUTEX's
+    // recursive connection mutex. A cache hit therefore holds the mutex
+    // across reset/bind/step, which also stops two threads from interleaving
+    // binds on one shared statement (bind values are not covered by the
+    // connection mutex). That mutex is recursive, so cached statements used
+    // from inside withTransaction re-enter safely on the same thread.
+    private var statementCache: [String: OpaquePointer] = [:]
+    /// LRU bookkeeping: least-recently-used SQL string first.
+    private var statementCacheLRU: [String] = []
+    /// Reused statements are bounded so a long-lived app cannot pin an
+    /// unbounded number of VMs/plans. 24 comfortably covers every SQL string
+    /// the scan/autopilot loops hit per pass.
+    private static let statementCacheCapacity = 24
+    /// On overflow, drop the least-recently-used half instead of a single
+    /// entry. One eviction pass then costs a bounded number of finalizes and
+    /// the loop keeps its working set warm; dropping the whole cache would
+    /// recompile every hot statement on the next pass.
+    private static let statementCacheEvictCount = 12
+
+    /// Observability for tests: how many times SQL had to be compiled.
+    /// A cache hit never increments this, so a test can assert that a
+    /// repeated call prepared the statement only once.
+    private(set) var statementPrepareCount = 0
+
+    /// Observability for tests: how many write statements were *executed*
+    /// (counted per execution, never per prepare, so the statement cache
+    /// cannot mask the work). Read-only statements (SELECT/PRAGMA) do not
+    /// count. Used to assert "no stale rows means zero write transactions".
+    private(set) var writeStatementCount = 0
+
     init(dbPath: String? = nil, createParentDirectory: Bool = true, cleanupPath: String? = nil) {
         let home = NSHomeDirectory()
         let dir = dbPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
@@ -27,6 +70,8 @@ final class HUDStore: ObservableObject {
         guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             throw HUDStoreError.openFailed(String(cString: sqlite3_errmsg(db)))
         }
+        // A previous connection's cached statements belong to that handle.
+        prepareStatementCacheForNewConnection()
         try exec("PRAGMA journal_mode=WAL")
         try exec("PRAGMA synchronous=NORMAL")
         try exec("PRAGMA foreign_keys=ON")
@@ -88,9 +133,15 @@ final class HUDStore: ObservableObject {
         guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
             throw HUDStoreError.openFailed(String(cString: sqlite3_errmsg(db)))
         }
+        prepareStatementCacheForNewConnection()
     }
 
     func close() {
+        // sqlite3_close returns SQLITE_BUSY while any statement is still
+        // alive, so every cached statement must be finalized first. Without
+        // this the connection would leak and the on-disk WAL would never be
+        // checkpointed on the final close.
+        finalizeCachedStatements()
         if let db = db {
             sqlite3_close(db)
             self.db = nil
@@ -2137,8 +2188,6 @@ final class HUDStore: ObservableObject {
 
     func loadCommitments(status: CommitmentStatus? = nil, relevantSince: Int? = nil) -> [Commitment] {
         var results: [Commitment] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
         var sql = """
             SELECT id, msg_uid, chat_username, chat_name, content, commit_to,
                    deadline_at, confidence, status, prompt_version,
@@ -2153,15 +2202,7 @@ final class HUDStore: ObservableObject {
             params.append(status.rawValue)
         }
         if let relevantSince {
-            clauses.append("""
-                (status IN (?, ?)
-                 OR CAST(created_at AS INTEGER) >= ?
-                 OR (
-                    CAST(IFNULL(deadline_at, 0) AS INTEGER) > 0
-                    AND CAST(deadline_at AS INTEGER) >= ?
-                 )
-                 OR CAST(updated_at AS INTEGER) >= ?)
-                """)
+            clauses.append(Self.commitmentRelevantSinceClause)
             params.append(CommitmentStatus.pending.rawValue)
             params.append(CommitmentStatus.overdue.rawValue)
             params.append("\(relevantSince)")
@@ -2172,35 +2213,36 @@ final class HUDStore: ObservableObject {
             sql += " WHERE " + clauses.joined(separator: " AND ")
         }
         sql += " ORDER BY COALESCE(deadline_at, 9999999999) ASC"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        for (i, p) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let deadlineRaw = sqlite3_column_int64(stmt, 6)
-            let deadline: Date? = sqlite3_column_type(stmt, 6) == SQLITE_NULL || deadlineRaw == 0
-                ? nil
-                : Date(timeIntervalSince1970: TimeInterval(deadlineRaw))
-            results.append(Commitment(
-                id: sqlite3_column_int64(stmt, 0),
-                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
-                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
-                chatName: String(cString: sqlite3_column_text(stmt, 3)),
-                content: String(cString: sqlite3_column_text(stmt, 4)),
-                commitTo: String(cString: sqlite3_column_text(stmt, 5)),
-                deadlineAt: deadline,
-                confidence: sqlite3_column_double(stmt, 7),
-                status: CommitmentStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .pending,
-                promptVersion: String(cString: sqlite3_column_text(stmt, 9)),
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 10))),
-                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 11))),
-                sourceText: Self.textColumn(stmt, 12),
-                contextText: Self.textColumn(stmt, 13),
-                captureReason: Self.textColumn(stmt, 14),
-                nextStep: Self.textColumn(stmt, 15),
-                deadlineLabel: Self.textColumn(stmt, 16),
-                commitmentKind: Self.textColumn(stmt, 17)
-            ))
+        // Routed through the shared statement cache: this query runs on every
+        // live-workspace refresh and the string is built from a fixed clause
+        // set, so the cache sees at most four variants and reuses each one.
+        try? withCachedStatement(sql, params: params) { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let deadlineRaw = sqlite3_column_int64(stmt, 6)
+                let deadline: Date? = sqlite3_column_type(stmt, 6) == SQLITE_NULL || deadlineRaw == 0
+                    ? nil
+                    : Date(timeIntervalSince1970: TimeInterval(deadlineRaw))
+                results.append(Commitment(
+                    id: sqlite3_column_int64(stmt, 0),
+                    msgUID: String(cString: sqlite3_column_text(stmt, 1)),
+                    chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
+                    chatName: String(cString: sqlite3_column_text(stmt, 3)),
+                    content: String(cString: sqlite3_column_text(stmt, 4)),
+                    commitTo: String(cString: sqlite3_column_text(stmt, 5)),
+                    deadlineAt: deadline,
+                    confidence: sqlite3_column_double(stmt, 7),
+                    status: CommitmentStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .pending,
+                    promptVersion: String(cString: sqlite3_column_text(stmt, 9)),
+                    createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 10))),
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 11))),
+                    sourceText: Self.textColumn(stmt, 12),
+                    contextText: Self.textColumn(stmt, 13),
+                    captureReason: Self.textColumn(stmt, 14),
+                    nextStep: Self.textColumn(stmt, 15),
+                    deadlineLabel: Self.textColumn(stmt, 16),
+                    commitmentKind: Self.textColumn(stmt, 17)
+                ))
+            }
         }
         if let relevantSince {
             return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
@@ -2294,8 +2336,6 @@ final class HUDStore: ObservableObject {
         limit: Int? = nil
     ) -> [DiscussionItem] {
         var results: [DiscussionItem] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
 
         var sql = """
             SELECT id, chat_username, chat_name, kind, owner, content, detail,
@@ -2326,19 +2366,7 @@ final class HUDStore: ObservableObject {
             params.append("\(since)")
         }
         if let relevantSince {
-            clauses.append("""
-                (
-                    CAST(source_timestamp AS INTEGER) >= ?
-                    OR (
-                        CAST(IFNULL(due_at, 0) AS INTEGER) > 0
-                        AND CAST(due_at AS INTEGER) >= ?
-                    )
-                    OR (
-                        status != ?
-                        AND CAST(updated_at AS INTEGER) >= ?
-                    )
-                )
-                """)
+            clauses.append(Self.discussionRelevantSinceClause)
             params.append("\(relevantSince)")
             params.append("\(relevantSince)")
             params.append(DiscussionItemStatus.pending.rawValue)
@@ -2350,33 +2378,33 @@ final class HUDStore: ObservableObject {
         sql += " ORDER BY source_timestamp DESC"
         if let limit = limit { sql += " LIMIT \(limit)" }
 
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        for (i, p) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let detailRaw = String(cString: sqlite3_column_text(stmt, 6))
-            let dueRaw = sqlite3_column_int64(stmt, 9)
-            let due: Date? = sqlite3_column_type(stmt, 9) == SQLITE_NULL || dueRaw == 0
-                ? nil
-                : Date(timeIntervalSince1970: TimeInterval(dueRaw))
-            results.append(DiscussionItem(
-                id: sqlite3_column_int64(stmt, 0),
-                chatUsername: String(cString: sqlite3_column_text(stmt, 1)),
-                chatName: String(cString: sqlite3_column_text(stmt, 2)),
-                kind: DiscussionItemKind(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .todo,
-                owner: DiscussionItemOwner(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .shared,
-                content: String(cString: sqlite3_column_text(stmt, 5)),
-                detail: detailRaw.isEmpty ? nil : detailRaw,
-                anchorMsgUID: String(cString: sqlite3_column_text(stmt, 7)),
-                sourceTimestamp: Int(sqlite3_column_int64(stmt, 8)),
-                dueAt: due,
-                status: DiscussionItemStatus(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .pending,
-                confidence: sqlite3_column_double(stmt, 11),
-                promptVersion: String(cString: sqlite3_column_text(stmt, 12)),
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 13))),
-                updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14)))
-            ))
+        // Same clause set on every refresh, so the cache sees a handful of
+        // distinct SQL strings and compiles each one only once.
+        try? withCachedStatement(sql, params: params) { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let detailRaw = String(cString: sqlite3_column_text(stmt, 6))
+                let dueRaw = sqlite3_column_int64(stmt, 9)
+                let due: Date? = sqlite3_column_type(stmt, 9) == SQLITE_NULL || dueRaw == 0
+                    ? nil
+                    : Date(timeIntervalSince1970: TimeInterval(dueRaw))
+                results.append(DiscussionItem(
+                    id: sqlite3_column_int64(stmt, 0),
+                    chatUsername: String(cString: sqlite3_column_text(stmt, 1)),
+                    chatName: String(cString: sqlite3_column_text(stmt, 2)),
+                    kind: DiscussionItemKind(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .todo,
+                    owner: DiscussionItemOwner(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .shared,
+                    content: String(cString: sqlite3_column_text(stmt, 5)),
+                    detail: detailRaw.isEmpty ? nil : detailRaw,
+                    anchorMsgUID: String(cString: sqlite3_column_text(stmt, 7)),
+                    sourceTimestamp: Int(sqlite3_column_int64(stmt, 8)),
+                    dueAt: due,
+                    status: DiscussionItemStatus(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .pending,
+                    confidence: sqlite3_column_double(stmt, 11),
+                    promptVersion: String(cString: sqlite3_column_text(stmt, 12)),
+                    createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 13))),
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14)))
+                ))
+            }
         }
         if let relevantSince {
             return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
@@ -2526,7 +2554,58 @@ final class HUDStore: ObservableObject {
 
     /// Saved drafts plus in-progress composer text that is not already a saved row.
     func workspaceDraftCount() -> Int {
-        loadWorkspaceDrafts().count
+        // This used to be loadWorkspaceDrafts().count, which materialised
+        // every saved row into a struct, then resolved a display name for
+        // every composer draft (a whitelist lookup plus a contacts lookup
+        // each) — and threw all of it away for a cardinality check.
+        //
+        // Parity with loadWorkspaceDrafts is exact:
+        //   count = (every saved row, duplicates included)
+        //         + (composer drafts whose (chat, text) pair matches no saved
+        //            row of the same chat)
+        // The saved side is now a pure COUNT(*) — the same table, no WHERE,
+        // so it counts exactly the rows loadDrafts() would have returned.
+        // The name resolution on the composer side was never observable
+        // here because the result is a count, so it is skipped.
+        let savedCount = scalarCount("SELECT COUNT(*) FROM reply_drafts")
+        var savedTextsByChat: [String: Set<String>] = [:]
+        for row in loadDraftTextIdentities() {
+            savedTextsByChat[row.chatUsername, default: []].insert(row.text)
+        }
+        var composerOnly = 0
+        for composer in loadComposerDrafts()
+        where savedTextsByChat[composer.chatUsername]?.contains(composer.text) != true {
+            composerOnly += 1
+        }
+        return savedCount + composerOnly
+    }
+
+    /// Minimal projection used by the draft badge: the (chat, text) pairs
+    /// needed to dedupe composer drafts, without decoding names/timestamps
+    /// into WorkspaceDraft values.
+    private func loadDraftTextIdentities() -> [(chatUsername: String, text: String)] {
+        var rows: [(chatUsername: String, text: String)] = []
+        try? withCachedStatement("SELECT chat_username, text FROM reply_drafts") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                rows.append((
+                    chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
+                    text: String(cString: sqlite3_column_text(stmt, 1))
+                ))
+            }
+        }
+        return rows
+    }
+
+    /// Single-value COUNT helper that matches the existing scalar-read
+    /// convention (0 when the statement cannot be prepared or stepped).
+    private func scalarCount(_ sql: String) -> Int {
+        var value = 0
+        try? withCachedStatement(sql) { stmt in
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                value = Int(sqlite3_column_int64(stmt, 0))
+            }
+        }
+        return value
     }
 
     struct WorkspaceDraft: Equatable {
@@ -2967,6 +3046,21 @@ final class HUDStore: ObservableObject {
 
     /// Pending drafts from every session, including ones whose session already ended.
     func loadOpenAutopilotPendingItems(relevantSince: Int? = nil) -> [AutopilotLogEntry] {
+        loadOpenAutopilotPendingItems(relevantSince: relevantSince, limit: nil)
+    }
+
+    /// Upper bound for the pending half of the autopilot display list. The
+    /// display used to load every pending row in the table on each refresh;
+    /// once the log grew that became an unbounded read on a UI timer. 50
+    /// matches the current-session half (loadAutopilotLog's default limit) so
+    /// both halves of the list are bounded the same way.
+    static let autopilotDisplayPendingLimit = 50
+
+    /// Limit-aware variant. A nil limit preserves the public method's
+    /// "return everything" semantics, which other callers still rely on;
+    /// the display path passes a bound instead. Internal rather than private
+    /// so a cross-file test can assert the bounded behavior directly.
+    func loadOpenAutopilotPendingItems(relevantSince: Int?, limit pendingLimit: Int?) -> [AutopilotLogEntry] {
         var results: [AutopilotLogEntry] = []
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
@@ -2979,10 +3073,22 @@ final class HUDStore: ObservableObject {
         if relevantSince != nil {
             sql += " AND created_at >= ?"
         }
-        sql += " ORDER BY created_at DESC"
+        // Newest pending rows first, so a limit drops the oldest leftovers
+        // rather than the ones the user is most likely acting on. created_at
+        // ties break by id DESC (insertion order) so the window is
+        // deterministic instead of arbitrary.
+        sql += " ORDER BY created_at DESC, id DESC"
+        if pendingLimit != nil {
+            sql += " LIMIT ?"
+        }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        var bindIndex: Int32 = 1
         if let relevantSince {
-            sqlite3_bind_int64(stmt, 1, Int64(relevantSince))
+            sqlite3_bind_int64(stmt, bindIndex, Int64(relevantSince))
+            bindIndex += 1
+        }
+        if let pendingLimit {
+            sqlite3_bind_int(stmt, bindIndex, Int32(pendingLimit))
         }
         while sqlite3_step(stmt) == SQLITE_ROW {
             results.append(autopilotLogEntry(from: stmt!))
@@ -2994,7 +3100,13 @@ final class HUDStore: ObservableObject {
     func loadAutopilotDisplayLog(sessionId: Int64?, limit: Int = 50, relevantSince: Int? = nil) -> [AutopilotLogEntry] {
         var result: [AutopilotLogEntry] = []
         var seen = Set<Int64>()
-        for item in loadOpenAutopilotPendingItems(relevantSince: relevantSince) {
+        // Pending first (existing ordering contract), deduped by id, then the
+        // current session's log appended. Only this display path bounds the
+        // pending half; loadOpenAutopilotPendingItems itself is unchanged.
+        for item in loadOpenAutopilotPendingItems(
+            relevantSince: relevantSince,
+            limit: Self.autopilotDisplayPendingLimit
+        ) {
             if seen.insert(item.id).inserted { result.append(item) }
         }
         if let sessionId {
@@ -3464,20 +3576,192 @@ final class HUDStore: ObservableObject {
     }
 
     private func exec(_ sql: String, params: [String] = []) throws {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+        try withCachedStatement(sql, params: params) { stmt in
+            // Loop to consume any result rows (e.g. PRAGMA journal_mode returns SQLITE_ROW).
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE { return }
+                if rc == SQLITE_ROW { continue }
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+            }
         }
-        defer { sqlite3_finalize(stmt) }
-        for (i, p) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+    }
+
+    // MARK: - Cached statement plumbing
+    //
+    // Failure semantics are deliberately identical to the uncached code:
+    // prepare failures surface as HUDStoreError.sqlError (throwing callers)
+    // or nil/0/[] (non-throwing callers), always with the same
+    // sqlite3_errmsg text, and a statement that failed to step is discarded
+    // instead of being reused.
+
+    /// Clears any statements belonging to a previous connection. Called
+    /// right after (re)opening so a stale handle can never be stepped on the
+    /// new one.
+    private func prepareStatementCacheForNewConnection() {
+        try? withDatabaseMutex {
+            for (_, stmt) in statementCache { sqlite3_finalize(stmt) }
+            statementCache.removeAll()
+            statementCacheLRU.removeAll()
         }
-        // Loop to consume any result rows (e.g. PRAGMA journal_mode returns SQLITE_ROW).
-        while true {
-            let rc = sqlite3_step(stmt)
-            if rc == SQLITE_DONE { return }
-            if rc == SQLITE_ROW { continue }
-            throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+    }
+
+    /// Finalizes every cached statement. MUST run before sqlite3_close:
+    /// close returns SQLITE_BUSY (and leaks the handle) while statements are
+    /// still alive.
+    private func finalizeCachedStatements() {
+        try? withDatabaseMutex {
+            for (_, stmt) in statementCache { sqlite3_finalize(stmt) }
+            statementCache.removeAll()
+            statementCacheLRU.removeAll()
+        }
+    }
+
+    /// Hand a single SQL string back to the cache, evicting the
+    /// least-recently-used half once capacity is exceeded.
+    private func storeCachedStatement(_ sql: String, _ stmt: OpaquePointer) {
+        if statementCache[sql] == nil {
+            if statementCacheLRU.count >= Self.statementCacheCapacity {
+                for victim in statementCacheLRU.prefix(Self.statementCacheEvictCount) {
+                    if let stale = statementCache.removeValue(forKey: victim) {
+                        sqlite3_finalize(stale)
+                    }
+                }
+                statementCacheLRU.removeFirst(min(Self.statementCacheEvictCount, statementCacheLRU.count))
+            }
+            statementCacheLRU.append(sql)
+        }
+        statementCache[sql] = stmt
+    }
+
+    /// Move an LRU entry to the most-recently-used end. The cache is tiny
+    /// (capacity 24), so the O(n) rebuild on a hit is far cheaper than the
+    /// prepare it avoids.
+    private func touchStatementCacheLRU(_ sql: String) {
+        guard let index = statementCacheLRU.firstIndex(of: sql) else {
+            statementCacheLRU.append(sql)
+            return
+        }
+        guard index != statementCacheLRU.count - 1 else { return }
+        statementCacheLRU.remove(at: index)
+        statementCacheLRU.append(sql)
+    }
+
+    /// Runs the body on a prepared statement, reusing the cached one when
+    /// the exact SQL string was compiled before.
+    ///
+    /// Two invariants matter on the reuse path:
+    /// 1. sqlite3_reset + sqlite3_clear_bindings before every reuse. Without
+    ///    them a reused statement would keep the previous call's bindings
+    ///    (wrong rows) and its stepped state (SQLITE_MISUSE).
+    /// 2. The reset/bind/step sequence holds the recursive connection mutex,
+    ///    so two threads can never interleave binds on one statement.
+    ///
+    /// A statement returns to the cache only after a clean step. On a prepare
+    /// or step failure it is finalized and dropped, so the next caller
+    /// recompiles rather than stepping a poisoned statement.
+    private func withCachedStatement(
+        _ sql: String,
+        params: [String] = [],
+        cacheOnSuccess: Bool = true,
+        _ body: (OpaquePointer) throws -> Void
+    ) throws {
+        try withDatabaseMutex {
+            let statement: OpaquePointer?
+            if let cached = statementCache[sql] {
+                // sqlite3_reset's return value describes the previous step,
+                // not a new failure, so it is intentionally ignored; this
+                // call's step below reports the error that matters.
+                sqlite3_reset(cached)
+                sqlite3_clear_bindings(cached)
+                touchStatementCacheLRU(sql)
+                statement = cached
+            } else {
+                var prepared: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &prepared, nil) == SQLITE_OK else {
+                    sqlite3_finalize(prepared)
+                    throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+                }
+                statementPrepareCount += 1
+                statement = prepared
+            }
+            guard let stmt = statement else {
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+            }
+
+            for (i, p) in params.enumerated() {
+                sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+            }
+            // sqlite3_stmt_readonly distinguishes writes from SELECT/PRAGMA
+            // without sniffing the SQL text, so the write counter stays
+            // correct even for PRAGMA statements that return rows.
+            let isWrite = sqlite3_stmt_readonly(stmt) == 0
+
+            do {
+                try body(stmt)
+            } catch {
+                // Poisoned statement: drop it instead of caching a
+                // half-stepped handle that would surface SQLITE_MISUSE.
+                if statementCache.removeValue(forKey: sql) != nil {
+                    statementCacheLRU.removeAll { $0 == sql }
+                    sqlite3_finalize(stmt)
+                }
+                throw error
+            }
+
+            if isWrite {
+                // Counted per execution: the statement cache must not hide
+                // "did we actually issue a write?" from callers or tests.
+                writeStatementCount += 1
+            }
+            // Callers that report their own bind failures opt out of caching
+            // so a partially-bound statement can never be reused.
+            if cacheOnSuccess { storeCachedStatement(sql, stmt) }
+        }
+    }
+
+    /// Same contract as withCachedStatement, but for callers that bind a
+    /// dynamic parameter list themselves. The bind closure returns false to
+    /// report a bind failure; the throwing callers then raise the same
+    /// "step" error surface the uncached code produced.
+    private func withCachedStatement(
+        _ sql: String,
+        _ bind: (OpaquePointer?) -> Bool,
+        _ body: (OpaquePointer) throws -> Void
+    ) throws {
+        try withDatabaseMutex {
+            let statement: OpaquePointer?
+            if let cached = statementCache[sql] {
+                sqlite3_reset(cached)
+                sqlite3_clear_bindings(cached)
+                touchStatementCacheLRU(sql)
+                statement = cached
+            } else {
+                var prepared: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &prepared, nil) == SQLITE_OK else {
+                    sqlite3_finalize(prepared)
+                    throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+                }
+                statementPrepareCount += 1
+                statement = prepared
+            }
+            guard let stmt = statement else {
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+            }
+
+            let isWrite = sqlite3_stmt_readonly(stmt) == 0
+            let bound = bind(stmt)
+            do {
+                try body(stmt)
+            } catch {
+                if statementCache.removeValue(forKey: sql) != nil {
+                    statementCacheLRU.removeAll { $0 == sql }
+                    sqlite3_finalize(stmt)
+                }
+                throw error
+            }
+            if isWrite { writeStatementCount += 1 }
+            if bound { storeCachedStatement(sql, stmt) }
         }
     }
 
@@ -3540,68 +3824,70 @@ final class HUDStore: ObservableObject {
     /// not part of the public surface.
     nonisolated var rawDB: OpaquePointer? { db }
 
+    /// Test/extension hook onto the same throwing exec path the store uses
+    /// internally. Exists so tests can assert the exact failure surface
+    /// (HUDStoreError.sqlError) without duplicating the call.
+    nonisolated func execProbeThrowing(_ sql: String) throws {
+        try exec(sql)
+    }
+
     /// Best-effort SQL exec used by retrospective migration (mirrors the
     /// existing private exec but swallows errors, matching the codebase's
     /// best-effort `try? exec("ALTER TABLE …")` pattern).
     nonisolated func execIgnoringError(_ sql: String) {
-        var stmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+        // Same connection and same cache as every other caller. Both the
+        // cache dictionary and the shared statement handle are reached
+        // through the recursive connection mutex, so a best-effort call from
+        // another thread cannot corrupt a bound statement mid-step. Errors
+        // stay swallowed exactly as before.
+        try? withCachedStatement(sql) { stmt in
             sqlite3_step(stmt)
         }
-        sqlite3_finalize(stmt)
     }
 
     typealias SQLiteBinder = (OpaquePointer?) -> Void
 
     @discardableResult
     nonisolated func executeInsert(_ sql: String, bind: SQLiteBinder) -> Int? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            sqlite3_finalize(stmt); return nil
+        var rowID: Int? = nil
+        // A prepare failure leaves the cache untouched and still returns nil,
+        // matching the original uncached behavior.
+        try? withCachedStatement(sql) { stmt in
+            bind(stmt)
+            rowID = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_last_insert_rowid(db)) : nil
         }
-        bind(stmt)
-        let rowID: Int? = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_last_insert_rowid(db)) : nil
-        sqlite3_finalize(stmt)
         return rowID
     }
 
     @discardableResult
     nonisolated func executeUpdate(_ sql: String, bind: SQLiteBinder) -> Int {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            sqlite3_finalize(stmt); return 0
+        var changes = 0
+        try? withCachedStatement(sql) { stmt in
+            bind(stmt)
+            changes = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_changes(db)) : 0
         }
-        bind(stmt)
-        let changes = (sqlite3_step(stmt) == SQLITE_DONE) ? Int(sqlite3_changes(db)) : 0
-        sqlite3_finalize(stmt)
         return changes
     }
 
     nonisolated func queryOne<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer?) -> T?) -> T? {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            sqlite3_finalize(stmt); return nil
-        }
-        bind(stmt)
         var result: T? = nil
-        if sqlite3_step(stmt) == SQLITE_ROW {
-            result = decode(stmt)
+        try? withCachedStatement(sql) { stmt in
+            bind(stmt)
+            if sqlite3_step(stmt) == SQLITE_ROW {
+                result = decode(stmt)
+            }
         }
-        sqlite3_finalize(stmt)
         return result
     }
 
     nonisolated func queryAll<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer?) -> T?) -> [T] {
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            sqlite3_finalize(stmt); return []
-        }
-        bind(stmt)
         var results: [T] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            if let decoded = decode(stmt) { results.append(decoded) }
+        try? withCachedStatement(sql) { stmt in
+            bind(stmt)
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let decoded = decode(stmt) { results.append(decoded) }
+            }
         }
-        sqlite3_finalize(stmt)
         return results
     }
 }
@@ -3612,6 +3898,46 @@ extension HUDStore {
     /// outlives the prepare/finalize cycle. Scoped to HUDStore namespace so
     /// it doesn't pollute module globals.
     static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    // MARK: - Live-window SQL fragments
+    //
+    // These are the exact predicates the corresponding loaders interpolate,
+    // exposed as constants for two reasons:
+    //  1. The statement cache is keyed by SQL text, so a constant string is
+    //     what makes repeat calls a cache hit instead of a recompile.
+    //  2. Tests can rebuild the identical query and run EXPLAIN QUERY PLAN
+    //     against it, so the indexed plan is asserted on the real SQL.
+    //
+    // Both deliberately avoid CAST(column AS INTEGER) around the timestamp
+    // columns. CAST strips the column's NUMERIC affinity, which forces
+    // SQLite into a TEXT-vs-INTEGER comparison and (worse) makes the
+    // expression non-sargable, so idx_commitments_status /
+    // idx_disc_status_time could not be used. Because created_at /
+    // deadline_at / updated_at / source_timestamp / due_at are declared
+    // INTEGER, SQLite applies numeric affinity to the bound parameter on
+    // its own, so a text-bound "1700000000" and an integer-stored
+    // 1700000000 both compare correctly — including rows written with a
+    // string timestamp via raw SQL, where the column affinity stores them
+    // as integers anyway. Verified by
+    // HUDStoreQueryPlanPerfTests.testTextAndIntegerTimestampRowsBothMatch.
+    static var commitmentRelevantSinceClause: String {
+        """
+        (status IN (?, ?)
+         OR created_at >= ?
+         OR (IFNULL(deadline_at, 0) > 0 AND deadline_at >= ?)
+         OR updated_at >= ?)
+        """
+    }
+
+    static var discussionRelevantSinceClause: String {
+        """
+        (
+            source_timestamp >= ?
+            OR (IFNULL(due_at, 0) > 0 AND due_at >= ?)
+            OR (status != ? AND updated_at >= ?)
+        )
+        """
+    }
 
     static func textColumn(_ stmt: OpaquePointer?, _ index: Int32) -> String {
         guard sqlite3_column_type(stmt, index) != SQLITE_NULL,
