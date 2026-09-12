@@ -14,6 +14,24 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     private let aliasDefaults: UserDefaults
     private let manifestPath: String
 
+    /// Debounced manifest persistence (`.persistent` strategy only).
+    ///
+    /// `refreshIfChanged` used to rewrite the entire manifest synchronously, so
+    /// a scan that touched a dozen message DBs paid a dozen full JSON
+    /// serializations, atomic writes and `setAttributes` calls. The trade-off is
+    /// explicit: a crash inside the debounce window loses at most the entries
+    /// recorded during that window, and a lost entry only means the next launch
+    /// re-decrypts that DB because the manifest is an index over the cache, not
+    /// the cache itself.
+    private static let manifestFlushDebounce: TimeInterval = 4.0
+    private var manifestDirty = false
+    private var manifestFlushWorkItem: DispatchWorkItem?
+    /// Serial queue the debounced flush runs on, off the scan's critical path.
+    private let manifestFlushQueue = DispatchQueue(label: "com.wechathud.reader.manifest-flush")
+    /// Manifest writes actually performed. Exposed so tests can assert that a
+    /// burst of refreshes collapses into one write.
+    private(set) var manifestWriteCount = 0
+
     /// Recursive lock protecting all mutable dictionary state from concurrent access.
     /// ChatMonitor runs scans on a detached task while the main actor may read state;
     /// this lock serialises those accesses without requiring full actor isolation.
@@ -22,6 +40,38 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     private let lock = NSRecursiveLock()
 
     private var keys: [String: Data] = [:]           // relative path → 32-byte key
+
+    /// Precomputed candidate sets for `findKey(for:)`, keyed by file name.
+    ///
+    /// `findKey` used to filter the entire key dictionary on every call, and a
+    /// scan calls it several times per DB (`getDecryptedDB`, the WAL apply,
+    /// `getSessions`). Candidate selection can only ever accept keys whose
+    /// `lastPathComponent` equals the queried file name — an exact-path match
+    /// always carries the same file name — so one bucket per file name answers
+    /// the query without touching the rest of the key file.
+    private struct KeyCandidateBucket {
+        /// Distinct `enc_key` values across all candidates. `findKey` only
+        /// returns a value when this collapses to exactly one entry.
+        var distinctValues: Set<Data> = []
+        /// Distinct values among candidates whose absolute path lives under
+        /// `dbDir` — the scoped branch of `findKey`.
+        var scopedValues: Set<Data> = []
+        /// Whether any candidate is written as an absolute path. A key file
+        /// that already names another account must not fall back to a
+        /// relative entry.
+        var hasAbsolute = false
+    }
+
+    private var keyIndex: [String: KeyCandidateBucket] = [:]
+    /// True once `loadKeys` has built `keyIndex` for the current `keys`
+    /// dictionary. Distinguishes "no candidate for this file name" (nil, no
+    /// scan needed) from "index not built" (fall back to scanning).
+    private var keyIndexIsWarm = false
+    /// Full `keys` dictionary walks performed by `findKey`. Stays at zero once
+    /// the index is warm; exposed so tests can prove lookups use the index.
+    private(set) var keyLookupLinearScanCount = 0
+    /// Times the file-name index was rebuilt — once per key (re)load.
+    private(set) var keyIndexBuildCount = 0
     private var contactCache: [String: String] = [:] // username → display name
     /// Maps WeChat username / nick_name / remark to one canonical username
     /// when the alias is unambiguous. Prevents group member nicknames and
@@ -72,6 +122,15 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// can assert the hot path reuses one handle instead of re-parsing the
     /// schema per query, which is a timing-independent signal.
     private(set) var readHandleOpenCount = 0
+    /// Invocations of `getSessions()`. A full scan reads the session table once;
+    /// exposed so tests can prove a second full pass over every session is not
+    /// being performed.
+    private(set) var sessionQueryCount = 0
+    /// Fresh decrypted snapshots published by `getDecryptedDB` (cache misses and
+    /// refreshes). Exposed so tests can prove an unchanged DB is not decrypted
+    /// again — including right after `purgeEphemeralCache()`, when the snapshot
+    /// is gone but the encryption mtime is still known.
+    private(set) var decryptedSnapshotWriteCount = 0
 
     init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent,
          persistLearnedAliases: Bool = true, userDefaults: UserDefaults = .standard) {
@@ -100,6 +159,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        // Last-chance flush: a debounced write can still be pending when the
+        // reader goes away (app quit, account switch, tests tearing down).
+        flushManifestIfNeeded()
         for (_, stale) in handleCache { sqlite3_close(stale.db) }
         if cacheStrategy == .memory { try? FileManager.default.removeItem(atPath: cacheDir) }
     }
@@ -225,8 +287,38 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 let normalized = path.replacingOccurrences(of: "\\", with: "/")
                 keys[normalized] = keyData
             }
+            // The index is derived state: it must be rebuilt in lockstep with
+            // `keys` (new material, changed file, or an explicit force reload).
+            rebuildKeyIndex()
             keysMtime = curMtime
         }
+    }
+
+    /// Rebuild the per-file-name candidate index from the current `keys`.
+    ///
+    /// Every key is stored already normalized by `loadKeys`; the extra
+    /// backslash pass keeps this correct if a future writer forgets that.
+    private func rebuildKeyIndex() {
+        let databaseRoot = URL(fileURLWithPath: dbDir).standardizedFileURL.path
+        var index: [String: KeyCandidateBucket] = [:]
+        index.reserveCapacity(keys.count)
+        for (keyPath, keyData) in keys {
+            let normalized = keyPath.replacingOccurrences(of: "\\", with: "/")
+            let filename = (normalized as NSString).lastPathComponent
+            var bucket = index[filename] ?? KeyCandidateBucket()
+            bucket.distinctValues.insert(keyData)
+            if normalized.hasPrefix("/") {
+                bucket.hasAbsolute = true
+                let absolute = URL(fileURLWithPath: normalized).standardizedFileURL.path
+                if Self.keyPath(absolute, isUnderDatabaseRoot: databaseRoot) {
+                    bucket.scopedValues.insert(keyData)
+                }
+            }
+            index[filename] = bucket
+        }
+        keyIndex = index
+        keyIndexIsWarm = true
+        keyIndexBuildCount += 1
     }
 
     // MARK: - Cache Invalidation (mtime-based)
@@ -301,7 +393,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             }
             mainMtimes[normalized] = mainMtime
             walMtimes[normalized] = walMtime
-            if cacheStrategy == .persistent { saveManifest() }
+            // Persisting the manifest is a full JSON serialization + atomic
+            // write per changed DB. Record the change instead and let the
+            // debounced flush below collapse a burst of refreshes into one
+            // write — see `markManifestDirty`.
+            markManifestDirty()
             return true
         }
     }
@@ -345,16 +441,57 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             // still pointing at the previous contents.
             invalidateHandles(path: decPath)
             decryptedCache[normalized] = decPath
+            decryptedSnapshotWriteCount += 1
             return decPath
         }
     }
 
+    /// Resolve the 32-byte key for a DB path.
+    ///
+    /// Uses the per-file-name index built by `loadKeys`; the branch structure is
+    /// the historical one, kept verbatim so a key file that describes several
+    /// accounts still resolves exactly as before:
+    ///   1. candidates are every key matching by exact path or by file name;
+    ///   2. if any candidate is an absolute path under `dbDir`, the answer must
+    ///      be unambiguous among those;
+    ///   3. absolute candidates that are *not* under `dbDir` mean this key file
+    ///      belongs to another account → no relative fallback, nil;
+    ///   4. otherwise the answer must be unambiguous across candidates.
+    ///
+    /// Equivalence with the previous linear filter follows from (1) being
+    /// exactly the index bucket for `lastPathComponent(normalized)`: an exact
+    /// path match always has that same file name, and a raw `path` containing a
+    /// backslash can never equal a normalized key.
     func findKey(for path: String) -> Data? {
-        let normalized = path.replacingOccurrences(of: "\\", with: "/")
-        let filename = (normalized as NSString).lastPathComponent
+        lock.withLock {
+            let normalized = path.replacingOccurrences(of: "\\", with: "/")
+            let filename = (normalized as NSString).lastPathComponent
+
+            if keyIndexIsWarm {
+                guard let bucket = keyIndex[filename] else { return nil }
+                if !bucket.scopedValues.isEmpty {
+                    return bucket.scopedValues.count == 1 ? bucket.scopedValues.first : nil
+                }
+                if bucket.hasAbsolute { return nil }
+                return bucket.distinctValues.count == 1 ? bucket.distinctValues.first : nil
+            }
+
+            // Cold index: either no keys are loaded yet, or a future writer of
+            // `keys` forgot to rebuild the index. Fall back to the dictionary
+            // filter so a missing index can never turn into a wrong "no key"
+            // verdict; the counter is a canary for exactly that situation.
+            guard !keys.isEmpty else { return nil }
+            keyLookupLinearScanCount += 1
+            return findKeyByScanning(normalized: normalized, filename: filename)
+        }
+    }
+
+    /// The original dictionary filter, kept as the cold-path reference
+    /// implementation for `findKey`.
+    private func findKeyByScanning(normalized: String, filename: String) -> Data? {
         let candidates = keys.filter { keyPath, _ in
             let kp = keyPath.replacingOccurrences(of: "\\", with: "/")
-            return kp == path || kp == normalized || (kp as NSString).lastPathComponent == filename
+            return kp == normalized || (kp as NSString).lastPathComponent == filename
         }
         if candidates.isEmpty { return nil }
 
@@ -619,6 +756,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// chat; callers typically filter on `unreadCount > 0`.
     func getSessions() throws -> [SessionInfo] {
         let rel = "session/session.db"
+        sessionQueryCount += 1
         guard keys[rel] != nil else { return [] }
         _ = try? refreshIfChanged(relPath: rel)
         let decPath = try getDecryptedDB(relativePath: rel)
@@ -920,6 +1058,23 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let latestTs: Int
     }
 
+    /// Build the reverse tableName → chatUsername map used to attribute rows
+    /// scanned from a `Msg_<md5>` table back to a chat.
+    ///
+    /// Duplicate table names are expected, not exceptional:
+    /// - callers pass one entry per `chatUsernames` element, and a caller that
+    ///   feeds the session list can repeat the same username across accounts;
+    /// - two different usernames can resolve to the same `Msg_<md5>` table in
+    ///   a merged DB snapshot.
+    /// `Dictionary(uniqueKeysWithValues:)` traps on duplicates, and that trap
+    /// is uncatchable (it kills the process instead of throwing), so this
+    /// helper must never be replaced with it. First-wins keeps the caller's
+    /// original name, which is deterministic for a given input, while the
+    /// reverse lookup only needs *a* plausible owner for the SQL hit.
+    static func tableToChatMap(_ pairs: [(chatUsername: String, tableName: String)]) -> [String: String] {
+        Dictionary(pairs.map { ($0.tableName, $0.chatUsername) }, uniquingKeysWith: { first, _ in first })
+    }
+
     func bulkMessageStats(
         chatUsernames: [String],
         selfNames: Set<String>,
@@ -931,8 +1086,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
             ($0, "Msg_\(Self.md5Hex($0))")
         }
-        // Group by table name for O(1) lookup
-        let tableToChat = Dictionary(uniqueKeysWithValues: chatToTable.map { ($0.tableName, $0.chatUsername) })
+        // Group by table name for O(1) lookup. See `tableToChatMap` for why
+        // this must tolerate duplicate table names (it used to trap).
+        let tableToChat = Self.tableToChatMap(chatToTable)
         let targetTables = Set(chatToTable.map(\.tableName))
 
         let msgDBs = findMessageDBs()
@@ -1306,6 +1462,22 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     /// For the `.memory` cache strategy: remove decrypted files after use so
     /// plaintext never lingers on disk. Call this after each scan cycle.
+    ///
+    /// Deliberately keeps `mainMtimes` / `walMtimes`. Dropping them made every
+    /// encrypted DB look "never seen" on the next scan (`mtime != nil == nil`),
+    /// so `refreshIfChanged` reported a change for files that had not moved and
+    /// the scan re-decrypted + re-parsed the schema of the whole corpus.
+    ///
+    /// Keeping a record for a file whose plaintext was just deleted is safe, and
+    /// the two cases that matter both hold:
+    ///   * encrypted DB unchanged → `refreshIfChanged` correctly reports "nothing
+    ///     moved", and `getDecryptedDB` falls through to a fresh decrypt because
+    ///     the `decryptedCache` entry is gone and its `fileExists` check fails;
+    ///     a stale snapshot is never served.
+    ///   * encrypted DB changed → `mainChanged` is true, so the re-decrypt path
+    ///     runs exactly as before.
+    /// The privacy promise is unchanged: every file listed in `decryptedCache`
+    /// is deleted and every cached handle is closed before this returns.
     func purgeEphemeralCache() {
         lock.withLock {
             guard cacheStrategy == .memory else { return }
@@ -1316,9 +1488,30 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 _ = rel
             }
             decryptedCache.removeAll(keepingCapacity: true)
-            mainMtimes.removeAll(keepingCapacity: true)
-            walMtimes.removeAll(keepingCapacity: true)
+            // mtimes intentionally survive the purge — see the note above.
         }
+    }
+
+    /// Whether the reader still remembers this DB's encryption mtime after its
+    /// plaintext copy was purged. `.memory`-strategy observability for the
+    /// "no plaintext on disk, no re-decrypt storm" contract.
+    func tracksEncryptionMtime(forRelativePath relPath: String) -> Bool {
+        lock.withLock {
+            let normalized = relPath.replacingOccurrences(of: "\\", with: "/")
+            return mainMtimes[normalized] != nil || walMtimes[normalized] != nil
+        }
+    }
+
+    /// Number of DBs the reader believes it has a decrypted snapshot for.
+    /// Zero after `purgeEphemeralCache()`.
+    var decryptedCacheCount: Int {
+        lock.withLock { decryptedCache.count }
+    }
+
+    /// Plaintext files the reader still tracks. Tests assert the cache directory
+    /// holds none of them after a purge.
+    var decryptedFilePaths: [String] {
+        lock.withLock { Array(decryptedCache.values) }
     }
 
     // MARK: - Manifest (persistent strategy only)
@@ -1364,8 +1557,45 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func saveManifest() {
+    /// Mark the manifest as needing a write and make sure a debounced flush is
+    /// scheduled. Called from the scan's hot path while `lock` is held.
+    ///
+    /// The flush is timer-backed rather than caller-driven because nothing in
+    /// the scan loop is guaranteed to call `flushManifestIfNeeded()`: the dirty
+    /// flag can therefore never be lost "until someone remembers to flush".
+    private func markManifestDirty() {
         guard cacheStrategy == .persistent else { return }
+        manifestDirty = true
+        guard manifestFlushWorkItem == nil else {
+            return  // already scheduled; that write will pick up this change
+        }
+        let item = DispatchWorkItem { [weak self] in
+            self?.flushManifestIfNeeded()
+        }
+        manifestFlushWorkItem = item
+        manifestFlushQueue.asyncAfter(deadline: .now() + Self.manifestFlushDebounce, execute: item)
+    }
+
+    /// Write the manifest now if anything changed since the last successful
+    /// write. Safe to call from any thread; call sites that flush eagerly
+    /// (a scan boundary, `deinit`) pay nothing when the manifest is clean.
+    func flushManifestIfNeeded() {
+        lock.withLock {
+            manifestFlushWorkItem?.cancel()
+            manifestFlushWorkItem = nil
+            guard cacheStrategy == .persistent, manifestDirty else { return }
+            // Keep the flag when the write fails so the next change (or the
+            // next explicit flush) retries instead of silently dropping state.
+            if writeManifestNow() {
+                manifestDirty = false
+            }
+        }
+    }
+
+    /// Serialize and atomically replace the manifest. Callers hold `lock`.
+    /// Returns false when nothing was written; the caller keeps the dirty flag.
+    @discardableResult
+    private func writeManifestNow() -> Bool {
         var json: [String: [String: Any]] = [:]
         for (relPath, cachedPath) in decryptedCache {
             var entry: [String: Any] = ["cachedPath": cachedPath, "accountIdentity": Self.accountCacheIdentity(dbDir)]
@@ -1379,9 +1609,15 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             }
             json[relPath] = entry
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return }
-        try? data.write(to: URL(fileURLWithPath: manifestPath), options: .atomic)
+        guard let data = try? JSONSerialization.data(withJSONObject: json) else { return false }
+        do {
+            try data.write(to: URL(fileURLWithPath: manifestPath), options: .atomic)
+        } catch {
+            return false
+        }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: manifestPath)
+        manifestWriteCount += 1
+        return true
     }
 
     // MARK: - Name2Id

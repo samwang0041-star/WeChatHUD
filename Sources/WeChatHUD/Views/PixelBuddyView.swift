@@ -448,80 +448,381 @@ private let autopilotFrame2: Frame = {
 
 // MARK: - Mood → Frame mapping
 
+/// Memoized mood → frame table.
+///
+/// `framesForMood` used to build a fresh nested array every time it was
+/// called, and `PixelBuddyView.body` called it on every evaluation — so every
+/// re-render (and any SwiftUI re-layout, hover, mood flip, timer tick) rebuilt
+/// up to 8 × 24 × 24 `PixelColor` values. The frames are immutable, so they are
+/// now built once per mood and handed out by reference from a lock-guarded
+/// cache. The lock keeps the `static` lazy init safe when the compact bar, the
+/// expanded inbox and a test all ask for frames at the same moment.
+enum PixelMoodFrames {
+    private static let lock = NSLock()
+    private static var cache: [BuddyMood: [Frame]] = [:]
+
+    /// Number of moods whose frame table had to be *built*. A second request
+    /// for the same mood is a cache hit and leaves this unchanged — the
+    /// assertion the memoization test is written against.
+    private(set) static var buildCount = 0
+
+    /// The frames for `mood`, built at most once per process.
+    static func frames(for mood: BuddyMood) -> [Frame] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[mood] { return cached }
+        let built = PixelMoodFrames.build(mood)
+        cache[mood] = built
+        buildCount += 1
+        return built
+    }
+
+    /// Frames currently in the cache. Never builds anything.
+    static var cachedMoods: Set<BuddyMood> {
+        lock.lock()
+        defer { lock.unlock() }
+        return Set(cache.keys)
+    }
+
+    /// How many frames `mood` animates through, without materialising the
+    /// table (the driver only needs the count).
+    static func frameCount(for mood: BuddyMood) -> Int { build(mood).count }
+
+    /// The single place the frame literals are turned into a mood's cycle.
+    private static func build(_ mood: BuddyMood) -> [Frame] {
+        switch mood {
+        case .idle:        return [idleStand, idleStand, idleBreathe, idleStand, idleBlink, idleStand, idleLookRight, idleStand]
+        case .scanning:    return [scanFrame1, scanFrame2]
+        case .pending:     return [pendingFrame1, pendingFrame2]
+        case .urgent:      return [urgentFrame1, urgentFrame2]
+        case .error:       return [errorFrame1, errorFrame2]
+        case .sleepy:      return [sleepyFrame1, sleepyFrame2]
+        case .browsing:    return [browsingFrame1, browsingFrame2]
+        case .analyzing:   return [analyzingFrame1, analyzingFrame2]
+        case .celebrating: return [celebrateFrame1, celebrateFrame2]
+        case .autopiloting: return [autopilotFrame1, autopilotFrame2]
+        }
+    }
+}
+
+/// Mood → frame cycle. Kept as a free function for existing callers; the
+/// result is memoized per mood (see `PixelMoodFrames`), so calling it in a
+/// render pass no longer allocates a new table.
 func framesForMood(_ mood: BuddyMood) -> [Frame] {
-    switch mood {
-    case .idle:        return [idleStand, idleStand, idleBreathe, idleStand, idleBlink, idleStand, idleLookRight, idleStand]
-    case .scanning:    return [scanFrame1, scanFrame2]
-    case .pending:     return [pendingFrame1, pendingFrame2]
-    case .urgent:      return [urgentFrame1, urgentFrame2]
-    case .error:       return [errorFrame1, errorFrame2]
-    case .sleepy:      return [sleepyFrame1, sleepyFrame2]
-    case .browsing:    return [browsingFrame1, browsingFrame2]
-    case .analyzing:   return [analyzingFrame1, analyzingFrame2]
-    case .celebrating: return [celebrateFrame1, celebrateFrame2]
-    case .autopiloting: return [autopilotFrame1, autopilotFrame2]
+    PixelMoodFrames.frames(for: mood)
+}
+
+// MARK: - Sprite geometry
+
+/// Crop region — only render the interesting part of the 24x24 grid.
+/// Shared by the view and the pixel tests so both agree on the exact
+/// mapping from grid cell → view point.
+enum BuddySpriteGeometry {
+    static let gridSize = 24
+    static let cropTop = 8
+    static let cropBottom = 20
+    static let cropLeft = 7
+    static let cropRight = 19
+    static let cropRows = cropBottom - cropTop  // 12
+    static let cropCols = cropRight - cropLeft  // 12
+    /// Points per sprite pixel. 12 × 1.5 = 18pt, matching `IslandMetrics.buddy`.
+    static let pixelSize: CGFloat = 1.5
+}
+
+/// One visible sprite pixel and where it lands in the view's coordinate space.
+/// `BuddySpriteGeometry.pixelSize` is exactly representable in binary, so the
+/// arithmetic here is exact and the rects tile without gaps or overlaps.
+struct BuddyPixel: Equatable {
+    let row: Int
+    let col: Int
+    let color: PixelColor
+    /// A rectangle fully inside the sprite that this pixel covers.
+    var rect: CGRect {
+        CGRect(x: CGFloat(col) * BuddySpriteGeometry.pixelSize,
+               y: CGFloat(row) * BuddySpriteGeometry.pixelSize,
+               width: BuddySpriteGeometry.pixelSize,
+               height: BuddySpriteGeometry.pixelSize)
+    }
+}
+
+/// The crop → points mapping, as a pure function. The legacy renderer (144
+/// `Rectangle`s in a nested `VStack`/`HStack`) and the `Canvas` renderer both
+/// consume this list; the pixel tests compare the two bitmaps to prove the
+/// swap did not move or recolour a single pixel.
+enum PixelGridLayout {
+    /// Visible pixels of `frame`, in row-major order. Transparent pixels are
+    /// omitted — the legacy renderer drew them as fully transparent
+    /// rectangles, which is a no-op over whatever is behind the sprite.
+    static func pixels(in frame: Frame) -> [BuddyPixel] {
+        var pixels: [BuddyPixel] = []
+        pixels.reserveCapacity(BuddySpriteGeometry.cropRows * BuddySpriteGeometry.cropCols)
+        for row in BuddySpriteGeometry.cropTop..<BuddySpriteGeometry.cropBottom {
+            for col in BuddySpriteGeometry.cropLeft..<BuddySpriteGeometry.cropRight {
+                let color = frame[row][col]
+                guard color != .clear else { continue }
+                pixels.append(BuddyPixel(row: row - BuddySpriteGeometry.cropTop,
+                                         col: col - BuddySpriteGeometry.cropLeft,
+                                         color: color))
+            }
+        }
+        return pixels
+    }
+
+    /// Sprite size in points: 12 × 1.5 = 18.
+    static var spriteSize: CGSize {
+        CGSize(width: CGFloat(BuddySpriteGeometry.cropCols) * BuddySpriteGeometry.pixelSize,
+               height: CGFloat(BuddySpriteGeometry.cropRows) * BuddySpriteGeometry.pixelSize)
+    }
+}
+
+/// The sprite itself, drawn as a single `Canvas`.
+///
+/// The pre-Canvas view built 12 nested `HStack`s holding 144 `Rectangle`
+/// views, and SwiftUI laid the whole tree out on every frame tick. A Canvas
+/// draws the same 12×12 grid of 1.5pt cells in one pass: the content of each
+/// cell is `BuddyPixel.rect` filled with `PixelColor.swiftUIColor`, which is
+/// exactly what the old `Rectangle().fill(...)` painted.
+struct BuddyPixelGrid: View {
+    let frame: Frame
+    var cellSize: CGFloat = BuddySpriteGeometry.pixelSize
+
+    var body: some View {
+        Canvas { context, _ in
+            // One fill per colour instead of one per 1.5pt cell: the cells
+            // never overlap, so a single path per colour paints exactly the
+            // pixels 144 individual rectangles used to paint.
+            var paths: [PixelColor: Path] = [:]
+            for pixel in PixelGridLayout.pixels(in: frame) {
+                paths[pixel.color, default: Path()].addRect(rect(for: pixel))
+            }
+            for (color, path) in paths {
+                context.fill(path, with: .color(color.swiftUIColor))
+            }
+        }
+        .frame(width: cellSize * CGFloat(BuddySpriteGeometry.cropCols),
+               height: cellSize * CGFloat(BuddySpriteGeometry.cropRows))
+    }
+
+    /// Cell rect at the renderer's cell size. At the default size this is
+    /// `BuddyPixel.rect`; the parameter exists so a test can render the same
+    /// grid at a size that lands on whole device pixels.
+    private func rect(for pixel: BuddyPixel) -> CGRect {
+        CGRect(x: CGFloat(pixel.col) * cellSize,
+               y: CGFloat(pixel.row) * cellSize,
+               width: cellSize,
+               height: cellSize)
+    }
+}
+
+// MARK: - Lifecycle gate
+
+/// Why the companion is allowed to animate, and why not.
+///
+/// The 0.55s frame timer used to run for the whole life of the view, including
+/// while the panel was ordered out, the app was hidden, or the display was
+/// asleep — the sprite kept cycling frames nothing could see. The gate names
+/// the conditions; `CompanionFrameDriver` consults it before every advance.
+enum CompanionFrameGate {
+    enum Reason: Equatable {
+        case ok
+        case reduceMotion
+        case appHidden
+        case screenAsleep
+        case panelOffScreen
+
+        var isOpen: Bool { self == .ok }
+    }
+
+    /// Is the app's panel on screen? False when the panel is ordered out, in
+    /// the Dock, or fully covered by another window — offscreen renders and
+    /// unit tests (no app, no panel) also land here.
+    ///
+    /// `NSApp` is nil outside a running application, so this reads through an
+    /// optional: the sprite must render (and stay still) in a test or preview
+    /// without touching the live app.
+    static func defaultPanelVisible() -> Bool {
+        guard let app = NSApp, let panel = (app.delegate as? AppDelegate)?.panel else { return false }
+        return panel.isVisible && !panel.isMiniaturized
+            && panel.occlusionState.contains(.visible)
+    }
+}
+
+/// Owns the 0.55s frame timer and the advance policy.
+///
+/// Extracted from the view so the gate has a unit-testable seam: the view
+/// only says *what* the sprite looks like, the driver decides *whether* the
+/// next frame may be shown (gate closed → stop the timer, keep the current
+/// frame) and *when* the cycle wraps.
+///
+/// The four gate inputs are closures owned by the driver — deliberately not
+/// globals, so a test can drive one driver without affecting the sprite in
+/// the panel. Tests inject them; the app leaves them at the live system
+/// values.
+@MainActor
+final class CompanionFrameDriver {
+    /// Index of the frame being shown. Owned here so a tick mutates state the
+    /// view renders from, instead of reaching back into the view.
+    private(set) var frameIndex = 0
+    /// Frames actually shown. The gating test asserts this stays 0 while the
+    /// gate is closed.
+    private(set) var appliedTicks = 0
+    private(set) var frameCount: Int
+    private(set) var isRunning = false
+    private var timer: Timer?
+    /// Interval the running timer was created with, so `start()` can tell
+    /// "already ticking" from "needs arming".
+    private var runningInterval: TimeInterval = 0
+    /// The system asks for reduced motion (accessibility).
+    var reduceMotionProvider: () -> Bool = { CompanionMotion.reduceMotion }
+    /// The app itself is hidden (`NSApp.isHidden`).
+    var appHiddenProvider: () -> Bool = { NSApp?.isHidden ?? false }
+    /// The display is asleep. Set from `NSWorkspace.screensDidSleepNotification`
+    /// / `screensDidWakeNotification` by the view.
+    private var screenAsleep = false
+    /// The surface hosting the sprite is on screen. Defaults to the app's
+    /// panel (visible, not miniaturised, not fully covered); both sprites
+    /// live in that one panel, so a single check covers them.
+    var panelVisibleProvider: () -> Bool = CompanionFrameGate.defaultPanelVisible
+
+    init(frameCount: Int) {
+        self.frameCount = max(1, frameCount)
+    }
+
+    /// Why the sprite may or may not animate right now.
+    var gateReason: CompanionFrameGate.Reason {
+        if reduceMotionProvider() { return .reduceMotion }
+        if appHiddenProvider() { return .appHidden }
+        if screenAsleep { return .screenAsleep }
+        if !panelVisibleProvider() { return .panelOffScreen }
+        return .ok
+    }
+
+    var isGateOpen: Bool { gateReason.isOpen }
+
+    /// Display sleep/wake. While the display is dark nothing is drawn, so the
+    /// frame timer is dead weight.
+    func setScreenAsleep(_ asleep: Bool) {
+        guard screenAsleep != asleep else { return }
+        screenAsleep = asleep
+        refresh()
+    }
+
+    /// Re-evaluate the gate: arm the timer when it is open, park it when it
+    /// is not. Called on every lifecycle signal (window show/hide, app
+    /// hide/unhide, Reduce Motion, display sleep).
+    func refresh() {
+        if !isGateOpen { stop(); return }
+        start()
+    }
+
+    /// Start ticking, or stop immediately when the gate is closed.
+    func start(interval: TimeInterval = 0.55) {
+        // A closed gate parks the timer right away rather than letting one
+        // more tick go by.
+        guard isGateOpen else {
+            stop()
+            return
+        }
+        // Idempotent: app-update notifications arrive several times a second,
+        // and tearing the timer down on each one would restart the 0.55s
+        // cycle every time — the sprite would never advance.
+        if isRunning, runningInterval == interval { return }
+        stop()
+        isRunning = true
+        self.runningInterval = interval
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        // `.common` keeps the sprite cycling while the run loop is in a
+        // tracking mode, which is when the old `.default`-mode timer went
+        // quiet.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        isRunning = false
+        runningInterval = 0
+    }
+
+    /// Updates the cycle length (the mood changed) and puts the sprite back
+    /// on its first frame.
+    func reset(frameCount: Int) {
+        self.frameCount = max(1, frameCount)
+        frameIndex = 0
+    }
+
+    /// One timer tick. Re-checks the gate because a tick can land between the
+    /// gate closing and the notification that stops the timer.
+    func tick() {
+        guard isGateOpen else {
+            stop()
+            return
+        }
+        frameIndex = (frameIndex + 1) % frameCount
+        appliedTicks += 1
     }
 }
 
 // MARK: - Pixel Buddy View
 
+/// The 18pt companion mark, drawn as a single `Canvas` and animated by
+/// `CompanionFrameDriver`. The frame table is memoized per mood; the timer
+/// only runs while the sprite is actually visible (see `CompanionFrameGate`).
 struct PixelBuddyView: View {
     let mood: BuddyMood
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Crop region — only render the interesting part of the 24x24 grid
-    private static let cropTop = 8
-    private static let cropBottom = 20
-    private static let cropLeft = 7
-    private static let cropRight = 19
-    private static let cropRows = cropBottom - cropTop  // 12
-    private static let cropCols = cropRight - cropLeft  // 12
-
-    @State private var frameIndex = 0
-    @State private var timer: Timer?
+    /// The timer lives in the view's state (not in the view value), so a
+    /// SwiftUI re-render does not restart it.
+    @State private var driver = CompanionFrameDriver(
+        frameCount: PixelMoodFrames.frameCount(for: .idle)
+    )
 
     private var frames: [Frame] { framesForMood(mood) }
 
     var body: some View {
-        let currentFrame = frames[frameIndex % frames.count]
-        let pxSize: CGFloat = 1.5  // each pixel = 1.5pt
+        // Reading `frames` (not just the count) is what exercises the
+        // memoized table, and keeps the view in sync with a mood flip.
+        let cycle = frames
+        let visible = cycle[driver.frameIndex % cycle.count]
 
-        VStack(spacing: 0) {
-            ForEach(Self.cropTop..<Self.cropBottom, id: \.self) { row in
-                HStack(spacing: 0) {
-                    ForEach(Self.cropLeft..<Self.cropRight, id: \.self) { col in
-                        let color = currentFrame[row][col]
-                        Rectangle()
-                            .fill(color.swiftUIColor)
-                            .frame(width: pxSize, height: pxSize)
-                    }
-                }
+        BuddyPixelGrid(frame: visible)
+            .accessibilityHidden(true)
+            .onChange(of: mood) {
+                driver.reset(frameCount: cycle.count)
+                restartTimer()
             }
-        }
-        .accessibilityHidden(true)
-        .onChange(of: mood) {
-            frameIndex = 0
-        }
-        .onChange(of: reduceMotion) {
-            frameIndex = 0
-            startTimer()
-        }
-        .onAppear { startTimer() }
-        .onDisappear { stopTimer() }
-    }
-
-    private func startTimer() {
-        stopTimer()
-        guard !reduceMotion else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { _ in
-            DispatchQueue.main.async {
-                frameIndex = (frameIndex + 1) % frames.count
+            .onChange(of: reduceMotion) { restartTimer() }
+            // Panel visibility, app hide/unhide and display sleep all land
+            // as an app update; re-asking the gate here is what stops the
+            // timer when the panel is ordered out and restarts it when the
+            // panel comes back.
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSApplication.didUpdateNotification)
+            ) { _ in restartTimer() }
+            // Ticks cannot observe display sleep (nothing is drawn while the
+            // panel is dark); the notification is the only signal.
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSWorkspace.screensDidSleepNotification)
+            ) { _ in
+                driver.setScreenAsleep(true)
             }
-        }
+            .onReceive(NotificationCenter.default.publisher(
+                for: NSWorkspace.screensDidWakeNotification)
+            ) { _ in
+                driver.setScreenAsleep(false)
+            }
+            .onAppear { restartTimer() }
+            .onDisappear {
+                driver.stop()
+            }
     }
 
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
+    /// (Re)start the timer when the gate is open. When the gate is closed,
+    /// `driver.start()` invalidates the timer and leaves the sprite on its
+    /// current frame.
+    private func restartTimer() { driver.start() }
 }

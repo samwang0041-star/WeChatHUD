@@ -94,8 +94,22 @@ final class ChatMonitor: ObservableObject {
     @Published var autopilotLog: [AutopilotLogEntry] = []
     @Published var autopilotSessionSent = 0
     @Published var autopilotSessionPending = 0
-    @Published var autopilotPendingSendQueue: [PendingSend] = []
+    @Published var autopilotPendingSendQueue: [PendingSend] = [] {
+        // Queuing (or draining) a send flips the heartbeat cadence. The
+        // countdown slot on screen is only accurate while the tick runs at
+        // 10 s, so the flip has to happen on the assignment — waiting for the
+        // next tick would leave a freshly queued countdown stale for up to a
+        // full idle period. See adaptSafetyTickCadence.
+        didSet {
+            guard oldValue.isEmpty != autopilotPendingSendQueue.isEmpty else { return }
+            adaptSafetyTickCadence()
+        }
+    }
     @Published var autopilotSessionStats = AutopilotService.SessionStats()
+    /// Set when an operation that can change autopilot_log happened (message
+    /// processed, item approved / rejected, session started). Consumed by the
+    /// gated reload in reloadAIData — see reloadAutopilotDisplayLog(force:).
+    private var autopilotLogDirty = true
     /// In-memory session ledger: one entry per verified outgoing message
     /// per chat during an active autopilot session. Reset on start/stop.
     /// Capped at 20 entries per chat (FIFO eviction).
@@ -219,6 +233,11 @@ final class ChatMonitor: ObservableObject {
     /// One-shot copy after stale pending rows are archived. The HUD toast layer
     /// consumes it so a 2000-row fold is not silent.
     @Published var discussionArchiveNotice: String?
+    /// Minimum gap between stale-row archive sweeps (one hour). See
+    /// shouldSweepStaleRows for why the sweep is throttled.
+    static let staleArchiveSweepInterval: TimeInterval = 3600
+    /// Wall-clock stamp of the last stale-row archive sweep.
+    private var lastStaleArchiveSweepAt: Date?
     let islandPresentation = IslandPresentation()
     let workspaceBadges = WorkspaceBadges()
     /// Per-chat labels resolved for the current process. `displayName(for:)`
@@ -303,8 +322,16 @@ final class ChatMonitor: ObservableObject {
     @Published var actionPrefetch: [String: PrefetchedAction] = [:]
 
     private var safetyTimer: Timer?
-    private var safetyTickCount = 0
     private var lastSafetyScanAt: Date?
+    /// Scan interval from sync settings, captured at start() so the heartbeat
+    /// body (which now lives in scheduleSafetyTimer) can compare against it.
+    private var safetyScanInterval: TimeInterval = 60
+    /// Wall-clock stamp of the last proactive-outreach evaluation. Replaced
+    /// the old "every 60th tick" counter: once the idle heartbeat slows to
+    /// 30 s, counting ticks silently stretches a 10-minute cadence to 30.
+    private var lastProactiveOutreachAt: Date?
+    /// ~10 minutes, matching the historical "every 60th 10-second tick".
+    static let proactiveOutreachInterval: TimeInterval = 600
     private var scanInProgress = false
 
     /// Set when an FSEvent or timer tick requests a scan while one is
@@ -411,8 +438,30 @@ final class ChatMonitor: ObservableObject {
         // If FSEvents delivers in time, this is a no-op.
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
         let scanInterval = TimeInterval(max(10, syncCfg.intervalSeconds))
+        safetyScanInterval = scanInterval
         lastSafetyScanAt = Date()
-        safetyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+        // The proactive-outreach cadence is anchored to wall-clock time (see
+        // the tick body) instead of counting ticks, so throttling the idle
+        // heartbeat to 30 s cannot stretch an "every 10 minutes" job to 30.
+        lastProactiveOutreachAt = Date()
+        scheduleSafetyTimer(Self.safetySchedule(countdownActive: false))
+    }
+
+    /// Test seam: the cadence the live heartbeat is currently running at.
+    var activeSafetyTickInterval: TimeInterval? { safetyTimer.map(\.timeInterval) }
+
+    /// Pure policy helper (nonisolated so the schedule can be asserted without
+    /// a run loop or the main actor).
+    nonisolated static func safetySchedule(countdownActive: Bool) -> SafetyTickSchedule {
+        SafetyTickSchedule.make(countdownActive: countdownActive)
+    }
+
+    /// (Re)start the safety heartbeat. Called on start and whenever the
+    /// countdown/idle cadence flips. Internal so the cadence flip can be
+    /// exercised without running the whole start() sequence.
+    func scheduleSafetyTimer(_ schedule: SafetyTickSchedule) {
+        safetyTimer?.invalidate()
+        let timer = Timer(timeInterval: schedule.interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 // Snooze expiry is time-based, so reevaluate it even when
@@ -427,35 +476,65 @@ final class ChatMonitor: ObservableObject {
                     + self.store.loadCommitments(status: .overdue, relevantSince: liveCutoff)
                 self.alertEngine.evaluateCommitmentDeadlines(commitments: activeCommitments)
 
-                // Process pending send queue every 10s (fast enough for UI countdown accuracy)
+                // Process the pending send queue on every tick. The tick runs
+                // at the 10 s countdown cadence whenever something is queued
+                // (see adaptSafetyTickCadence), which is what the countdown
+                // accuracy needs.
                 let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
                 await self.autopilotService?.processPendingQueue(config: config)
-                // Sync queue and stats to UI
+                // A live service can resolve log rows (sent / skipped) inside
+                // processPendingQueue; without this the gated reload in
+                // reloadAIData would keep serving the pre-send snapshot until
+                // the next session mutation.
+                if self.autopilotService != nil {
+                    self.markAutopilotLogDirty()
+                }
+                // Sync queue and stats to UI. Assignments are equality-guarded
+                // inside the helper: publishing an identical snapshot fires
+                // objectWillChange and re-renders every observing view.
                 if let svc = self.autopilotService {
                     let queue = await svc.pendingSendQueue
                     let stats = await svc.sessionStats
                     let manPaused = await svc.manuallyPaused
-                    await MainActor.run {
-                        self.autopilotPendingSendQueue = queue
-                        self.autopilotSessionStats = stats
-                        self.autopilotManuallyPaused = manPaused
-                    }
+                    self.publishAutopilotHeartbeat(queue: queue, stats: stats, manuallyPaused: manPaused)
                 }
 
                 self.resumeDiscussionExtraction()
 
-                // Full scan every Nth tick (interval from sync settings)
-                self.safetyTickCount += 1
-                if Date().timeIntervalSince(self.lastSafetyScanAt ?? .distantPast) >= scanInterval {
+                // Full scan once the configured interval has elapsed. Checked
+                // against wall-clock time, so the slower idle tick can never
+                // skip a due scan.
+                if Date().timeIntervalSince(self.lastSafetyScanAt ?? .distantPast) >= self.safetyScanInterval {
                     self.lastSafetyScanAt = Date()
                     await self.scan()
                 }
-                // Proactive outreach every 60th tick (~10 min)
-                if self.safetyTickCount % 60 == 0 {
+                // Proactive outreach every ~10 minutes (wall-clock, so the
+                // cadence is independent of the tick rate).
+                if Date().timeIntervalSince(self.lastProactiveOutreachAt ?? .distantPast) >= Self.proactiveOutreachInterval {
+                    self.lastProactiveOutreachAt = Date()
                     await self.autopilotService?.evaluateProactiveOutreach(config: config)
                 }
+                // Drop back to the idle cadence as soon as nothing is queued.
+                self.adaptSafetyTickCadence()
             }
         }
+        timer.tolerance = schedule.tolerance
+        safetyTimer = timer
+        RunLoop.main.add(timer, forMode: .default)
+    }
+
+    /// Flip the heartbeat between the countdown and idle cadences, but only
+    /// when the target changed — re-creating the timer every tick would
+    /// defeat the coalescing window that the timer tolerance buys us.
+    private func adaptSafetyTickCadence() {
+        // No heartbeat installed (never started, or already stopped) — there
+        // is nothing to retime, and installing one here would resurrect a
+        // stopped monitor.
+        guard safetyTimer != nil else { return }
+        let countdownActive = autopilotActive && !autopilotPendingSendQueue.isEmpty
+        let schedule = Self.safetySchedule(countdownActive: countdownActive)
+        guard schedule.interval != activeSafetyTickInterval else { return }
+        scheduleSafetyTimer(schedule)
     }
 
     func stop() {
@@ -1237,7 +1316,9 @@ final class ChatMonitor: ObservableObject {
         // suggestions) so clicking into an inbox row surfaces the
         // AI output instantly instead of making the user wait for
         // two round-trips. Fires in the background, updates
-        // `actionPrefetch` progressively.
+        // actionPrefetch progressively — but only while the panel is
+        // expanded and only for the top few rows: see
+        // panelExpansionProvider / actionPrefetchVisibleLimit.
         prefetchActionPanelData()
 
         // Proactive alerts — evaluate rules after state update
@@ -1284,18 +1365,12 @@ final class ChatMonitor: ObservableObject {
                     self.autopilotSessionStats = stats
                     self.autopilotManuallyPaused = manPaused
                     self.autopilotPaused = paused
-                    if let session = self.store.currentAutopilotSession() {
-                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
-                            sessionId: session.id,
-                            limit: 50,
-                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-                        )
-                    } else {
-                        self.autopilotLog = self.store.loadAutopilotDisplayLog(
-                            sessionId: nil,
-                            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-                        )
-                    }
+                    // handleNewMessages may have written log rows, so the
+                    // display log is stale by definition here. The forced path
+                    // also picks the current session id itself, which is what
+                    // the previous if/else pair was computing by hand.
+                    self.markAutopilotLogDirty()
+                    self.reloadAutopilotDisplayLog(force: true)
                 }
                 if result.totalProcessed > 0 {
                     print("[WCHUD] Autopilot: processed=\(result.totalProcessed), sent=\(result.totalSent), pending=\(result.totalPending)")
@@ -1383,14 +1458,33 @@ final class ChatMonitor: ObservableObject {
 
     private func reloadPendingDiscussionItems() {
         let cutoff = DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
-        let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
-        if archived > 0 {
-            discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+        let now = Date()
+        if shouldSweepStaleRows(now: now) {
+            lastStaleArchiveSweepAt = now
+            let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
+            if archived > 0 {
+                discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+            }
+            _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
         }
-        _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
         let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
         refreshWorkspaceChrome()
+    }
+
+    /// Gate for the stale-row archive sweep.
+    ///
+    /// Both sweeps are whole-table UPDATEs, and they used to run on every scan
+    /// (FSEvents plus the timer ⇒ several per minute while WeChat is active)
+    /// even when there was nothing to archive — each one opening a write
+    /// transaction against the HUD database. The rows they target are
+    /// minutes-to-days old, so sweeping hourly is indistinguishable to the
+    /// user; the first sweep after launch always runs, so an app that is
+    /// restarted often still folds stale rows. Injectable date so the schedule
+    /// can be tested without waiting.
+    func shouldSweepStaleRows(now: Date) -> Bool {
+        guard let last = lastStaleArchiveSweepAt else { return true }
+        return now.timeIntervalSince(last) >= Self.staleArchiveSweepInterval
     }
 
     private func publishDiscussionItem(id: Int64) {
@@ -2004,9 +2098,44 @@ final class ChatMonitor: ObservableObject {
 
     private func refreshAutopilotLiveState() async {
         guard let service = autopilotService else { return }
-        autopilotPendingSendQueue = await service.pendingSendQueue
-        autopilotSessionStats = await service.sessionStats
-        autopilotManuallyPaused = await service.manuallyPaused
+        publishAutopilotHeartbeat(
+            queue: await service.pendingSendQueue,
+            stats: await service.sessionStats,
+            manuallyPaused: await service.manuallyPaused
+        )
+    }
+
+    /// Publish the autopilot heartbeat snapshot, skipping assignments that
+    /// would not change anything.
+    ///
+    /// Every published store fires objectWillChange, and SwiftUI then
+    /// re-renders every view that observes this monitor — even when the
+    /// assigned value equals the old one. The safety tick used to assign all
+    /// three unconditionally, so an idle HUD (no autopilot session, empty
+    /// queue) re-rendered the whole island twice a minute forever.
+    ///
+    /// Internal rather than private so the equality contract itself is
+    /// testable without driving a timer.
+    @discardableResult
+    func publishAutopilotHeartbeat(
+        queue: [PendingSend],
+        stats: AutopilotService.SessionStats,
+        manuallyPaused: Bool
+    ) -> Bool {
+        var published = false
+        if autopilotPendingSendQueue != queue {
+            autopilotPendingSendQueue = queue
+            published = true
+        }
+        if autopilotSessionStats != stats {
+            autopilotSessionStats = stats
+            published = true
+        }
+        if autopilotManuallyPaused != manuallyPaused {
+            autopilotManuallyPaused = manuallyPaused
+            published = true
+        }
+        return published
     }
 
     /// Compute relationship strength score (0-100) for a contact.
@@ -2364,9 +2493,29 @@ final class ChatMonitor: ObservableObject {
         return "用户风格: \(style.toneDescription). 常用语: \(style.frequentPhrases.prefix(3).joined(separator: "、"))"
     }
 
+    /// Run blocking database work off the main actor and hand the result back.
+    ///
+    /// Reading messages walks the encrypted shards (page decryption, then XML /
+    /// zstd message parsing) and building the AI context reads the HUD SQLite
+    /// file. Both used to run inside this summary task on the main actor, so a
+    /// single slow shard froze the island, the menu-bar badge and any open
+    /// composer while it worked. scan() already pushes its whole body onto a
+    /// detached task for the same reason; this is the single-row version of
+    /// that pattern.
+    ///
+    /// Internal rather than private so the off-main hop itself is testable
+    /// (the fetch cannot otherwise be observed from XCTest without a real
+    /// multi-shard WeChat directory).
+    static func runOffMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        await Task.detached(priority: .utility) { work() }.value
+    }
+
     /// Generate AI summaries for inbox items that don't have cached summaries.
     /// Called after scan. Runs async, updates inboxItems progressively.
-    private func generateSummaries() {
+    ///
+    /// Internal rather than private so tests can drive the ordering rules
+    /// (source validation before cache, generation-key check before commit).
+    func generateSummaries() {
         let items = InboxPresentationPolicy.summaryCandidates(inboxItems)
             .filter { $0.aiSummary == nil }
         guard !items.isEmpty else { return }
@@ -2392,11 +2541,15 @@ final class ChatMonitor: ObservableObject {
                 }
                 // Validate a group @ source before consulting cache; an old
                 // summary must not survive after its triggering row vanished.
+                // The load walks the group's shards, so it runs off the main
+                // actor — see runOffMain.
                 let sourceCentered: [MessageInfo]?
                 if let sourceNotification {
-                    sourceCentered = GroupContextSourceLoader.load(
-                        notification: sourceNotification, reader: readerRef
-                    )
+                    sourceCentered = await Self.runOffMain {
+                        GroupContextSourceLoader.load(
+                            notification: sourceNotification, reader: readerRef
+                        )
+                    }
                     guard sourceCentered != nil else { continue }
                 } else {
                     sourceCentered = nil
@@ -2429,23 +2582,31 @@ final class ChatMonitor: ObservableObject {
                         continue
                     }
                     msgs = centered
-                    let context = InboxContextBuilder.build(
-                        chatUsername: item.chatUsername,
-                        triggerMessage: trigger,
-                        reader: readerRef,
-                        store: storeRef,
-                        myUsername: myUname,
-                        contactEntry: storeRef.getContact(username: item.chatUsername),
-                        whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername),
-                        sourceContextMessages: centered
-                    )
+                    // Context building reads the message window again; keep it
+                    // off the main actor with the fetch above.
+                    let context = await Self.runOffMain {
+                        InboxContextBuilder.build(
+                            chatUsername: item.chatUsername,
+                            triggerMessage: trigger,
+                            reader: readerRef,
+                            store: storeRef,
+                            myUsername: myUname,
+                            contactEntry: storeRef.getContact(username: item.chatUsername),
+                            whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername),
+                            sourceContextMessages: centered
+                        )
+                    }
                     let summary = await summarizer.summarize(context)
                     guard let summary,
                           self.inboxItems.contains(where: { $0.generationKey == item.generationKey }) else { continue }
                     self.cacheAndUpdateInboxSummary(summary, for: item)
                     continue
                 } else {
-                    msgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+                    // Cross-shard decryption + parsing for up to 50 messages:
+                    // the single biggest main-thread stall in this loop.
+                    msgs = await Self.runOffMain {
+                        (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+                    }
                 }
                 let cutoff48h = Date().addingTimeInterval(-48 * 3600)
                 let filtered = msgs.filter { msg in
@@ -2463,15 +2624,17 @@ final class ChatMonitor: ObservableObject {
                 }
                 guard let triggerMsg = filtered.first else { continue }
 
-                let context = InboxContextBuilder.build(
-                    chatUsername: item.chatUsername,
-                    triggerMessage: triggerMsg,
-                    reader: readerRef,
-                    store: storeRef,
-                    myUsername: myUname,
-                    contactEntry: storeRef.getContact(username: item.chatUsername),
-                    whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
-                )
+                let context = await Self.runOffMain {
+                    InboxContextBuilder.build(
+                        chatUsername: item.chatUsername,
+                        triggerMessage: triggerMsg,
+                        reader: readerRef,
+                        store: storeRef,
+                        myUsername: myUname,
+                        contactEntry: storeRef.getContact(username: item.chatUsername),
+                        whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
+                    )
+                }
 
                 // Call AI
                 let summary = await summarizer.summarize(context)
@@ -2534,6 +2697,49 @@ final class ChatMonitor: ObservableObject {
         return String(cleaned.prefix(limit))
     }
 
+    /// Rows whose expand-panel data may be warmed per scan.
+    ///
+    /// The expanded panel shows a handful of rows at a time, and each warmed
+    /// row costs two AI round-trips (analysis + reply suggestions). Warming
+    /// every action row in the inbox made one scan fire two requests per row
+    /// whose results nobody had looked at yet.
+    nonisolated static let actionPrefetchVisibleLimit = 3
+
+    /// Injected probe answering "is an expanded HUD surface on screen right
+    /// now?".
+    ///
+    /// The monitor cannot see PanelState (App layer), so it reuses the probe
+    /// AppDelegate already installs on MenuBarController — that closure is
+    /// literally "panelState.currentState != .compact". With the panel
+    /// collapsed nothing can render the warmed panel data, so the prefetch is
+    /// skipped and the row's own on-demand fetch
+    /// (ActionPanelView.prepareForCurrentItem) takes over when the user
+    /// actually opens it. Injected so tests can pin the gate without standing
+    /// up AppKit.
+    var panelExpansionProvider: @MainActor () -> Bool = { MenuBarController.shared.isCompanionOpen() }
+
+    /// Pure selection policy for the background prefetch: the newest visible
+    /// action row per chat, capped at the given limit. Separate from the firing
+    /// code so "who gets warmed" can be asserted directly.
+    nonisolated static func actionPrefetchTargets(
+        _ items: [InboxItem],
+        limit: Int = actionPrefetchVisibleLimit
+    ) -> [InboxItem] {
+        guard limit > 0 else { return [] }
+        let actionItems = items.filter { $0.participatesInActionQueue }
+        guard !actionItems.isEmpty else { return [] }
+        var latestTimestampByChat: [String: Int] = [:]
+        for item in actionItems {
+            let ts = Int(item.timestamp.timeIntervalSince1970)
+            latestTimestampByChat[item.chatUsername] = max(latestTimestampByChat[item.chatUsername] ?? ts, ts)
+        }
+        // One row per chat — its newest trigger generation.
+        let newestPerChat = actionItems.filter {
+            latestTimestampByChat[$0.chatUsername] == Int($0.timestamp.timeIntervalSince1970)
+        }
+        return Array(newestPerChat.prefix(limit))
+    }
+
     /// Pre-generate ActionPanel data in the background. Fires ALL
     /// items in parallel and commits each slot (analysis / replies)
     /// to the cache as soon as it resolves, so the user doesn't
@@ -2548,19 +2754,15 @@ final class ChatMonitor: ObservableObject {
     ///
     /// Cache key: chatUsername. Each slot entry is stamped with
     /// the item's timestamp so a newer message invalidates it.
-    private func prefetchActionPanelData() {
-        let items = inboxItems.filter { $0.participatesInActionQueue }
+    /// Internal rather than private so tests can drive the panel-visibility
+    /// gate through the real code path.
+    func prefetchActionPanelData() {
+        guard panelExpansionProvider() else { return }
+        let items = Self.actionPrefetchTargets(inboxItems)
         guard !items.isEmpty else { return }
-        let latestTimestampByChat = items.reduce(into: [String: Int]()) { result, item in
-            let ts = Int(item.timestamp.timeIntervalSince1970)
-            result[item.chatUsername] = max(result[item.chatUsername] ?? ts, ts)
-        }
 
         for item in items {
             let ts = Int(item.timestamp.timeIntervalSince1970)
-            guard latestTimestampByChat[item.chatUsername] == ts else {
-                continue
-            }
             // Skip if we already have a fully-materialized entry
             // for this exact trigger generation.
             if let existing = actionPrefetch[item.chatUsername],
@@ -2839,7 +3041,9 @@ final class ChatMonitor: ObservableObject {
         autopilotSessionPending = recoveredStats.totalPending
         autopilotPendingSendQueue = recoveredQueue
         autopilotSessionStats = recoveredStats
-        reloadAutopilotDisplayLog()
+        // Session recovery can read back rows this process never saw, so the
+        // dirty gate must not apply here.
+        reloadAutopilotDisplayLog(force: true)
         refreshWorkspaceChrome()
     }
 
@@ -2936,16 +3140,40 @@ final class ChatMonitor: ObservableObject {
     }
 
     func reloadAutopilotDisplayLog() {
+        reloadAutopilotDisplayLog(force: false)
+    }
+
+    /// Refresh the autopilot display log.
+    ///
+    /// reloadAIData() runs on every scan — FSEvents bursts included — and used
+    /// to re-query this log unconditionally, re-decoding the pending rows and
+    /// the session log for a panel the user may not even have open. The query
+    /// now runs only when an operation that can change autopilot_log marked it
+    /// dirty, or when the caller forces it (user-driven mutations, session
+    /// recovery). Nothing can write that table while no service is running, so
+    /// the skipped case cannot hide a change.
+    func reloadAutopilotDisplayLog(force: Bool) {
+        guard force || autopilotLogDirty else { return }
+        autopilotLogDirty = false
         autopilotLog = store.loadAutopilotDisplayLog(
             sessionId: store.currentAutopilotSession()?.id,
             relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
         )
     }
 
+    /// Flags the autopilot log as possibly changed by an operation that can
+    /// add, re-classify, or resolve a row (message processed, item approved /
+    /// rejected, session started). Consumed by the next non-forced reload.
+    func markAutopilotLogDirty() {
+        autopilotLogDirty = true
+    }
+
     /// Refresh autopilot UI state from the DB (source of truth for counters).
     private func refreshAutopilotSessionState() {
         let session = store.currentAutopilotSession()
-        reloadAutopilotDisplayLog()
+        // Every caller is a user-driven mutation (approve / reject / send now),
+        // so the cached display log is known-stale.
+        reloadAutopilotDisplayLog(force: true)
         if let session {
             autopilotSessionSent = session.totalSent
             autopilotSessionPending = session.totalPending

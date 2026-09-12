@@ -111,7 +111,8 @@ enum PreviewRuntime {
     }
 
     @MainActor static func simulateNotification(monitor: ChatMonitor, panelState: PanelState,
-                                                longForm: Bool = false) {
+                                                longForm: Bool = false,
+                                                holdSeconds: TimeInterval? = nil) {
         guard isEnabled else { return }
         panelState.islandSnoozeUndo = nil
         panelState.toastMessage = nil
@@ -151,7 +152,14 @@ enum PreviewRuntime {
         )
         let config = monitor.store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
         if config.shouldPresent(notification.presentationSemanticState) {
-            panelState.showNotification(duration: TimeInterval(config.durationSeconds))
+            // A caller that wants the banner to stay put (the
+            // `--preview-notification` launch flag) passes the hold here
+            // instead of rewriting the consumer-facing duration setting.
+            // That write used to leak: killing the preview process between
+            // "hold" and "restore" left a 900-second duration in the
+            // preview database, so later preview launches showed a banner
+            // that appeared to ignore repeat clicks.
+            panelState.showNotification(duration: holdSeconds ?? TimeInterval(config.durationSeconds))
         }
     }
 
@@ -314,6 +322,38 @@ enum PreviewRuntime {
         panelState.goExtended()
     }
 
+    /// `--preview-hold-island` pins the expanded island open and
+    /// `--preview-disconnected` forces the connection-error banner, so a
+    /// snapshot can capture expanded surfaces that normally collapse the
+    /// moment the pointer is not inside them. Without this, QA has to move
+    /// the user's pointer into the panel to keep it on screen.
+    @MainActor static func applyIslandSnapshotOverrides(monitor: ChatMonitor, panelState: PanelState) {
+        guard isEnabled else { return }
+        let arguments = CommandLine.arguments
+        if arguments.contains("--preview-disconnected") {
+            monitor.stats.syncStatus = .error("preview")
+        }
+        if arguments.contains("--preview-hold-island") {
+            panelState.islandSurface = .inbox
+            panelState.goExtended()
+            // popoverOpen is the panel's existing "do not auto-collapse"
+            // latch; reuse it rather than adding preview state to PanelState.
+            panelState.popoverOpen = true
+        }
+        // `--preview-tab=<raw>` opens the workspace on one page, so every
+        // workspace surface can be captured from a repeatable launch
+        // instead of by clicking through the sidebar (which moves the
+        // operator's pointer and cannot be replayed).
+        let tabPrefix = "--preview-tab="
+        if let raw = arguments.first(where: { $0.hasPrefix(tabPrefix) }) {
+            let tab = String(raw.dropFirst(tabPrefix.count))
+            if !tab.isEmpty {
+                panelState.pendingSettingsTab = tab
+                panelState.showDetail()
+            }
+        }
+    }
+
     @MainActor static func simulateAITestFailure() {
         guard isEnabled else { return }
         pendingAITestFailure = true
@@ -341,15 +381,22 @@ enum PreviewRuntime {
     /// attached sheet/alert from inside the process.
     @MainActor static func captureSurfaces(as tag: String? = nil) {
         guard isEnabled else { return }
-        if let app = NSApp.delegate as? AppDelegate {
-            app.panelState.popoverOpen = true
-        }
+        // Latch the panel open only for the duration of the capture. This
+        // used to be set and never restored, which left popoverOpen true for
+        // the rest of the process: mouseExited() refuses to collapse while a
+        // popover is open, so every preview session silently stopped
+        // auto-collapsing after its first snapshot — and QA then read that
+        // artifact as a product bug.
+        let panelState = (NSApp.delegate as? AppDelegate)?.panelState
+        let wasPopoverOpen = panelState?.popoverOpen ?? false
+        panelState?.popoverOpen = true
         hideDemoChromeForCapture = true
         NotificationCenter.default.post(name: .hudPreviewCaptureChrome, object: nil)
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         writeSurfaceBitmaps(tag: tag)
         hideDemoChromeForCapture = false
         NotificationCenter.default.post(name: .hudPreviewCaptureChrome, object: nil)
+        panelState?.popoverOpen = wasPopoverOpen
         let done = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("wechathud-capture-done")
         try? (tag ?? "ok").write(to: done, atomically: true, encoding: .utf8)
     }
