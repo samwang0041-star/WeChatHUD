@@ -703,14 +703,14 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         if DeviceSettingsStore.sharedKeys.contains(key), let deviceSettings {
             return deviceSettings.get(key)
         }
-        return (try? perform { () -> String? in
+        return perform { () -> String? in
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
             sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
             return String(cString: sqlite3_column_text(stmt, 0))
-        }) ?? nil
+        }
     }
 
     func setSetting(_ key: String, value: String) throws {
@@ -1804,9 +1804,12 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     private func hydrateAPIKey(_ cfg: inout AIConfig) {
         if !cfg.provider.apiKey.isEmpty { return }
         let account = cfg.provider.keychainItemRef ?? Self.defaultAIKeyAccount
-        if let secret = try? secretStore.load(account: account), let secret, !secret.isEmpty {
+        do {
+            guard let secret = try secretStore.load(account: account), !secret.isEmpty else { return }
             cfg.provider.apiKey = secret
             cfg.provider.keychainItemRef = account
+        } catch {
+            return
         }
     }
 
@@ -3729,7 +3732,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         try exec("UPDATE classification_queue SET retry_after=0")
     }
 
-    private func exec(_ sql: String, params: [String?] = []) throws {
+    /// Serial write helper. Internal so same-module extensions (radar, etc.)
+    /// share the cached-statement + `perform` queue path.
+    func exec(_ sql: String, params: [String?] = []) throws {
         try withCachedStatement(sql, params: params) { stmt in
             // Loop to consume any result rows (e.g. PRAGMA journal_mode returns SQLITE_ROW).
             while true {
