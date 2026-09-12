@@ -43,7 +43,9 @@ actor AIDailyReportActionInsightGenerator {
 
         // 1. Load cache; partition into hits and misses.
         let cached = store.loadActionInsights(dateKey: dateKey)
-        let cacheMap = Dictionary(uniqueKeysWithValues: cached.map { ($0.actionID, $0) })
+        // Storage has no uniqueness hard-guarantee; never trap the report on a
+        // duplicate row, keep the first.
+        let cacheMap = Dictionary(cached.map { ($0.actionID, $0) }, uniquingKeysWith: { first, _ in first })
 
         var hits: [DailyReportActionInsight] = []
         var misses: [DailyReportAction] = []
@@ -87,7 +89,7 @@ actor AIDailyReportActionInsightGenerator {
 
         // 4. Match rows by id and persist.
         let now = Date()
-        let missMap = Dictionary(uniqueKeysWithValues: misses.map { ($0.id, $0) })
+        let missMap = Dictionary(misses.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var fresh: [DailyReportActionInsight] = []
         for row in rows where missMap[row.id] != nil {
             let insight = DailyReportActionInsight(

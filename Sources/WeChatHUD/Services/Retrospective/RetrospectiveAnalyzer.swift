@@ -56,6 +56,15 @@ actor RetrospectiveAnalyzer {
         for msg in messages {
             _ = await redactor.codenameFor(username: msg.senderUsername, displayName: msg.senderName)
         }
+        // The chat itself gets a codename too: the prompt template carries a
+        // `{chat_name}` slot, and sending the raw group name while the ledger
+        // records `redacted: true` is a leak with a false audit trail. Names
+        // mentioned but never spoken (or @-ed by remark while registered as
+        // nick) get their own codenames via registerMentions.
+        let chatCodename = await redactor.codenameFor(username: chat.chatUsername, displayName: chat.chatName)
+        for msg in messages {
+            await redactor.registerMentions(in: msg.text)
+        }
         let myCodename = await redactor.codenameFor(username: myUsername, displayName: myDisplayName)
         var lines: [String] = []
         // Iterate chronologically (caller passes newest-first per ChatAnalyzer convention)
@@ -77,7 +86,7 @@ actor RetrospectiveAnalyzer {
         }
         let userPrompt = template
             .replacingOccurrences(of: "{my_codename}", with: myCodename)
-            .replacingOccurrences(of: "{chat_name}", with: chat.chatName)
+            .replacingOccurrences(of: "{chat_name}", with: chatCodename)
             .replacingOccurrences(of: "{relation}", with: relation.rawValue)
             .replacingOccurrences(of: "{messages}", with: messagesStr)
 

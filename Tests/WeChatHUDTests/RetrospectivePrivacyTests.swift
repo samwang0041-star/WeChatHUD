@@ -78,6 +78,62 @@ final class RetrospectivePrivacyTests: XCTestCase {
 
     // MARK: - Group screen: no caching of a transient failure
 
+    func testChatNameAndMentionedNonSpeakerStayOutOfThePrompt() async throws {
+        let store = try makeStore()
+        defer { store.close() }
+        let mock = MockAIService()
+        await mock.setDefaultResponse(#"{"highlights":[],"todos":[]}"#)
+        let analyzer = RetrospectiveAnalyzer(
+            store: store, aiService: mock, redactor: Redactor(),
+            dataLedger: DataLedger(store: store)
+        )
+        let runID = try XCTUnwrap(store.insertReviewRun(rangeStart: Date(), rangeEnd: Date(), chatCount: 1))
+        let chat = ScopeCandidate(
+            chatUsername: "room@chatroom", chatName: "项目群", isGroup: true,
+            msgCountInRange: 2, myMsgCountInRange: 0
+        )
+        _ = try await analyzer.analyze(
+            chat: chat,
+            relation: .peer,
+            messages: [
+                message(id: "m2", sender: "wxid_a", name: "张总", text: "@李四 记得带合同", at: 2_000),
+                message(id: "m1", sender: "wxid_b", name: "王工", text: "收到", at: 1_000),
+            ],
+            myUsername: "wxid_me",
+            myDisplayName: "我",
+            runID: runID
+        )
+        let lastCall = await mock.calls.last
+        let prompt = try XCTUnwrap(lastCall?.user)
+        XCTAssertFalse(prompt.contains("项目群"), "the group name must travel as a codename, not plaintext")
+        XCTAssertFalse(prompt.contains("李四"), "a mentioned non-speaker must not travel in plaintext")
+    }
+
+    func testRepeatedScreenFailuresCoolDownThenRecover() async throws {
+        let store = try makeStore()
+        defer { store.close() }
+        let mock = MockAIService()
+        struct Boom: Error {}
+        await mock.setShouldThrow(Boom())
+        let screener = GroupScreener(store: store, aiService: mock, dataLedger: DataLedger(store: store))
+        let candidate = ScopeCandidate(
+            chatUsername: "room@chatroom", chatName: "项目群", isGroup: true,
+            msgCountInRange: 5, myMsgCountInRange: 1
+        )
+        let samples = ["room@chatroom": ["明天开会确认预算"]]
+        // First failure retries immediately next run (transient blip).
+        _ = await screener.screen(candidates: [candidate], samples: samples)
+        let callsAfterFirst = await mock.calls.count
+        _ = await screener.screen(candidates: [candidate], samples: samples)
+        let callsAfterSecond = await mock.calls.count
+        XCTAssertGreaterThan(callsAfterSecond, callsAfterFirst, "the first failure must retry without a cooldown")
+        // From the second consecutive failure on, the screen cools down
+        // instead of re-sending full samples on every run.
+        _ = await screener.screen(candidates: [candidate], samples: samples)
+        let callsAfterThird = await mock.calls.count
+        XCTAssertEqual(callsAfterThird, callsAfterSecond, "an extended outage must not re-send samples every run")
+    }
+
     func testScreenerDoesNotCachePoliciesWhenTheAICallFails() async throws {
         let store = try makeStore()
         defer { store.close() }
@@ -224,5 +280,27 @@ final class RetrospectivePrivacyTests: XCTestCase {
         let text = try XCTUnwrap(summary.top3.first?.text)
         XCTAssertFalse(text.contains("A1"))
         XCTAssertFalse(text.contains("A2"))
+    }
+
+    func testSummarySynthRedactsNamesOutsideInvolved() async throws {
+        let store = try makeStore()
+        defer { store.close() }
+        let runID = try XCTUnwrap(store.insertReviewRun(rangeStart: Date(), rangeEnd: Date(), chatCount: 1))
+        store.insertReviewHighlight(ReviewHighlight(
+            id: 0, runID: runID, date: Date(), summary: "张总让@李四带合同",
+            quotedSnippet: nil, involved: ["张总"], sourceChatUsername: "room@chatroom",
+            sourceChatName: "供应链群", relation: .peer, sourceMsgIDs: [], confidence: 0.9,
+            category: .decision, flaggedUncertain: false
+        ))
+        let mock = MockAIService()
+        await mock.setDefaultResponse(#"{"top3":[],"risk":null,"missed":null}"#)
+        let synth = SummarySynthesizer(
+            store: store, aiService: mock, dataLedger: DataLedger(store: store)
+        )
+        _ = await synth.synthesize(runID: runID)
+        let lastCall = await mock.calls.last
+        let prompt = try XCTUnwrap(lastCall?.user)
+        XCTAssertFalse(prompt.contains("李四"), "a name outside involved must not travel in plaintext")
+        XCTAssertFalse(prompt.contains("供应链群"))
     }
 }

@@ -185,6 +185,16 @@ actor AutopilotService {
         proactiveSentCount = 0
         proactiveContactsSent.removeAll()
         pendingSendQueue = store.loadPendingSends(sessionId: id)
+        // One-time hardening for queue rows written before the group guardrail:
+        // they carry manualOnlyReason == nil, and without isGroup on the row
+        // executeSend cannot re-derive it — so a restart would auto-send a
+        // group reply that was queued as sendable. The @chatroom suffix is
+        // server-controlled, so re-hold those rows here, once.
+        for i in pendingSendQueue.indices where pendingSendQueue[i].manualOnlyReason == nil
+            && pendingSendQueue[i].chatUsername.contains("@chatroom") {
+            pendingSendQueue[i].manualOnlyReason = "群聊需人工确认（会话恢复时补挂）"
+            try? store.upsertPendingSend(pendingSendQueue[i], sessionId: id)
+        }
         sessionStats = SessionStats(
             totalSent: sessionSent,
             totalPending: sessionPending,
@@ -801,7 +811,10 @@ actor AutopilotService {
             chatName: representative.chatName,
             senderName: representative.senderName,
             replyText: replyText,
-            confidence: decision.confidence,
+            // Store the decayed confidence, not the model's raw number: the UI
+            // shows this value, and showing the pre-decay one overstates how
+            // sure the send is about media it cannot see.
+            confidence: effectiveConfidence,
             risk: risk,
             reasoning: decision.reasoning,
             styleScore: styleScore,
@@ -1224,6 +1237,21 @@ actor AutopilotService {
     /// Decision hold for one AI reply. Internal rather than private so the
     /// guardrail has a behaviour test: the keyword scan covers the *inbound*
     /// text as well as the reply, which no test exercised before.
+    /// Normalizes text for safety-keyword matching: lowercase plus
+    /// Traditional→Simplified folding, so 轉賬/紅包 match the 转账/红包
+    /// keywords. Without the fold, a one-character variant swaps the whole
+    /// safety decision.
+    nonisolated static func normalizedForSafetyMatch(_ s: String) -> String {
+        let lower = s.lowercased()
+        return lower.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? lower
+    }
+
+    /// Built-in tripwires checked against the *incoming* text even when the
+    /// user emptied `sensitiveKeywords`. Hanzi money words live in the
+    /// keywords (with the fold above); these are the forms keywords cannot
+    /// express: the red-packet emoji and pinyin spellings.
+    nonisolated static let financialTriggerCues = ["🧧", "zhuanzhang", "hongbao"]
+
     nonisolated static func autopilotSafetyHoldReason(
         triggerText: String,
         replyText: String?,
@@ -1242,10 +1270,16 @@ actor AutopilotService {
             // line — the raw code would leak English jargon into the UI.
             return Self.safetyHoldLabel(for: reasonCode)
         }
-        guard !sensitiveKeywords.isEmpty else { return nil }
-        let haystack = "\(triggerText)\n\(replyText ?? "")".lowercased()
-        if let keyword = sensitiveKeywords.first(where: { haystack.contains($0.lowercased()) }) {
+        let haystack = Self.normalizedForSafetyMatch("\(triggerText)\n\(replyText ?? "")")
+        if let keyword = sensitiveKeywords.first(where: { haystack.contains(Self.normalizedForSafetyMatch($0)) }) {
             return "命中敏感词「\(keyword)」"
+        }
+        // Type codes miss a transfer announced in plain text (parse failure),
+        // and keyword matching misses non-Hanzi spellings. Either way the
+        // money moved in the incoming message, so hold for a human.
+        let trigger = Self.normalizedForSafetyMatch(triggerText)
+        if let cue = Self.financialTriggerCues.first(where: { trigger.contains($0) }) {
+            return "疑似资金往来「\(cue)」，需本人处理"
         }
         return nil
     }
@@ -1463,8 +1497,8 @@ actor AutopilotService {
             reasoning = "风险非低(\(risk))降级为缓兵之计; \(aiReasoning)"
         }
         if !sensitiveKeywords.isEmpty, !replyText.isEmpty {
-            let lower = replyText.lowercased()
-            if let keyword = sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+            let lower = Self.normalizedForSafetyMatch(replyText)
+            if let keyword = sensitiveKeywords.first(where: { lower.contains(Self.normalizedForSafetyMatch($0)) }) {
                 action = .stall
                 reasoning = "敏感词「\(keyword)」降级为缓兵之计; \(aiReasoning)"
             }

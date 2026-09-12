@@ -421,10 +421,15 @@ enum ClassifierCLI {
                 options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
             )
             let url = URL(fileURLWithPath: outPath)
-            try json.write(to: url)
-            // Raw WeChat text: keep the file owner-only even for a caller-chosen
-            // path (the repo-root guard above only rejects repository targets).
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            // Raw WeChat text: create owner-only in one step. Writing first
+            // and chmod-ing after leaves a world-readable window under the
+            // process umask (the repo-root guard above only rejects
+            // repository targets; an explicit --out under /tmp stays allowed
+            // for this dev-only tool, so the mode must be right at creation).
+            guard FileManager.default.createFile(atPath: url.path, contents: json, attributes: [.posixPermissions: 0o600]) else {
+                fputs("写入 \(outPath) 失败: 无法创建文件\n", stderr)
+                exit(1)
+            }
             print("\n已写入: \(outPath)")
             print("下一步：只提炼分类行为，把样本重写为合成语料后再加入 Tests/Fixtures")
         } catch {

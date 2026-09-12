@@ -26,10 +26,12 @@ class InsightWindow: NSWindow {
 
         let hostingView = NSHostingView(rootView: rootView)
 
-        // 80% of screen size
-        let screen = NSScreen.main ?? NSScreen.screens[0]
-        let w = screen.frame.width * 0.8
-        let h = screen.frame.height * 0.8
+        // 80% of screen size. Never index screens[0]: with no display attached
+        // (clamshell without external monitor, hot-plug gap) it traps on the
+        // launch path — the same crash FloatingPanel already fixed.
+        let frame = NSScreen.main?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let w = frame.width * 0.8
+        let h = frame.height * 0.8
 
         let window = InsightWindow(
             contentRect: NSRect(x: 0, y: 0, width: w, height: h),

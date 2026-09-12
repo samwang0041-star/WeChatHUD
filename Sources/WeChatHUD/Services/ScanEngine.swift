@@ -252,6 +252,7 @@ enum ScanEngine {
             for entry in whitelist {
                 let isFirstWhitelistScan = store.getWhitelistCursor(username: entry.id) == nil
                 let messages: [MessageInfo]
+                var backlogComplete = true
                 do {
                     let unreadHint = sessionMap[entry.id]?.unreadCount ?? 0
                     let fetchLimit = Self.whitelistFetchLimit(
@@ -269,26 +270,50 @@ enum ScanEngine {
                         limit: fetchLimit,
                         sinceLocalId: nil
                     )
-                    if unreadHint > page.count, backlogPageBudget > 0, !page.isEmpty {
-                        var seen = Set(page.map(\.id))
-                        var anchor = page.last.map { ($0.createTime, max(0, $0.localId - 1)) }
-                        while page.count < unreadHint, backlogPageBudget > 0, let cursor = anchor {
-                            backlogPageBudget -= 1
-                            let older = try reader.getMessages(
-                                chatUsername: entry.id,
-                                limit: fetchLimit,
-                                sinceLocalId: nil,
-                                afterCursor: nil,
-                                beforeCursor: cursor
-                            )
-                            let fresh = older.filter { seen.insert($0.id).inserted }
-                            if fresh.isEmpty {
-                                // Older shards/pages are exhausted; stop instead
-                                // of re-reading the same page forever.
-                                break
+                    // backlogComplete (declared above) tracks whether this scan
+                    // saw every unread message, so advancing the watermark below
+                    // is lossless. False means the scan-wide page budget ran out
+                    // first: the chat keeps its watermark and retries next scan
+                    // (a delay, never a silent drop).
+                    backlogComplete = true
+                    if unreadHint > page.count, !page.isEmpty {
+                        if backlogPageBudget <= 0 {
+                            backlogComplete = false
+                        } else {
+                            var seen = Set(page.map(\.id))
+                            // Inclusive anchor: the SQL bound keeps the anchor
+                            // row and the seen-filter drops the echo. Subtracting
+                            // 1 (the old code) assumes localIds are globally
+                            // ordered, but they restart per shard file — a tied
+                            // row in another shard with the same (createTime,
+                            // localId) would fall below the anchor and never be
+                            // fetched again.
+                            var anchor = page.last.map { ($0.createTime, $0.localId) }
+                            var lastFetchWasFull = true
+                            while page.count < unreadHint, backlogPageBudget > 0, let cursor = anchor {
+                                backlogPageBudget -= 1
+                                let older = try reader.getMessages(
+                                    chatUsername: entry.id,
+                                    limit: fetchLimit,
+                                    sinceLocalId: nil,
+                                    afterCursor: nil,
+                                    beforeCursor: cursor
+                                )
+                                lastFetchWasFull = older.count >= fetchLimit
+                                let fresh = older.filter { seen.insert($0.id).inserted }
+                                if fresh.isEmpty {
+                                    // Older shards/pages are exhausted; stop
+                                    // instead of re-reading the same page forever.
+                                    break
+                                }
+                                page.append(contentsOf: fresh)
+                                anchor = fresh.last.map { ($0.createTime, $0.localId) }
                             }
-                            page.append(contentsOf: fresh)
-                            anchor = fresh.last.map { ($0.createTime, max(0, $0.localId - 1)) }
+                            // A short last fetch proves the shards are exhausted
+                            // (a merged page is short only when every matching
+                            // row fit). A full last fetch with the budget spent
+                            // may still hide older rows.
+                            backlogComplete = page.count >= unreadHint || !lastFetchWasFull
                         }
                     }
                     messages = page
@@ -570,6 +595,15 @@ enum ScanEngine {
 
                 if currentCursor.0 > baseline.lastCreateTime
                     || (currentCursor.0 == baseline.lastCreateTime && currentCursor.1 > baseline.lastLocalId) {
+                    // The backfill above ran out of scan-wide page budget with
+                    // the backlog uncovered. Advancing the watermark to the
+                    // newest fetched message would orphan everything between
+                    // the old watermark and this page — the exact loss the
+                    // backfill exists to prevent. Leave the watermark so the
+                    // next scan retries this chat once earlier chats drain.
+                    if !backlogComplete {
+                        continue
+                    }
                     do {
                         try store.withTransaction {
                             // Discussion extraction includes both sides of the

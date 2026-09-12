@@ -65,6 +65,10 @@ actor SummarySynthesizer {
                 _ = await redactor.codenameFor(username: chatName, displayName: chatName)
             }
         }
+        // Snippets and summaries can mention people outside `involved` (a name
+        // quoted in prose, or @-ed by remark). Register those too — otherwise
+        // they travel in the payload the ledger below calls redacted.
+        await redactor.registerMentions(in: aggregated)
         let redactedAggregate = await redactor.redactText(aggregated)
 
         let template: String

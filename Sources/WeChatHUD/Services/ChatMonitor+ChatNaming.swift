@@ -53,15 +53,16 @@ extension ChatMonitor {
     }
 
     /// Names to type into WeChat search. Live remark first, then nickname,
-    /// HUD alias, stale stored labels, username. Old remarks must not be
-    /// the only query — WeChat search matches the current remark.
+    /// stale stored labels, username. Old remarks must not be the only query —
+    /// WeChat search matches the current remark. Deliberately no HUD alias:
+    /// an alias exists only in HUD's database, so WeChat can never match it
+    /// to the right chat — but it can match a same-named stranger.
     func weChatSearchNames(for chatUsername: String) -> [String] {
         _ = try? reader.refreshContactsIfChanged()
         displayNameCache.removeValue(forKey: chatUsername)
         return WeChatOpenSearch.names(
             liveRemark: reader.weChatRemark(for: chatUsername),
             liveNick: reader.weChatNickName(for: chatUsername),
-            hudAlias: store.chatAlias(for: chatUsername),
             stored: [
                 store.getContact(username: chatUsername)?.displayName,
                 store.getWhitelistEntry(username: chatUsername)?.displayName
@@ -112,10 +113,12 @@ extension ChatMonitor {
     }
 
     func openWeChatChatAndPaste(_ chatUsername: String, text: String) {
+        // Drafts use the send-safe names: a pasted draft in a same-named
+        // stranger's chat is one Enter away from a missend.
         WeChatLauncher.openChatAndPaste(
             named: displayName(for: chatUsername),
             text: text,
-            searchNames: weChatSearchNames(for: chatUsername)
+            searchNames: weChatSendSearchNames(for: chatUsername)
         )
     }
 

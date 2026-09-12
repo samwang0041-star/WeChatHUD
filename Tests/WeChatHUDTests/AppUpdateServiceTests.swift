@@ -230,6 +230,7 @@ final class AppUpdateServiceTests: XCTestCase {
         let verifiedPaths = LockedPaths()
         let service = AppUpdateService(
             http: client,
+            downloadHTTP: client,
             currentVersion: AppVersion("1.2.0")!,
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: current,
@@ -301,6 +302,7 @@ final class AppUpdateServiceTests: XCTestCase {
         ])
         let service = AppUpdateService(
             http: client,
+            downloadHTTP: client,
             currentVersion: AppVersion("1.2.0")!,
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: current,
@@ -340,6 +342,75 @@ final class AppUpdateServiceTests: XCTestCase {
 
     func testDeviceSettingsKeepsUpdateKey() {
         XCTAssertTrue(DeviceSettingsStore.sharedKeys.contains("update"))
+    }
+
+    func testInstallDownloadsThroughDownloadHTTPClient() async throws {
+        // P0 wiring: the check client inspects (blocks) redirects for
+        // `releases/latest` tag resolution, but both download URLs answer
+        // 302. Downloads must go through the redirect-following client — a
+        // download through the inspecting client surfaces httpStatus(302).
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("update-dlclient-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let incoming = try makeFakeApp(
+            at: root.appendingPathComponent("incoming/WeChatHUD.app"),
+            identifier: AppUpdateService.productionIdentifier,
+            version: "1.3.0"
+        )
+        let current = try makeFakeApp(
+            at: root.appendingPathComponent("Applications/WeChatHUD.app"),
+            identifier: AppUpdateService.productionIdentifier,
+            version: "1.2.0"
+        )
+        let zip = root.appendingPathComponent("WeChatHUD-1.3.0-macOS14-arm64.zip")
+        let zipProcess = Process()
+        zipProcess.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        zipProcess.arguments = ["-c", "-k", "--keepParent", incoming.path, zip.path]
+        try zipProcess.run()
+        zipProcess.waitUntilExit()
+        let zipData = try Data(contentsOf: zip)
+        let checkClient = MockUpdateClient(responses: [
+            MockUpdateClient.response(status: 302, body: Data(), url: "https://github.com/x/y/z.zip")
+        ])
+        let downloadClient = MockUpdateClient(responses: [
+            MockUpdateClient.response(status: 200, body: zipData, url: "https://github.com/x/y/z.zip")
+        ])
+        let service = AppUpdateService(
+            http: checkClient,
+            downloadHTTP: downloadClient,
+            currentVersion: AppVersion("1.2.0")!,
+            currentBundleIdentifier: AppUpdateService.productionIdentifier,
+            currentBundleURL: current,
+            allowsNonApplicationDestination: true,
+            signatureTeamIdentifier: { _ in "TEAM123" },
+            runningTeamIdentifier: { "TEAM123" }
+        )
+        let offer = AppUpdateOffer(
+            version: AppVersion("1.3.0")!,
+            tagName: "v1.3.0",
+            htmlURL: URL(string: "https://github.com/samwang0041-star/WeChatHUD/releases/tag/v1.3.0")!,
+            notes: "",
+            asset: GitHubReleaseAsset(
+                id: 1,
+                name: "WeChatHUD-1.3.0-macOS14-arm64.zip",
+                browserDownloadURL: URL(string: "https://github.com/x/y/z.zip")!,
+                apiURL: nil,
+                size: zipData.count,
+                state: "uploaded"
+            ),
+            checksumAsset: nil
+        )
+        let installed = try await service.install(offer, destination: current)
+        XCTAssertEqual(installed.standardizedFileURL.path, current.standardizedFileURL.path)
+        XCTAssertEqual(downloadClient.requests.count, 1, "the download must use the redirect-following client")
+        XCTAssertTrue(checkClient.requests.isEmpty, "the check client must not see download traffic")
+    }
+
+    func testTagFromReleasePagePrefersHighestVersion() {
+        let html = #"<a href="/o/r/releases/tag/v1.2.0">old</a><a href="/o/r/releases/tag/v1.3.1">new</a><a href="/o/r/releases/tag/v1.3.0">mid</a>"#
+        XCTAssertEqual(AppUpdateService.tagFromReleasePage(html), "v1.3.1")
+        XCTAssertEqual(AppUpdateService.tagFromReleasePage(#"<a href="/o/r/releases/tag/v1.3.0">only</a>"#), "v1.3.0")
+        XCTAssertNil(AppUpdateService.tagFromReleasePage("<p>no release links</p>"))
     }
 
     @MainActor

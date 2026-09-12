@@ -322,7 +322,9 @@ enum ChatStatsEngine {
         else { boundaryScore = max(0, 100 - Int(Double(workAfterHours) / Double(max(workCount, 1)) * 100)) }
 
         // D6: Influence
-        let profileMap = Dictionary(uniqueKeysWithValues: contacts.compactMap { c -> (String, RelationshipProfile.Hierarchy)? in
+        // Same no-unique-constraint residue as above: never trap on duplicate
+        // usernames, keep the first inferred hierarchy.
+        let profileMap = Dictionary(contacts.compactMap { c -> (String, RelationshipProfile.Hierarchy)? in
             // Use role to infer hierarchy
             switch c.role {
             case .boss, .keyClient: return (c.username, .superior)
@@ -331,7 +333,7 @@ enum ChatStatsEngine {
             case .client, .supplier: return (c.username, .external)
             case .acquaintance, .groupOnly, .service: return (c.username, .peer)
             }
-        })
+        }, uniquingKeysWith: { first, _ in first })
         var superiorMsgs = 0, subordinateMsgs = 0, peerMsgs = 0, externalMsgs = 0, personalMsgs = 0
         for s in statsArr where !s.isGroup {
             switch profileMap[s.chatUsername] {

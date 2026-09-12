@@ -68,4 +68,16 @@ final class DailyReportIdentityTests: XCTestCase {
         let risk = DailyReportRisk(id: "custom-id", type: .recalledMessage, description: "撤回", severity: .medium)
         XCTAssertEqual(risk.id, "custom-id")
     }
+
+    func testLegacyHashValueIdentifiersAreRecognized() {
+        // Pre-SHA-256 ids ended in a decimal hashValue; stable ids end in
+        // exactly 16 hex chars. The GC relies on this distinction.
+        XCTAssertTrue(HUDStore.isLegacyDailyReportItemID("wxid_abc--7328473628473628"))
+        XCTAssertTrue(HUDStore.isLegacyDailyReportItemID("overdueCommitment-12345678901234567"))
+        XCTAssertFalse(HUDStore.isLegacyDailyReportItemID("wxid_abc-0123456789abcdef"))
+        XCTAssertFalse(HUDStore.isLegacyDailyReportItemID("todo-42"))
+        // All-digit 16-char suffix is ambiguous with an all-numeric hex
+        // digest: left in place, the age rule reaps it instead.
+        XCTAssertFalse(HUDStore.isLegacyDailyReportItemID("wxid_abc-1234567890123456"))
+    }
 }

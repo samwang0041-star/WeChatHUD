@@ -11,6 +11,16 @@ actor GroupScreener {
     private let promptLoader: PromptLoader
     private let dataLedger: DataLedger
 
+    /// Guards an extended outage from re-sending every undecided group's full
+    /// sample set on every run. A single failure retries immediately next run
+    /// (a transient blip must not wait out a cooldown); the cooldown starts
+    /// after two consecutive incomplete screens. In-memory only, never
+    /// persisted: a restart retries immediately, so a transient failure can
+    /// never lock a group out the way the old persisted `ask_each_time` did.
+    private var consecutiveIncompleteScreens = 0
+    private var rescreenCoolUntil: Date?
+    private static let rescreenCooldown: TimeInterval = 600
+
     init(
         store: HUDStore,
         aiService: any AIServiceProtocol,
@@ -54,6 +64,11 @@ actor GroupScreener {
         }
 
         if !needAI.isEmpty {
+            if let coolUntil = rescreenCoolUntil, coolUntil > Date() {
+                // Still inside the outage cooldown: ask about them this run
+                // and retry the screen once it lapses.
+                ask.append(contentsOf: needAI)
+            } else {
             // A nil result means the screen produced no usable decisions at all
             // (prompt missing, AI error, unparseable reply). Cache nothing in
             // that case: a transient outage used to be persisted as
@@ -85,6 +100,16 @@ actor GroupScreener {
             for c in needAI where !decided.contains(c.chatUsername) {
                 ask.append(c)
             }
+            if decided.count < needAI.count {
+                consecutiveIncompleteScreens += 1
+                if consecutiveIncompleteScreens >= 2 {
+                    rescreenCoolUntil = Date().addingTimeInterval(Self.rescreenCooldown)
+                }
+            } else {
+                consecutiveIncompleteScreens = 0
+                rescreenCoolUntil = nil
+            }
+        }
         }
 
         return ScreenResult(included: included, excluded: excluded, askEachTime: ask)

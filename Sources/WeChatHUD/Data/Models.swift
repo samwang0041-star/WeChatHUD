@@ -1969,6 +1969,7 @@ struct AutopilotConfig: Codable {
     /// Sensitive keywords — if AI reply contains any, route to pending review.
     var sensitiveKeywords: [String] = [
         "钱", "转账", "汇款", "银行卡", "密码", "验证码",
+        "红包", "到账", "收款", "付款",
         "合同", "签字", "辞职", "离职", "解雇",
         "骂", "傻逼", "滚", "操", "妈的"
     ]
@@ -2023,7 +2024,11 @@ struct AutopilotConfig: Codable {
         batchWindowSeconds = value(.batchWindowSeconds, fallback.batchWindowSeconds)
         excludedContacts = value(.excludedContacts, fallback.excludedContacts)
         replyStyle = value(.replyStyle, fallback.replyStyle)
-        maxSendsPerSession = value(.maxSendsPerSession, fallback.maxSendsPerSession)
+        // Counts must not go negative: the send path treats <= 0 as unlimited,
+        // so a corrupted negative would silently lift the per-session cap.
+        // Fall back to the default cap instead (fail capped, not open).
+        let storedCap: Int = value(.maxSendsPerSession, fallback.maxSendsPerSession)
+        maxSendsPerSession = storedCap < 0 ? fallback.maxSendsPerSession : storedCap
         sensitiveKeywords = value(.sensitiveKeywords, fallback.sensitiveKeywords)
         replySpeedMultiplier = value(.replySpeedMultiplier, fallback.replySpeedMultiplier)
         proactiveEnabled = value(.proactiveEnabled, fallback.proactiveEnabled)

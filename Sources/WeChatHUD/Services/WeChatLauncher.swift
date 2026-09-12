@@ -110,10 +110,21 @@ enum WeChatLauncher {
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir)
+        // Runs once per process, before the first log line: the right moment
+        // to drop the world-readable predecessor.
+        removeLegacyWorldReadableLog()
         return dir
     }()
 
     private static var logPath: String { logDirectory + "/launcher.log" }
+    /// Deletes the pre-fix log at `/tmp/wchud_launcher.log` if it is still
+    /// around. That file carried AX tree dumps (contact names, group titles,
+    /// input-box text) with 0644 permissions; moving the log does not delete
+    /// the old file. Best-effort — a missing file is the common case on fresh
+    /// installs.
+    private static func removeLegacyWorldReadableLog() {
+        try? FileManager.default.removeItem(atPath: "/tmp/wchud_launcher.log")
+    }
 
     private static func log(_ msg: String) {
         let line = "[\(Date())] \(msg)\n"
@@ -194,7 +205,13 @@ enum WeChatLauncher {
                 ClipboardGuard.restore(saved)
                 finishClipboardRestore()
             }
-            let names = WeChatOpenSearch.names(stored: searchNames.isEmpty ? [chatName] : searchNames, username: chatName)
+            // When the caller supplied WeChat-resolved names, never append the
+            // HUD display label as the username slot: it would join the search
+            // input and the accepted-title set and can validate a same-named
+            // stranger. Fall back to the label only when nothing else is known.
+            let names = searchNames.isEmpty
+                ? WeChatOpenSearch.names(stored: [chatName], username: chatName)
+                : WeChatOpenSearch.names(stored: searchNames)
             if let failure = await navigateToChat(app: app, searchNames: names) { notifyUser(failure.userMessage) }
         }
     }
@@ -695,7 +712,11 @@ enum WeChatLauncher {
         chatName: String, text: String, typingDelay: TimeInterval, sendKey: WeChatSendKey?,
         searchNames: [String] = []
     ) async -> TextActionOutcome {
-        let searchNames = WeChatOpenSearch.names(stored: searchNames.isEmpty ? [chatName] : searchNames, username: chatName)
+        // Same alias isolation as above: supplied names are WeChat-resolved;
+        // the HUD label must not join them via the username slot.
+        let searchNames = searchNames.isEmpty
+            ? WeChatOpenSearch.names(stored: [chatName], username: chatName)
+            : WeChatOpenSearch.names(stored: searchNames)
         guard !PreviewRuntime.isEnabled else { return .failed(.previewMode) }
         guard !textActionInFlight else { return .failed(.operationInProgress) }
         textActionInFlight = true

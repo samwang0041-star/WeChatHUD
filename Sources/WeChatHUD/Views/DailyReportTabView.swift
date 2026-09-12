@@ -140,7 +140,7 @@ struct DailyReportTabView: View {
             return interval.contains(date) || (item.dueAt.map { interval.contains($0) } ?? false)
         }
         let done = items.filter { $0.status == .done }
-        let pending = items.filter { $0.status == .pending && $0.kind != .info }
+        let pending = items.filter { $0.status == .pending && !$0.kind.isRecord }
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("本周推进了 \(done.count) 件事，还有 \(pending.count) 件要跟进。")

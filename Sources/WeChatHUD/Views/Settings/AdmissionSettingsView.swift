@@ -441,7 +441,10 @@ private struct GroupMemberPickerSheet: View {
     private var members: [(username: String, name: String)] {
         guard let selectedGroup else { return [] }
         let contacts = store.loadContacts()
-        let byUsername = Dictionary(uniqueKeysWithValues: contacts.map { ($0.username, $0.displayName) })
+        // contacts has no unique constraint (multi-account residue can leave
+        // two rows with the same username); uniqueKeysWithValues traps on
+        // duplicates, so keep the first display name instead of crashing.
+        let byUsername = Dictionary(contacts.map { ($0.username, $0.displayName) }, uniquingKeysWith: { first, _ in first })
         return reader.groupMemberNames(for: selectedGroup.id)
             .map { (username: $0, name: byUsername[$0] ?? $0) }
             .sorted { $0.name < $1.name }

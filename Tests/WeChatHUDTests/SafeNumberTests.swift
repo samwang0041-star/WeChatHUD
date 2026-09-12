@@ -52,4 +52,14 @@ final class SafeNumberTests: XCTestCase {
         XCTAssertNil(SafeNumber.jsonInt("not a number"))
         XCTAssertNil(SafeNumber.jsonInt(3.5, in: 1...5))
     }
+
+    /// Whole numbers sent as decimal strings (`"3.0"`) are the same index —
+    /// dropping them orphaned the citation. Fractions stay nil.
+    func testJSONIntAcceptsDecimalStringsForWholeNumbersOnly() {
+        XCTAssertEqual(SafeNumber.jsonInt("3.0", in: 1...5), 3)
+        XCTAssertEqual(SafeNumber.jsonInt("1e3", in: 1...2000), 1000)
+        XCTAssertNil(SafeNumber.jsonInt("3.5", in: 1...5))
+        XCTAssertNil(SafeNumber.jsonInt("0.5", in: 1...5))
+        XCTAssertNil(SafeNumber.jsonInt("99.0", in: 1...5))
+    }
 }

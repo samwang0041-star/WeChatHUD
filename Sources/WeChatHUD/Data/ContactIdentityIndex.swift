@@ -184,7 +184,12 @@ enum WeChatOpenSearch {
         liveNick: String? = nil,
         hudAlias: String? = nil,
         stored: [String] = [],
-        username: String
+        // Optional: callers that only have a HUD display label must NOT pass
+        // it here. The label is appended to both the search input and the
+        // accepted-title set, so a HUD-only alias can match a same-named
+        // stranger and then validate them as the recipient. Pass an account
+        // username only when it really is one (wxid_/chatroom id).
+        username: String? = nil
     ) -> [String] {
         var seen = Set<String>()
         var result: [String] = []

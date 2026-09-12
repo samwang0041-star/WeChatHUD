@@ -27,7 +27,13 @@ struct DiscussionWorkspaceView: View {
         // History is a review of what was handled, so it is never narrowed by
         // the level — hiding completed work would make the level look like it
         // deleted things. The level applies to the live list only.
-        showHistory ? historyItems : monitor.discussionItems.filter { strictness.admits($0) }
+        // The memo tab is the home for records: it always shows them regardless
+        // of level. Filtering first would leave a held-back record with no tab
+        // that can ever show it — invisible at every level while still counted
+        // as "held back". The level narrows the work tabs only.
+        if showHistory { return historyItems }
+        if scope == .notes { return monitor.discussionItems }
+        return monitor.discussionItems.filter { strictness.admits($0) }
     }
 
     /// Resolved once per body evaluation. Never read this from a row: rows
@@ -236,7 +242,9 @@ struct DiscussionWorkspaceView: View {
         // level is holding material back. The third case is the dangerous one
         // — it looks identical to "nothing to do" unless we say otherwise.
         let hiddenHere = strictness.hidden(from: monitor.discussionItems)
-        let heldBackByLevel = !showHistory && query.isEmpty && !hiddenHere.isEmpty
+        // The memo tab bypasses the level (see sourceItems), so the level can
+        // never be the reason it looks empty.
+        let heldBackByLevel = !showHistory && query.isEmpty && scope != .notes && !hiddenHere.isEmpty
         return ContentUnavailableView(
             query.isEmpty ? "还没有待办" : "没有匹配的待办",
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
@@ -248,13 +256,6 @@ struct DiscussionWorkspaceView: View {
                         : "连上微信并选好对话后，还没做完的事会出现在这里。"))
                 : "当前搜索：\(query)")
         )
-        .overlay(alignment: .bottom) {
-            if heldBackByLevel, scope == .notes {
-                Button("把记录放回来") { monitor.setDiscussionStrictness(.everything) }
-                    .buttonStyle(.bordered)
-                    .padding(.bottom, 24)
-            }
-        }
         .frame(maxWidth: .infinity, minHeight: 280)
         .overlay(alignment: .bottom) {
             if !query.isEmpty {
@@ -441,7 +442,7 @@ struct DiscussionWorkspaceView: View {
                 monitor.discussionItems.filter { $0.chatUsername == chat },
                 scope: .all, query: "", history: false
             )
-            selectedID = ranked.first(where: { $0.kind != .info })?.id ?? ranked.first?.id
+            selectedID = ranked.first(where: { !$0.kind.isRecord })?.id ?? ranked.first?.id
             panelState.pendingDiscussionChatUsername = nil
         }
     }
@@ -815,7 +816,7 @@ enum ChatReviewFollowUps {
             scope: .all,
             query: "",
             history: false
-        ).filter { $0.kind != .info }
+        ).filter { !$0.kind.isRecord }
         return ranked.prefix(3)
             .map {
                 Item(

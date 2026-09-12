@@ -38,6 +38,62 @@ extension HUDStore {
             )
         """)
         execIgnoringError("CREATE INDEX IF NOT EXISTS idx_action_insights_date ON daily_report_action_insights(date_key)")
+        // One-time and ongoing cleanup of orphan command-state rows (see
+        // gcDailyReportState). Runs inside the same startup migration.
+        gcDailyReportState()
+    }
+
+    /// Drops `daily_report_state` rows that can never match again.
+    ///
+    /// Two sources: (1) pre-SHA-256 ids derived from `String.hashValue`, which
+    /// is reseeded every process launch — every "忽略风险" left one orphan row
+    /// per restart behind. Legacy highlight/risk ids end in a decimal integer
+    /// (`<chat>-123456789` / `<type>--123456789`); stable ids end in exactly
+    /// 16 hex chars. An all-digit 16-char suffix is ambiguous, so those rows
+    /// are left to the age rule. (2) Rows older than 45 days: states are only
+    /// ever read for the viewed report date, so nothing consults them again.
+    /// Called from the migration path at startup; best-effort.
+    func gcDailyReportState(retentionDays: Int = 45) {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -retentionDays, to: Date()) ?? Date.distantPast
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        let cutoffKey = formatter.string(from: cutoff)
+        _ = executeUpdate("DELETE FROM daily_report_state WHERE date_key < ?") { stmt in
+            sqlite3_bind_text(stmt, 1, cutoffKey, -1, Self.sqliteTransient)
+        }
+        let ids: [String] = queryAll("SELECT DISTINCT item_id FROM daily_report_state", bind: { _ in }, decode: { stmt in
+            sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+        })
+        for id in ids where Self.isLegacyDailyReportItemID(id) {
+            _ = executeUpdate("DELETE FROM daily_report_state WHERE item_id = ?") { stmt in
+                sqlite3_bind_text(stmt, 1, id, -1, Self.sqliteTransient)
+            }
+        }
+    }
+
+    /// True for pre-SHA-256 `hashValue` ids: a trailing decimal integer that
+    /// cannot be a 16-hex stable digest. Negative hashes (`--123…`) are
+    /// unambiguous; positive ones are legacy unless exactly 16 digits (which
+    /// could theoretically be an all-numeric hex digest — left in place).
+    static func isLegacyDailyReportItemID(_ id: String) -> Bool {
+        // Action states (`todo-<relatedID>` etc.) are current-format by
+        // construction — their suffixes are related ids, not hashes.
+        for prefix in ["todo-", "commitment-", "replyDebt-", "ask-"] {
+            if id.hasPrefix(prefix) { return false }
+        }
+        // Negative hashValues serialize with a double dash (`<chat>--123…`).
+        // Stable ids never contain one (usernames do not end in `-`).
+        if let dash = id.lastIndex(of: "-"), dash > id.startIndex,
+           id[id.index(before: dash)] == "-" {
+            let tail = String(id[id.index(after: dash)...])
+            if !tail.isEmpty, tail.allSatisfy({ $0.isNumber }) { return true }
+            return false
+        }
+        guard let dash = id.lastIndex(of: "-") else { return false }
+        let suffix = String(id[id.index(after: dash)...])
+        guard !suffix.isEmpty, suffix.allSatisfy({ $0.isNumber }) else { return false }
+        return suffix.count != 16
     }
 
     func upsertDailyReportCommandState(_ state: DailyReportCommandState) throws {

@@ -968,6 +968,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
                 let uid = "\(relPath)/\(tableName)/\(localId)"
                 guard seenIDs.insert(uid).inserted else { continue }
+                // Cross-shard dedup: while WCDB checkpoints pages into the main
+                // file, the same row is visible in two shards — with different
+                // `relPath`s, so the uid above cannot catch it. The content key
+                // does: two rows that agree on everything user-visible are the
+                // same message, not a collision (per-shard localIds restart per
+                // file, so the key must include content, not just ids).
+                let contentKey = "\(createTime)-\(localId)-\(baseType)-\(subType)-\(senderUsername)-\(parsed.text)"
+                guard seenIDs.insert(contentKey).inserted else { continue }
                 let msg = MessageInfo(
                     id: uid,
                     localId: localId,
