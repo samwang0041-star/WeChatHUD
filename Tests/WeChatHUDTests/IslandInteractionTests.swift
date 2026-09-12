@@ -308,4 +308,25 @@ final class IslandInteractionTests: XCTestCase {
         XCTAssertGreaterThan(fake.notchHeight, 0)
     }
 
+    @MainActor
+    func testCollapseKeepsOutgoingSurfaceUntilTheSpringLands() {
+        let state = PanelState()
+        state.goExtended()
+        XCTAssertEqual(state.presentedState, .extended)
+        state.frameAnimationStarted()
+        state.currentState = .compact
+        XCTAssertEqual(state.currentState, .compact)
+        XCTAssertEqual(state.presentedState, .extended,
+                       "the inbox must stay mounted while the mask shrinks")
+        state.frameAnimationEnded(mouseInside: false)
+        XCTAssertEqual(state.presentedState, .compact)
+    }
+
+    @MainActor
+    func testExpandPaintsTheInboxImmediately() {
+        let state = PanelState()
+        state.currentState = .extended
+        XCTAssertEqual(state.presentedState, .extended)
+    }
+
 }

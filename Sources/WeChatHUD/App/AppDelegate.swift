@@ -225,13 +225,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if cached.width > 1, cached.height > 1 {
                         self.panel.animateHeight(to: cached.height, width: cached.width, caller: "AppDelegate.currentState.extended.cached")
                     } else {
-                        // First hover: animate to the estimate — the spring
-                        // driver retargets mid-flight without a velocity
-                        // reset, so when the real measurement arrives the
-                        // trajectory bends instead of snapping. (Snapping
-                        // to the estimate first was only needed when a
-                        // retarget meant a full re-anchored ease restart.)
-                        self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.extended.estimated")
+                        // First hover this session: do not animate to the static
+                        // estimate and do not snap the width. The covering-window
+                        // mask spring lays SwiftUI out once at the destination
+                        // size when the measurement arrives, so an instant widen
+                        // would only flash a 32 pt bar at the expanded width.
+                        // `scheduleFirstHoverFallback` covers a dropped measurement.
+                        self.scheduleFirstHoverFallback(width: w, height: h)
                     }
                 } else if state == .compact {
                     // The compact frame is fully determined by notch
@@ -314,9 +314,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
 
                 AnimationDebugger.logLazyEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
-                // Tolerance — don't re-animate for sub-pixel jitter.
-                let curr = self.panel.frame
-                if abs(targetSize.height - curr.height) < 2, abs(targetSize.width - curr.width) < 2 {
+                // Tolerance — don't re-animate for sub-pixel jitter. While a run
+                // is in flight the bar is higher: text settling at the final width
+                // reports 1–3 pt of height jitter per layout pass, and each
+                // retarget bends the trajectory (the old expand "catch"). Real
+                // content changes that must bend the run — a row expanding to its
+                // action panel, the snooze menu, the briefing card — are all
+                // 50 pt+, so they still sail through.
+                // Compare against the *visible* island. During a mask-driven
+                // run `panel.frame` is the covering union, so a 252 pt inbox
+                // would look like it already matched a 252 pt cover and the
+                // height spring would never start.
+                let curr = self.panel.visibleIslandFrame ?? self.panel.frame
+                let tolerance = IslandMotion.retargetTolerance(isAnimating: self.panel.isFrameAnimationRunning)
+                if abs(targetSize.height - curr.height) < tolerance, abs(targetSize.width - curr.width) < tolerance {
                     return
                 }
                 if current == .compact {
@@ -845,7 +856,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func resizeNotificationPanel(caller: String, measuredHeight: CGFloat? = nil) {
         guard panelState.isReady, panelState.currentState == .notification else { return }
         let (w, h) = panelSize(for: .notification, notificationMeasuredHeight: measuredHeight)
-        let curr = panel.frame
+        let curr = panel.visibleIslandFrame ?? panel.frame
         guard abs(h - curr.height) >= 2 || abs(w - curr.width) >= 2 else { return }
         panel.animateHeight(to: h, width: w, caller: caller)
     }
@@ -892,6 +903,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return (IslandNotificationLayout.panelWidth(notchWidth: notch.notchWidth), height)
         case .detail:
             return (PanelState.width(for: state), PanelState.height(for: state))
+        }
+    }
+
+    /// Safety net for a first-hover whose SwiftUI measurement never arrives
+    /// (e.g. `isReady` still false drops it in the measurement sink): after
+    /// 0.25 s, fall back to the static estimate so the panel can never be
+    /// stranded as a widened 32 pt bar. When the measurement did arrive the
+    /// pipe is non-zero and this is a no-op — the single height spring owns
+    /// the run and must not be bent by a stale estimate.
+    private func scheduleFirstHoverFallback(width: CGFloat, height: CGFloat) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self,
+                  self.panelState.currentState == .extended,
+                  self.panelState.measuredExtendedSize.height <= 1 else { return }
+            self.panel.animateHeight(to: height, width: width, caller: "AppDelegate.currentState.extended.estimatedFallback")
         }
     }
 

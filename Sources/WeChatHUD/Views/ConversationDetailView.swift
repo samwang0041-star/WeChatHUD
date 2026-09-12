@@ -609,7 +609,7 @@ private struct SuggestionRowView: View {
         .cornerRadius(4)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .companionAnimation(CompanionMotion.ease(0.15), value: hovered)
+        .companionAnimation(CompanionMotion.hover(), value: hovered)
         .onTapGesture { onAdopt(suggestion.text) }
     }
 }

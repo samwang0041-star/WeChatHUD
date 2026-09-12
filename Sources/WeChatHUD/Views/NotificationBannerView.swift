@@ -202,7 +202,7 @@ struct NotificationBannerView: View {
         .onHover { hovering = $0 }
         .background(alignment: .center) { hoverWash }
         .background { tapSurface }
-        .companionAnimation(CompanionMotion.ease(0.15), value: hovering)
+        .companionAnimation(CompanionMotion.hover(), value: hovering)
         .accessibilityElement(children: .contain)
     }
 
