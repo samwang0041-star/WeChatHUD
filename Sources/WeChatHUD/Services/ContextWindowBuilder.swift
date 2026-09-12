@@ -69,6 +69,24 @@ struct ContextWindow {
     let chatType: ChatType
     let role: ContextRole
 
+    /// 目标消息是否真的落在窗口里。
+    ///
+    /// `build` 早期版本在目标不在 `allMessages` 内时会静默退化成「窗口末条」，
+    /// 于是承诺提取拿到的是一段与目标无关的尾消息（还会被写进承诺的
+    /// `contextText`），回复建议也会把无关消息当目标上下文。现在目标找不到就
+    /// 返回空窗口并把这个标记置为 false，调用方走「没有上下文」的安全分支：
+    /// ChatMonitor 传空 `contextMessages`、OnDemandAnalysis 的
+    /// `serialize().isEmpty` 直接返回 nil、AutopilotService 只会拿到空串。
+    let targetFound: Bool
+
+    /// 默认 true，保持既有构造点（目标一定在窗口内的地方）不用改写。
+    init(messages: [AnnotatedMessage], chatType: ChatType, role: ContextRole, targetFound: Bool = true) {
+        self.messages = messages
+        self.chatType = chatType
+        self.role = role
+        self.targetFound = targetFound
+    }
+
     func serialize() -> String {
         messages.map { msg in
             let time = MessageInfo.formatRelative(msg.createTime)
@@ -99,6 +117,9 @@ enum ContextWindowBuilder {
     /// target and received the newest few in reverse order, and the commitment
     /// extractor saw its look-behind as look-ahead. Sorting here makes the
     /// contract structural instead of a convention each caller has to remember.
+    ///
+    /// `target` must be inside `allMessages`. When it is not, the window comes
+    /// back empty with `targetFound == false` — see the note on `ContextWindow`.
     static func build(
         target: MessageInfo,
         role: ContextRole,
@@ -107,7 +128,8 @@ enum ContextWindowBuilder {
         contactLookup: ContactLookup
     ) -> ContextWindow {
         guard !allMessages.isEmpty else {
-            return ContextWindow(messages: [], chatType: chatType, role: role)
+            // 窗口为空时目标同样不在窗口内，标记为 false 让调用方走安全分支。
+            return ContextWindow(messages: [], chatType: chatType, role: role, targetFound: false)
         }
 
         // Same tie-break as the reader's own `ORDER BY create_time, local_id`,
@@ -116,7 +138,13 @@ enum ContextWindowBuilder {
             $0.createTime == $1.createTime ? $0.localId < $1.localId : $0.createTime < $1.createTime
         }
 
-        let targetIdx = ordered.firstIndex(where: { $0.id == target.id }) ?? ordered.count - 1
+        // 目标必须真的在 allMessages 里。旧实现用 `?? ordered.count - 1` 兜底，
+        // 等于把窗口最后一条无关消息当成目标：承诺提取会把这段尾消息当上下文
+        // 写进承诺，回复建议的窗口里也完全没有目标消息本身。找不到就返回空窗口
+        // 并显式标记 targetFound=false，调用方按「没有上下文」处理。
+        guard let targetIdx = ordered.firstIndex(where: { $0.id == target.id }) else {
+            return ContextWindow(messages: [], chatType: chatType, role: role, targetFound: false)
+        }
         let start = max(0, targetIdx - role.lookBehind)
         let end = min(ordered.count - 1, targetIdx + role.lookAhead)
         let slice = Array(ordered[start...end])

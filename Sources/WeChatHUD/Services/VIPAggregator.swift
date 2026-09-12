@@ -151,7 +151,7 @@ actor VIPAggregator {
         }
 
         // Mark traces as batched
-        let batchID = "batch_\(vipUsername)_\(Int(Date().timeIntervalSince1970))"
+        let batchID = Self.makeBatchID(vipUsername: vipUsername)
         try? store.markVIPTracesBatched(ids: traces.map(\.id), batchID: batchID)
 
         try? store.writeAIAudit(AIAuditEntry(
@@ -168,6 +168,32 @@ actor VIPAggregator {
     }
 
     // MARK: - Private helpers
+
+    /// Build the id that groups the traces consumed by one aggregation run.
+    ///
+    /// Uniqueness matters because `store.markVIPTracesBatched(ids:batchID:)`
+    /// stamps every trace of this run with this one value, and any later
+    /// per-batch lookup or cleanup works on the shared id. Two runs for the
+    /// same VIP inside one wall-clock second would therefore collide: run 1's
+    /// traces would look like they belong to run 2's batch, and a cleanup for
+    /// one run could delete or re-read the other's output. The `batch_<user>_<epoch>`
+    /// prefix stays for readability (logs, manual SQL, existing fixtures), and
+    /// an 8-char UUID fragment makes concurrent or same-second runs distinct.
+    ///
+    /// `nonce` is injectable so a test can pin determinism; production callers
+    /// use the random default.
+    ///
+    /// The username length is embedded (`batch_<len>_<user>_<epoch>_<nonce>`) so
+    /// an underscore inside a username cannot make the layout ambiguous. That
+    /// keeps the format crash-free for any value WeChat stores, rather than
+    /// requiring a precondition on data the app does not control.
+    static func makeBatchID(
+        vipUsername: String,
+        now: Date = Date(),
+        nonce: String = String(UUID().uuidString.prefix(8))
+    ) -> String {
+        "batch_\(vipUsername.count)_\(vipUsername)_\(Int(now.timeIntervalSince1970))_\(nonce)"
+    }
 
     private struct ModelResponse {
         let text: String?
