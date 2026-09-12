@@ -9,12 +9,39 @@ protocol AppUpdateHTTPClient: Sendable {
 struct URLSessionAppUpdateClient: AppUpdateHTTPClient {
     let session: URLSession
 
-    init(session: URLSession = URLSession(configuration: .ephemeral)) {
-        self.session = session
+    init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+            return
+        }
+        // The public web channel reads the release tag out of the
+        // `releases/latest` redirect, so redirects are reported instead of
+        // followed. Downloads use pre-built URLs and are unaffected.
+        let configuration = URLSessionConfiguration.ephemeral
+        self.session = URLSession(
+            configuration: configuration,
+            delegate: RedirectInspectingDelegate(),
+            delegateQueue: nil
+        )
     }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
+    }
+}
+
+/// Reports redirect responses to the caller instead of following them, so the
+/// public web channel can read `releases/latest` → `releases/tag/<tag>` from
+/// the `Location` header.
+private final class RedirectInspectingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
     }
 }
 
@@ -23,6 +50,7 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
     case currentVersionUnknown
     case invalidRepository
     case unauthorized
+    case rateLimited
     case privateOrMissingRelease
     case httpStatus(Int)
     case noInstallableAsset(String)
@@ -48,9 +76,15 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
         case .invalidRepository:
             return "发布仓库地址无效"
         case .unauthorized:
-            return "GitHub 拒绝访问。私有仓库需要填写具有读取权限的 Token。"
+            return "GitHub 拒绝了这次读取。如果仓库是私有的，需要填写具有读取权限的 Token；公开仓库出现这个提示，请稍后再试。"
+        case .rateLimited:
+            // Anonymous GitHub API calls are limited per IP, and that budget is
+            // shared by everyone behind the same network. Saying so is the
+            // difference between "I will retry in a few minutes" and "the
+            // developer never published anything".
+            return "GitHub 的查询次数暂时用完了（同一网络共用额度），请过几分钟再试。也可以到发布页手动下载。"
         case .privateOrMissingRelease:
-            return "还没有可安装的新版本，或仓库尚未公开发布。"
+            return "没有找到已发布的版本，或仓库尚未公开。"
         case .httpStatus:
             return "暂时无法检查更新，请稍后再试"
         case .noInstallableAsset(let version):
@@ -153,6 +187,36 @@ struct AppUpdateService {
         guard let repo = AppUpdatePolicy.normalizedRepository(repository) else {
             throw AppUpdateError.invalidRepository
         }
+        do {
+            return try await checkViaAPI(repository: repo, includePrerelease: includePrerelease)
+        } catch let error as AppUpdateError where Self.shouldFallBackToWeb(error) {
+            // The REST API is rate limited per client IP — 60 requests an
+            // hour for anonymous callers — and that budget is shared by
+            // everyone behind the same NAT. A published app therefore cannot
+            // treat a 403 here as "private repository": for most users it
+            // just means the group's quota ran out. The public release pages
+            // carry the same version and installers without a quota, so the
+            // update check falls through to them instead of failing.
+            return try await checkViaWeb(repository: repo)
+        }
+    }
+
+    /// True when the API failure says nothing about whether a release
+    /// exists, so the public pages should be asked instead.
+    static func shouldFallBackToWeb(_ error: AppUpdateError) -> Bool {
+        switch error {
+        case .rateLimited, .httpStatus, .privateOrMissingRelease:
+            return true
+        case .unauthorized:
+            // A 401 means the configured credential was rejected. Falling back
+            // would hide a bad token behind a misleading "not published".
+            return false
+        default:
+            return false
+        }
+    }
+
+    private func checkViaAPI(repository repo: String, includePrerelease: Bool) async throws -> AppUpdateCheckResult {
         let url = URL(string: "https://api.github.com/repos/\(repo)/releases?per_page=20")!
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -167,7 +231,14 @@ struct AppUpdateService {
         switch status {
         case 200:
             break
-        case 401, 403:
+        case 403:
+            // Distinguish "you are not allowed" from "you are over quota":
+            // GitHub signals the latter with rate-limit headers and a body that
+            // says so, and only the former deserves the token advice.
+            throw Self.isRateLimited(response: response, body: data)
+                ? AppUpdateError.rateLimited
+                : AppUpdateError.unauthorized
+        case 401:
             throw AppUpdateError.unauthorized
         case 404:
             throw AppUpdateError.privateOrMissingRelease
@@ -187,6 +258,148 @@ struct AppUpdateService {
             .filter { $0 > currentVersion }
             .max()
         return AppUpdateCheckResult(offer: nil, unpublishedInstaller: newerWithoutZip)
+    }
+
+    /// GitHub reports an exhausted quota with `x-ratelimit-remaining: 0`, and
+    /// in the body it names the limit. Either signal is enough.
+    static func isRateLimited(response: URLResponse, body: Data) -> Bool {
+        if let http = response as? HTTPURLResponse {
+            if let remaining = http.value(forHTTPHeaderField: "x-ratelimit-remaining"), remaining == "0" {
+                return true
+            }
+            if let retry = http.value(forHTTPHeaderField: "retry-after"), !retry.isEmpty {
+                return true
+            }
+        }
+        let text = String(data: body.prefix(2048), encoding: .utf8)?.lowercased() ?? ""
+        return text.contains("rate limit");
+    }
+
+    // MARK: Public web channel
+
+    /// Reads the newest release from the public release pages. One request
+    /// resolves `releases/latest` to a tag; a second lists that release's
+    /// uploaded files. No quota, no credentials.
+    private func checkViaWeb(repository repo: String) async throws -> AppUpdateCheckResult {
+        guard let latestURL = GitHubReleaseWebFeed.latestReleaseURL(repository: repo) else {
+            throw AppUpdateError.invalidRepository
+        }
+        let tag = try await resolveLatestTag(from: latestURL)
+        guard let version = AppVersion(tag) else {
+            throw AppUpdateError.httpStatus(0)
+        }
+        guard version > currentVersion else {
+            return AppUpdateCheckResult(offer: nil, unpublishedInstaller: nil)
+        }
+
+        let names = try await installerNames(repository: repo, tag: tag)
+        guard let installer = Self.preferredInstaller(from: names),
+              let url = GitHubReleaseWebFeed.downloadURL(repository: repo, tag: tag, assetName: installer) else {
+            // The release exists but carries nothing installable — the same
+            // distinction the API path reports.
+            return AppUpdateCheckResult(offer: nil, unpublishedInstaller: version)
+        }
+
+        let checksum = names.first { $0.lowercased() == installer.lowercased() + ".sha256" }
+        let htmlURL = URL(string: GitHubReleaseWebFeed.baseURL + "/" + repo + "/releases/tag/" + tag) ?? latestURL
+        let offer = AppUpdateOffer(
+            version: version,
+            tagName: tag,
+            htmlURL: htmlURL,
+            // Notes live on the release page; the app links there rather than
+            // re-rendering HTML it would first have to sanitize.
+            notes: "",
+            asset: GitHubReleaseAsset(
+                id: 0,
+                name: installer,
+                browserDownloadURL: url,
+                apiURL: nil,
+                size: 0,
+                state: "uploaded"
+            ),
+            checksumAsset: checksum.flatMap { name in
+                GitHubReleaseWebFeed.downloadURL(repository: repo, tag: tag, assetName: name).map {
+                    GitHubReleaseAsset(id: 0, name: name, browserDownloadURL: $0, apiURL: nil, size: 0, state: "uploaded")
+                }
+            }
+        )
+        return AppUpdateCheckResult(offer: offer, unpublishedInstaller: nil)
+    }
+
+    /// Resolves `releases/latest` to its tag, using whichever the response
+    /// exposes: the redirect header, the final URL, or the page itself.
+    private func resolveLatestTag(from url: URL) async throws -> String {
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        let (data, response) = try await http.data(for: request)
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        switch status {
+        case 200, 301, 302, 303, 307, 308:
+            break
+        case 404:
+            throw AppUpdateError.privateOrMissingRelease
+        case 403, 429:
+            throw AppUpdateError.rateLimited
+        default:
+            throw AppUpdateError.httpStatus(status)
+        }
+        if let location = http?.value(forHTTPHeaderField: "Location"),
+           let target = URL(string: location, relativeTo: url)?.absoluteURL,
+           let tag = GitHubReleaseWebFeed.tag(fromResolvedLatestURL: target) {
+            return tag
+        }
+        if let finalURL = http?.url, let tag = GitHubReleaseWebFeed.tag(fromResolvedLatestURL: finalURL) {
+            return tag
+        }
+        if let html = String(data: data, encoding: .utf8), let tag = Self.tagFromReleasePage(html) {
+            return tag
+        }
+        throw AppUpdateError.httpStatus(status)
+    }
+
+    private func installerNames(repository repo: String, tag: String) async throws -> [String] {
+        guard let url = GitHubReleaseWebFeed.expandedAssetsURL(repository: repo, tag: tag) else {
+            throw AppUpdateError.httpStatus(0)
+        }
+        var request = URLRequest(url: url)
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
+        let (data, response) = try await http.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        switch status {
+        case 200:
+            break
+        case 404:
+            throw AppUpdateError.privateOrMissingRelease
+        case 403, 429:
+            throw AppUpdateError.rateLimited
+        default:
+            throw AppUpdateError.httpStatus(status)
+        }
+        let html = String(data: data, encoding: .utf8) ?? ""
+        return ExpandedAssetsParser.parse(html).names
+    }
+
+    /// Picks the installer out of a release's file list with the same scoring
+    /// the API path uses, so both channels agree on what is installable.
+    static func preferredInstaller(from names: [String]) -> String? {
+        let installers = names.filter { name in
+            let lowered = name.lowercased()
+            guard lowered.hasSuffix(".zip") else { return false }
+            if lowered.contains("sha256") || lowered.contains("source") { return false }
+            return true
+        }
+        return installers.max { GitHubReleaseFeed.assetScore($0) < GitHubReleaseFeed.assetScore($1) }
+    }
+
+    static func tagFromReleasePage(_ html: String) -> String? {
+        guard let marker = html.range(of: "/releases/tag/") else { return nil }
+        let rest = html[marker.upperBound...]
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-/+"))
+        let tag = String(rest.prefix { $0.unicodeScalars.allSatisfy(allowed.contains) })
+        return tag.isEmpty ? nil : tag
     }
 
     func install(_ offer: AppUpdateOffer, destination: URL? = nil) async throws -> URL {
@@ -289,8 +502,12 @@ struct AppUpdateService {
         switch status {
         case 200:
             try data.write(to: file, options: .atomic)
-        case 401, 403:
+        case 401:
             throw AppUpdateError.unauthorized
+        case 403:
+            throw Self.isRateLimited(response: response, body: data)
+                ? AppUpdateError.rateLimited
+                : AppUpdateError.unauthorized
         case 404:
             throw AppUpdateError.privateOrMissingRelease
         default:
