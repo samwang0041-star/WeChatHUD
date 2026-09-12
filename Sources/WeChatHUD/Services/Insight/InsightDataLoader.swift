@@ -20,7 +20,7 @@ final class InsightDataLoader {
     ) -> LoadResult? {
         let whitelist = store.getWhitelist()
         let whitelistIds = Set(whitelist.map(\.id))
-        let whitelistMap = Dictionary(uniqueKeysWithValues: whitelist.map { ($0.id, $0) })
+        let whitelistMap = Self.whitelistLookup(whitelist)
         let selfNames = reader.mySelfNames
         let cutoff = cutoffTimestamp(for: window)
 
@@ -50,7 +50,7 @@ final class InsightDataLoader {
 
         var stats: [String: ChatStatsData] = [:]
         var others: [InsightSessionEntry] = []
-        let sessionMap = Dictionary(uniqueKeysWithValues: filteredSessions.map { ($0.username, $0) })
+        let sessionMap = Self.sessionLookup(filteredSessions)
 
         for (chatUsername, bulk) in bulkStats {
             let session = sessionMap[chatUsername]
@@ -167,6 +167,29 @@ final class InsightDataLoader {
     }
 
     // MARK: - Helpers
+
+    /// Build the username → whitelist entry lookup used for display name and
+    /// category attribution.
+    ///
+    /// `whitelist.id` is the chat username, so re-adding a contact (remove +
+    /// add again, or a migration that re-inserts the row) can hand us the
+    /// same id twice in one snapshot. `Dictionary(uniqueKeysWithValues:)`
+    /// traps on that, and the trap is uncatchable — it terminates the app
+    /// rather than throwing. First-wins keeps the earliest row for a given
+    /// username, which is stable across repeated loads of the same data.
+    static func whitelistLookup(_ whitelist: [WhitelistEntry]) -> [String: WhitelistEntry] {
+        Dictionary(whitelist.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Build the username → session lookup used for `isGroup` and timestamps.
+    ///
+    /// The session query returns one row per account, so the same username
+    /// can appear multiple times (same contact on two logged-in accounts).
+    /// Trapping on that duplicate would crash the whole insight load for a
+    /// perfectly ordinary account layout, so duplicates resolve first-wins.
+    static func sessionLookup(_ sessions: [SessionInfo]) -> [String: SessionInfo] {
+        Dictionary(sessions.map { ($0.username, $0) }, uniquingKeysWith: { first, _ in first })
+    }
 
     private func cutoffTimestamp(for window: InsightTimeWindow) -> Int {
         if window == .today {

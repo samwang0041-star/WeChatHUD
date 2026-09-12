@@ -36,12 +36,23 @@ actor AIClassifier {
         case direct, collective, other, uncertain
     }
 
+    /// Mention-token regex, compiled once per process.
+    ///
+    /// Why hoisted: recipientScope runs on the classification hot path for
+    /// every message, and the expensive part of NSRegularExpression is the
+    /// compile (pattern parse + program build), not the match. The pattern is a
+    /// compile-time literal with no per-call state, so compiling it on every
+    /// message bought nothing; NSRegularExpression is immutable and documented
+    /// as safe for concurrent matching, so one shared instance is fine.
+    /// Matching behaviour is unchanged, byte for byte.
+    private static let mentionTokenRegex = try? NSRegularExpression(
+        pattern: #"(?:^|[\s，,。;；:：])@([^\s，,。;；:：!?！？]+)"#
+    )
+
     static func recipientScope(message: ClassifierInput, context: RecipientContext) -> RecipientScope {
         guard message.isGroup else { return .direct }
-        let pattern = #"(?:^|[\s，,。;；:：])@([^\s，,。;；:：!?！？]+)"#
-        let regex = try? NSRegularExpression(pattern: pattern)
         let text = message.text as NSString
-        let tokens = regex?.matches(in: message.text, range: NSRange(location: 0, length: text.length))
+        let tokens = Self.mentionTokenRegex?.matches(in: message.text, range: NSRange(location: 0, length: text.length))
             .map { text.substring(with: $0.range(at: 1)) } ?? []
         let collective = tokens.contains { $0 == "所有人" || $0.lowercased() == "all" }
         let namedMentions = tokens.filter { $0 != "所有人" && $0.lowercased() != "all" }

@@ -91,17 +91,6 @@ enum ImportanceDetector {
 
     // MARK: - Ack-only reply detection
 
-    /// Patterns the user types when acknowledging without actually
-    /// answering. Trimmed/lowercased comparison in the checker.
-    private static let ackPatterns: Set<String> = [
-        "嗯", "嗯嗯", "嗯呢", "嗯好", "嗯啊",
-        "好", "好的", "好好", "好哒", "好嘞", "好呢",
-        "ok", "ok的", "okok", "okk", "oky",
-        "收到", "知道了", "晓得了", "了解", "明白",
-        "行", "行吧", "可以", "好叭", "好吧",
-        "👌", "👍", "🆗", "🙏", "👏"
-    ]
-
     /// True if `text` is, effectively, an ack — empty after trim, or
     /// one of the known ack tokens (case-insensitive), or a very
     /// short emoji-only message (≤2 grapheme clusters).
@@ -110,8 +99,7 @@ enum ImportanceDetector {
         if trimmed.isEmpty { return true }
         // Strip trailing punctuation that shouldn't change meaning.
         let stripped = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ".。！!~～、，,"))
-        let lower = stripped.lowercased()
-        if ackPatterns.contains(lower) { return true }
+        if AckVocabulary.isAckToken(stripped) { return true }
         // Pure-emoji or single-grapheme responses.
         if stripped.count <= 2 {
             let isAllNonLetters = stripped.unicodeScalars.allSatisfy {
@@ -164,5 +152,33 @@ enum ImportanceDetector {
 
         let allAck = repliesInWindow.allSatisfy { isAckOnly($0.text) }
         return allAck ? .unsubstantiveReply(signals: matches) : .answered
+    }
+}
+
+/// 收尾词（ack）的唯一词表。
+///
+/// 历史上 ImportanceDetector.isAckOnly（判断「我这条回复是不是纯 ack」）和
+/// ReplyDebtScorer.isAckMessage（判断「对方这条消息值不值得回」）各自维护了一份
+/// 词表，于是同一句「哈哈」在前一条路径里是实质回复、在后一条路径里是收尾废话：
+/// 我用「哈哈」回了实质请求时不会被判成「未实质回应」，而对方发来「哈哈」却被
+/// 当成需要认真回复的正事。放进一个共享常量后，两条路径的判定不会再漂移。
+enum AckVocabulary {
+    /// 两份旧词表的并集 —— 任何一条路径曾认识的收尾词都保留，行为只增不减。
+    static let tokens: Set<String> = [
+        "嗯", "嗯嗯", "嗯呢", "嗯好", "嗯啊", "嗯嗯嗯",
+        "好", "好的", "好好", "好哒", "好嘞", "好呢", "好吧", "好叭",
+        "ok", "ok的", "okok", "okk", "oky",
+        "收到", "知道了", "晓得了", "了解", "明白",
+        "行", "行吧", "可以", "没问题",
+        "哈哈", "哈哈哈", "哈哈哈哈", "谢谢", "感谢", "666",
+        "👌", "👍", "🆗", "🙏", "👏"
+    ]
+
+    /// 大小写不敏感匹配（「OK」与「ok」都是 ack）。调用方自行决定要不要先去掉
+    /// 首尾标点/空白；这里只做词表匹配，空串不算 ack。
+    static func isAckToken(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return tokens.contains { trimmed.caseInsensitiveCompare($0) == .orderedSame }
     }
 }

@@ -134,16 +134,32 @@ final class ProactiveAlertEngine {
         // the normal in-flight dedup and hourly budget still prevent flooding.
         evaluateCommitmentDeadlines(commitments: commitments, at: evaluationNow)
 
-        // Rule 3: Burst messages (3+ unanswered from the same person)
+        // Rule 3: Burst messages (3+ unanswered from the same person).
+        //
+        // Bucket by `senderUsername`, not by `senderName`: a display name is
+        // not an identity. Two different people who both show up as "小王"
+        // (a common nickname, or a stale contact note) would otherwise have
+        // their unrelated messages counted into one bucket, and both would
+        // share the single dedup slot `burst-小王` — so one conversation's
+        // alert would suppress the other's, while the merged count could
+        // cross the 3-message threshold with no single person having sent 3.
+        // Rows without a username (system/unread summaries) fall back to the
+        // display name so they still bucket somewhere.
         var senderCounts: [String: Int] = [:]
+        var displayNames: [String: String] = [:]
         for item in alertable {
-            senderCounts[item.senderName, default: 0] += 1
+            let key = Self.burstBucketKey(senderUsername: item.senderUsername, senderName: item.senderName)
+            senderCounts[key, default: 0] += 1
+            // First display name wins for the body text; the key already
+            // carries the identity, so only readability depends on this.
+            if displayNames[key] == nil { displayNames[key] = item.senderName }
         }
-        for (sender, count) in senderCounts where count >= 3 {
+        for (key, count) in senderCounts where count >= 3 {
+            let displayName = displayNames[key] ?? key
             pushAlert(
                 title: "连续消息",
-                body: "\(sender) 连续发了 \(count) 条消息",
-                identifier: "burst-\(sender)"
+                body: "\(displayName) 连续发了 \(count) 条消息",
+                identifier: "burst-\(key)"
             )
         }
 
@@ -267,6 +283,17 @@ final class ProactiveAlertEngine {
             body: body,
             identifier: "cross-vip-\(vipUsername)-\(groupUsername)"
         )
+    }
+
+    /// Identity key for the burst rule (rule 3).
+    ///
+    /// The username is the real identity; the display name is only a label
+    /// that two different people can share ("小王"). Bucketing on the label
+    /// merges strangers' messages and makes them share one dedup slot, so the
+    /// username wins whenever the row has one. Rows without a username
+    /// (system/unread summaries) fall back to the display name.
+    nonisolated static func burstBucketKey(senderUsername: String, senderName: String) -> String {
+        senderUsername.isEmpty ? senderName : senderUsername
     }
 
     @discardableResult
