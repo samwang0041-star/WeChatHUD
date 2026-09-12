@@ -268,4 +268,64 @@ final class MessageHelpersTests: XCTestCase {
     func testResolveDeadlineWhitespace() {
         XCTAssertNotNil(MessageHelpers.resolveDeadline("  +30m  "))
     }
+
+    // MARK: - Conversation transcript window
+
+    func testChronologicalWindowKeepsNewestRowsOldestAtTop() {
+        // Live 多巴胺姐妹家 thread (newest-first, the order recentMessages
+        // actually returns). suffix(4) used to keep the 10:00 booking cluster
+        // and drop the 14:25 @ with the 12:40 plan.
+        let newestFirst = [
+            "是",
+            "[OK]饼饼打篮球是不是",
+            "好，那我们吃完饭就要走了 三点还有事",
+            "@哆啦 明儿中饭咱们12:40到，还要去接大学生",
+            "[表情] ponge",
+            "[表情] 哆啦",
+            "@S琪婷婷 @哆啦",
+            "【包间】：805房-",
+        ]
+        XCTAssertEqual(
+            MessageHelpers.chronologicalWindow(newestFirst: newestFirst, visible: 4),
+            [
+                "@哆啦 明儿中饭咱们12:40到，还要去接大学生",
+                "好，那我们吃完饭就要走了 三点还有事",
+                "[OK]饼饼打篮球是不是",
+                "是",
+            ]
+        )
+        XCTAssertEqual(
+            MessageHelpers.chronologicalWindow(newestFirst: newestFirst, visible: 8).first,
+            "【包间】：805房-"
+        )
+        XCTAssertEqual(
+            MessageHelpers.chronologicalWindow(newestFirst: newestFirst, visible: 8).last,
+            "是"
+        )
+    }
+
+    func testChronologicalWindowEmptyAndShort() {
+        XCTAssertEqual(MessageHelpers.chronologicalWindow(newestFirst: [String](), visible: 4), [])
+        XCTAssertEqual(
+            MessageHelpers.chronologicalWindow(newestFirst: ["a", "b"], visible: 8),
+            ["b", "a"]
+        )
+    }
+
+    func testDisplayTextStripsWeChatMentionDecoration() {
+        let raw = "@S琪婷婷❁\u{0489}\u{0489}\u{0489}\u{0489}\u{0489}\u{0489}\u{0489}\u{0489}\u{2005}\u{2005}@哆啦\u{2005}"
+        XCTAssertEqual(MessageHelpers.displayText(raw), "@S琪婷婷❁ @哆啦")
+    }
+
+    func testDisplayTextKeepsBookingNewlines() {
+        let raw = "尊贵的贵宾，您好！\n感谢您选择：丹江渔村(八卦岭店)\n【日期】：9月13日(周日)午\n【包间】：805房-\n对接人员：方丽19928716106"
+        XCTAssertEqual(MessageHelpers.displayText(raw), raw)
+    }
+
+    func testDisplayTextDropsObjectReplacementAndCollapsesSpaces() {
+        XCTAssertEqual(
+            MessageHelpers.displayText("hello\u{fffc}   world"),
+            "hello world"
+        )
+    }
 }

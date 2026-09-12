@@ -237,4 +237,46 @@ enum MessageHelpers {
         }
         return anchor.addingTimeInterval(seconds)
     }
+
+    /// getMessages / recentMessages return newest-first. A chat
+    /// transcript must show that same window oldest-at-top, newest-at-bottom.
+    /// Taking .suffix(visible) on the newest-first array does the opposite:
+    /// it keeps the oldest rows and drops the messages the user actually
+    /// opened the thread to see.
+    static func chronologicalWindow<T>(newestFirst: [T], visible: Int) -> [T] {
+        let count = max(0, visible)
+        return Array(newestFirst.prefix(count).reversed())
+    }
+
+    /// WeChat group @mentions terminate with U+2005, and some nicknames pad
+    /// themselves with enclosing/nonspacing marks (U+0489 and friends) that
+    /// render as a cloud of tofu in any font except WeChat's. Strip those for
+    /// display without touching the raw bytes used for @-matching.
+    static func displayText(_ text: String) -> String {
+        var scalars: [Unicode.Scalar] = []
+        scalars.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .enclosingMark:
+                continue
+            default:
+                break
+            }
+            switch scalar.value {
+            case 0x00A0, 0x00AD, 0x2004, 0x2005, 0x2006, 0x202F:
+                scalars.append(" ")
+            case 0xFFFC:
+                continue
+            default:
+                scalars.append(scalar)
+            }
+        }
+        let stripped = String(String.UnicodeScalarView(scalars))
+        let collapsed = stripped.replacingOccurrences(
+            of: " {2,}",
+            with: " ",
+            options: .regularExpression
+        )
+        return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
