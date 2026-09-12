@@ -37,6 +37,14 @@ extension ChatMonitor {
                !ContactIdentityIndex.isRawChatIdentifier(whitelistName) {
                 return whitelistName
             }
+            // Nothing readable anywhere. Returning the raw username puts an
+            // account id on screen (the daily report showed "preview-colleague"
+            // next to fully named rows). The placeholder keeps the row
+            // honest about not knowing the name yet; callers that show it
+            // alongside real names do not have to special-case it.
+            if ContactIdentityIndex.isRawChatIdentifier(chatUsername), !chatUsername.contains("@chatroom") {
+                return ContactIdentityIndex.unnamedContactPlaceholder
+            }
             return chatUsername.contains("@chatroom")
                 ? ContactIdentityIndex.unnamedGroupPlaceholder
                 : chatUsername

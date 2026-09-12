@@ -175,7 +175,12 @@ private struct ContactsListSubView: View {
                 .listStyle(.inset(alternatesRowBackgrounds: false))
                 .scrollContentBackground(.hidden)
                 .background(CompanionPalette.canvas)
-                .frame(minWidth: 230, idealWidth: 380, maxWidth: 500, maxHeight: .infinity)
+                // Fit the smallest supported window. The previous minima
+                // (230 + 260) exceeded the content column left after the
+                // 236pt sidebar and 28pt of padding each side, so the
+                // inspector pane was laid out past the right edge and its
+                // controls were clipped out of reach.
+                .frame(minWidth: 200, idealWidth: 360, maxWidth: 500, maxHeight: .infinity)
                 .accessibilityLabel("已关注的人")
 
                 ContactInspectorView(
@@ -192,7 +197,7 @@ private struct ContactsListSubView: View {
                         pendingDeleteContact = contact
                     }
                 )
-                .frame(minWidth: 260, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 230, idealWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
             .background(CompanionPalette.canvas)

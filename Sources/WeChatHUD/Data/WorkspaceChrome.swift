@@ -30,6 +30,10 @@ final class IslandPresentation: ObservableObject {
 
     /// Background scans flip `ChatMonitor` to `.syncing`. The island must
     /// keep the last real status so a 10-second tick does not hide badges.
+    /// This is the deliberate anti-flicker design, not an accident: `.syncing`
+    /// therefore never reaches `CompactIslandPolicy`, which is why the policy
+    /// has no syncing "working" phase. Add one there only after removing this
+    /// rewrite.
     static func stabilizing(_ next: IslandLiveInput, previous: IslandLiveInput) -> IslandLiveInput {
         var next = next
         if case .syncing = next.sync {

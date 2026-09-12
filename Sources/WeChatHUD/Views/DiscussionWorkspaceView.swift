@@ -48,9 +48,9 @@ struct DiscussionWorkspaceView: View {
             } else {
                 HSplitView {
                     listPane(items: items, selectedID: selected?.id)
-                        .frame(minWidth: 320, idealWidth: 420)
+                        .frame(minWidth: 240, idealWidth: 420)
                     detailPane(selected: selected)
-                        .frame(minWidth: 300, idealWidth: 380)
+                        .frame(minWidth: 240, idealWidth: 380)
                 }
             }
             if let receipt {

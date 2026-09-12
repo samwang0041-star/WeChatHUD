@@ -15,8 +15,13 @@ struct ChatInsightView: View {
         GeometryReader { geometry in
             if geometry.size.width >= 800 {
                 HSplitView {
-                    conversationSidebar.frame(minWidth: 220, maxWidth: 280)
-                    detailArea.frame(minWidth: 480)
+                    // The smallest supported window leaves this page about
+                    // 528pt after the sidebar and padding; 220 + 480 could not
+                    // fit, and the list column rendered over the divider with
+                    // its rows cut off. The floors now fit, and ideal widths
+                    // keep the split unchanged on a roomy window.
+                    conversationSidebar.frame(minWidth: 180, idealWidth: 240, maxWidth: 320)
+                    detailArea.frame(minWidth: 300, idealWidth: 480)
                 }
             } else {
                 VStack(spacing: 0) {

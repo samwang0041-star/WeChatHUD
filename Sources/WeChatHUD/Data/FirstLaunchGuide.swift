@@ -17,6 +17,24 @@ enum FirstLaunchGuide {
     /// Two content pages; the third stepper label is the start CTA on page 2.
     static let contentPageCount = 2
 
+    /// Labels the step indicator is allowed to draw.
+    ///
+    /// Only `contentPageCount` dots are rendered: the third label describes
+    /// the start action that page 2's CTA performs, and drawing it as an
+    /// unreachable dot made a finished setup look like it was missing a step.
+    /// Derived from `stepTitles` so the two can never disagree.
+    static var pageTitles: [String] {
+        Array(stepTitles.prefix(contentPageCount))
+    }
+
+    /// Label for one rendered page. Returns the start CTA label rather than
+    /// crashing if a caller ever asks past the last page.
+    static func pageTitle(at index: Int) -> String {
+        guard index >= 0, index < pageTitles.count else { return finishCTA }
+        return pageTitles[index]
+    }
+
+
     static func primaryCTA(forStep step: Int) -> String {
         step == 0 ? nextCTA : finishCTA
     }

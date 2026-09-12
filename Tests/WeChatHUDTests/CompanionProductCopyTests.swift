@@ -52,10 +52,12 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertTrue(CompanionProductCopy.compactHoverHint.contains("移入查看"))
     }
 
-    /// The banner's arrival stamp answers "how long has this been waiting", so
-    /// a fresh message is relative and only a stale one falls back to the clock
-    /// (which is the only form that carries a date).
-    func testArrivalLabelIsRelativeWhileTheMessageIsFresh() {
+    /// The banner shares the panel's relative vocabulary ("12 分钟前" /
+    /// "2 小时前") instead of switching to a clock after an hour, which read
+    /// as a second time format next to the island's sync stamp. Only past a
+    /// day does elapsed time stop being a useful unit and the stamp becomes
+    /// an absolute time (the only form that can carry a date).
+    func testArrivalLabelSharesThePanelsRelativeVocabulary() {
         let calendar = Calendar(identifier: .gregorian)
         let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 9, hour: 14, minute: 32))!
 
@@ -78,14 +80,25 @@ final class CompanionProductCopyTests: XCTestCase {
         )
         XCTAssertEqual(
             CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-3600), now: now, calendar: calendar),
-            "今天 13:32"
+            "1 小时前"
         )
         XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-5 * 3600), now: now, calendar: calendar),
+            "5 小时前"
+        )
+        XCTAssertEqual(
+            CompanionProductCopy.arrivalLabel(now.addingTimeInterval(-86_399), now: now, calendar: calendar),
+            "23 小时前",
+            "Still inside the day, so still relative."
+        )
+        // Past a day the stamp becomes absolute, which is the only form that
+        // can carry a date.
+        XCTAssertEqual(
             CompanionProductCopy.arrivalLabel(
-                calendar.date(from: DateComponents(year: 2026, month: 9, day: 8, hour: 22, minute: 10))!,
+                calendar.date(from: DateComponents(year: 2026, month: 9, day: 7, hour: 22, minute: 10))!,
                 now: now, calendar: calendar
             ),
-            "9月8日 22:10"
+            "9月7日 22:10"
         )
     }
 

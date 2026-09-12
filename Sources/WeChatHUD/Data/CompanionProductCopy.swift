@@ -112,22 +112,19 @@ enum CompanionProductCopy {
 
     /// Arrival stamp for the notification banner's identity line.
     ///
-    /// Deliberately not `clockLabel` while the message is fresh: a banner is
+    /// Deliberately not `clockLabel` while the message is recent: a banner is
     /// shown the moment it interrupts, so the only question its timestamp
     /// raises is how long the message has been waiting — and elapsed time
     /// answers that, while "今天 14:32" makes the reader do the subtraction.
     ///
-    /// The cutoff is an hour, matching how people read recency at a glance
-    /// ("12 分钟前" is a wait; "今天 13:22" is a time of day). Before that,
-    /// `clockLabel` would print a "今天" the banner has no use for; after it,
-    /// the absolute time is the more useful of the two and is the only form
-    /// that can carry a date when the message is not from today.
+    /// It shares the panel's one relative vocabulary ("刚刚" / "12 分钟前" /
+    /// "3 小时前" / "2 天前"). A banner-local "x 分钟前 then clock time" rule
+    /// read as a second clock next to the island's sync stamp. Past a day
+    /// elapsed time stops being a useful unit, so `clockLabel` takes over —
+    /// it is the only form that can carry a date.
     static func arrivalLabel(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         let elapsed = now.timeIntervalSince(date)
-        if elapsed < 60 { return "刚刚" }
-        if elapsed < 3600 {
-            return "\(max(1, Int(elapsed / 60))) 分钟前"
-        }
+        if elapsed < 86400 { return RelativeTimeFormatter.relativeLabel(date, now: now) }
         return clockLabel(date, now: now, calendar: calendar)
     }
 

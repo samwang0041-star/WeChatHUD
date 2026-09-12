@@ -31,14 +31,17 @@ struct CompactInboxBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { panelState.goExtended() } label: {
+            // The left wing is the only way out when WeChat itself is
+            // unreachable: see CompactLeftWingCopy for the promise the tooltip
+            // and the click both have to keep.
+            Button { CompactWingRouter.activate(leftWingCopy.route, panelState: panelState) } label: {
                 leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("打开聊天收件箱")
+            .accessibilityLabel(leftWingCopy.accessibilityLabel)
             .accessibilityValue(accessibilityStatus)
-            .help(accessibilityStatus + " · 点击打开收件箱")
+            .help(leftWingCopy.help)
             .padding(.trailing, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
@@ -114,6 +117,13 @@ struct CompactInboxBar: View {
     }
 
     private var accessibilityStatus: String { island.spoken }
+
+    /// Words and destination for the left wing, derived together from the same
+    /// island phase so the tooltip can never promise a different click than the
+    /// one the button performs.
+    private var leftWingCopy: CompactLeftWingCopy {
+        CompactLeftWingCopy.make(phase: island.phase, spoken: island.spoken)
+    }
 
     // MARK: - Notch width lookup
 
@@ -239,6 +249,64 @@ struct CompactInboxBar: View {
                 guard !Task.isCancelled, !aiTracker.isActive else { return }
                 heldAIActive = false
             }
+        }
+    }
+}
+
+/// Where the compact bar's left wing goes for a given island phase.
+enum CompactLeftWingRoute: Equatable {
+    /// WeChat is unreachable, so the inbox has nothing new to show: the wing
+    /// goes straight to 设置 › 微信连接.
+    case openWeChatConnection
+    /// Every other phase keeps the original behaviour: expand the inbox.
+    case openInbox
+
+    static func resolve(_ phase: CompactIslandPhase) -> CompactLeftWingRoute {
+        phase == .connectionProblem ? .openWeChatConnection : .openInbox
+    }
+}
+
+/// Tooltip + VoiceOver words for the left wing. Both are derived from the same
+/// route the click takes, so what the user is promised is what happens.
+struct CompactLeftWingCopy: Equatable {
+    let route: CompactLeftWingRoute
+    let spoken: String
+    let accessibilityLabel: String
+    let help: String
+
+    static func make(phase: CompactIslandPhase, spoken: String) -> CompactLeftWingCopy {
+        let route = CompactLeftWingRoute.resolve(phase)
+        switch route {
+        case .openWeChatConnection:
+            return CompactLeftWingCopy(
+                route: route,
+                spoken: spoken,
+                accessibilityLabel: "打开设置里的微信连接",
+                help: "微信连不上 · 点击打开 设置 › 微信连接"
+            )
+        case .openInbox:
+            return CompactLeftWingCopy(
+                route: route,
+                spoken: spoken,
+                accessibilityLabel: "打开聊天收件箱",
+                help: spoken + " · 点击打开收件箱"
+            )
+        }
+    }
+}
+
+/// The click behind the left wing, kept out of the view body so it can be
+/// exercised against a real PanelState.
+@MainActor
+enum CompactWingRouter {
+    static func activate(_ route: CompactLeftWingRoute, panelState: PanelState) {
+        switch route {
+        case .openWeChatConnection:
+            // The same two-step route the extended inbox's 「检查连接」 uses.
+            panelState.pendingSettingsTab = "system"
+            panelState.onShowSettings?()
+        case .openInbox:
+            panelState.goExtended()
         }
     }
 }

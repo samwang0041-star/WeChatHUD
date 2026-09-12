@@ -27,6 +27,12 @@ struct ContactIdentityIndex {
     /// `…@chatroom` id into the UI: it is meaningless to the user.
     static let unnamedGroupPlaceholder = "未命名群聊"
 
+    /// Placeholder for a direct chat whose id is all we have. Returning the
+    /// raw username put account ids like `preview-colleague` on screen in the
+    /// middle of fully named rows; the id is just as meaningless to a reader
+    /// as a nameless group's `…@chatroom` id.
+    static let unnamedContactPlaceholder = "未命名联系人"
+
     /// Builds the user-facing label for a group member list, e.g.
     /// `群聊 · 赖豪、张沛、索洛诺勋`. Group names come from WeChat, so a
     /// nameless group is only identifiable by who is in it.

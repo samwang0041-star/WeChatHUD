@@ -130,7 +130,9 @@ struct InboxView: View {
                     let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
                     if hiddenTotalCount > 0 {
                         Button(action: { panelState.showDetail() }) {
-                            Text("+\(hiddenTotalCount) 更多 — 查看详情")
+                            // This opens the separate detail window, not an
+                            // in-place expansion, so the label says so.
+                            Text("+\(hiddenTotalCount) 更多 — 查看全部（新窗口）")
                                 .islandMicro()
                                 .foregroundColor(IslandInk.tertiary)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
@@ -174,7 +176,7 @@ struct InboxView: View {
                 .foregroundStyle(IslandInk.tertiary)
             Spacer(minLength: 8)
             // Sync state lives in this fixed slot — the "同步中" indicator
-            // occupies exactly where "刚刚同步" sits, so a refresh starting
+            // occupies exactly where the fresh-sync label sits, so a refresh starting
             // or finishing never changes the panel's measured height. The
             // old syncing banner was a whole row that popped in and out,
             // and every insertion moved the window.
@@ -184,15 +186,18 @@ struct InboxView: View {
                         .controlSize(.mini)
                         .scaleEffect(0.55)
                         .frame(width: 8, height: 8)
-                    Text("同步中")
-                        .islandMicro()
-                        .foregroundStyle(IslandInk.quaternary)
+                   Text("同步中")
+                       .islandMicro()
+                        // Tertiary/quaternary are chrome only (IslandInk doc):
+                        // sync state is something the user reads, so it stays
+                        // on the `meta` step.
+                        .foregroundStyle(IslandInk.meta)
                         .lineLimit(1)
                 }
             } else if let syncAt = monitor.stats.lastSyncAt {
-                Text(syncLabel(syncAt))
-                    .islandMicro()
-                    .foregroundStyle(IslandInk.quaternary)
+               Text(syncLabel(syncAt))
+                   .islandMicro()
+                    .foregroundStyle(IslandInk.meta)
                     .lineLimit(1)
             }
         }
@@ -233,7 +238,11 @@ struct InboxView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("暂时读不到新消息。请确认微信已经打开并登录。")
                     if let last = monitor.stats.lastSyncAt {
-                        Text("上次同步 \(syncLabel(last))")
+                        // syncLabel already carries the "同步" suffix
+                        // ("270 分钟前同步"), so prefixing it here read as
+                        // "上次同步 270 分钟前同步". This line owns the
+                        // "上次同步" wording, so it takes the bare label.
+                        Text("上次同步 \(RelativeTimeFormatter.relativeLabel(last))")
                             .foregroundStyle(IslandInk.tertiary)
                     }
                     Button("检查连接") {
@@ -339,9 +348,9 @@ struct InboxView: View {
                     Circle()
                         .fill(Color.green.opacity(0.7))
                         .frame(width: 5, height: 5)
-                    Text("一切正常")
-                        .islandMicro()
-                        .foregroundColor(IslandInk.quaternary)
+                   Text("一切正常")
+                       .islandMicro()
+                        .foregroundColor(IslandInk.meta)
                 }
             }
             .padding(.leading, IslandMetrics.sectionInset)
@@ -425,9 +434,9 @@ struct InboxView: View {
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
                         .frame(height: 1)
-                    Text("已处理 (\(monitor.handledItems.count))")
-                        .islandMicro()
-                        .foregroundColor(IslandInk.quaternary)
+                   Text("已处理 (\(monitor.handledItems.count))")
+                       .islandMicro()
+                        .foregroundColor(IslandInk.meta)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(IslandInk.quaternary)
@@ -464,7 +473,7 @@ struct InboxView: View {
                 if let summary = item.aiSummary, !summary.isEmpty {
                     Text(summary)
                         .islandMicro()
-                        .foregroundColor(IslandInk.quaternary)
+                        .foregroundColor(IslandInk.meta)
                         .lineLimit(1)
                 }
             }
@@ -520,9 +529,9 @@ struct InboxView: View {
                     .tint(.white)
             }
             if let syncAt = monitor.stats.lastSyncAt {
-                Label(syncLabel(syncAt), systemImage: "arrow.triangle.2.circlepath")
-                    .islandMicro()
-                    .foregroundColor(IslandInk.quaternary)
+               Label(syncLabel(syncAt), systemImage: "arrow.triangle.2.circlepath")
+                   .islandMicro()
+                    .foregroundColor(IslandInk.meta)
             }
             Spacer(minLength: 4)
         }
@@ -572,9 +581,9 @@ struct InboxView: View {
     // MARK: - Helpers
 
     private func syncLabel(_ date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "刚刚同步" }
-        return "\(seconds / 60)分钟前同步"
+        // One relative-time vocabulary for the whole panel; the suffix is
+        // the only thing this slot adds: fresh, or N minutes/hours plus 同步.
+        RelativeTimeFormatter.relativeLabel(date, suffix: "同步")
     }
 
     private func scheduleUndoExpiry() {

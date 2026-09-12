@@ -135,9 +135,48 @@ final class PanelState: ObservableObject {
     /// In-island 稍后提醒 menu on the notification/briefing surface.
     /// Grows the notification panel so all three time choices stay visible.
     @Published var snoozeMenuExpanded: Bool = false
-    /// NSMenu tracking over the island. Separate from `popoverOpen` so
-    /// closing a context menu cannot clobber Autopilot / briefing latch.
-    @Published var menuTrackingOpen: Bool = false
+    /// NSMenu tracking over the island. Separate from the popover latch so
+    /// closing a context menu cannot clobber the Autopilot / briefing latch.
+    ///
+    /// This flag blocks the hover-exit collapse, so it must never latch.
+    /// AppKit's didEndTracking notification is the only thing that clears it,
+    /// and that notification is not guaranteed to arrive (app switch, menu
+    /// torn down by another process, Cmd-Tab while it is open). A missed end
+    /// notification used to pin the panel open with no way back except Esc.
+    /// The backstops below clear it on a timeout.
+    @Published var menuTrackingOpen: Bool = false {
+        didSet {
+            guard oldValue != menuTrackingOpen else { return }
+            menuTrackingTimeoutTimer?.invalidate()
+            menuTrackingTimeoutTimer = nil
+            guard menuTrackingOpen else { return }
+            menuTrackingTimeoutTimer = Timer.scheduledTimer(
+                withTimeInterval: Self.menuTrackingTimeout, repeats: false
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.endMenuTrackingIfStale()
+                }
+            }
+        }
+    }
+
+    /// How long a menu may claim to be tracking before we assume the end
+    /// notification was lost. Real menu use is seconds; this is a backstop,
+    /// not a UX deadline.
+    private static let menuTrackingTimeout: TimeInterval = 60
+    private var menuTrackingTimeoutTimer: Timer?
+
+    /// Drops a stale menu latch and re-runs the collapse decision the latch
+    /// was blocking.
+    func endMenuTrackingIfStale() {
+        menuTrackingTimeoutTimer?.invalidate()
+        menuTrackingTimeoutTimer = nil
+        guard menuTrackingOpen else { return }
+        menuTrackingOpen = false
+        guard !isMouseInside, !popoverOpen, !islandTextInputActive else { return }
+        scheduleExitCollapse()
+    }
+
     /// Autopilot popover on the compact/extended pill. Separate from
     /// `popoverOpen` so closing a snooze menu cannot drop this latch.
     @Published var autopilotPopoverOpen: Bool = false
