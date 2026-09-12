@@ -135,7 +135,7 @@ struct DetailNoticeBar: View {
                 // Switch to .extended directly — the old "collapse
                 // then mouseEntered 0.3s later" dance produced a
                 // visible shrink-then-grow flicker.
-                panelState.goExtended()
+                panelState.revealInboxItem(item.id)
             }
             .islandMicro()
             .buttonStyle(.plain)

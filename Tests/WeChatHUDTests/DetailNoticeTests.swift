@@ -75,6 +75,14 @@ final class DetailNoticeTests: XCTestCase {
 
     // MARK: - The notice's real click contract
 
+    func testRevealInboxItemSurvivesLeavingDetail() {
+        let state = PanelState()
+        state.showChatDetail(chatUsername: "chat-a", chatName: "林晓")
+        state.revealInboxItem("chat-b")
+        XCTAssertEqual(state.currentState, .extended)
+        XCTAssertEqual(state.expandedInboxItemID, "chat-b")
+    }
+
     func testClickingTheNoticeCloseOnlyCloses() {
         let state = PanelState()
         state.goExtended()
@@ -103,6 +111,7 @@ final class DetailNoticeTests: XCTestCase {
         click(window, at: viewSlotCenter)
 
         XCTAssertEqual(state.currentState, .extended, "[查看] 仍然回到收件箱")
+        XCTAssertEqual(state.expandedInboxItemID, "chat-b", "[查看] 必须展开被提醒的那一行")
         XCTAssertEqual(closed, 0, "[查看] 不是关闭")
     }
 

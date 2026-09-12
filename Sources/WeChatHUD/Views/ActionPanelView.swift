@@ -442,16 +442,14 @@ struct ActionPanelView: View {
                     .islandSection()
                     .foregroundColor(IslandInk.secondary)
             }
-            ForEach(replies) { suggestion in
+            ForEach(sanitizedReplies(replies)) { suggestion in
                 suggestionRow(suggestion)
             }
         }
     }
 
     private func suggestionRow(_ suggestion: SuggestedReply) -> some View {
-        Button(action: {
-            monitor.openWeChatChatAndPaste(item.chatUsername, text: suggestion.text)
-        }) {
+        Button(action: { adoptSuggestion(suggestion) }) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .top, spacing: 6) {
@@ -559,7 +557,7 @@ struct ActionPanelView: View {
 
     private func runPrimaryCTA() {
         switch item.semanticState {
-        case .groupMentionFYI:
+        case .groupMentionFYI, .groupActionRequired:
             panelState.showChatDetail(chatUsername: item.chatUsername,
                                       chatName: monitor.displayName(for: item.chatUsername))
         case .handled:
@@ -567,6 +565,25 @@ struct ActionPanelView: View {
         default:
             monitor.openWeChatChat(item.chatUsername)
         }
+    }
+
+    private func adoptSuggestion(_ suggestion: SuggestedReply) {
+        panelState.requestReplyDraftContinuation(
+            chatUsername: item.chatUsername,
+            text: suggestion.text
+        )
+        panelState.showChatDetail(
+            chatUsername: item.chatUsername,
+            chatName: monitor.displayName(for: item.chatUsername)
+        )
+    }
+
+    private func sanitizedReplies(_ replies: [SuggestedReply]) -> [SuggestedReply] {
+        ReplySuggestionSafety.sanitize(
+            replies,
+            sourceTexts: [item.preview]
+                + [item.aiSummary, item.contextNotification?.rawText].compactMap { $0 }
+        )
     }
 
     private func runAnalysis() {
