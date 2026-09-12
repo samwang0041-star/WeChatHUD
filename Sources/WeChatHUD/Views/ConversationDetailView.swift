@@ -27,21 +27,26 @@ struct ConversationDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider().background(Color.white.opacity(0.08))
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    messagesSection
-                    // Render whenever there is reply-debt context, not only once
-                    // suggestions exist: the "生成建议" button lives inside this
-                    // section, and it is the only caller of `loadSuggestions()`.
-                    // Gating the section on `!suggestions.isEmpty` made the block,
-                    // the button, `SuggestionRowView` and `recordReplyFeedback`
-                    // unreachable — suggestions could never appear.
-                    if !suggestions.isEmpty || isLoadingSuggestions || hasReplyDebtContext {
-                        divider
-                        replySuggestionsSection
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        messagesSection
+                        // Render whenever there is reply-debt context, not only once
+                        // suggestions exist: the "生成建议" button lives inside this
+                        // section, and it is the only caller of `loadSuggestions()`.
+                        // Gating the section on `!suggestions.isEmpty` made the block,
+                        // the button, `SuggestionRowView` and `recordReplyFeedback`
+                        // unreachable — suggestions could never appear.
+                        if !suggestions.isEmpty || isLoadingSuggestions || hasReplyDebtContext {
+                            divider
+                            replySuggestionsSection
+                        }
                     }
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 8)
+                .onAppear { scrollTranscriptToLatest(proxy) }
+                .onChange(of: chatUsername) { _, _ in scrollTranscriptToLatest(proxy) }
+                .onChange(of: transcriptMessages.count) { _, _ in scrollTranscriptToLatest(proxy) }
             }
 
             Divider().background(Color.white.opacity(0.12))
@@ -186,14 +191,14 @@ struct ConversationDetailView: View {
 
     private var replyControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("AI 建议", systemImage: "sparkles")
+            Label("回复", systemImage: "square.and.pencil")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(CompanionPalette.islandMint)
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $replyText)
                     .accessibilityLabel("回复内容")
                     .font(.system(size: 14))
-                    .frame(minHeight: 58, maxHeight: 108)
+                    .frame(height: 64)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 4)
                     .scrollContentBackground(.hidden)
@@ -422,9 +427,22 @@ struct ConversationDetailView: View {
 
     // MARK: - Messages
 
+    private static let transcriptLimit = 20
+
+    /// Newest-first reader rows flipped into WeChat order (oldest at top).
+    /// recentMessages itself stays newest-first for the rest of the app.
+    private var transcriptMessages: [(sender: String, body: String)] {
+        let newestFirst = monitor.recentMessages(chatUsername: chatUsername, limit: Self.transcriptLimit)
+            .map { (sender: $0.sender, body: MessageHelpers.displayText($0.body)) }
+        return MessageHelpers.chronologicalWindow(
+            newestFirst: newestFirst,
+            visible: Self.transcriptLimit
+        )
+    }
+
     private var messagesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            let messages = monitor.recentMessages(chatUsername: chatUsername, limit: 8)
+            let messages = transcriptMessages
             if messages.isEmpty && PreviewRuntime.isEnabled {
                 previewTranscript
             } else if messages.isEmpty {
@@ -433,8 +451,9 @@ struct ConversationDetailView: View {
                     .foregroundColor(.white.opacity(0.35))
                     .padding(.vertical, 6)
             } else {
-                ForEach(Array(messages.suffix(4).enumerated()), id: \.offset) { _, msg in
+                ForEach(Array(messages.enumerated()), id: \.offset) { index, msg in
                     messageBubble(msg)
+                        .id(transcriptAnchor(index, isLast: index == messages.count - 1))
                 }
             }
         }
@@ -464,9 +483,22 @@ struct ConversationDetailView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(Color.white.opacity(mine ? 0.06 : 0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
             if !mine { Spacer(minLength: 40) }
+        }
+    }
+
+    private func transcriptAnchor(_ index: Int, isLast: Bool) -> String {
+        isLast ? "transcript-latest" : "transcript-\(index)"
+    }
+
+    private func scrollTranscriptToLatest(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(nil) {
+                proxy.scrollTo("transcript-latest", anchor: .bottom)
+            }
         }
     }
 
