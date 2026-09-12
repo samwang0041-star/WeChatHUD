@@ -563,6 +563,14 @@ final class PanelState: ObservableObject {
         }
     }
 
+    /// Open the inbox with a specific row already expanded. `goExtended()`
+    /// itself clears `expandedInboxItemID` on the state change, so the
+    /// expansion has to be applied after that transition.
+    func revealInboxItem(_ id: String) {
+        goExtended()
+        expandedInboxItemID = id
+    }
+
     /// Called by HUDRootView's SwiftUI preference-key callback with the
     /// actual rendered size of the extended inbox. AppDelegate observes
     /// this to animate the NSPanel frame to hug the content — so a row

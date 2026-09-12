@@ -210,14 +210,16 @@ actor AIReplySuggester {
         guard let dto = AIJSONExtractor.decodeFirstObject(from: raw, as: ResultDTO.self) else { return nil }
         let validTones: Set<String> = ["recommended", "friendly", "formal", "brief", "professional", "concise", "友好", "正式", "简洁"]
         let sensitiveKeywords = (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sensitiveKeywords
-        let sensitiveSourceKeywords = sensitiveKeywords + Self.semanticSensitiveSourceKeywords
         let sourceText = [
             input.messageBody,
             input.contextWindow,
             input.analysisSummary,
             input.knownConstraints
         ].compactMap { $0 }.joined(separator: "\n")
-        let sourceHasSensitiveSignal = Self.containsAnyKeyword(sourceText, keywords: sensitiveSourceKeywords)
+        let sourceHasSensitiveSignal = ReplySuggestionSafety.sourceHasSensitiveSignal(
+            [sourceText],
+            extraKeywords: sensitiveKeywords
+        )
         let highCommitmentIntents: Set<String> = ["accept", "decline"]
         let filtered = dto.suggestions
             .filter { $0.safeToSend }
