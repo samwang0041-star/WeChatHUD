@@ -107,7 +107,18 @@ actor ChatInsightService {
             memory: memoryStr,
             recentContext: recentContext
         ) else { return nil }
-        return Self.addingCoverageNotice(to: result, analyzedCount: dayMessages.count, isTruncated: isTruncated)
+        let finalized = Self.addingCoverageNotice(to: result, analyzedCount: dayMessages.count, isTruncated: isTruncated)
+        let myCount = formatted.filter { $0.sender.hasPrefix("我") }.count
+        try? store.upsertDailyInsightPoint(
+            RelationshipRadarService.point(
+                from: finalized,
+                chatUsername: entry.id,
+                day: dateLabel,
+                messageCount: formatted.count,
+                myMessageCount: myCount
+            )
+        )
+        return finalized
     }
 
     /// Rolling memory is a current snapshot, not historical evidence. Exclude
@@ -169,13 +180,15 @@ actor ChatInsightService {
         selfName: String,
         date: String,
         chatInsights: [(chatName: String, result: ChatInsightResult)],
-        globalStats: BriefingStats
+        globalStats: BriefingStats,
+        radarSummaries: [String] = []
     ) async -> GlobalBriefing? {
         await chatInsight.generateGlobalBriefing(
             selfName: selfName,
             date: date,
             chatInsights: chatInsights,
-            globalStats: globalStats
+            globalStats: globalStats,
+            radarSummaries: radarSummaries
         )
     }
 
