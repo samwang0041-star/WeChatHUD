@@ -2,6 +2,17 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-13 — Overnight：Keychain / 串行存储 / 关系雷达
+
+### [Engineer] 安全 P0 + 存储地基 + 关系雷达初版
+
+- API Key 离开 SQLite：两阶段写入 Keychain（写后读回才清明文），失败保留原值。`~/.wechat-hud` 目录 0700、文件 0600。远程 `http://` AI 拒绝，localhost HTTP 保留。Codex `auth.json` 拒绝符号链接 / 错主 / 宽于 0640。AI 审计默认只留 hash + 脱敏片段。
+- HUDStore 增加串行队列与 `PRAGMA user_version` 迁移（v2 = 关系雷达表）。扫描不再 `Task.detached` 抓 store。
+- 关系雷达：跨天态度/语气/沉默/趋势；单聊分析仍然没有 attitudes / tone_changes / mood_shift。简报 prompt 可吃雷达摘要。UI 是 insight 页上的 stub。
+- 自动驾驶护栏默认值未动。补了 `handleNewMessages` / `executeSend` 真链路测试（群聊人工确认、媒体 0.7x、敏感词、会话上限 50）。
+- 验证：本环境是 Linux，未跑 `swift test` / release 构建。用例写在 `SecurityRegressionTests` / `CodexAuthSecurityTests` / `HUDStoreConcurrencyAndMigrationTests` / `RelationshipRadarTests` / `AutopilotGuardrailPipelineTests`。
+- 细节见 `docs/overnight/2026-09-13-morning-report.md`。
+
 ## 2026-09-13 — 1.3.5：对话窗口与回复建议
 
 ### [Engineer] 点进去要看到最新消息，不能替用户决定接种

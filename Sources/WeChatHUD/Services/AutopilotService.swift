@@ -1151,6 +1151,20 @@ actor AutopilotService {
         await executeSend(item: item, config: config)
     }
 
+    func testingSetSessionSent(_ value: Int) {
+        sessionSent = max(0, value)
+    }
+
+    /// Drives `processBatch` without waiting on the batch timer.
+    func testingProcessBatch(
+        _ messages: [InboundMessage],
+        config: AutopilotConfig,
+        myUsername: String
+    ) async -> AutopilotLogEntry {
+        let sid = sessionId ?? 0
+        return await processBatch(messages, sessionId: sid, config: config, myUsername: myUsername)
+    }
+
     private func persistSessionCounts() {
         guard let sid = sessionId else { return }
         try? store.updateAutopilotSessionCounts(

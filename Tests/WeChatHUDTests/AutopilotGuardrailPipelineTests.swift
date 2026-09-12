@@ -121,4 +121,145 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let sent = await service.sessionSent
         XCTAssertEqual(sent, 0)
     }
+
+    /// `handleGroupAt` only lets a group @ enter the batch; the send queue
+    /// still carries the product hold so timers cannot auto-send it.
+    func testGroupAtWithHandlingOnStillRequiresManualConfirm() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(reply: "好的，我看一下", confidence: 0.95)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+
+        var config = pipelineConfig()
+        config.handleGroupAt = true
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "group-at-1", text: "@我 看一下排期", isGroup: true, isAtMention: true)],
+            config: config,
+            myUsername: "me"
+        )
+
+        XCTAssertFalse(result.logEntries.isEmpty, "expired batch must produce a log row")
+        XCTAssertNotEqual(result.logEntries.first?.action, .sent)
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(queue.first?.manualOnlyReason, "群聊消息，请人工确认后发送")
+        XCTAssertEqual(await pipeline.sessionSent, 0)
+        try? await pipeline.stop()
+    }
+
+    /// Image (type 3) replies go through `processBatch`, so media decay is
+    /// applied before the 0.8 threshold — 0.9 becomes 0.63 and cannot auto-send.
+    func testImageMessageDecaysConfidenceOnRealBatchPath() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(reply: "好的，我看一下", confidence: 0.9)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "img-1", text: "[图片]", messageType: 3)],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        XCTAssertEqual(
+            AutopilotService.effectiveConfidence(base: 0.9, hasMedia: true),
+            0.63,
+            accuracy: 0.0001
+        )
+        XCTAssertLessThan(0.63, AutopilotConfig().confidenceThreshold)
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1, "decayed media must still queue for a human, got \(result.logEntries)")
+        XCTAssertEqual(queue.first?.manualOnlyReason, "安全策略要求人工确认后再发送")
+        XCTAssertEqual(queue.first?.confidence ?? 0, 0.63, accuracy: 0.0001)
+        XCTAssertNotEqual(result.logEntries.first?.action, .sent)
+        try? await pipeline.stop()
+    }
+
+    /// A high-confidence send whose reply contains a default keyword is
+    /// held on the real `handleNewMessages` → `processBatch` → enqueue path.
+    func testSensitiveKeywordInGeneratedReplyHoldsTheSend() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(reply: "我帮你转账", confidence: 0.95)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+
+        _ = await pipeline.handleNewMessages(
+            [inbound(uid: "kw-1", text: "今晚吃饭吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(queue.first?.manualOnlyReason, "安全检查：命中敏感词「转账」")
+        XCTAssertEqual(await pipeline.sessionSent, 0)
+        try? await pipeline.stop()
+    }
+
+    /// Session cap 50 is enforced in `executeSend` before WeChat/AX work.
+    func testSessionCapBlocksExecuteSendAndKeepsManualHold() async {
+        await service.testingSetSessionSent(50)
+        let item = PendingSend(
+            chatUsername: "wxid_peer",
+            chatName: "同事",
+            senderName: "同事",
+            replyText: "好的",
+            confidence: 0.95,
+            risk: .low,
+            reasoning: "ok",
+            styleScore: 80,
+            scheduledSendTime: Date()
+        )
+        let outcome = await service.testingExecuteSend(item: item, config: autoSendConfig())
+        XCTAssertEqual(outcome, .blocked("已达到本次会话发送上限"))
+        let queue = await service.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(queue.first?.manualOnlyReason, "已达到本次会话发送上限，请人工确认")
+        XCTAssertEqual(await service.sessionSent, 50)
+    }
+
+    // MARK: - Pipeline helpers
+
+    private func pipelineConfig() -> AutopilotConfig {
+        var config = AutopilotConfig()
+        config.autoSendEnabled = true
+        config.confidenceThreshold = 0.8
+        config.maxSendsPerSession = 50
+        config.batchWindowSeconds = 0
+        config.silentNightThreshold = 0
+        return config
+    }
+
+    private func makePipelineService() -> AutopilotService {
+        var cfg = AIConfig()
+        cfg.provider = AIProviderSlot(
+            providerID: "custom",
+            baseURL: "http://127.0.0.1:9/v1",
+            model: "test-model",
+            apiKey: "test"
+        )
+        return AutopilotService(store: store, reader: reader, aiService: AIService(config: cfg))
+    }
+
+    private func stubDecision(reply: String, confidence: Double) {
+        let payload: [String: Any] = [
+            "action": "send",
+            "reply": reply,
+            "confidence": confidence,
+            "risk": "low",
+            "reasoning": "ok"
+        ]
+        let content = String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: content,
+            urlString: "http://127.0.0.1:9/v1/chat/completions"
+        )
+        URLRequestRecorder.stubbedResponses = [URLRequestRecorder.stubbedResponse!]
+    }
 }
