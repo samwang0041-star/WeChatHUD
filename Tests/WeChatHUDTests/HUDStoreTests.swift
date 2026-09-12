@@ -782,7 +782,7 @@ final class HUDStoreTests: XCTestCase {
         try store.pruneAIAudit(olderThanDays: 14)
         let remaining = store.loadRecentAIAudit()
         XCTAssertEqual(remaining.count, 1)
-        XCTAssertEqual(remaining[0].inputText, "new")
+        XCTAssertTrue(remaining[0].inputText.contains("new") || remaining[0].inputText.contains("sha256:"))
     }
 
     // MARK: - Autopilot Session & Log

@@ -140,23 +140,25 @@ final class InsightStore: ObservableObject {
         date: Date,
         reader: WeChatReader
     ) async -> [String: ChatStatsData] {
-        await Task.detached(priority: .utility) {
-            let loader = InsightDataLoader()
-            var out: [String: ChatStatsData] = [:]
-            for request in requests {
-                if let stats = loader.statsForDay(
-                    chatUsername: request.username,
-                    chatName: request.displayName,
-                    isGroup: request.isGroup,
-                    category: request.category,
-                    date: date,
-                    reader: reader
-                ) {
-                    out[request.username] = stats
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let loader = InsightDataLoader()
+                var out: [String: ChatStatsData] = [:]
+                for request in requests {
+                    if let stats = loader.statsForDay(
+                        chatUsername: request.username,
+                        chatName: request.displayName,
+                        isGroup: request.isGroup,
+                        category: request.category,
+                        date: date,
+                        reader: reader
+                    ) {
+                        out[request.username] = stats
+                    }
                 }
+                continuation.resume(returning: out)
             }
-            return out
-        }.value
+        }
     }
 
     /// Store finished day stats so the single-chat detail view can read them
@@ -179,10 +181,18 @@ final class InsightStore: ObservableObject {
         window: InsightTimeWindow,
         scope: InsightScope
     ) async -> InsightDataLoader.LoadResult? {
-        await Task.detached(priority: .userInitiated) {
-            loader.load(store: store, reader: reader, replyDebtItems: replyDebtItems,
-                        window: window, scope: scope)
-        }.value
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = loader.load(
+                    store: store,
+                    reader: reader,
+                    replyDebtItems: replyDebtItems,
+                    window: window,
+                    scope: scope
+                )
+                continuation.resume(returning: result)
+            }
+        }
     }
 
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {

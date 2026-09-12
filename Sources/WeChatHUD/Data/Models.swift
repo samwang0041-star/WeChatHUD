@@ -777,22 +777,28 @@ struct AIProviderSlot: Codable, Equatable {
     var providerID: String = "custom"
     var baseURL: String = ""
     var model: String = ""
+    /// In-memory only after load. Persistence writes this to Keychain and
+    /// stores `keychainItemRef` in SQLite instead.
     var apiKey: String = ""
+    /// Keychain account for this slot. Present in `settings.ai` JSON.
+    var keychainItemRef: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case providerID, baseURL, model, apiKey
+        case providerID, baseURL, model, apiKey, keychainItemRef
     }
 
     init(
         providerID: String = "custom",
         baseURL: String = "",
         model: String = "",
-        apiKey: String = ""
+        apiKey: String = "",
+        keychainItemRef: String? = nil
     ) {
         self.providerID = providerID
         self.baseURL = baseURL
         self.model = model
         self.apiKey = apiKey
+        self.keychainItemRef = keychainItemRef
     }
 
     init(from decoder: Decoder) throws {
@@ -801,6 +807,7 @@ struct AIProviderSlot: Codable, Equatable {
         baseURL = try container.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
         model = try container.decodeIfPresent(String.self, forKey: .model) ?? ""
         apiKey = try container.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        keychainItemRef = try container.decodeIfPresent(String.self, forKey: .keychainItemRef)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -809,6 +816,14 @@ struct AIProviderSlot: Codable, Equatable {
         try container.encode(baseURL, forKey: .baseURL)
         try container.encode(model, forKey: .model)
         try container.encode(apiKey, forKey: .apiKey)
+        try container.encodeIfPresent(keychainItemRef, forKey: .keychainItemRef)
+    }
+
+    /// Copy used for SQLite / device-settings JSON: never contains the secret.
+    func persistedWithoutSecret() -> AIProviderSlot {
+        var copy = self
+        copy.apiKey = ""
+        return copy
     }
 }
 

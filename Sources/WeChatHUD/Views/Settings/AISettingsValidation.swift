@@ -14,6 +14,9 @@ enum AISettingsValidation {
               url.user == nil, url.password == nil else {
             return "请填写有效的 http:// 或 https:// 接口地址，不要将密钥放入地址。"
         }
+        if scheme == "http", !AIEndpointPolicy.isLoopbackHost(host) {
+            return "远程 AI 接口必须使用 https://。仅本机（localhost / 127.0.0.1 / ::1）允许 http://"
+        }
         if AIProvider.find(slot.providerID)?.requiresKey == true && slot.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return "请填写此供应商的 API Key。"
         }
@@ -33,7 +36,7 @@ enum AISettingsValidation {
         }
         if let error = error as? CodexError {
             switch error {
-            case .notLoggedIn, .notChatGPTMode, .missingTokens, .invalidJWT, .missingAccountId, .authRefreshFailed, .authExpired:
+            case .notLoggedIn, .notChatGPTMode, .missingTokens, .invalidJWT, .missingAccountId, .authRefreshFailed, .authExpired, .insecureAuthFile:
                 return "Codex 登录状态不可用，请在 Codex 中重新登录后重试。"
             case .usageLimitReached: return "ChatGPT 使用额度已达上限，请稍后重试。"
             case .timeout: return "ChatGPT 请求超时，请稍后重试。"
@@ -45,6 +48,7 @@ enum AISettingsValidation {
         if let error = error as? AIError {
             switch error {
             case .invalidURL: return "接口地址无效，请检查 http:// 或 https:// 地址。"
+            case .insecureCleartext: return "远程 AI 接口必须使用 https://，仅本机允许 http://。"
             case .parseFailed: return "服务响应格式不兼容，请检查模型和 OpenAI 兼容接口。"
             case .requestFailed(let raw): return requestFailureGuidance(raw)
             }

@@ -190,11 +190,13 @@ enum ImageResolver {
         guard let decoded = xorDecodedImage(data) else { return nil }
 
         let cacheDir = "\(NSHomeDirectory())/.wechat-hud/media-cache"
-        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true)
+        SecureFileManager.ensureDirectory(at: NSHomeDirectory() + "/.wechat-hud")
+        SecureFileManager.ensureDirectory(at: cacheDir)
         let key = md5Hex(path + ":\(data.count)")
         let output = "\(cacheDir)/\(key).\(decoded.ext)"
         if !FileManager.default.fileExists(atPath: output) {
             try? decoded.data.write(to: URL(fileURLWithPath: output), options: .atomic)
+            SecureFileManager.ensureFilePermissions(at: output)
         }
         return isImageFile(output) ? output : nil
     }

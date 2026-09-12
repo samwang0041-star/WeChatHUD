@@ -1,9 +1,15 @@
 import Foundation
 import SQLite3
 
-final class HUDStore: ObservableObject {
+final class HUDStore: ObservableObject, @unchecked Sendable {
     private let dbPath: String
     private let cleanupPath: String?
+    /// Serial executor for every SQLite hop. FULLMUTEX still protects the
+    /// connection; this queue also serializes Swift wrapper state
+    /// (statement cache, transactionDepth, secret hydration).
+    private let serialQueue = DispatchQueue(label: "com.wechathud.hudstore")
+    private static let serialQueueKey = DispatchSpecificKey<UInt8>()
+    let secretStore: SecretStore
     private var db: OpaquePointer?
     /// Protected by sqlite3_db_mutex. This lets helpers called from an
     /// existing transaction use savepoints without releasing the connection
@@ -54,15 +60,27 @@ final class HUDStore: ObservableObject {
     /// count. Used to assert "no stale rows means zero write transactions".
     private(set) var writeStatementCount = 0
 
-    init(dbPath: String? = nil, createParentDirectory: Bool = true, cleanupPath: String? = nil) {
+    init(
+        dbPath: String? = nil,
+        createParentDirectory: Bool = true,
+        cleanupPath: String? = nil,
+        secretStore: SecretStore? = nil
+    ) {
         let home = NSHomeDirectory()
         let dir = dbPath.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
             ?? "\(home)/.wechat-hud"
         self.dbPath = dbPath ?? "\(dir)/hud.sqlite3"
         self.cleanupPath = cleanupPath
+        if let secretStore {
+            self.secretStore = secretStore
+        } else if NSClassFromString("XCTestCase") != nil {
+            self.secretStore = InMemorySecretStore()
+        } else {
+            self.secretStore = KeychainSecretStore.shared
+        }
+        serialQueue.setSpecific(key: Self.serialQueueKey, value: 1)
         if createParentDirectory {
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
-                                                     attributes: [.posixPermissions: 0o700])
+            SecureFileManager.ensureDirectory(at: dir)
         }
     }
 
@@ -80,7 +98,13 @@ final class HUDStore: ObservableObject {
         // unbounded -wal pages. 256 pages (~1MB) is a good balance between
         // write throughput and disk usage.
         try exec("PRAGMA wal_autocheckpoint=256")
+        SecureFileManager.ensureFilePermissions(at: dbPath)
+        let parent = URL(fileURLWithPath: dbPath).deletingLastPathComponent()
+        if parent.lastPathComponent == ".wechat-hud" {
+            SecureFileManager.hardenTree(at: parent.path)
+        }
         try createTables()
+        try SchemaMigrator.apply(to: self)
         try exec("""
             CREATE TABLE IF NOT EXISTS classification_queue (
                 msg_uid TEXT PRIMARY KEY,
@@ -121,6 +145,7 @@ final class HUDStore: ObservableObject {
         migrateChatAliases()
 
         normalizeDiscussionDueDates()
+        migratePlaintextAPIKeysToKeychain()
     }
 
     /// Rewrites `due_at` values that were stored as an empty string into real
@@ -678,12 +703,14 @@ final class HUDStore: ObservableObject {
         if DeviceSettingsStore.sharedKeys.contains(key), let deviceSettings {
             return deviceSettings.get(key)
         }
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return String(cString: sqlite3_column_text(stmt, 0))
+        return (try? perform { () -> String? in
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
+            sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return String(cString: sqlite3_column_text(stmt, 0))
+        }) ?? nil
     }
 
     func setSetting(_ key: String, value: String) throws {
@@ -700,6 +727,10 @@ final class HUDStore: ObservableObject {
     }
 
     func setSettingJSON<T: Encodable>(_ key: String, value: T) throws {
+        if key == "ai", let config = value as? AIConfig {
+            try persistAIConfig(config)
+            return
+        }
         let data = try JSONEncoder().encode(value)
         try setSetting(key, value: String(data: data, encoding: .utf8)!)
     }
@@ -1415,8 +1446,8 @@ final class HUDStore: ObservableObject {
             entry.role.rawValue,
             entry.model,
             entry.promptVersion,
-            entry.inputText,
-            entry.outputText,
+            AIAuditPrivacy.persistableText(entry.inputText),
+            AIAuditPrivacy.persistableText(entry.outputText),
             "\(entry.latencyMs)",
             entry.status.rawValue,
             entry.errorMessage ?? ""
@@ -1704,9 +1735,79 @@ final class HUDStore: ObservableObject {
     }
 
     /// Single read point for the unified AI config. Always returns a
-    /// usable config (post-seed) or the empty struct defaults.
+    /// usable config (post-seed) or the empty struct defaults. The API
+    /// key is hydrated from the secret store; SQLite only holds a ref.
     func loadAIConfig() -> AIConfig {
-        getSettingJSON("ai", as: AIConfig.self) ?? AIConfig()
+        var cfg = getSettingJSON("ai", as: AIConfig.self) ?? AIConfig()
+        cfg.migrateIfNeeded()
+        hydrateAPIKey(&cfg)
+        return cfg
+    }
+
+    static let defaultAIKeyAccount = "ai.provider.apiKey"
+
+    /// Two-phase commit: write+read-back the Keychain item, then persist
+    /// `settings.ai` with an empty `apiKey` and a `keychainItemRef`.
+    func persistAIConfig(_ config: AIConfig) throws {
+        var persistable = config
+        persistable.migrateIfNeeded()
+        let plaintext = persistable.provider.apiKey
+        let account = persistable.provider.keychainItemRef
+            ?? Self.defaultAIKeyAccount
+
+        if plaintext.isEmpty {
+            persistable.provider.apiKey = ""
+            // A persisted JSON round-trip (empty key + existing ref) must not
+            // delete the Keychain item. A UI save with a blank key and no ref
+            // is an explicit clear.
+            if persistable.provider.keychainItemRef == nil {
+                try? secretStore.delete(account: account)
+            }
+        } else {
+            try secretStore.save(account: account, secret: plaintext)
+            guard try secretStore.load(account: account) == plaintext else {
+                throw SecretStoreError.readbackMismatch
+            }
+            persistable.provider.apiKey = ""
+            persistable.provider.keychainItemRef = account
+        }
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(persistable)
+        try setSetting("ai", value: String(data: data, encoding: .utf8)!)
+    }
+
+    /// One-shot upgrade for databases that still have a plaintext `apiKey`
+    /// in `settings.ai`. Failure leaves the plaintext row in place so the
+    /// user does not lose the key.
+    @discardableResult
+    func migratePlaintextAPIKeysToKeychain() -> Bool {
+        guard var cfg = getSettingJSON("ai", as: AIConfig.self) else { return true }
+        cfg.migrateIfNeeded()
+        guard !cfg.provider.apiKey.isEmpty else { return true }
+        do {
+            try persistAIConfig(cfg)
+            if let raw = getSetting("ai"), raw.contains(cfg.provider.apiKey) {
+                return false
+            }
+            return true
+        } catch {
+            print("[HUDStore] API key Keychain migration deferred: \(error)")
+            return false
+        }
+    }
+
+    func persistedAIConfigJSON() -> String? {
+        getSetting("ai")
+    }
+
+    private func hydrateAPIKey(_ cfg: inout AIConfig) {
+        if !cfg.provider.apiKey.isEmpty { return }
+        let account = cfg.provider.keychainItemRef ?? Self.defaultAIKeyAccount
+        if let secret = try? secretStore.load(account: account), let secret, !secret.isEmpty {
+            cfg.provider.apiKey = secret
+            cfg.provider.keychainItemRef = account
+        }
     }
 
     // MARK: - Contacts
@@ -3864,13 +3965,25 @@ final class HUDStore: ObservableObject {
     /// Hold the SQLite connection mutex across a synchronous sequence of
     /// calls. Used by the intentionally best-effort ledger batch, whose
     /// partial-success semantics are preserved.
-    func withDatabaseMutex<T>(_ body: () throws -> T) throws -> T {
-        guard let db, let mutex = sqlite3_db_mutex(db) else {
-            throw HUDStoreError.sqlError("Database is not open")
+    /// Hop onto the store's serial queue when the caller is not already on it.
+    func perform<T>(_ body: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: Self.serialQueueKey) != nil {
+            return try body()
         }
-        sqlite3_mutex_enter(mutex)
-        defer { sqlite3_mutex_leave(mutex) }
-        return try body()
+        return try serialQueue.sync {
+            try body()
+        }
+    }
+
+    func withDatabaseMutex<T>(_ body: () throws -> T) throws -> T {
+        try perform {
+            guard let db, let mutex = sqlite3_db_mutex(db) else {
+                throw HUDStoreError.sqlError("Database is not open")
+            }
+            sqlite3_mutex_enter(mutex)
+            defer { sqlite3_mutex_leave(mutex) }
+            return try body()
+        }
     }
 
     // MARK: - Retrospective extension helpers

@@ -185,7 +185,7 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
 
         var config = AIConfig()
         config.provider = AIProviderSlot(
-            providerID: "custom", baseURL: "http://insight-test.local", model: "test-model", apiKey: "test"
+            providerID: "custom", baseURL: "https://insight-test.local", model: "test-model", apiKey: "test"
         )
         InsightDelayedURLProtocol.install(
             firstResponse: InsightDelayedURLProtocol.response(headline: "旧日期结果"),
