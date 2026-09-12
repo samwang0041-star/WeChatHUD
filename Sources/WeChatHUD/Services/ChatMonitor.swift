@@ -2542,7 +2542,7 @@ final class ChatMonitor: ObservableObject {
 
     /// Off-main scan hop that does not use `Task.detached` or
     /// `nonisolated(unsafe)`. HUDStore is sendable via its serial queue.
-    nonisolated static func performScanOffMain(
+    private nonisolated static func performScanOffMain(
         reader: WeChatReader,
         store: HUDStore,
         aiService: AIService,
