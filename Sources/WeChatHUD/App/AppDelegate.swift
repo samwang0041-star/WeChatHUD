@@ -442,6 +442,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if CommandLine.arguments.contains("--preview-empty") {
                 PreviewRuntime.simulateEmptyIsland(monitor: monitor, panelState: panelState)
             }
+            // `--preview-cycle=N` runs N hover expand/collapse cycles from
+            // inside the app so motion can be measured without touching the
+            // operator's pointer or a second display.
+            let cyclePrefix = "--preview-cycle="
+            if let raw = CommandLine.arguments.first(where: { $0.hasPrefix(cyclePrefix) }),
+               let count = Int(raw.dropFirst(cyclePrefix.count)) {
+                PreviewRuntime.startAnimationCycle(monitor: monitor, panelState: panelState, count: count)
+            }
             if CommandLine.arguments.contains("--preview-notification") {
                 // Fire the banner after the launch-time work (workspace
                 // window first paint, preview data seeding) has settled — a

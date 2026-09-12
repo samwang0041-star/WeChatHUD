@@ -24,9 +24,25 @@ enum CompanionMotion {
     /// True when the system asks for more opaque surfaces.
     static var reduceTransparency: Bool { reduceTransparencyProvider() }
 
-    /// easeInOut with the given duration; nil when reduce motion is on.
+    /// The house curve for content that appears or disappears in place.
+    ///
+    /// A strong ease-out — cubic-bezier(0.23, 1, 0.32, 1) — rather than
+    /// easeInOut. Every call site is a disclosure, a state flip or a toast:
+    /// the user has already committed to the action, so the motion has to
+    /// react on the attack and only soften the landing. easeInOut spends its
+    /// first third barely leaving the start value, which reads as input lag.
+    ///
+    /// Borrowed from codex-island (github.com/ericjypark/codex-island),
+    /// which cites Emil Kowalski's curve for non-spring UI transitions.
+    static func strongEaseOut(_ duration: TimeInterval = 0.2) -> Animation? {
+        reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: duration)
+    }
+
+    /// The generic in-place content transition. Still called `ease` because
+    /// every caller means "this thing appears / disappears in place", not
+    /// "please run an easeInOut".
     static func ease(_ duration: TimeInterval = 0.18) -> Animation? {
-        reduceMotion ? nil : .easeInOut(duration: duration)
+        strongEaseOut(duration)
     }
 
     /// easeIn with the given duration; nil when reduce motion is on.
@@ -59,6 +75,13 @@ enum CompanionMotion {
         reduceMotion ? nil : .easeOut(duration: 0.12)
     }
 
+    /// How far a pressable surface shrinks under the cursor.
+    ///
+    /// The usable band is ~0.92–0.97: below it the surface reads as rubber,
+    /// above it the press is invisible next to the opacity wash. Exposed as a
+    /// token so the value is assertable rather than buried in a ButtonStyle.
+    static let pressScale: CGFloat = 0.96
+
     /// Row hover wash (~100ms).
     ///
     /// easeOut, not easeInOut: a hover wash must react on the attack (the
@@ -86,12 +109,28 @@ enum CompanionMotion {
     static func complete() -> Animation? { ease(0.17) }
     /// Save receipt (120ms).
     static func saveReceipt() -> Animation? { ease(0.12) }
-    /// Page content fade (120–160ms).
-    static func pageChange() -> Animation? { ease(0.14) }
+    /// Full page swap (Settings tab, report page). Longer than an in-place
+    /// disclosure: the whole surface changes, so the eye needs a beat to read
+    /// it as one replacement rather than a flicker. Same strong ease-out, so
+    /// it shares the family with every other content transition.
+    static func pageChange() -> Animation? { ease(0.22) }
 
     /// Bare withAnimation default (Animation.default), gated by reduceMotion.
     static var systemDefault: Animation? {
         reduceMotion ? nil : .default
+    }
+
+    /// Trackpad tick for the hover expansion.
+    ///
+    /// A haptic is a separate channel from motion, but someone who asked the
+    /// system for reduced motion is asking for less incidental activity, so
+    /// the tick is suppressed alongside the animation. No trackpad (or a Mac
+    /// without Force Touch) makes this a no-op in AppKit, so no capability
+    /// check is needed here. Borrowed from codex-island, which ticks on the
+    /// hover-in that morphs its island out to peek width.
+    static func performHoverTick() {
+        guard !reduceMotion else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
     }
 }
 

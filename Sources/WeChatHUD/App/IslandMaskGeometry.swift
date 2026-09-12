@@ -43,6 +43,15 @@ enum IslandMaskGeometry {
         IslandMotion.maskCornerRadius(width: size.width, height: size.height)
     }
 
+    /// Which corners of the mask are rounded, in layer space.
+    ///
+    /// Only the two `minY` corners — the island's *bottom*, since the
+    /// covering window's content view is unflipped. The top edge sits on the
+    /// screen's top scanline and must stay square, or the pill would read as
+    /// a floating capsule instead of a cutout hanging off the bezel. Matches
+    /// `IslandShape`, whose cornerRadii are zero on top.
+    static let maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+
     /// Hit-testing a cursor against the *visible* island, not the covering
     /// window. While a run is in flight the window is the union, so a raw
     /// `frame.contains` would count empty cover as inside and refuse to

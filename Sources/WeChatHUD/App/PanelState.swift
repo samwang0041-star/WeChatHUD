@@ -308,6 +308,7 @@ final class PanelState: ObservableObject {
         // Keep the banner under the pointer. Replacing it with the inbox
         // on entry used to remove the very controls the user was aiming at.
         if currentState == .compact {
+            CompanionMotion.performHoverTick()
             currentState = .extended
         }
     }

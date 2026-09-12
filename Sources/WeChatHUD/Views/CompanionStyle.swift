@@ -137,7 +137,12 @@ struct CompanionPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.82 : 1)
-            .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion ? 0.99 : 1)
+            // 0.96, not 0.99. A press must register as a press: below ~0.97
+            // the surface visibly gives under the cursor, above it the label
+            // just gains a faint wash. 0.92–0.97 is the band where a button
+            // feels responsive without going rubbery — see codex-island's
+            // PressableButtonStyle, Emil Kowalski's press-feedback rule.
+            .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1)
             .animation(CompanionMotion.press(), value: configuration.isPressed)
     }
 }

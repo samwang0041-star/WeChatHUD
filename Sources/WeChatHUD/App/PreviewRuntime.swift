@@ -309,6 +309,39 @@ enum PreviewRuntime {
         panelState.collapse()
     }
 
+    /// `--preview-cycle=N` drives N expand/collapse cycles from inside the
+    /// app: hover state, collapse and the wait between them all happen on the
+    /// main queue, with no cursor movement and no second display involved.
+    ///
+    /// Animation QA used to be driven by synthesising mouse events, which
+    /// commandeered the operator's real pointer and made every measurement
+    /// depend on whatever window happened to be under it. A self-driven loop
+    /// is repeatable, runs entirely on the screen the operator chose, and
+    /// leaves their machine alone.
+    @MainActor static func startAnimationCycle(monitor: ChatMonitor, panelState: PanelState, count: Int) {
+        guard isEnabled, count > 0 else { return }
+        if monitor.inboxItems.filter(\.surfacesInCompact).count < 3 {
+            seed(store: monitor.store, monitor: monitor)
+        }
+        monitor.stats.syncStatus = .ok
+
+        var remaining = count
+        func cycle() {
+            guard remaining > 0 else { return }
+            remaining -= 1
+            panelState.islandSurface = .inbox
+            panelState.popoverOpen = false
+            panelState.goExtended()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                panelState.collapse()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { cycle() }
+            }
+        }
+        // Let launch settle first: the first cycle would otherwise race the
+        // workspace window's own first paint and measure that instead.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { cycle() }
+    }
+
     @MainActor static func simulateEmptyIsland(monitor: ChatMonitor, panelState: PanelState) {
         guard isEnabled else { return }
         monitor.handledItems = monitor.inboxItems + monitor.handledItems

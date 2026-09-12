@@ -88,7 +88,15 @@ struct InboxRowView: View {
 
             if expanded {
                 ActionPanelView(item: item)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    // Anchored scale + fade, not a slide. The row's height
+                    // change already re-drives the panel frame through the
+                    // measurement pipe, so a translation on top of that is a
+                    // second motion competing with the one the user is
+                    // watching — it reads as the action panel arriving from
+                    // somewhere it never was. A 2% scale anchored at the top
+                    // reads as the panel settling into the row instead.
+                    // (codex-island's detailReveal transition.)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .onHover { inside in
