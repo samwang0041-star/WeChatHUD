@@ -4,7 +4,6 @@ import AppKit
 struct AppUpdateSettingsView: View {
     @EnvironmentObject private var store: HUDStore
     @ObservedObject private var updates = AppUpdateController.shared
-    @State private var tokenDraft = ""
     @State private var showInstallConfirm = false
     @State private var didLoad = false
 
@@ -51,36 +50,19 @@ struct AppUpdateSettingsView: View {
                     .disabled(PreviewRuntime.isEnabled)
             }
             SettingsRowDivider()
-            VStack(alignment: .leading, spacing: 8) {
-                SettingsRow("GitHub Token", subtitle: "私有仓库读取 Releases 时需要。只保存在本机。", icon: "key", iconColor: .secondary) {
-                    CompanionClipboardField(
-                        text: $tokenDraft,
-                        placeholder: tokenDraft.isEmpty ? "可选" : "已填写",
-                        kind: .secret,
-                        writable: !PreviewRuntime.isEnabled,
-                        secure: true,
-                        accessibilityLabel: "GitHub Token",
-                        onSubmit: saveToken
-                    )
-                    .frame(width: 220)
-                }
-                HStack {
-                    Spacer(minLength: 56)
-                    Button("保存 Token", action: saveToken)
+            HStack {
+                Spacer(minLength: 56)
+                if let url = updates.offer?.htmlURL {
+                    Button("在浏览器中查看") { NSWorkspace.shared.open(url) }
                         .controlSize(.small)
-                        .disabled(PreviewRuntime.isEnabled)
-                    if let url = updates.offer?.htmlURL {
-                        Button("在浏览器中查看") { NSWorkspace.shared.open(url) }
-                            .controlSize(.small)
-                    } else if let fallback = URL(string: "https://github.com/\(updates.config.repository)/releases") {
-                        Button("打开发布页") { NSWorkspace.shared.open(fallback) }
-                            .controlSize(.small)
-                    }
-                    Spacer()
+                } else if let fallback = URL(string: "https://github.com/\(updates.config.repository)/releases") {
+                    Button("打开发布页") { NSWorkspace.shared.open(fallback) }
+                        .controlSize(.small)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+                Spacer()
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
             if PreviewRuntime.isEnabled {
                 Text("演示模式不检查或安装更新。")
                     .font(.system(size: 12))
@@ -94,7 +76,6 @@ struct AppUpdateSettingsView: View {
             guard !didLoad else { return }
             didLoad = true
             updates.bind(store: store)
-            tokenDraft = updates.config.githubToken
         }
         .alert("安装新版本？", isPresented: $showInstallConfirm) {
             Button("下载并安装") {
@@ -153,10 +134,5 @@ struct AppUpdateSettingsView: View {
                 updates.saveConfig()
             }
         )
-    }
-
-    private func saveToken() {
-        updates.config.githubToken = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        updates.saveConfig()
     }
 }

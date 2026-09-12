@@ -55,20 +55,19 @@ final class AppUpdateWebFallbackTests: XCTestCase {
     }
 
     func testRejectedCredentialStillReportsUnauthorized() async {
-        // A 401 is a real answer about the credential, so it must not be
-        // papered over by the public path.
+        // A 401 is reported as-is and must not be papered over by the
+        // public path (which would mislabel it "not published").
         let client = StubClient(stubs: [StubClient.status(401)])
         let service = AppUpdateService(
             http: client,
-            currentVersion: AppVersion("1.2.27")!,
-            tokenProvider: { "bad-token" }
+            currentVersion: AppVersion("1.2.27")!
         )
         do {
             _ = try await service.check(repository: "samwang0041-star/WeChatHUD")
             XCTFail("Expected unauthorized")
         } catch let error as AppUpdateError {
             XCTAssertEqual(error, .unauthorized)
-            XCTAssertEqual(client.requests.count, 1, "no fallback for a rejected credential")
+            XCTAssertEqual(client.requests.count, 1, "no fallback for a 401")
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -159,8 +158,7 @@ final class AppUpdateWebFallbackTests: XCTestCase {
             "set WCHUD_LIVE_UPDATE_CHECK=1 to run the live update check"
         )
         let service = AppUpdateService(
-            currentVersion: AppVersion("1.2.27")!,
-            tokenProvider: { nil }
+            currentVersion: AppVersion("1.2.27")!
         )
         let result = try await service.check(repository: "samwang0041-star/WeChatHUD")
         let offer = try XCTUnwrap(result.offer, "the published release must be found without a token")

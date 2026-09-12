@@ -83,7 +83,7 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
         case .invalidRepository:
             return "发布仓库地址无效"
         case .unauthorized:
-            return "GitHub 拒绝了这次读取。如果仓库是私有的，需要填写具有读取权限的 Token；公开仓库出现这个提示，请稍后再试。"
+            return "GitHub 拒绝了这次读取，请稍后再试，也可以到发布页手动下载。"
         case .rateLimited:
             // Anonymous GitHub API calls are limited per IP, and that budget is
             // shared by everyone behind the same network. Saying so is the
@@ -140,7 +140,6 @@ struct AppUpdateService {
     var currentVersion: AppVersion
     var currentBundleIdentifier: String
     var currentBundleURL: URL
-    var tokenProvider: @Sendable () -> String?
     var userAgent: String
     var unzip: @Sendable (URL, URL) throws -> Void
     var fileManager: FileManager
@@ -159,7 +158,6 @@ struct AppUpdateService {
         currentVersion: AppVersion,
         currentBundleIdentifier: String = Bundle.main.bundleIdentifier ?? AppUpdateService.productionIdentifier,
         currentBundleURL: URL = Bundle.main.bundleURL,
-        tokenProvider: @escaping @Sendable () -> String? = { nil },
         userAgent: String = AppUpdateService.defaultUserAgent(),
         unzip: @escaping @Sendable (URL, URL) throws -> Void = { archive, destination in
             try AppUpdateUnzip.ditto(archive: archive, destination: destination)
@@ -180,7 +178,6 @@ struct AppUpdateService {
         self.currentVersion = currentVersion
         self.currentBundleIdentifier = currentBundleIdentifier
         self.currentBundleURL = currentBundleURL
-        self.tokenProvider = tokenProvider
         self.userAgent = userAgent
         self.unzip = unzip
         self.fileManager = fileManager
@@ -224,8 +221,8 @@ struct AppUpdateService {
         case .rateLimited, .httpStatus, .privateOrMissingRelease:
             return true
         case .unauthorized:
-            // A 401 means the configured credential was rejected. Falling back
-            // would hide a bad token behind a misleading "not published".
+            // A 401 carries no signal about whether a release exists, so the
+            // web channel stays out of it and the failure is reported as-is.
             return false
         default:
             return false
@@ -238,9 +235,6 @@ struct AppUpdateService {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        if let token = resolvedToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
 
         let (data, response) = try await http.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -250,7 +244,7 @@ struct AppUpdateService {
         case 403:
             // Distinguish "you are not allowed" from "you are over quota":
             // GitHub signals the latter with rate-limit headers and a body that
-            // says so, and only the former deserves the token advice.
+            // says so.
             throw Self.isRateLimited(response: response, body: data)
                 ? AppUpdateError.rateLimited
                 : AppUpdateError.unauthorized
@@ -443,7 +437,7 @@ struct AppUpdateService {
             allowNonApplicationDestination: allowsNonApplicationDestination
         )
 
-        guard GitHubReleaseFeed.downloadURL(for: offer.asset, hasToken: resolvedToken() != nil) != nil else {
+        guard GitHubReleaseFeed.downloadURL(for: offer.asset) != nil else {
             throw AppUpdateError.invalidDownloadURL
         }
 
@@ -504,32 +498,16 @@ struct AppUpdateService {
         return parent.path == applications.path || parent.path == userApplications.path
     }
 
-    func resolvedToken() -> String? {
-        let candidates = [
-            tokenProvider()?.trimmingCharacters(in: .whitespacesAndNewlines),
-            ProcessInfo.processInfo.environment["GH_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-            ProcessInfo.processInfo.environment["GITHUB_TOKEN"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-        ]
-        return candidates.first(where: { token in
-            guard let token, !token.isEmpty else { return false }
-            return true
-        }) ?? nil
-    }
-
     private func download(asset: GitHubReleaseAsset, to file: URL) async throws {
-        let token = resolvedToken()
-        guard let url = GitHubReleaseFeed.downloadURL(for: asset, hasToken: token != nil) else {
+        // Public releases only: the browser download URL needs no credential
+        // and redirects once to the objects host, which the following-
+        // redirects download client handles.
+        guard let url = GitHubReleaseFeed.downloadURL(for: asset) else {
             throw AppUpdateError.invalidDownloadURL
         }
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        // Only the API asset endpoint needs the token. The public
-        // `releases/download` URLs (and the objects host they redirect to)
-        // must never receive it.
-        if let token, url.host?.contains("api.github.com") == true {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         let (data, response) = try await downloadHTTP.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {

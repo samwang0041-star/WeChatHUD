@@ -10,7 +10,6 @@ struct AppUpdateConfig: Codable, Equatable, Sendable {
     var autoInstallEnabled: Bool = false
     /// ISO-8601 timestamp of the last successful GitHub check.
     var lastCheckAt: String?
-    var githubToken: String = ""
     var repository: String = AppUpdateConfig.defaultRepository
     /// Survives relaunch so a found update is not forgotten for 24 hours.
     var pendingOffer: AppUpdateOffer?
