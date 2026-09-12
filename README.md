@@ -14,6 +14,7 @@
   <img src="https://img.shields.io/badge/macOS-14%2B-66D4B7?style=for-the-badge" alt="macOS 14+">
   <img src="https://img.shields.io/badge/芯片-Apple%20Silicon-074E55?style=for-the-badge" alt="Apple Silicon">
   <img src="https://img.shields.io/badge/签名-Developer%20ID%20已公证-6E56CF?style=for-the-badge" alt="已签名并公证">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/许可证-MIT-3DA639?style=for-the-badge" alt="MIT"></a>
 </p>
 
 <p align="center">
@@ -136,7 +137,7 @@ AI 起草，你来改。存着、继续写、复制、或确认后送出——�
 
 ```bash
 make app && make run          # 编译并打开
-make test                     # 1115 项测试
+make test                     # 跑全部测试
 make package                  # 签名打包 zip + SHA-256
 ```
 
@@ -153,6 +154,14 @@ open ".build/WeChatHUD Preview.app"
 - [分发说明](docs/distribution.md) — 签名、公证、打包流程
 - [进化日志](docs/evolution-log.md) — 每个版本改了什么
 - [产品化说明](docs/2026-09-07-productization.md) — 设计取舍与验收边界
+
+## 许可证
+
+[MIT](LICENSE) — 可以自由使用、修改、分发，包括商业用途，保留版权与许可声明即可。
+
+随包分发的第三方组件只有 zstd（BSD-3-Clause），其许可证与来源说明在
+`Contents/Resources/THIRD_PARTY_LICENSES/`。项目在设计阶段只读参考过若干公开仓库
+（含 AGPL/GPL 项目），未复制其代码，详见 [参考边界](docs/2026-09-07-reader-reference-review.md)。
 
 ---
 
