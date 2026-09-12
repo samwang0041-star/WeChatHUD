@@ -22,8 +22,12 @@ struct AssistantTodayView: View {
         return items.filter { text.isEmpty || [$0.chatName, $0.preview, $0.aiSummary ?? ""].contains { $0.localizedCaseInsensitiveContains(text) } }
     }
     private var needsReply: [InboxItem] { TodayFeed.needsReply(monitor.inboxItems) }
-    private var mineTasks: [DiscussionItem] { TodayFeed.mineTasks(monitor.discussionItems) }
-    private var waitingTasks: [DiscussionItem] { TodayFeed.waitingTasks(monitor.discussionItems) }
+    private var mineTasks: [DiscussionItem] {
+        TodayFeed.mineTasks(monitor.discussionItems, strictness: monitor.discussionStrictness)
+    }
+    private var waitingTasks: [DiscussionItem] {
+        TodayFeed.waitingTasks(monitor.discussionItems, strictness: monitor.discussionStrictness)
+    }
 
     private var upcoming: [Commitment] {
         monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }
@@ -426,11 +430,26 @@ enum TodayFeed {
     }
 
     static func mineTasks(_ items: [DiscussionItem]) -> [DiscussionItem] {
-        items.filter { item in item.status == .pending && item.kind != .info && item.owner == .mine }
+        mineTasks(items, strictness: .default)
+    }
+
+    /// Honours the strictness level so 今天 cannot list work the 待办 page has
+    /// been told to hold back. Info memos stay excluded at every level: this
+    /// feed is "what needs me today", not a record of what was said.
+    static func mineTasks(_ items: [DiscussionItem], strictness: DiscussionStrictness) -> [DiscussionItem] {
+        items.filter { item in
+            item.status == .pending && item.kind != .info && item.owner == .mine && strictness.admits(item)
+        }
     }
 
     static func waitingTasks(_ items: [DiscussionItem]) -> [DiscussionItem] {
-        items.filter { item in item.status == .pending && item.kind != .info && item.owner == .theirs }
+        waitingTasks(items, strictness: .default)
+    }
+
+    static func waitingTasks(_ items: [DiscussionItem], strictness: DiscussionStrictness) -> [DiscussionItem] {
+        items.filter { item in
+            item.status == .pending && item.kind != .info && item.owner == .theirs && strictness.admits(item)
+        }
     }
 
     static func hasOpenWork(mine: [DiscussionItem], waiting: [DiscussionItem], upcoming: [Commitment]) -> Bool {
