@@ -50,6 +50,7 @@ enum CodexTestSupport {
         let file = dir.appendingPathComponent("auth.json")
         let data = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
         try data.write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
         return dir
     }
 

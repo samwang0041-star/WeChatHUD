@@ -207,7 +207,7 @@ enum ProductSelfCheck {
             switch codexError {
             case .timeout: return "timeout"
             case .notLoggedIn, .notChatGPTMode, .missingTokens, .invalidJWT,
-                 .missingAccountId, .authRefreshFailed, .authExpired:
+                 .missingAccountId, .authRefreshFailed, .authExpired, .insecureAuthFile:
                 return "authentication"
             case .responseFailed, .invalidResponse: return "model"
             case .usageLimitReached: return "authentication"
@@ -216,7 +216,7 @@ enum ProductSelfCheck {
         }
         if let aiError = error as? AIError {
             switch aiError {
-            case .invalidURL: return "network"
+            case .invalidURL, .insecureCleartext: return "network"
             case .parseFailed: return "model"
             case .requestFailed(let message):
                 let text = message.lowercased()

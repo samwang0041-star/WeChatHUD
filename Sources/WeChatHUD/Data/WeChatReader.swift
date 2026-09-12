@@ -143,9 +143,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let accountDirectory = Self.cacheDir(for: cacheStrategy, databaseRoot: self.dbDir)
         self.cacheDir = cacheStrategy == .memory ? accountDirectory + "/" + UUID().uuidString : accountDirectory
         self.manifestPath = "\(self.cacheDir)/manifest.json"
-        try? FileManager.default.createDirectory(atPath: cacheDir, withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
-        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cacheDir)
+        SecureFileManager.ensureDirectory(at: cacheDir)
         if cacheStrategy == .persistent {
             loadManifest()
         }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Profile extracted from codex CLI's auth.json — used by CodexTokenStore as
@@ -25,6 +26,7 @@ enum CodexError: Error, LocalizedError, Equatable, Sendable {
     case responseFailed(String)
     case timeout
     case invalidResponse(String)
+    case insecureAuthFile
 
     var errorDescription: String? {
         switch self {
@@ -52,6 +54,8 @@ enum CodexError: Error, LocalizedError, Equatable, Sendable {
             return "Codex 请求超时"
         case .invalidResponse(let m):
             return "Codex 响应解析失败: \(m)"
+        case .insecureAuthFile:
+            return "auth.json 权限或归属不安全（拒绝符号链接、非本用户文件、以及宽于 0640 的权限）"
         }
     }
 }
@@ -84,9 +88,30 @@ enum CodexAuth {
         guard FileManager.default.fileExists(atPath: path.path) else {
             throw CodexError.notLoggedIn
         }
+        try assertSecureAuthFile(at: path)
         let data = try Data(contentsOf: path)
         let raw = try JSONDecoder().decode(RawAuthFile.self, from: data)
         return try parseProfile(raw: raw)
+    }
+
+    /// Reject symlink / wrong-owner / world-or-group-writable auth files before
+    /// we ever decode tokens. Group-readable `0640` is the widest allowed mode.
+    static func assertSecureAuthFile(at url: URL) throws {
+        var info = stat()
+        let result = url.path.withCString { lstat($0, &info) }
+        guard result == 0 else { throw CodexError.notLoggedIn }
+        if (info.st_mode & S_IFMT) == S_IFLNK {
+            throw CodexError.insecureAuthFile
+        }
+        if info.st_uid != getuid() {
+            throw CodexError.insecureAuthFile
+        }
+        let mode = info.st_mode & 0o777
+        // Bits outside owner rw + group r are too wide (0644, 0660, 0755, …).
+        let allowedMask: mode_t = 0o640
+        if mode & ~allowedMask != 0 {
+            throw CodexError.insecureAuthFile
+        }
     }
 
     /// Build a profile from a previously-decoded auth file (separated for testability).

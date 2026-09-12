@@ -206,7 +206,7 @@ final class SettingsReliabilityTests: XCTestCase {
         var config = AIConfig()
         config.provider = AIProviderSlot(
             providerID: "custom",
-            baseURL: "http://settings-reliability.test",
+            baseURL: "https://settings-reliability.test",
             model: "settings-test-model",
             apiKey: ""
         )
@@ -233,7 +233,7 @@ final class SettingsReliabilityTests: XCTestCase {
             "choices": [["message": ["role": "assistant", "content": content]]]
         ])
         let response = HTTPURLResponse(
-            url: URL(string: "http://settings-reliability.test/chat/completions")!,
+            url: URL(string: "https://settings-reliability.test/v1/chat/completions")!,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]

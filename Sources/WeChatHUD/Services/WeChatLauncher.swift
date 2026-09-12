@@ -106,10 +106,8 @@ enum WeChatLauncher {
     /// on-disk artifact this app writes.
     private static let logDirectory: String = {
         let dir = NSHomeDirectory() + "/.wechat-hud/logs"
-        let fm = FileManager.default
-        try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true,
-                                attributes: [.posixPermissions: 0o700])
-        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir)
+        SecureFileManager.ensureDirectory(at: NSHomeDirectory() + "/.wechat-hud")
+        SecureFileManager.ensureDirectory(at: dir)
         // Runs once per process, before the first log line: the right moment
         // to drop the world-readable predecessor.
         removeLegacyWorldReadableLog()

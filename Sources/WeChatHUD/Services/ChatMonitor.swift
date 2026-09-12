@@ -138,7 +138,7 @@ final class ChatMonitor: ObservableObject {
     private let recentLimit = 10
 
     let reader: WeChatReader
-    nonisolated(unsafe) let store: HUDStore
+    let store: HUDStore
     let aiService: AIService
 
     // MARK: - Retrospective surface (Plan M6.0)
@@ -1264,7 +1264,7 @@ final class ChatMonitor: ObservableObject {
         // their methods can run on any thread. We rely on `scanInProgress`
         // + sqlite's FULLMUTEX to serialise access.
         let readerRef = reader
-        nonisolated(unsafe) let storeRef = store
+        let storeRef = store
         let cp = changedRelPaths
         let th = thresholds
         let currentRecent = recentNotifications
@@ -1273,19 +1273,17 @@ final class ChatMonitor: ObservableObject {
         let replyDebtConfig = store.getSettingJSON("replyDebt", as: ReplyDebtConfig.self) ?? ReplyDebtConfig()
         let aiRef = aiService
 
-        let outcome = await Task.detached(priority: .userInitiated) {
-            return await ScanEngine.performScan(
-                reader: readerRef,
-                store: storeRef,
-                aiService: aiRef,
-                changedRelPaths: cp,
-                thresholds: th,
-                replyDebtConfig: replyDebtConfig,
-                currentRecent: currentRecent,
-                recentLimit: rLimit,
-                autopilotActive: apActive
-            )
-        }.value
+        let outcome = await Self.performScanOffMain(
+            reader: readerRef,
+            store: storeRef,
+            aiService: aiRef,
+            changedRelPaths: cp,
+            thresholds: th,
+            replyDebtConfig: replyDebtConfig,
+            currentRecent: currentRecent,
+            recentLimit: rLimit,
+            autopilotActive: apActive
+        )
 
         let ms = Int(Date().timeIntervalSince(scanStart) * 1000)
 
@@ -2535,7 +2533,37 @@ final class ChatMonitor: ObservableObject {
     /// (the fetch cannot otherwise be observed from XCTest without a real
     /// multi-shard WeChat directory).
     static func runOffMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-        await Task.detached(priority: .utility) { work() }.value
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: work())
+            }
+        }
+    }
+
+    /// Off-main scan hop that does not use `Task.detached` or
+    /// `nonisolated(unsafe)`. HUDStore is sendable via its serial queue.
+    nonisolated static func performScanOffMain(
+        reader: WeChatReader,
+        store: HUDStore,
+        aiService: AIService,
+        changedRelPaths: Set<String>?,
+        thresholds: UnreadThresholds,
+        replyDebtConfig: ReplyDebtConfig,
+        currentRecent: [HUDNotification],
+        recentLimit: Int,
+        autopilotActive: Bool
+    ) async -> ScanOutcome? {
+        await ScanEngine.performScan(
+            reader: reader,
+            store: store,
+            aiService: aiService,
+            changedRelPaths: changedRelPaths,
+            thresholds: thresholds,
+            replyDebtConfig: replyDebtConfig,
+            currentRecent: currentRecent,
+            recentLimit: recentLimit,
+            autopilotActive: autopilotActive
+        )
     }
 
     /// Generate AI summaries for inbox items that don't have cached summaries.

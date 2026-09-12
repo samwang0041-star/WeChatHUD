@@ -125,6 +125,7 @@ func completeWithMetadata(
         }
 
         let baseURL = Self.normalizeBaseURL(slot.baseURL)
+        try AIEndpointPolicy.validateNormalizedBaseURL(baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw AIError.invalidURL(slot.baseURL)
         }
@@ -250,6 +251,7 @@ func completeWithMetadata(
             return ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.3-codex"]
         }
         let baseURL = Self.normalizeBaseURL(slot.baseURL)
+        try AIEndpointPolicy.validateNormalizedBaseURL(baseURL)
         guard let url = URL(string: "\(baseURL)/models") else {
             throw AIError.invalidURL(slot.baseURL)
         }
@@ -472,12 +474,15 @@ enum AIError: Error, LocalizedError {
     case invalidURL(String)
     case requestFailed(String)
     case parseFailed(String)
+    case insecureCleartext(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidURL(let u): return "Invalid AI URL: \(u)"
         case .requestFailed(let m): return "AI request failed: \(m)"
         case .parseFailed(let m): return "AI response parse failed: \(m)"
+        case .insecureCleartext(let u):
+            return "Remote AI endpoint must use HTTPS: \(u)"
         }
     }
 }
