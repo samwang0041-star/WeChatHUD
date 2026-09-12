@@ -70,13 +70,13 @@ enum DiscussionStrictness: String, Codable, CaseIterable, Sendable {
             // `timePlace` reads like a record ("明天下午 3 点，老地方") and was
             // being shown as work. It stays in the memo tab, where it is still
             // searchable, but it no longer pads the task list.
-            return kind != .info && kind != .timePlace
+            return !kind.isRecord
         case .pressing:
             // Records stay out at this level too. Admitting them here because
             // they happen to be dated would make the tighter level *looser*
             // than the one above it — an item that disappears when you
             // tighten and reappears when you loosen is a lie about ordering.
-            guard kind != .info, kind != .timePlace else { return false }
+            guard !kind.isRecord else { return false }
             // Work with a side attached is pressing whenever it is due.
             if kind == .todo || kind == .decision, owner == .mine || owner == .theirs {
                 return true
