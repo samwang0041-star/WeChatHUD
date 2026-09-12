@@ -16,6 +16,11 @@ import simd
 final class PillContainerView: NSView {
     var onEntered: (() -> Void)?
     var onExited: (() -> Void)?
+    /// Screen-space hit test for the *visible* island. While a mask-driven
+    /// spring is in flight the view fills the covering union, so a raw
+    /// bounds test would treat empty cover as inside the pill.
+    var isScreenPointInside: ((NSPoint) -> Bool)?
+    private var lastPointerInside = false
 
     /// Color painted behind the hosted SwiftUI content, or `nil` for a
     /// transparent container.
@@ -69,10 +74,15 @@ final class PillContainerView: NSView {
         return true
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isEventInsideVisibleIsland(windowPoint: convert(point, to: nil)) else { return nil }
+        return super.hitTest(point)
+    }
+
     private func installTrackingArea() {
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -80,25 +90,35 @@ final class PillContainerView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        onEntered?()
+        publishPointerInside(isEventInsideVisibleIsland(event))
     }
 
     override func mouseExited(with event: NSEvent) {
-        // Forward unconditionally.
-        //
-        // This used to be filtered by "is the cursor still inside the panel
-        // frame?", to drop exits raised while the window resizes. AppKit
-        // delivers exactly ONE exit per hover, and at the moment that event
-        // is processed the cursor is only a fraction of a point past the
-        // frame edge — so a slow, deliberate move off the panel had its exit
-        // discarded and the panel never collapsed, however far the pointer
-        // then travelled. A fast flick only worked because it cleared several
-        // points within a single event.
-        //
-        // Whether the pointer is really gone is decided downstream, where the
-        // question can be asked again; it cannot be settled here, because this
-        // event does not come twice.
-        onExited?()
+        // Re-test the painted island. AppKit fires exit when the cursor
+        // crosses the covering window's exclusive maxY, which is exactly
+        // the top scanline the island occupies — a hover parked on the
+        // notch would otherwise collapse itself.
+        publishPointerInside(isEventInsideVisibleIsland(event))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        publishPointerInside(isEventInsideVisibleIsland(event))
+    }
+
+    func publishPointerInside(_ inside: Bool) {
+        guard inside != lastPointerInside else { return }
+        lastPointerInside = inside
+        if inside { onEntered?() } else { onExited?() }
+    }
+
+    private func isEventInsideVisibleIsland(_ event: NSEvent) -> Bool {
+        isEventInsideVisibleIsland(windowPoint: event.locationInWindow)
+    }
+
+    private func isEventInsideVisibleIsland(windowPoint: NSPoint) -> Bool {
+        guard let isScreenPointInside, let window else { return true }
+        let screen = window.convertToScreen(NSRect(origin: windowPoint, size: .zero)).origin
+        return isScreenPointInside(screen)
     }
 }
 
@@ -229,7 +249,16 @@ class FloatingPanel: NSPanel {
         ])
 
         self.contentView = container
+        container.isScreenPointInside = { [weak self] point in
+            self?.containsMouse(point) ?? false
+        }
         positionAtTop()
+        installPointerMonitor()
+    }
+
+    deinit {
+        if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
+        if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
     }
 
     /// Which screen preference to use — updated from settings.
@@ -323,6 +352,14 @@ class FloatingPanel: NSPanel {
     private var animationRun: SpringRun?
     var onFrameAnimationStarted: (() -> Void)?
     var onFrameAnimationEnded: (() -> Void)?
+    /// Visible island while a mask-driven run is in flight. Hit testing
+    /// reads this instead of `frame`, because `frame` is the covering
+    /// union and would count empty space as inside the pill.
+    private var visibleFrame: NSRect?
+    private var maskLayer: CALayer?
+    var visibleIslandFrame: NSRect? { visibleFrame }
+    private var localPointerMonitor: Any?
+    private var globalPointerMonitor: Any?
 
     /// One frame-animation pass, modelled as four damped springs — one per
     /// frame component (x, y, width, height). Velocity is kept across
@@ -349,6 +386,10 @@ class FloatingPanel: NSPanel {
 
         /// The rect the window server was storing after the last tick.
         var painted: SIMD4<Double>
+        /// Covering window the mask is painted inside. Stable for the
+        /// whole run so a retarget only grows it, never shrinks it under
+        /// the currently visible island.
+        var cover: NSRect
 
         /// The goal as an `NSRect`, read from the spring's own target
         /// components so the integrator and the window can never disagree
@@ -391,7 +432,7 @@ class FloatingPanel: NSPanel {
         SIMD4(landing.x + 0.5, landing.y + 0.5, landing.z - 0.5, landing.w - 0.5)
     }
 
-    private static func rect(from v: SIMD4<Double>) -> NSRect {
+    static func rect(from v: SIMD4<Double>) -> NSRect {
         NSRect(x: v.x, y: v.y, width: v.z, height: v.w)
     }
 
@@ -405,7 +446,7 @@ class FloatingPanel: NSPanel {
     /// every edge inclusive instead of widening the rect, so a cursor that
     /// has genuinely left still reads as outside.
     func containsMouse(_ point: NSPoint = NSEvent.mouseLocation) -> Bool {
-        IslandHitTest.contains(frame: frame, point: point)
+        IslandMaskGeometry.containsMouse(painted: visibleFrame ?? frame, point: point)
     }
 
     /// True while a frame animation is in flight (display link or the
@@ -419,6 +460,7 @@ class FloatingPanel: NSPanel {
         animationDisplayLink?.invalidate()
         animationDisplayLink = nil
         animationRun = nil
+        clearIslandMask()
         if notify {
             onFrameAnimationEnded?()
         }
@@ -443,6 +485,7 @@ class FloatingPanel: NSPanel {
         let x = notch.notchCenterX - newWidth / 2
         let y = (targetScreen?.frame.maxY ?? frame.maxY) - newHeight
         let target = NSRect(x: x, y: y, width: newWidth, height: newHeight)
+        let fromVisible = visibleFrame ?? frame
 
         // Already heading exactly there? Keep the spring in flight —
         // retargeting to the same value would only re-announce started/
@@ -455,10 +498,10 @@ class FloatingPanel: NSPanel {
             return
         }
 
-        AnimationDebugger.logStart(from: self.frame, to: target, caller: caller,
+        AnimationDebugger.logStart(from: fromVisible, to: target, caller: caller,
                                    duration: AnimationDebugger.isEnabled ? AnimationDebugger.slowDuration : 0)
 
-        if CompanionMotion.reduceMotion || self.frame == target {
+        if CompanionMotion.reduceMotion || fromVisible == target {
             cancelFrameAnimation(notify: false)
             IslandFrameTiming.recordInstant()
             setFrame(target, display: true)
@@ -473,13 +516,15 @@ class FloatingPanel: NSPanel {
             // that never settles, not to truncate a healthy retarget.
             let landing = FloatingPanel.landing(target)
             run.spring.target = FloatingPanel.springTarget(for: landing)
-            // Re-seed the integrator from the live frame so a retarget can
-            // never inherit a stale position.
-            run.spring.position = FloatingPanel.components(of: frame)
-            run.spring.expanding = IslandMotion.isExpanding(from: self.frame, to: target)
+            run.spring.expanding = IslandMotion.isExpanding(from: fromVisible, to: target)
             run.landing = landing
-            run.painted = FloatingPanel.components(of: frame)
             run.startedWallClock = Date()
+            let grown = IslandMaskGeometry.covering(run.cover, target)
+            if grown != run.cover {
+                setFrame(grown, display: false)
+                run.cover = grown
+                applyIslandMask(painted: FloatingPanel.rect(from: run.painted), in: grown)
+            }
             animationRun = run
             return
         }
@@ -487,16 +532,24 @@ class FloatingPanel: NSPanel {
         onFrameAnimationStarted?()
 
         let landing = FloatingPanel.landing(target)
+        let cover = IslandMaskGeometry.covering(fromVisible, target)
+        // One window-server resize for the whole run: the covering union.
+        // SwiftUI lays out once at the destination size; later ticks only
+        // move a compositor mask. That is what removes the 19 ms first-tick
+        // hitch of setFrame-per-vsync.
+        setFrame(cover, display: false)
+        applyIslandMask(painted: fromVisible, in: cover)
         animationRun = SpringRun(
             spring: IslandFrameSpring(
-                position: FloatingPanel.components(of: frame),
+                position: FloatingPanel.components(of: fromVisible),
                 target: FloatingPanel.springTarget(for: landing),
-                expanding: IslandMotion.isExpanding(from: self.frame, to: target)
+                expanding: IslandMotion.isExpanding(from: fromVisible, to: target)
             ),
             lastTimestamp: 0,
             startedWallClock: Date(),
             landing: landing,
-            painted: FloatingPanel.components(of: frame)
+            painted: FloatingPanel.components(of: fromVisible),
+            cover: cover
         )
         IslandFrameTiming.begin()
 
@@ -558,15 +611,11 @@ class FloatingPanel: NSPanel {
         run.spring.step(dt: dt)
 
         let stepped = run.spring.frame
-        // `display: false` — the window server composites the resized
-        // window at its own display cycle. Forcing a synchronous redraw
-        // here re-laid-out the whole SwiftUI tree inside the tick, which is
-        // what starved the next frames.
-        setFrame(stepped, display: false)
-        // What the window server actually kept. AppKit floors the origin and
-        // ceils the size, so this is the rect the user is looking at — the
-        // only honest input to "is there anything left to animate?".
-        run.painted = FloatingPanel.components(of: frame)
+        // Paint the mask, not the window. The covering frame is already at
+        // the union; moving a CALayer is compositor work and cannot relayout
+        // SwiftUI. `display: false` setFrame-per-tick used to cost 8–19 ms.
+        applyIslandMask(painted: stepped, in: run.cover)
+        run.painted = FloatingPanel.landing(stepped)
         animationRun = run
 
         AnimationDebugger.logSample(window: self, startTime: run.startedWallClock,
@@ -614,8 +663,14 @@ class FloatingPanel: NSPanel {
         // composite of the previous step. Setting whole points means the
         // window stores exactly this rect — no quantizer step is left to
         // happen after the motion has stopped.
-        setFrame(FloatingPanel.rect(from: run.landing), display: true)
+        // Tell SwiftUI to swap surfaces *before* the covering window shrinks
+        // to the landing rect. A collapse that setFrame'd first would briefly
+        // show the outgoing inbox inside a 32 pt bar; swapping first lets the
+        // compact wings paint into the still-covering window, then the mask
+        // comes off on the already-correct compact frame.
         onFrameAnimationEnded?()
+        setFrame(FloatingPanel.rect(from: run.landing), display: true)
+        clearIslandMask()
         AnimationDebugger.logEnd(frame: frame)
         IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.startedWallClock))
     }
@@ -639,6 +694,81 @@ class FloatingPanel: NSPanel {
         let y = frame.maxY - newHeight
         setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
         if wasAnimating { onFrameAnimationEnded?() }
+    }
+
+    /// Reveal only `painted` inside `cover` via a compositor mask.
+    ///
+    /// Actions are disabled (`CATransaction.setDisableActions`) so the
+    /// display-link owns timing; an implicit CA animation on top of the
+    /// spring would lag one vsync and read as jelly.
+    private func applyIslandMask(painted: NSRect, in cover: NSRect) {
+        visibleFrame = painted
+        guard let container = contentView else { return }
+        container.wantsLayer = true
+        let mask: CALayer
+        if let existing = maskLayer {
+            mask = existing
+        } else {
+            mask = CALayer()
+            mask.backgroundColor = NSColor.white.cgColor
+            // Unflipped layer space: MinY is the bottom of the island.
+            // Compact (capsule) rounds every corner; expanded keeps the top
+            // edge square so the body stays flush with the screen.
+            mask.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            container.layer?.mask = mask
+            maskLayer = mask
+        }
+        let layerFrame = IslandMaskGeometry.layerFrame(painted: painted, in: cover)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.frame = layerFrame
+        mask.cornerRadius = IslandMaskGeometry.cornerRadius(for: layerFrame.size)
+        if layerFrame.height <= 40 {
+            mask.maskedCorners = [
+                .layerMinXMinYCorner, .layerMaxXMinYCorner,
+                .layerMinXMaxYCorner, .layerMaxXMaxYCorner
+            ]
+        } else {
+            mask.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        }
+        CATransaction.commit()
+        refreshPointerAgainstVisibleIsland()
+    }
+
+    private func clearIslandMask() {
+        visibleFrame = nil
+        guard maskLayer != nil else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        contentView?.layer?.mask = nil
+        CATransaction.commit()
+        maskLayer = nil
+        refreshPointerAgainstVisibleIsland()
+    }
+
+    /// The covering window's tracking area fires enter as soon as the union
+    /// is applied. Re-test against the painted island so a cursor sitting in
+    /// the yet-to-grow region does not count as hovering, and a cursor that
+    /// the shrinking mask has left is reported as an exit.
+    private func refreshPointerAgainstVisibleIsland() {
+        pillContainer.publishPointerInside(containsMouse())
+    }
+
+    /// Tracking areas only fire while the cursor is inside the covering
+    /// window. After a mask-driven expand the cover is the union, so a
+    /// cursor that never entered the *visible* island can sit in empty
+    /// cover forever with no exit event. A local/global mouse-moved pair
+    /// re-tests the painted island on every move, including jumps that
+    /// skip the tracking-area edge (CGEvent / cliclick).
+    private func installPointerMonitor() {
+        guard localPointerMonitor == nil, globalPointerMonitor == nil else { return }
+        localPointerMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            self?.refreshPointerAgainstVisibleIsland()
+            return event
+        }
+        globalPointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+            self?.refreshPointerAgainstVisibleIsland()
+        }
     }
 
     /// Compute the target NSRect given a desired height/width. Keeps
@@ -749,8 +879,12 @@ struct AnimationDebugger {
 
     static func logSample(window: NSWindow, startTime: Date, elapsed: TimeInterval) {
         guard isEnabled else { return }
-        let f = window.frame
-        print(String(format: "[ANIM] %06.1fms frame=(x:%.1f y:%.1f w:%.1f h:%.1f)", elapsed * 1000, f.origin.x, f.origin.y, f.size.width, f.size.height))
+        if let panel = window as? FloatingPanel, let visible = panel.visibleIslandFrame {
+            print(String(format: "[ANIM] %06.1fms frame=(x:%.1f y:%.1f w:%.1f h:%.1f)", elapsed * 1000, visible.origin.x, visible.origin.y, visible.size.width, visible.size.height))
+        } else {
+            let f = window.frame
+            print(String(format: "[ANIM] %06.1fms frame=(x:%.1f y:%.1f w:%.1f h:%.1f)", elapsed * 1000, f.origin.x, f.origin.y, f.size.width, f.size.height))
+        }
     }
 
     static func logEnd(frame: NSRect) {

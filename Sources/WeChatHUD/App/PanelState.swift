@@ -45,8 +45,30 @@ final class PanelState: ObservableObject {
                 autopilotPopoverOpen = false
                 islandTextInputActive = false
             }
+            // Expanding content can swap immediately: the covering window
+            // is already at the destination size. Collapsing content must
+            // wait for the mask spring to land, or the covering window
+            // would show an empty black plate while the island shrinks.
+            if currentState != .compact || oldValue == .compact {
+                presentedState = currentState
+            }
+            // Tests and reduce-motion / already-at-size paths never start a
+            // frame spring. If no animation has claimed the collapse by the
+            // next turn of the run loop, paint the compact surface instead of
+            // leaving the outgoing inbox mounted forever.
+            if presentedState != currentState {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.presentedState != self.currentState,
+                          !self.frameAnimationInProgress else { return }
+                    self.presentedState = self.currentState
+                }
+            }
         }
     }
+    /// What SwiftUI currently paints. Matches `currentState` except during
+    /// a compacting spring, when the outgoing surface stays mounted until
+    /// `frameAnimationEnded`.
+    @Published var presentedState: HUDState = .compact
     @Published var isMouseInside = false
     /// What the detail panel is currently showing. `nil` means no detail
     /// target (either the panel is in compact/extended/notification, or
@@ -326,6 +348,9 @@ final class PanelState: ObservableObject {
     func frameAnimationEnded(mouseInside: Bool) {
         frameAnimationInProgress = false
         updateMouseInside(mouseInside)
+        if presentedState != currentState {
+            presentedState = currentState
+        }
         guard collapsesWhenMouseOutside else {
             exitRequestedDuringFrameAnimation = false
             return

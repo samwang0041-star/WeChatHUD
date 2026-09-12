@@ -30,7 +30,7 @@ struct HUDRootView: View {
         // curves and durations they visibly desync, producing a "content
         // slides left after the window has settled" artifact.
         Group {
-            switch panelState.currentState {
+            switch panelState.presentedState {
             case .compact:
                 // Compact fills the entire panel frame — AppDelegate's
                 // `panelSize(for: .compact)` sizes the panel to
@@ -43,7 +43,11 @@ struct HUDRootView: View {
                 HUDMonitorSurface()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Top-aligned so a covering window (the union of current and target
+        // frames during a mask-driven spring) keeps the island hung from the
+        // notch. Centering would drop compact content into the middle of the
+        // cover while the mask shrinks from the top.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(
             // One black body: notch band + pill are the same color as
             // the hardware Dynamic Island, so compact wings disappear
@@ -94,7 +98,7 @@ private struct HUDMonitorSurface: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
-        switch panelState.currentState {
+        switch panelState.presentedState {
         case .extended:
             InboxView()
                 .fixedSize(horizontal: false, vertical: true)

@@ -58,7 +58,7 @@ struct InboxRowView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                withMotion(CompanionMotion.ease(0.2)) {
+                withMotion(CompanionMotion.rowExpand()) {
                     expanded.toggle()
                 }
             }
@@ -112,7 +112,7 @@ struct InboxRowView: View {
                 panelState.setSnoozeMenuExpanded(false)
             }
         }
-        .companionAnimation(CompanionMotion.ease(0.15), value: hovered)
+        .companionAnimation(CompanionMotion.hover(), value: hovered)
         .companionAnimation(CompanionMotion.rowExpand(), value: showSnoozeMenu)
     }
 
@@ -394,19 +394,32 @@ private struct PriorityPulseDot: View {
     let isUrgent: Bool
     @State private var pulseOn = false
 
+    /// Fixed 14×14 slot for every row, urgent or not.
+    ///
+    /// The ring used to animate its *frame* (8→14 pt) with a 1.4 s
+    /// repeatForever. A frame change is a layout change: every pulse tick
+    /// re-laid-out the row, re-fired the inbox measurement pipe and bent the
+    /// window-frame spring — forever, on every urgent row, including while
+    /// the expand/collapse animation was running. The ring now animates only
+    /// scale + opacity inside a fixed box (compositor-only, zero layout), so
+    /// the pulse can never move a pixel of layout again. The uniform slot
+    /// also keeps urgent and quiet rows on the same leading alignment instead
+    /// of the dot column breathing with the pulse.
     var body: some View {
         ZStack {
-            if isUrgent {
+            if isUrgent, !CompanionMotion.reduceMotion {
                 Circle()
                     .stroke(color.opacity(pulseOn ? 0.35 : 0.0), lineWidth: 1.5)
-                    .frame(width: pulseOn ? 14 : 8, height: pulseOn ? 14 : 8)
+                    .frame(width: 14, height: 14)
+                    .scaleEffect(pulseOn ? 1.0 : 0.57)
             }
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
         }
+        .frame(width: 14, height: 14)
         .onAppear {
-            guard isUrgent else { return }
+            guard isUrgent, !CompanionMotion.reduceMotion else { return }
             withMotion(CompanionMotion.easeOut(1.4).map { $0.repeatForever(autoreverses: false) }) {
                 pulseOn = true
             }

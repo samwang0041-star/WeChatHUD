@@ -28,6 +28,11 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertNil(CompanionMotion.islandExpand())
         XCTAssertNil(CompanionMotion.islandCollapse())
         XCTAssertNil(CompanionMotion.pageChange())
+        XCTAssertNil(CompanionMotion.rowExpand())
+        XCTAssertNil(CompanionMotion.drawer())
+        XCTAssertNil(CompanionMotion.dialog())
+        XCTAssertNil(CompanionMotion.complete())
+        XCTAssertNil(CompanionMotion.saveReceipt())
     }
 
     func testAllAnimationsNonNilWhenMotionEnabled() {
@@ -43,6 +48,13 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertNotNil(CompanionMotion.systemDefault)
         XCTAssertNotNil(CompanionMotion.hover())
         XCTAssertNotNil(CompanionMotion.islandExpand())
+        XCTAssertNotNil(CompanionMotion.islandCollapse())
+        XCTAssertNotNil(CompanionMotion.rowExpand())
+        XCTAssertNotNil(CompanionMotion.drawer())
+        XCTAssertNotNil(CompanionMotion.dialog())
+        XCTAssertNotNil(CompanionMotion.complete())
+        XCTAssertNotNil(CompanionMotion.saveReceipt())
+        XCTAssertNotNil(CompanionMotion.pageChange())
     }
 
     func testIslandFrameTimingReportsSixtyHertzCadence() {
@@ -103,5 +115,20 @@ final class CompanionMotionTests: XCTestCase {
         var executed = false
         withMotion(CompanionMotion.ease(0.2)) { executed = true }
         XCTAssertTrue(executed)
+    }
+
+    func testRetargetToleranceIgnoresLayoutJitterMidFlight() {
+        // At rest the panel hugs measurements tightly; mid-flight only a
+        // genuine content change (row expand, snooze menu — all 50 pt+)
+        // may bend the trajectory, never 1–3 pt of text-settling jitter.
+        XCTAssertEqual(IslandMotion.retargetTolerance(isAnimating: false), 2)
+        XCTAssertEqual(IslandMotion.retargetTolerance(isAnimating: true), 6)
+        XCTAssertGreaterThan(IslandMotion.retargetTolerance(isAnimating: true), 3)
+        XCTAssertLessThan(IslandMotion.retargetTolerance(isAnimating: true), 50)
+    }
+
+    func testMaskCornerRadiusCapsulesTheCompactBar() {
+        XCTAssertEqual(IslandMotion.maskCornerRadius(width: 297, height: 32), 16)
+        XCTAssertEqual(IslandMotion.maskCornerRadius(width: 560, height: 252), 22)
     }
 }

@@ -40,8 +40,13 @@ enum CompanionMotion {
     }
 
     /// Standard spring used for expand/collapse transitions.
+    ///
+    /// Response-based (physical) rather than duration-based: the window-frame
+    /// spring in `FloatingPanel` runs response 0.42/0.26, so content riding a
+    /// spring from the same family settles together with the frame instead of
+    /// visibly leading or lagging it mid-flight.
     static var spring: Animation? {
-        reduceMotion ? nil : .spring(duration: 0.25)
+        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.9)
     }
 
     /// Parameterized spring preserving explicit response/damping values.
@@ -54,15 +59,25 @@ enum CompanionMotion {
         reduceMotion ? nil : .easeOut(duration: 0.12)
     }
 
-    /// Row hover wash (100–120ms).
-    static func hover() -> Animation? { ease(0.11) }
+    /// Row hover wash (~100ms).
+    ///
+    /// easeOut, not easeInOut: a hover wash must react on the attack (the
+    /// cursor is already there) and only soften the landing. easeInOut spends
+    /// half its budget barely leaving the start value, which reads as input
+    /// lag next to AppKit hover states (Finder, Mail).
+    static func hover() -> Animation? { easeOut(0.10) }
     /// Island compact → hover: pop out of the notch.
     static func islandExpand() -> Animation? { easeOut(IslandMotion.expandDuration) }
     /// Island leave collapse: retract into the notch.
     static func islandCollapse() -> Animation? { easeIn(IslandMotion.collapseDuration) }
 
-    /// In-row expand (180–220ms).
-    static func rowExpand() -> Animation? { ease(0.20) }
+    /// In-row expand.
+    ///
+    /// A spring from the window frame's family: a row's height change
+    /// re-drives the panel frame through the measurement pipe, so the content
+    /// curve and the frame curve must be the same physics or they visibly
+    /// desync while the panel grows around the expanding row.
+    static func rowExpand() -> Animation? { springResponse(response: 0.32, dampingFraction: 0.92) }
     /// Source drawer (200–240ms).
     static func drawer() -> Animation? { ease(0.22) }
     /// Modal fade (140–180ms).
@@ -261,6 +276,22 @@ enum IslandMotion {
 
     static func isExpanding(from: NSRect, to: NSRect) -> Bool {
         to.height > from.height + 1 || to.width > from.width + 1
+    }
+
+    /// Minimum size delta that justifies bending a window-frame run
+    /// mid-flight. At rest the panel hugs measurements tightly (2 pt); while
+    /// a spring is running, layout-pass jitter must not retarget it — only a
+    /// genuine content change (row expand, snooze menu, briefing card, all
+    /// 50 pt+) may bend the trajectory.
+    static func retargetTolerance(isAnimating: Bool) -> CGFloat {
+        isAnimating ? 6 : 2
+    }
+
+    /// Bottom-corner radius of the island mask. Top stays square so the
+    /// pill remains flush with the screen edge; the radius is clamped to a
+    /// half-side so a compact 32 pt bar still reads as a capsule.
+    static func maskCornerRadius(width: CGFloat, height: CGFloat) -> CGFloat {
+        min(22, max(0, min(width, height) / 2))
     }
 }
 

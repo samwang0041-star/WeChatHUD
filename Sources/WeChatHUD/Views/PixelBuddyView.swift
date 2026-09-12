@@ -31,7 +31,7 @@ struct AIBuddyOverlay: View {
         ZStack(alignment: .topTrailing) {
             PixelBuddyView(mood: effectiveMood)
                 .onHover { hovering in
-                    withMotion(CompanionMotion.ease(0.15)) { isHovering = hovering }
+                    withMotion(CompanionMotion.hover()) { isHovering = hovering }
                     if hovering { startRefresh() } else { stopRefresh() }
                 }
 
@@ -796,13 +796,14 @@ struct PixelBuddyView: View {
                 restartTimer()
             }
             .onChange(of: reduceMotion) { restartTimer() }
-            // Panel visibility, app hide/unhide and display sleep all land
-            // as an app update; re-asking the gate here is what stops the
-            // timer when the panel is ordered out and restarts it when the
-            // panel comes back.
-            .onReceive(NotificationCenter.default.publisher(
-                for: NSApplication.didUpdateNotification)
-            ) { _ in restartTimer() }
+            // Re-ask the gate only on real visibility changes. `didUpdate`
+            // fires many times a second (mouse, tracking, display-link work)
+            // and used to poke the sprite timer on every one of them.
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in restartTimer() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in restartTimer() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in restartTimer() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in restartTimer() }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { _ in restartTimer() }
             // Ticks cannot observe display sleep (nothing is drawn while the
             // panel is dark); the notification is the only signal.
             .onReceive(NotificationCenter.default.publisher(

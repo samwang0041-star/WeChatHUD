@@ -429,7 +429,7 @@ struct InboxView: View {
     private var handledSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Section header (tap to expand/collapse)
-            Button(action: { withMotion(CompanionMotion.ease(0.2)) { showHandled.toggle() } }) {
+            Button(action: { withMotion(CompanionMotion.rowExpand()) { showHandled.toggle() } }) {
                 HStack(spacing: 6) {
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
@@ -441,7 +441,7 @@ struct InboxView: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(IslandInk.quaternary)
                         .rotationEffect(.degrees(showHandled ? 180 : 0))
-                        .companionAnimation(CompanionMotion.ease(0.2), value: showHandled)
+                        .companionAnimation(CompanionMotion.rowExpand(), value: showHandled)
                     Rectangle()
                         .fill(IslandInk.divider)
                         .frame(height: 1)
