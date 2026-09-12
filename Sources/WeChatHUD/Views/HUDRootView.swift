@@ -23,21 +23,15 @@ struct HUDRootView: View {
         // from the center, so center-aligned content stays visually
         // pinned to screen-center rather than sliding with the left edge.
         //
-        // `.transaction { $0.animation = nil }` disables all SwiftUI
-        // implicit transitions on state changes. Without this, SwiftUI
-        // cross-fades / scales the content view in parallel with the
-        // AppKit window-frame animation; because the two use different
-        // curves and durations they visibly desync, producing a "content
-        // slides left after the window has settled" artifact.
+        // Isolate island *state* swaps from SwiftUI implicit animation so
+        // compact/extended/detail do not cross-fade against the mask spring.
+        // Do not nil the whole transaction: that also killed in-row expand,
+        // which then snapped and could report the covering stage as height.
         Group {
             switch panelState.presentedState {
-            case .compact:
-                // Compact fills the entire panel frame — AppDelegate's
-                // `panelSize(for: .compact)` sizes the panel to
-                // (notchWidth + wings) × notchHeight, so we don't
-                // hardcode dimensions here. Letting it flex keeps the
-                // bar honest when the display (and therefore the
-                // notch geometry) changes under us.
+            case .compact, .peek:
+                // Compact/peek fill the panel frame — AppDelegate sizes
+                // them geometrically (notch + wings, plus peek slots).
                 CompactInboxBar()
             case .extended, .notification, .detail:
                 HUDMonitorSurface()
@@ -74,7 +68,7 @@ struct HUDRootView: View {
             HUDToastLayer()
         }
         .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
-        .transaction { $0.animation = nil }
+        .animation(nil, value: panelState.presentedState)
         .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
     }
 
@@ -82,7 +76,11 @@ struct HUDRootView: View {
         if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
             return panel.notch.notchWidth
         }
-        return 16
+        // Must match `CompactInboxBar`'s fallback: the two views draw the same
+        // notch geometry from the same panel, and a 16 vs 200 disagreement
+        // during the no-panel window (preview / early launch) would render the
+        // island body at one width and its glow layer at another.
+        return 200
     }
 
     private var islandNotchHeight: CGFloat {
@@ -98,11 +96,31 @@ private struct HUDMonitorSurface: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
+        surface
+            .background { expandedChrome }
+    }
+
+    @ViewBuilder
+    private var expandedChrome: some View {
+        let show = panelState.presentedState == .extended
+            || panelState.presentedState == .notification
+            || panelState.presentedState == .detail
+        UnevenRoundedRectangle(
+            cornerRadii: .init(topLeading: 0, bottomLeading: 22, bottomTrailing: 22, topTrailing: 0),
+            style: .continuous
+        )
+        .strokeBorder(IslandChrome.hairline, lineWidth: show ? IslandChrome.hairlineWidth : 0)
+        .shadow(color: show ? Color.black.opacity(0.45) : .clear, radius: 20, y: 10)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private var surface: some View {
         switch panelState.presentedState {
         case .extended:
             InboxView()
+                .frame(width: IslandChrome.expandedWidth, alignment: .top)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(width: IslandChrome.expandedWidth)
                 .background(
                     GeometryReader { proxy in
                         Color.clear
@@ -124,7 +142,7 @@ private struct HUDMonitorSurface: View {
         case .detail:
             DetailPanelView()
                 .padding(.top, islandNotchHeight)
-        case .compact:
+        case .compact, .peek:
             EmptyView()
         }
     }

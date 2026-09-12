@@ -164,6 +164,7 @@ enum PreviewRuntime {
     }
 
     @MainActor static func seed(store: HUDStore, monitor: ChatMonitor) {
+        try? store.setSetting("onboarded", value: "1")
         let now = Date()
         let examples: [(String, String, String, Bool)] = [
             ("preview-project", "项目协作群", "@我 明天下午评审，能否先确认交互稿里待办的责任人展示？", true),
@@ -372,6 +373,22 @@ enum PreviewRuntime {
             // popoverOpen is the panel's existing "do not auto-collapse"
             // latch; reuse it rather than adding preview state to PanelState.
             panelState.popoverOpen = true
+        }
+        if arguments.contains("--preview-expand-row") {
+            panelState.islandSurface = .inbox
+            panelState.goExtended()
+            panelState.popoverOpen = true
+            // Let the inbox measure and the mask spring land before the row
+            // opens, so this is a real click-expand, not a launch-sized panel.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                captureSurfaces(as: "inbox-closed")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                panelState.expandedInboxItemID = monitor.inboxItems.first?.id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    captureSurfaces(as: "row-expanded")
+                }
+            }
         }
         // `--preview-tab=<raw>` opens the workspace on one page, so every
         // workspace surface can be captured from a repeatable launch

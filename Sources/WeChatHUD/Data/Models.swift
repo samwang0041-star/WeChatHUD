@@ -2,11 +2,18 @@ import Foundation
 
 // MARK: - Panel State
 
-enum HUDState {
-    case compact        // default — tiniest pill, passive glance
-    case extended       // hover-expanded pill (same height, wider)
-    case notification   // popup banner for important alerts
-    case detail         // full-height panel (chat list, settings)
+enum HUDState: Equatable {
+    /// Tiniest pill. Passive glance; no message body.
+    case compact
+    /// Hover-in morph: same height as compact, wider outboard slots.
+    /// Click or a short dwell opens the inbox.
+    case peek
+    /// Hover-expanded inbox (taller, measured).
+    case extended
+    /// Popup banner for important alerts.
+    case notification
+    /// Full-height panel (chat list, settings).
+    case detail
 }
 
 // MARK: - Stats (CompactBar)

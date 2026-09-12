@@ -118,6 +118,16 @@ final class CompactIslandPolicyTests: XCTestCase {
         XCTAssertEqual(waiting.glow, .none)
     }
 
+    func testGlanceIsShortAndHasNoHoverHint() {
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(sync: .error("x"))).glance, "连不上")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p0)])).glance, "紧急 · 1")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(aiActive: true)).glance, "整理中")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p2), item(priority: .p2)])).glance, "2 待处理")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(noticeCount: 2)).glance, "2 条群消息")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input()).glance, "暂无")
+        XCTAssertFalse(CompactIslandPolicy.snapshot(input()).glance.contains("移入"))
+    }
+
     func testSpokenLineNamesTheDominantFact() {
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(sync: .error("x"))).spoken.contains("连不上"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p0)])).spoken.contains("尽快"))

@@ -233,14 +233,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         // `scheduleFirstHoverFallback` covers a dropped measurement.
                         self.scheduleFirstHoverFallback(width: w, height: h)
                     }
-                } else if state == .compact {
+                } else if state == .compact || state == .peek {
                     // The compact frame is fully determined by notch
                     // geometry (notchWidth + 2·wingWidth × notchHeight) —
                     // it needs no SwiftUI measurement, so drive the window
                     // animation NOW. Waiting for the PreferenceKey round
                     // trip used to add a whole layout pass of dead time
                     // between "mouse out" and "pill starts retracting".
-                    self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.compact")
+                    self.panel.animateHeight(to: h, width: w, caller: state == .peek ? "AppDelegate.currentState.peek" : "AppDelegate.currentState.compact")
                 } else if state == .notification || state == .detail {
                     self.panel.animateHeight(to: h, width: w, caller: "AppDelegate.currentState.\(state)")
                 }
@@ -254,7 +254,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // pipe, so without a reset the new state's rendered
                 // size could match the last one and get filtered by
                 // `removeDuplicates`.
-                if state == .extended || state == .compact {
+                if state == .extended || state == .compact || state == .peek {
                     self.panelState.invalidateMeasuredSize()
                 }
 
@@ -285,7 +285,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .extended:
                     self.panel.allowsBecomeKey = false
                     self.panel.setSurface(.island)
-                case .compact, .notification:
+                case .compact, .peek, .notification:
                     self.panel.allowsBecomeKey = false
                     self.panel.setSurface(.island)
                 }
@@ -303,46 +303,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .sink { [weak self] size in
                 guard let self = self else { return }
                 let current = self.panelState.currentState
-                guard current == .extended || current == .compact,
+                guard current == .extended || current == .compact || current == .peek,
                       size.height > 1, size.width > 1 else { return }
                 let targetSize: CGSize
-                if current == .compact {
-                    let (w, h) = self.panelSize(for: .compact)
+                if current == .compact || current == .peek {
+                    let (w, h) = self.panelSize(for: current)
                     targetSize = CGSize(width: w, height: h)
                 } else {
-                    targetSize = size
+                    let cover = self.panel.frame.size
+                    if IslandMeasurement.isCoveringStage(size, cover: cover, lastContent: self.panelState.lastExtendedSize) {
+                        AnimationDebugger.logEvent("ignore stage-sized measurement \(Int(size.width))×\(Int(size.height)) cover=\(Int(cover.width))×\(Int(cover.height))")
+                        return
+                    }
+                    targetSize = IslandMeasurement.clamped(size)
                 }
 
                 AnimationDebugger.logLazyEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
-                // Tolerance — don't re-animate for sub-pixel jitter. While a run
-                // is in flight the bar is higher: text settling at the final width
-                // reports 1–3 pt of height jitter per layout pass, and each
-                // retarget bends the trajectory (the old expand "catch"). Real
-                // content changes that must bend the run — a row expanding to its
-                // action panel, the snooze menu, the briefing card — are all
-                // 50 pt+, so they still sail through.
                 // Compare against the *visible* island. During a mask-driven
                 // run `panel.frame` is the covering union, so a 252 pt inbox
                 // would look like it already matched a 252 pt cover and the
                 // height spring would never start.
+                //
+                // The tolerance and the snap-vs-animate decision are pure,
+                // so `IslandMeasurement.sizeAction` owns them and the tests pin
+                // them without standing up an NSPanel. The rule the sink used
+                // to encode by hand — "compact width jitter may snap, a
+                // collapse from a taller island animates" — is the `.compact`
+                // branch there. Peek is a same-height width morph and MUST NOT
+                // snap: `setFrameInstantly` cancels the mask spring the morph is
+                // riding, which is the stutter this split fixes. Never call
+                // `setFrameInstantly` for `.peek`.
                 let curr = self.panel.visibleIslandFrame ?? self.panel.frame
-                let tolerance = IslandMotion.retargetTolerance(isAnimating: self.panel.isFrameAnimationRunning)
-                if abs(targetSize.height - curr.height) < tolerance, abs(targetSize.width - curr.width) < tolerance {
+                let action = IslandMeasurement.sizeAction(
+                    state: current,
+                    visible: curr.size,
+                    target: targetSize,
+                    isAnimating: self.panel.isFrameAnimationRunning
+                )
+                switch action {
+                case .ignore:
                     return
-                }
-                if current == .compact {
-                    if curr.height > targetSize.height + 8 {
-                        // Real collapse from extended → compact: animate it.
-                        self.panel.animateHeight(to: targetSize.height, width: targetSize.width, caller: "AppDelegate.compactCollapse")
-                    } else {
-                        // Compact-only width changes (idle → pending → urgent)
-                        // should not animate — snap instantly back to the
-                        // notch center so a bad compact self-measurement
-                        // cannot poison the next hover animation.
-                        self.panel.setFrameInstantly(height: targetSize.height, width: targetSize.width)
-                    }
-                } else {
-                    self.panel.animateHeight(to: targetSize.height, width: targetSize.width, caller: "AppDelegate.measuredExtendedSize")
+                case .animate:
+                    let caller = (current == .compact || current == .peek)
+                        ? "AppDelegate.compactCollapse"
+                        : "AppDelegate.measuredExtendedSize"
+                    self.panel.animateHeight(to: targetSize.height, width: targetSize.width, caller: caller)
+                case .snapInstantly:
+                    // Compact-only width changes (idle → pending → urgent)
+                    // should not animate — snap instantly back to the notch
+                    // center so a bad compact self-measurement cannot poison
+                    // the next hover animation.
+                    self.panel.setFrameInstantly(height: targetSize.height, width: targetSize.width)
                 }
             }
             .store(in: &cancellables)
@@ -656,7 +667,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateMenuBarIcon()
         if let statusItem {
             MenuBarController.shared.isCompanionOpen = { [weak self] in
-                self?.panelState.currentState != .compact
+                // Peek is still a collapsed notch pill: it shows none of the
+                // inbox. Counting it as "open" made the menu read 收起 while
+                // the user was only hovering, and let ChatMonitor's action
+                // prefetch warm data nobody could see. Only a state that has
+                // actually left the notch is open.
+                guard let state = self?.panelState.currentState else { return false }
+                return state == .extended || state == .notification || state == .detail
             }
             MenuBarController.shared.installMenu(on: statusItem, target: self)
         }
@@ -737,7 +754,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func toggleCompanionFromMenu() {
         MainActor.assumeIsolated {
-            if panelState.currentState == .compact {
+            if panelState.currentState == .compact || panelState.currentState == .peek {
                 panelState.goExtended()
             } else {
                 panelState.collapse()
@@ -884,6 +901,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // the middle void remains physically aligned with the
             // hardware notch; message text appears only after hover.
             let width = notch.notchWidth + CompactInboxMetrics.wingWidth * 2
+            return (width, notch.notchHeight)
+        case .peek:
+            // Same height as compact. Outboard glance slots grow the
+            // silhouette without opening the inbox. Width is geometric
+            // so a count change cannot jitter the morph.
+            let width = notch.notchWidth
+                + CompactInboxMetrics.wingWidth * 2
+                + IslandChrome.peekSlotWidth * 2
             return (width, notch.notchHeight)
         case .extended:
             let actionCount = monitor.inboxItems.filter { $0.participatesInActionQueue }.count

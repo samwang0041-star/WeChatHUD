@@ -442,3 +442,36 @@ final class AIServiceCompleteOptionsTests: XCTestCase {
         return try XCTUnwrap(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
     }
 }
+
+/// `normalizeBaseURL` decides the scheme a user's typed base URL gets before
+/// any request is built. It matters because the app ships a local-provider
+/// path (Ollama/LM Studio/Hermes on loopback) and a remote path, and getting
+/// the scheme wrong sends every request to a port that is not listening.
+final class AIServiceBaseURLTests: XCTestCase {
+
+    func testSchemelessRemoteHostDefaultsToHTTPS() {
+        XCTAssertEqual(AIService.normalizeBaseURL("api.openai.com"), "https://api.openai.com/v1")
+        XCTAssertEqual(AIService.normalizeBaseURL("api.deepseek.com"), "https://api.deepseek.com/v1")
+        XCTAssertEqual(
+            AIService.normalizeBaseURL("api.openai.com/v1"),
+            "https://api.openai.com/v1",
+            "an explicit /v1 must not be duplicated"
+        )
+    }
+
+    func testSchemelessLoopbackHostsDefaultToHTTP() {
+        XCTAssertEqual(AIService.normalizeBaseURL("localhost:11434"), "http://localhost:11434/v1")
+        XCTAssertEqual(AIService.normalizeBaseURL("127.0.0.1:11434"), "http://127.0.0.1:11434/v1")
+        XCTAssertEqual(AIService.normalizeBaseURL("[::1]:11434"), "http://[::1]:11434/v1")
+    }
+
+    func testExistingSchemeIsPreserved() {
+        XCTAssertEqual(AIService.normalizeBaseURL("http://localhost:9999"), "http://localhost:9999/v1")
+        XCTAssertEqual(AIService.normalizeBaseURL("https://api.kimi.com/coding/v1"), "https://api.kimi.com/coding/v1")
+        XCTAssertEqual(
+            AIService.normalizeBaseURL("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1",
+            "a trailing slash must be trimmed without dropping the scheme"
+        )
+    }
+}

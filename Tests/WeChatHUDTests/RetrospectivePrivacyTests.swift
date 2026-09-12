@@ -134,6 +134,55 @@ final class RetrospectivePrivacyTests: XCTestCase {
         XCTAssertEqual(callsAfterThird, callsAfterSecond, "an extended outage must not re-send samples every run")
     }
 
+    /// The group screen used to send the group's display name and raw sample
+    /// text to the model, and recorded `redacted: false`. Now the name travels
+    /// as a codename, sample text is masked, and the decision is still matched
+    /// back because `chat_username` (the only channel the fake name could
+    /// collide on) stays a real id.
+    func testGroupScreenPromptRedactsNameAndPhoneButKeepsUsernameKey() async throws {
+        let store = try makeStore()
+        defer { store.close() }
+        let mock = MockAIService()
+        await mock.setDefaultResponse(
+            #"{"items":[{"chat_username":"room@chatroom","decision":"include","confidence":0.9}]}"#
+        )
+        let ledger = DataLedger(store: store)
+        let screener = GroupScreener(store: store, aiService: mock, dataLedger: ledger)
+        let candidate = ScopeCandidate(
+            chatUsername: "room@chatroom", chatName: "项目群", isGroup: true,
+            msgCountInRange: 5, myMsgCountInRange: 1
+        )
+
+        let result = await screener.screen(
+            candidates: [candidate],
+            samples: [
+                "room@chatroom": [
+                    // The group name appears inside a sample too, not just in the
+                    // chat_name field — both must be redacted.
+                    "项目群通知：张总的手机号是 13800138000",
+                    "明天开会确认预算"
+                ]
+            ]
+        )
+
+        let lastCall = await mock.calls.last
+        let prompt = try XCTUnwrap(lastCall?.user)
+        XCTAssertFalse(prompt.contains("项目群"), "the group name reached the model in plaintext")
+        XCTAssertFalse(prompt.contains("13800138000"), "a phone number in a sample reached the model")
+        XCTAssertTrue(
+            prompt.contains("room@chatroom"),
+            "chat_username must stay the real id so parse can match the decision"
+        )
+        XCTAssertEqual(
+            result.included.map(\.chatUsername), ["room@chatroom"],
+            "a decision matched on chat_username still has to resolve"
+        )
+
+        let entries = await ledger.recent(days: 1)
+        XCTAssertEqual(entries.first?.purpose, .groupScreen)
+        XCTAssertEqual(entries.first?.redacted, true, "the ledger must not claim a plaintext screen")
+    }
+
     func testScreenerDoesNotCachePoliciesWhenTheAICallFails() async throws {
         let store = try makeStore()
         defer { store.close() }

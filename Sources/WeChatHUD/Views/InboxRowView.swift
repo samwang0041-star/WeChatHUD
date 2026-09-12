@@ -14,7 +14,7 @@ struct InboxRowView: View {
     var onSilence: (() -> Void)? = nil
 
     @State private var hovered = false
-    @State private var expanded = false
+    // Expansion is owned by PanelState so only one row is open at a time.
     @State private var showSnoozeMenu = false
     @State private var snoozeHoverClose: DispatchWorkItem?
     @State private var renamingChat: InboxItem?
@@ -59,7 +59,11 @@ struct InboxRowView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 withMotion(CompanionMotion.rowExpand()) {
-                    expanded.toggle()
+                    if panelState.expandedInboxItemID == item.id {
+                        panelState.expandedInboxItemID = nil
+                    } else {
+                        panelState.expandedInboxItemID = item.id
+                    }
                 }
             }
             .contextMenu {
@@ -86,17 +90,9 @@ struct InboxRowView: View {
                 .padding(.bottom, IslandMetrics.rowPadding)
             }
 
-            if expanded {
+            if panelState.expandedInboxItemID == item.id {
                 ActionPanelView(item: item)
-                    // Anchored scale + fade, not a slide. The row's height
-                    // change already re-drives the panel frame through the
-                    // measurement pipe, so a translation on top of that is a
-                    // second motion competing with the one the user is
-                    // watching — it reads as the action panel arriving from
-                    // somewhere it never was. A 2% scale anchored at the top
-                    // reads as the panel settling into the row instead.
-                    // (codex-island's detailReveal transition.)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .transition(.islandDetailReveal)
             }
         }
         .onHover { inside in
@@ -122,6 +118,7 @@ struct InboxRowView: View {
         }
         .companionAnimation(CompanionMotion.hover(), value: hovered)
         .companionAnimation(CompanionMotion.rowExpand(), value: showSnoozeMenu)
+        .companionAnimation(CompanionMotion.rowExpand(), value: panelState.expandedInboxItemID)
     }
 
     @ViewBuilder

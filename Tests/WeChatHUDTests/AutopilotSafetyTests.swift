@@ -636,4 +636,37 @@ final class AutopilotSafetyTests: XCTestCase {
             XCTAssertNotEqual(risk.label, risk.rawValue)
         }
     }
+
+    // MARK: - Read-receipt open-chat gate (P1-2)
+
+    /// Opening a WeChat window to leave a read receipt is an outward action,
+    /// so it is gated exactly like a send: only full-auto private chats may
+    /// open unattended. Group chats and disabled autopilot both decline.
+    func testReadReceiptOpenChatGate() {
+        XCTAssertTrue(
+            AutopilotService.shouldOpenChatForReadReceipt(autoSendEnabled: true, isGroup: false),
+            "full-auto private chat is the only case that may open the window"
+        )
+        XCTAssertFalse(
+            AutopilotService.shouldOpenChatForReadReceipt(autoSendEnabled: true, isGroup: true),
+            "a group chat must never be opened just to fake-read a message"
+        )
+        XCTAssertFalse(
+            AutopilotService.shouldOpenChatForReadReceipt(autoSendEnabled: false, isGroup: false),
+            "with autopilot off, read-no-reply is a human decision"
+        )
+        XCTAssertFalse(
+            AutopilotService.shouldOpenChatForReadReceipt(autoSendEnabled: false, isGroup: true)
+        )
+    }
+
+    /// The two decline reasons are what the autopilot log shows; pin the exact
+    /// strings the branches log so they cannot silently change.
+    func testReadReceiptHoldReasonStrings() {
+        XCTAssertEqual(AutopilotService.readReceiptHoldReason(isGroup: true), "群聊消息，请人工确认")
+        XCTAssertEqual(
+            AutopilotService.readReceiptHoldReason(isGroup: false),
+            "未开启自动发送，已读不回需人工确认"
+        )
+    }
 }

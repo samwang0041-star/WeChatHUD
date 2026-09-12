@@ -422,7 +422,19 @@ struct AppUpdateService {
         let versions: [(AppVersion, String)] = candidates.compactMap { tag in
             AppVersion(tag).map { ($0, tag) }
         }
-        if let best = versions.sorted(by: { $0.0 < $1.0 }).last { return best.1 }
+        // Never offer a prerelease (`-rc`/`-beta`) as the stable channel: the
+        // page can list a newer prerelease above an older real release, and
+        // silently steering users onto it is not this fallback's job. Prefer
+        // the highest non-prerelease; when the page lists only prereleases,
+        // report no stable tag rather than the newest one of any kind.
+        if let best = versions
+            .filter({ !$0.0.isPrerelease })
+            .sorted(by: { $0.0 < $1.0 })
+            .last {
+            return best.1
+        }
+        if !versions.isEmpty { return nil }
+        // Nothing parsed as a version; fall back to the first tag-like token.
         return candidates.first
     }
 

@@ -316,6 +316,13 @@ class FloatingPanel: NSPanel {
     func positionAtTop() {
         refreshNotchGeometry()
         guard let screen = targetScreen else { return }
+        // A snap to a new screen is a discontinuity: the in-flight spring's
+        // integrated `position`/`target` are in the *old* screen's coordinates,
+        // so leaving the run alive lets it re-derive the mask a tick later
+        // against the new frame and drag the island back off the notch. End the
+        // run first (notify: true, so PanelState's exit bookkeeping still
+        // runs), then re-anchor from a clean spring state.
+        cancelFrameAnimation(notify: true)
         let panelWidth = frame.width
         let x = notch.notchCenterX - panelWidth / 2
         let y = screen.frame.maxY - frame.height
@@ -785,6 +792,7 @@ class FloatingPanel: NSPanel {
             mask = CALayer()
             mask.backgroundColor = NSColor.white.cgColor
             mask.maskedCorners = IslandMaskGeometry.maskedCorners
+            mask.cornerCurve = IslandMaskGeometry.cornerCurve
             container.layer?.mask = mask
             maskLayer = mask
         }

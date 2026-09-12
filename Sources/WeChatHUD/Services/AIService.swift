@@ -124,13 +124,13 @@ func completeWithMetadata(
             return AICompletionResult(text: text, providerID: slot.providerID, model: model)
         }
 
-        let baseURL = normalizeURL(slot.baseURL)
+        let baseURL = Self.normalizeBaseURL(slot.baseURL)
         guard let url = URL(string: "\(baseURL)/chat/completions") else {
             throw AIError.invalidURL(slot.baseURL)
         }
 
         let isDeepSeek = slot.providerID == "deepseek"
-            || normalizeURL(slot.baseURL).contains("api.deepseek.com")
+            || Self.normalizeBaseURL(slot.baseURL).contains("api.deepseek.com")
 
         let thinkingOn = options.thinkingEnabled ?? (options.responseFormatJSON ? false : config.thinkingEnabled)
 
@@ -249,7 +249,7 @@ func completeWithMetadata(
         if slot.providerID == "openai-codex" {
             return ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.3-codex"]
         }
-        let baseURL = normalizeURL(slot.baseURL)
+        let baseURL = Self.normalizeBaseURL(slot.baseURL)
         guard let url = URL(string: "\(baseURL)/models") else {
             throw AIError.invalidURL(slot.baseURL)
         }
@@ -276,13 +276,38 @@ func completeWithMetadata(
         return models.sorted()
     }
 
-    private func normalizeURL(_ url: String) -> String {
-        var u = url
-        if !u.contains("://") { u = "http://\(u)" }
+    /// Normalizes a user-entered provider base URL into the form every request
+    /// builder expects: an explicit scheme, no trailing slash, and a `/v1`
+    /// suffix. Schemeless input defaults to **https**, except for loopback
+    /// hosts (localhost / 127.0.0.1 / ::1) which default to **http** — a local
+    /// server (Ollama, LM Studio, Hermes) almost never speaks TLS, and forcing
+    /// https there broke every local setup. `static` (not private) so the
+    /// policy is testable without standing up an `AIService` actor.
+    static func normalizeBaseURL(_ url: String) -> String {
+        var u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !u.contains("://") {
+            let authority = u.split(separator: "/", maxSplits: 1,
+                                    omittingEmptySubsequences: false).first.map(String.init) ?? u
+            u = (isLoopbackAuthority(authority) ? "http://" : "https://") + u
+        }
         while u.hasSuffix("/") { u.removeLast() }
         // Avoid double /v1
         if !u.hasSuffix("/v1") { u += "/v1" }
         return u
+    }
+
+    /// True when the `host[:port]` authority names the local machine. Bracketed
+    /// IPv6 (`[::1]:11434`) is unwrapped before the comparison.
+    private static func isLoopbackAuthority(_ authority: String) -> Bool {
+        var host = authority
+        if host.hasPrefix("[") {
+            if let close = host.firstIndex(of: "]") {
+                host = String(host[host.index(after: host.startIndex)..<close])
+            }
+        } else if let colon = host.firstIndex(of: ":") {
+            host = String(host[..<colon])
+        }
+        return ["localhost", "127.0.0.1", "::1"].contains(host.lowercased())
     }
 
     /// Kimi Coding's forced-reasoning monologue can consume 500–1500 tokens
@@ -290,9 +315,9 @@ func completeWithMetadata(
     /// 2048 tokens, bump it to a safe floor so we don't get an empty answer.
     private func effectiveMaxTokens(slot: AIProviderSlot, requested: Int, thinkingOn: Bool) -> Int {
         let isKimi = slot.baseURL.contains("api.kimi.com")
-            || normalizeURL(slot.baseURL).contains("api.kimi.com")
+            || Self.normalizeBaseURL(slot.baseURL).contains("api.kimi.com")
         let isDeepSeek = slot.providerID == "deepseek"
-            || normalizeURL(slot.baseURL).contains("api.deepseek.com")
+            || Self.normalizeBaseURL(slot.baseURL).contains("api.deepseek.com")
         if (isKimi || (isDeepSeek && thinkingOn)), requested < 2048 {
             return 2048
         }
@@ -300,7 +325,7 @@ func completeWithMetadata(
     }
 
     private func supportsJSONResponseFormat(slot: AIProviderSlot) -> Bool {
-        let normalized = normalizeURL(slot.baseURL)
+        let normalized = Self.normalizeBaseURL(slot.baseURL)
         return slot.providerID == "deepseek"
             || normalized.contains("api.deepseek.com")
             || isKimiProvider(slot: slot, url: nil, model: slot.model)
@@ -321,7 +346,7 @@ func completeWithMetadata(
         if ["kimicode", "kimi-coding", "kimi-coding-cn", "kimi-for-coding", "moonshot"].contains(provider) {
             return true
         }
-        let baseURL = normalizeURL(slot.baseURL).lowercased()
+        let baseURL = Self.normalizeBaseURL(slot.baseURL).lowercased()
         if baseURL.contains("api.kimi.com")
             || baseURL.contains("moonshot.ai")
             || baseURL.contains("moonshot.cn") {
@@ -356,7 +381,7 @@ func completeWithMetadata(
 
     private func shouldEmitEnableThinkingFlag(slot: AIProviderSlot) -> Bool {
         let provider = slot.providerID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let baseURL = normalizeURL(slot.baseURL).lowercased()
+        let baseURL = Self.normalizeBaseURL(slot.baseURL).lowercased()
         return provider == "dashscope"
             || provider == "qwen"
             || provider == "alibaba"

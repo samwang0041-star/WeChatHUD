@@ -673,6 +673,20 @@ actor AutopilotService {
 
         // Read-no-reply: open chat to trigger read receipt, but don't send anything
         if decision.readNoReply == true {
+            // Opening the chat is only safe when autopilot is actually allowed to
+            // act on its own. Group chats are excluded: opening a group window to
+            // fake-read a message there is an outward side effect that must stay
+            // with the user.
+            guard Self.shouldOpenChatForReadReceipt(
+                autoSendEnabled: config.autoSendEnabled,
+                isGroup: representative.isGroup
+            ) else {
+                return makeLogEntry(
+                    sessionId: sessionId, msg: representative, action: .readNoReply,
+                    reply: nil, confidence: decision.confidence, risk: risk,
+                    reasoning: Self.readReceiptHoldReason(isGroup: representative.isGroup)
+                )
+            }
             // Full-auto mode: read-no-reply executes directly, no human confirmation needed.
             let readDelay = Double.random(in: 3...10)
             try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
@@ -747,6 +761,19 @@ actor AutopilotService {
             if let last = recentStallByContact[representative.chatUsername],
                last.text == replyText,
                now.timeIntervalSince(last.timestamp) < dedupWindow {
+                // Same guard as the read-no-reply branch: without it, suppressing a
+                // duplicate stall still opened a window (and burned 3-10s) in a
+                // group or with autopilot disabled.
+                guard Self.shouldOpenChatForReadReceipt(
+                    autoSendEnabled: config.autoSendEnabled,
+                    isGroup: representative.isGroup
+                ) else {
+                    return makeLogEntry(
+                        sessionId: sessionId, msg: representative, action: .skipped,
+                        reply: nil, confidence: decision.confidence, risk: risk,
+                        reasoning: Self.readReceiptHoldReason(isGroup: representative.isGroup)
+                    )
+                }
                 let readDelay = Double.random(in: 3...10)
                 try? await Task.sleep(nanoseconds: UInt64(readDelay * 1_000_000_000))
                 guard !isPaused, self.sessionId != nil else {
@@ -840,7 +867,7 @@ actor AutopilotService {
         sessionStats.delaySum += replyDelay
         sessionStats.delayCount += 1
 
-        print("[WCHUD] Autopilot: queued reply to '\(representative.chatName)' — sends in \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat), style=\(styleScore), finalAction=\(finalAction))")
+        print("[WCHUD] Autopilot: queued reply — sends in \(Int(replyDelay))s (period=\(currentPeriod), urgency=\(urgency), hotChat=\(isHotChat), style=\(styleScore), finalAction=\(finalAction))")
 
         let reasoningWithScore = "\(finalReasoning) [style:\(styleScore)/100, delay:\(Int(replyDelay))s]"
 
@@ -884,7 +911,7 @@ actor AutopilotService {
     ) async -> Bool {
         // M5 fix: block concurrent sends through actor suspension points
         guard !isSending else {
-            print("[WCHUD] Autopilot: send already in progress, dropped for '\(chatName)' — will retry on next scan")
+            print("[WCHUD] Autopilot: send already in progress, dropped — will retry on next scan")
             lastSendFailureMessage = "已有发送正在进行"
             return false
         }
@@ -909,7 +936,7 @@ actor AutopilotService {
         )
         guard uiResult.succeeded else {
             lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
-            print("[WCHUD] Autopilot: UI send failed for '\(chatName)' — \(lastSendFailureMessage ?? "unknown")")
+            print("[WCHUD] Autopilot: UI send failed — \(lastSendFailureMessage ?? "unknown")")
             return false
         }
 
@@ -923,7 +950,7 @@ actor AutopilotService {
         )
         if !verified {
             lastSendFailureMessage = "发送后未在微信数据库中确认"
-            print("[WCHUD] Autopilot: send verification FAILED for '\(chatName)' — message may not have been sent")
+            print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
         }
         // I6 fix: track the actual outgoing message UID, not the trigger UID
         if let uid = outgoingMsgUID {
@@ -1527,6 +1554,25 @@ actor AutopilotService {
 
     static func effectiveConfidence(base: Double, hasMedia: Bool) -> Double {
         hasMedia ? base * mediaConfidenceDecay : base
+    }
+
+    /// Whether autopilot may open a WeChat window purely to leave a read
+    /// receipt (no message sent). Opening the window is an outward action, so
+    /// it is gated exactly like a send: only in full-auto, and never for group
+    /// chats. Both call sites in `processBatch` (the explicit read-no-reply
+    /// decision and the duplicate-stall suppression) must consult this before
+    /// `WeChatLauncher.openChat`. Pure so tests can pin the policy without
+    /// driving the UI.
+    static func shouldOpenChatForReadReceipt(autoSendEnabled: Bool, isGroup: Bool) -> Bool {
+        autoSendEnabled && !isGroup
+    }
+
+    /// Human-readable reason logged when the read-receipt open-chat gate above
+    /// declines to act. Kept as a function so the two branches cannot drift.
+    static func readReceiptHoldReason(isGroup: Bool) -> String {
+        isGroup
+            ? "群聊消息，请人工确认"
+            : "未开启自动发送，已读不回需人工确认"
     }
 
     static func isEligibleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {

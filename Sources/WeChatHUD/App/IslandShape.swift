@@ -16,7 +16,7 @@ import SwiftUI
 /// The shape is parameterised by the real notch geometry, so the
 /// silhouette scales naturally from a 14" MBP notch (smaller) to a
 /// 16" MBP notch (wider).
-struct IslandShape: Shape {
+struct IslandShape: InsettableShape {
     /// Horizontal width of the notch cutout at the top-center.
     let notchWidth: CGFloat
     /// Vertical depth of the notch cutout from the top edge.
@@ -40,11 +40,19 @@ struct IslandShape: Shape {
     /// clamped to the gap beside the notch so it can never eat into the
     /// cutout, and it never changes the shape's bounds.
     let topCornerRadius: CGFloat
+    var inset: CGFloat = 0
+
+    func inset(by amount: CGFloat) -> IslandShape {
+        var shape = self
+        shape.inset += amount
+        return shape
+    }
 
     func path(in rect: CGRect) -> Path {
         var p = Path()
-        let w = rect.width
-        let h = rect.height
+        let drawn = rect.insetBy(dx: inset, dy: inset)
+        let w = drawn.width
+        let h = drawn.height
         let nW = max(0, notchWidth)
         let nH = max(0, notchHeight)
         let nCR = min(notchCornerRadius, nH)
@@ -137,7 +145,9 @@ struct IslandShape: Shape {
         )
         // Close up the left edge.
         p.closeSubpath()
-
+        if inset != 0 {
+            p = p.offsetBy(dx: drawn.minX - rect.minX, dy: drawn.minY - rect.minY)
+        }
         return p
     }
 }

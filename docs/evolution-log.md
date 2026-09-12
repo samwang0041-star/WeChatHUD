@@ -2,6 +2,32 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-13 — 1.3.4 发布前：peek 弹簧与质检 P1
+
+### [Engineer] 悬停加宽不能瞬切；已读不回不能在没开托管时去前台
+
+- Peek 同高加宽若走 `setFrameInstantly`，会 `cancelFrameAnimation` 掐掉 mask spring。测量 sink 改由 `IslandMeasurement.sizeAction` 决定：peek / 已离开刘海的状态一律弹簧；compact 只有真正从更高岛收回才动画，同高宽变若是 peek 量级（>48pt）也不瞬切。
+- 光晕画真实刘海轮廓，30Hz 扫光只给「整理中」，VIP 只变色相。菜单把 peek 当收起，不预热收件箱。
+- 已读不回 / 重复缓兵打开微信窗口按发送闸：未开自动发送、群聊都不去前台。无 scheme 的远程 API 默认 https，loopback 仍 http。群筛选出网前把群名编成代号、样本走 Redactor。网页更新通道不再把 `-rc` 当正式版；启动时清掉 sqlite 里旧的 githubToken。
+- 验证：`IslandPeekTests` / `IslandRowExpandTests` / `AutopilotSafetyTests.testReadReceiptOpenChatGate` / `AIServiceBaseURLTests` / `AppUpdateServiceTests` 的 prerelease 与 token scrub。
+
+## 2026-09-13 — 收件箱行展开空板 + 点击动画
+
+### [Engineer] 点一条记录后岛面多出一大块黑；展开没有动画
+
+- 根因：`InboxView` 的 `.frame(width:)` 放在 `.fixedSize(vertical: true)` 之后，GeometryReader 读到的是 grow-only stage 的提议高度，不是列表本身。点击重测一次就把 lastExtendedSize 毒成窗口高，岛在短列表下面留出黑板。
+- 另一个根因：根视图 `.transaction { animation = nil }` 把行内展开也杀了，ActionPanel 突然出现。改为只对 `presentedState` 禁用隐式动画；行展开跟岛的 openMorph 弹簧走同一套物理（codex-island detailReveal）。
+- 同一时间只展开一行；忽略等于 covering stage 且明显高于上次真实内容的测量。
+
+## 2026-09-13 — Codex Island 状态位 / 初展开 / 边框动效
+
+### [Engineer] 把codex-island 的 peek 三态与边框编舞接进现有 mask spring
+
+- 对照 [codex-island](https://github.com/ericjypark/codex-island) @ `1a0634d2`：悬停不直接开收件箱，先 morph 到 `.peek`（同高、两侧 +78pt glance 槽），180ms dwell 或点击再进 `.extended`。边过刘海只看到一下小开口。
+- 边框：离开 compact 后 0.5pt 白发丝线；VIP 紧急光晕只变色相（琥珀 / 红）；AI 整理中 30Hz 锦 sweep。Mask 角用 `.continuous` squircle。
+- 不改窗口架构：仍是固定 stage + CALayer mask spring。`goExtended()` / 菜单点击仍直达收件箱。
+- 验证：`IslandPeekTests` + `swift test --filter IslandPeekTests`.
+
 ## 2026-09-13 — 动效收口：合成器遮罩 + 物理曲线
 
 ### [Engineer] 参考 codex-island，重构面板形态动画并实测收敛
