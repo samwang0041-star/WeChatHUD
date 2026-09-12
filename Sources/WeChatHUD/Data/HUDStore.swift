@@ -119,6 +119,32 @@ final class HUDStore: ObservableObject {
         // User-chosen conversation names. Must exist before any reader
         // resolution runs so `repairStaleChatNames` can consult it.
         migrateChatAliases()
+
+        normalizeDiscussionDueDates()
+    }
+
+    /// Rewrites `due_at` values that were stored as an empty string into real
+    /// NULLs.
+    ///
+    /// The insert and edit paths used to bind "" when an item had no deadline.
+    /// The column is INTEGER, so SQLite could not convert it and kept the value
+    /// as TEXT — and because every TEXT value sorts after every number,
+    /// `due_at > 0` was true for every row while `due_at IS NULL` was true for
+    /// none. The Swift reader already treats those rows as undated (the value
+    /// parses to 0), so this is not a behaviour change today; it makes the
+    /// stored data mean what the schema says, so queries written later cannot
+    /// be misled the way this one was.
+    ///
+    /// Idempotent: after the first run no rows match. Scoped to the empty
+    /// string, so a row that legitimately holds a timestamp is untouched.
+    @discardableResult
+    func normalizeDiscussionDueDates() -> Int {
+        let before = writeStatementCount
+        try? exec("""
+            UPDATE discussion_items SET due_at = NULL
+            WHERE due_at IS NOT NULL AND typeof(due_at) = 'text' AND TRIM(due_at) = ''
+        """)
+        return writeStatementCount - before
     }
 
     /// Opens an existing business store without schema migration, PRAGMA
@@ -2372,8 +2398,17 @@ final class HUDStore: ObservableObject {
             params.append("\(since)")
         }
         if let relevantSince {
+            // Bind in the exact order the clause lists its placeholders:
+            // source_timestamp, due_at, (status, created_at), (status, updated_at).
+            // `created_at` must be here: an item extracted just now from an old
+            // source message is still fresh to the user, and the Swift recheck
+            // in DiscussionLiveWindow.contains keeps it for that reason. When SQL
+            // drops the row first the recheck never sees it — which is what
+            // making empty `due_at` compare correctly exposed.
             clauses.append(Self.discussionRelevantSinceClause)
             params.append("\(relevantSince)")
+            params.append("\(relevantSince)")
+            params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
             params.append(DiscussionItemStatus.pending.rawValue)
             params.append("\(relevantSince)")
@@ -3950,6 +3985,7 @@ extension HUDStore {
         (
             source_timestamp >= ?
             OR (IFNULL(due_at, 0) > 0 AND due_at >= ?)
+            OR (status = ? AND created_at >= ?)
             OR (status != ? AND updated_at >= ?)
         )
         """

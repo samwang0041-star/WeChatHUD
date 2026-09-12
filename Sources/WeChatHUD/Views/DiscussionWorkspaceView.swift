@@ -48,7 +48,10 @@ struct DiscussionWorkspaceView: View {
     /// makes the trade visible.
     private var strictnessBar: some View {
         let hidden = strictness.hidden(from: monitor.discussionItems)
-        let hiddenMine = hidden.filter { $0.owner == .mine }.count
+        // "Work of mine" must mean work, not every record that happens to carry
+        // my owner. Counting records here overstated the cost of a tighter
+        // level by more than an order of magnitude (28 claimed vs 1 real).
+        let hiddenMine = hidden.filter { $0.owner == .mine && !$0.kind.isRecord }.count
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("保留")
@@ -247,7 +250,7 @@ struct DiscussionWorkspaceView: View {
         )
         .overlay(alignment: .bottom) {
             if heldBackByLevel, scope == .notes {
-                Button("把信息点放回来") { monitor.setDiscussionStrictness(.everything) }
+                Button("把记录放回来") { monitor.setDiscussionStrictness(.everything) }
                     .buttonStyle(.bordered)
                     .padding(.bottom, 24)
             }
@@ -685,10 +688,21 @@ enum DiscussionPresentation {
             let matches: Bool
             switch scope {
             case .all: matches = true
-            case .notes: matches = item.kind == .info
-            case .mine: matches = item.owner == .mine && item.kind != .info
-            case .theirs: matches = item.owner == .theirs && item.kind != .info
-            case .shared: matches = item.owner == .shared && item.kind != .info
+            // "Records" is two kinds, not one. `timePlace` is the same
+            // category as `info` — the extractor's prompt lists both as the
+            // pure-record kinds ("纯记录型内容（info/timePlace 常用）") — and
+            // the strictness levels hold both back from the task list. When
+            // this tab filtered to `info` alone, a held-back 时间地点 item had
+            // no tab that could ever show it, so it was invisible at every
+            // level while still counting as "已收起".
+            case .notes: matches = item.kind == .info || item.kind == .timePlace
+            // Record kinds belong to 信息备忘 alone. Leaving `timePlace` in
+            // these three would list the same 时间地点 twice — once as work
+            // and once as a memo — which is exactly the confusion the levels
+            // exist to remove.
+            case .mine: matches = item.owner == .mine && !item.kind.isRecord
+            case .theirs: matches = item.owner == .theirs && !item.kind.isRecord
+            case .shared: matches = item.owner == .shared && !item.kind.isRecord
             }
             return matches && (query.isEmpty || [item.content, item.detail ?? "", item.chatName].contains { $0.localizedCaseInsensitiveContains(query) })
         }.sorted {

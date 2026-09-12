@@ -24,7 +24,12 @@ extension ChatMonitor {
         dailyReportError = nil
         dailyReportIsLoading = true
 
-        let builder = DailyReportBuilder(store: store, replyDebtItems: replyDebtItems, stats: stats)
+        let builder = DailyReportBuilder(
+            store: store,
+            replyDebtItems: replyDebtItems,
+            stats: stats,
+            strictness: discussionStrictness
+        )
         let baseReport = builder.build(for: date)
         dailyReport = baseReport
         dailyReportGeneratedAt = baseReport.generatedAt
@@ -64,9 +69,12 @@ extension ChatMonitor {
     func currentDailyReportFactsStamp() -> String {
         let debts = replyDebtItems.map(\.id).sorted().joined(separator: ",")
         let tasks = discussionItems
-            // Same level as the 待办 page and 今天: a report that counts work
-            // the list refuses to show would contradict itself.
-            .filter { $0.status == .pending && $0.kind != .info && discussionStrictness.admits($0) }
+            // Deliberately NOT keyed on the strictness level. The report's
+            // numbers do follow the level, but the level is a display choice,
+            // not a change in the facts — folding it into the stamp would
+            // invalidate the 30-minute cache and re-run the AI pass every time
+            // the user drags the control.
+            .filter { $0.status == .pending && !$0.kind.isRecord }
             .map { String($0.id) }
             .sorted()
             .joined(separator: ",")

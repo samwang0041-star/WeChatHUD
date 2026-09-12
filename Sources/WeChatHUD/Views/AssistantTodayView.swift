@@ -438,7 +438,7 @@ enum TodayFeed {
     /// feed is "what needs me today", not a record of what was said.
     static func mineTasks(_ items: [DiscussionItem], strictness: DiscussionStrictness) -> [DiscussionItem] {
         items.filter { item in
-            item.status == .pending && item.kind != .info && item.owner == .mine && strictness.admits(item)
+            item.status == .pending && !item.kind.isRecord && item.owner == .mine && strictness.admits(item)
         }
     }
 
@@ -448,7 +448,7 @@ enum TodayFeed {
 
     static func waitingTasks(_ items: [DiscussionItem], strictness: DiscussionStrictness) -> [DiscussionItem] {
         items.filter { item in
-            item.status == .pending && item.kind != .info && item.owner == .theirs && strictness.admits(item)
+            item.status == .pending && !item.kind.isRecord && item.owner == .theirs && strictness.admits(item)
         }
     }
 

@@ -11,6 +11,11 @@ struct DailyReportBuilder {
     let store: HUDStore
     let replyDebtItems: [ReplyDebtItem]
     let stats: HUDStats
+    /// The same strictness the 待办 page and 今天 use. The report must count
+    /// what those surfaces are willing to show: a report that claims work the
+    /// list refuses to display contradicts itself, and switching levels would
+    /// otherwise change the numbers while the page claims they agree.
+    var strictness: DiscussionStrictness = .default
 
     func build(for date: Date = Date(), now: Date = Date()) -> DailyReport {
         let calendar = Calendar.current
@@ -57,7 +62,7 @@ struct DailyReportBuilder {
         let liveDiscussions = historical ? [] : store.loadDiscussionItems(
             status: .pending,
             relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays, now: now)
-        ).filter { $0.kind != .info && $0.owner == .mine }
+        ).filter { $0.owner == .mine && !$0.kind.isRecord && strictness.admits($0, now: now) }
 
         // 3. Commitments
         let allCommitments = store.loadCommitments()

@@ -1444,6 +1444,15 @@ enum DiscussionItemKind: String, Codable, CaseIterable {
     case timePlace  // 时间地点（约见/截止）
     case question   // 悬而未决的问题
 
+    /// True for the kinds that only record what was said — no one has to act
+    /// on them. The extractor's prompt names these two as the "pure record"
+    /// kinds, and both the 待办 strictness levels and the 信息备忘 tab treat
+    /// them as one category. Keeping the list in one place stops the two from
+    /// drifting apart, which is how 时间地点 briefly became unreachable.
+    var isRecord: Bool {
+        self == .info || self == .timePlace
+    }
+
     var label: String {
         switch self {
         case .todo:      return "待办"

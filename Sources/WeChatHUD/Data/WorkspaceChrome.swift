@@ -83,7 +83,11 @@ struct WorkspaceBadgeCounts: Equatable {
     /// Honours the strictness level so the badge cannot claim more work than
     /// the list it is counting for is willing to show.
     static func taskCount(_ items: [DiscussionItem], strictness: DiscussionStrictness = .default) -> Int {
-        items.filter { $0.status == .pending && $0.kind != .info && $0.owner == .mine && strictness.admits($0) }.count
+        // `!kind.isRecord`, not `kind != .info`: the tabs count the same way,
+        // so `timePlace` must not be work in one place and a record in another.
+        items.filter {
+            $0.status == .pending && !$0.kind.isRecord && $0.owner == .mine && strictness.admits($0)
+        }.count
     }
 }
 

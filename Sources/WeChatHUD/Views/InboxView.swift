@@ -611,7 +611,16 @@ private struct IslandTaskPreview: View {
     /// Resolved once per body evaluation; reading it from a row would re-sort
     /// the whole pending corpus for every row drawn.
     private var items: [DiscussionItem] {
-        itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false)
+        // Same level as the 待办 page: the island is a preview of that list, so
+        // showing items the page has been told to hold back would make the two
+        // disagree about how much work exists.
+        itemsCache.items(surfacedDiscussionItems, scope: scope, query: "", history: false)
+    }
+
+    /// The corpus every island read goes through, so the level is applied once
+    /// and cannot be forgotten at one of the five call sites.
+    private var surfacedDiscussionItems: [DiscussionItem] {
+        monitor.discussionItems.filter { monitor.discussionStrictness.admits($0) }
     }
 
     var body: some View {
@@ -651,7 +660,7 @@ private struct IslandTaskPreview: View {
                 ForEach([DiscussionScope.mine, .theirs], id: \.self) { value in
                     Button {
                         scope = value
-                        expandedID = itemsCache.items(monitor.discussionItems, scope: value, query: "", history: false).first?.id
+                        expandedID = itemsCache.items(surfacedDiscussionItems, scope: value, query: "", history: false).first?.id
                     } label: {
                         Text(value.rawValue)
                             .companionFont(size: IslandType.meta, weight: scope == value ? .semibold : .regular)
@@ -701,16 +710,16 @@ private struct IslandTaskPreview: View {
         .padding(.bottom, 12)
         .onAppear {
             // The cache keeps these lookups to one sort per distinct scope.
-            if itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).isEmpty {
-                let theirs = itemsCache.items(monitor.discussionItems, scope: .theirs, query: "", history: false)
+            if itemsCache.items(surfacedDiscussionItems, scope: scope, query: "", history: false).isEmpty {
+                let theirs = itemsCache.items(surfacedDiscussionItems, scope: .theirs, query: "", history: false)
                 if !theirs.isEmpty {
                     scope = .theirs
                 } else {
-                    let shared = itemsCache.items(monitor.discussionItems, scope: .shared, query: "", history: false)
+                    let shared = itemsCache.items(surfacedDiscussionItems, scope: .shared, query: "", history: false)
                     if !shared.isEmpty { scope = .shared }
                 }
             }
-            expandedID = itemsCache.items(monitor.discussionItems, scope: scope, query: "", history: false).first?.id
+            expandedID = itemsCache.items(surfacedDiscussionItems, scope: scope, query: "", history: false).first?.id
         }
         .sheet(item: $sourceItem) { item in
             DiscussionSourceView(item: item, onClose: { sourceItem = nil })
