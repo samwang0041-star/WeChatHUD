@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Compact-bar indicator for autopilot state. Lives in the left wing
-/// after the aiTick. Left-click opens a popover with start/stop/pause
-/// controls and a link into the full detail view. Right-click is
-/// intentionally empty — we keep the interaction surface minimal.
+/// Autopilot indicator for the extended header's right wing (the
+/// actionable instance of the compact bar's glanceable buddy). Left-click
+/// opens a popover with start/stop/pause controls plus links into
+/// 待确认回复 (in the island) and Settings. Right-click is intentionally
+/// empty — we keep the interaction surface minimal.
 struct AutopilotIndicator: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
@@ -103,6 +104,10 @@ struct AutopilotPopoverView: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
     var close: () -> Void
+    /// True while 开始整理 is waiting for the real start result. Keeps the
+    /// button in a named, disabled state instead of letting a second press
+    /// queue behind the first one.
+    @State private var starting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -156,24 +161,42 @@ struct AutopilotPopoverView: View {
     // MARK: - Off-state body
 
     private var offBody: some View {
-        Button(action: {
-            monitor.startAutopilot()
-            panelState.showToast("自动回复已开始整理", duration: 2)
-            close()
-        }) {
+        Button(action: start) {
             HStack(spacing: 4) {
-                Image(systemName: "play.fill")
+                Image(systemName: starting ? "hourglass" : "play.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text("开始整理")
+                Text(starting ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
                     .font(.system(size: 11, weight: .semibold))
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)
-            .background(Color.green.opacity(0.8))
+            .background(Color.green.opacity(starting ? 0.45 : 0.8))
             .cornerRadius(5)
         }
         .buttonStyle(.plain)
+        .disabled(starting)
+        .accessibilityLabel(starting ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
+        .help(starting ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
+    }
+
+    /// Pressing 开始整理 must report what actually happened. The old handler
+    /// called the fire-and-forget `startAutopilot()` and toasted success
+    /// unconditionally, so a session that never started still told the user
+    /// "已开始整理". The receipt now comes from `startAutopilotAndWait()`, and
+    /// a failure leaves the popover — and this button — on screen as the retry
+    /// entry.
+    private func start() {
+        guard !starting else { return }
+        starting = true
+        Task { @MainActor in
+            let receipt = AutopilotStartReceipt.resolve(
+                started: await monitor.startAutopilotAndWait()
+            )
+            starting = false
+            panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
+            if receipt.dismissesPopover { close() }
+        }
     }
 
     // MARK: - Running-state body
@@ -273,7 +296,7 @@ struct AutopilotPopoverView: View {
     // MARK: - Footer links
 
     private var footerLinks: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Button(action: {
                 panelState.pendingSettingsTab = "autopilotDashboard"
                 panelState.onShowSettings?()
@@ -284,6 +307,22 @@ struct AutopilotPopoverView: View {
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(.plain)
+
+            Text("·")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+
+            Button(action: {
+                AutopilotPopoverRouting.openPendingRepliesInPanel(panelState)
+                close()
+            }) {
+                Text("浮窗内查看")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
+            .help("在浮窗面板里打开待确认回复，不弹出设置窗口")
+            .accessibilityHint("在浮窗面板里打开待确认回复")
 
             Text("·")
                 .font(.system(size: 10))
@@ -304,5 +343,47 @@ struct AutopilotPopoverView: View {
 
             Spacer()
         }
+    }
+}
+
+/// Words for the popover's 「开始整理」 press.
+enum AutopilotStartCopy {
+    static let start = "开始整理"
+    static let starting = "正在启动…"
+    static let startHint = "开始整理该回的消息；发不发仍由自动回复设置决定"
+    static let startingHint = "正在启动自动回复，请稍候…"
+    static let started = "自动回复已开始整理"
+    static let failed = "自动回复没能启动，服务还没准备好。请重试。"
+}
+
+/// The receipt for one 开始整理 press. Only a confirmed start may dismiss the
+/// popover: a failure has to leave the button on screen as the retry entry.
+struct AutopilotStartReceipt: Equatable {
+    let started: Bool
+    let toast: String
+    let dismissesPopover: Bool
+
+    static func resolve(started: Bool) -> AutopilotStartReceipt {
+        started
+            ? AutopilotStartReceipt(
+                started: true,
+                toast: AutopilotStartCopy.started,
+                dismissesPopover: true
+            )
+            : AutopilotStartReceipt(
+                started: false,
+                toast: AutopilotStartCopy.failed,
+                dismissesPopover: false
+            )
+    }
+}
+
+/// The in-island 待确认回复 entry that makes `DetailKind.autopilot` reachable:
+/// routes the detail panel to the same ApprovalWorkspaceView the Settings
+/// window shows, without opening a second window.
+@MainActor
+enum AutopilotPopoverRouting {
+    static func openPendingRepliesInPanel(_ panelState: PanelState) {
+        panelState.showDetail(kind: .autopilot)
     }
 }

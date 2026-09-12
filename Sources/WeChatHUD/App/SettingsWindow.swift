@@ -60,7 +60,13 @@ class SettingsWindow: NSWindow {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified
         window.toolbar = NSToolbar(identifier: "WeChatHUD.Workspace")
-        window.minSize = NSSize(width: 820, height: 580)
+        // The split pages (草稿 / 关注谁 / 聊天回顾 / 待办) put two columns
+        // side by side. At 820pt the columns were narrower than their own
+        // content: the inspector pane overflowed and had its left edge —
+        // labels like 账号信息 and 整理范围 — clipped under the divider.
+        // Two columns need roughly 600pt after the 236pt sidebar, so the
+        // window's floor is set to the width where they actually fit.
+        window.minSize = NSSize(width: 900, height: 580)
         window.setFrameAutosaveName("WeChatHUD.Workspace")
         // A restored frame may belong to a disconnected or differently
         // arranged display. Keep the entire workspace reachable on this one.

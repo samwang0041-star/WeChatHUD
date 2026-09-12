@@ -27,8 +27,15 @@ enum CompactIslandPhase: Equatable {
     case notices(count: Int)
     case quiet(sleepy: Bool)
 
+    /// Working is deliberately a family with one live member. A background scan
+    /// flipping `SyncStatus` to `.syncing` is ambient bookkeeping, not work:
+    /// `IslandPresentation.stabilizing` rewrites it to the last real status
+    /// (see WorkspaceChrome), and PixelBuddyTests.testCompactMood_syncingStaysStill
+    /// pins the 1.2.3 contract that a sync tick must not repaint the companion
+    /// into .scanning. The former `.working(.syncing)` phase was unreachable
+    /// from both ends and is gone — do not reintroduce it without first making
+    /// `stabilizing` stop rewriting syncing away.
     enum Working: Equatable {
-        case syncing
         case analyzing
     }
 }
@@ -164,7 +171,6 @@ enum CompactIslandPolicy {
         switch phase {
         case .connectionProblem: base = .error
         case .urgent(let priority, _): base = priority == .p0 ? .urgent : .pending
-        case .working(.syncing): base = .scanning
         case .working(.analyzing): base = .analyzing
         case .waiting: base = .pending
         case .notices: base = .idle
@@ -193,8 +199,6 @@ enum CompactIslandPolicy {
             return "\(what)，共 \(spokenCount(count)) 项。\(CompanionProductCopy.compactHoverHint)"
         case .working(.analyzing):
             return "AI 正在整理。\(CompanionProductCopy.compactHoverHint)"
-        case .working(.syncing):
-            return "正在同步微信。\(CompanionProductCopy.compactHoverHint)"
         case .waiting(let count):
             return "收起 · \(spokenCount(count)) 项待处理。\(CompanionProductCopy.compactHoverHint)"
         case .notices(let count):

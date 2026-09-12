@@ -190,11 +190,7 @@ struct NotificationBannerView: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel(content.message)
             if showSnooze {
-                IslandSnoozeMenu { date in
-                    showSnooze = false
-                    panelState.setSnoozeMenuExpanded(false)
-                    snooze(date)
-                }
+                IslandSnoozeMenu { date in snooze(date) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -396,12 +392,79 @@ struct NotificationBannerView: View {
     }
 
     private func snooze(_ date: Date) {
-        let item = notification.actionInboxItem()
-        if monitor.snoozeInboxItem(item, until: date) {
-            panelState.islandSnoozeUndo = (item, date)
-            panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
+        let handedOff = Self.applySnooze(
+            date,
+            notification: notification,
+            monitor: monitor,
+            panelState: panelState
+        )
+        guard handedOff else {
+            // A failed write must not dismiss the banner: the time menu stays
+            // open underneath it as the retry entry, and the failure reason
+            // arrives as the toast.
+            showSnooze = true
+            panelState.setSnoozeMenuExpanded(true)
+            return
         }
+        showSnooze = false
+        panelState.setSnoozeMenuExpanded(false)
+    }
+
+    /// The banner's 稍后提醒 handler, split out of the view body so the routing
+    /// can be driven against a real PanelState without hosting SwiftUI.
+    ///
+    /// Returns true only when the snooze was saved and the banner handed off to
+    /// the inbox. False means the user stays where they are: the handler this
+    /// replaced ran goExtended() either way, so a memo that was never written
+    /// still looked like a finished action.
+    @MainActor
+    @discardableResult
+    static func applySnooze(
+        _ date: Date,
+        notification: HUDNotification,
+        monitor: ChatMonitor,
+        panelState: PanelState
+    ) -> Bool {
+        guard IslandSnoozeOutcome.apply(
+            notification.actionInboxItem(),
+            until: date,
+            monitor: monitor,
+            panelState: panelState
+        ) else { return false }
         panelState.islandSurface = .inbox
         panelState.goExtended()
+        return true
     }
+}
+
+/// The island's 稍后提醒 receipt, shared by the notification banner and the
+/// briefing card.
+///
+/// Only a write that actually landed may move the user anywhere else: the old
+/// banner ran `goExtended()` whether or not the snooze was saved, so a failed
+/// write looked like a success and dropped the user into the inbox. A failure
+/// leaves every surface where it was and surfaces the reason as a toast
+/// (`ChatMonitor` already records it in `inboxActionError`). Nothing here is
+/// persisted by the island itself.
+@MainActor
+enum IslandSnoozeOutcome {
+    @discardableResult
+    static func apply(
+        _ item: InboxItem,
+        until date: Date,
+        monitor: ChatMonitor,
+        panelState: PanelState
+    ) -> Bool {
+        guard monitor.snoozeInboxItem(item, until: date) else {
+            panelState.showToast(monitor.inboxActionError ?? IslandSnoozeCopy.failed, duration: 5)
+            return false
+        }
+        panelState.islandSnoozeUndo = (item, date)
+        panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
+        return true
+    }
+}
+
+enum IslandSnoozeCopy {
+    static let failed = "稍后提醒没设置成功，消息还在。请重试。"
 }

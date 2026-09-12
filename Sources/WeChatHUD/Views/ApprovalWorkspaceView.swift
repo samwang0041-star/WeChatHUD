@@ -74,8 +74,8 @@ struct ApprovalWorkspaceView: View {
                 emptyState
             } else {
                 HSplitView {
-                    listPane.frame(minWidth: 280, idealWidth: 340)
-                    detailPane.frame(minWidth: 360, idealWidth: 460)
+                    listPane.frame(minWidth: 220, idealWidth: 340)
+                    detailPane.frame(minWidth: 240, idealWidth: 460)
                 }
             }
             if let receipt {

@@ -64,15 +64,32 @@ struct ReplyDraftsView: View {
                 .frame(maxWidth: .infinity, minHeight: 240)
             } else {
                 HSplitView {
-                    listPane.frame(minWidth: 260, idealWidth: 320)
-                    detailPane.frame(minWidth: 360, idealWidth: 480)
+                    // The window's minimum width (820pt) leaves the content
+                    // column about 528pt after the 236pt sidebar and the 28pt
+                    // horizontal padding on each side. The old minimums (260 +
+                    // 360) added up to 620, so the editor column was laid out
+                    // 92pt wider than the space it had and its right edge —
+                    // including the primary 继续回复 action — was clipped off
+                    // the window. These minima fit the smallest supported
+                    // window and still leave the split comfortable when it is
+                    // wider.
+                    listPane.frame(minWidth: 200, idealWidth: 300)
+                    detailPane.frame(minWidth: 280, idealWidth: 420)
                 }
+                // Take the remaining height and clip. Neither pane used to
+                // claim a height, so when the detail column grew taller
+                // than the window the VStack overflowed and the page header
+                // drew on top of the draft list (reproduced twice in live
+                // QA on the 草稿 page only).
+                .frame(maxHeight: .infinity)
+                .clipped()
             }
         }
         .frame(maxWidth: 1180)
         .padding(.horizontal, 28)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity)
+        .frame(maxHeight: .infinity, alignment: .top)
         .onAppear { load() }
         .onChange(of: workspaceBadges.counts.drafts) { _, _ in load() }
         .onChange(of: drafts) { _, _ in reconcileSelection() }
@@ -184,11 +201,15 @@ struct ReplyDraftsView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let selected, let index = drafts.firstIndex(where: { $0.id == selected.id }) {
+            // Scroll rather than overflow: the editor column is the tallest
+            // content in the workspace and used to push the page past the
+            // window, printing the header over the list.
+            ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     CompanionAvatar(name: selected.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(selected.chatName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")").font(.system(size: 15, weight: .semibold))
+                        Text("\(selected.chatName) · \(isGroupChat(selected) ? "群聊" : "私聊")").font(.system(size: 15, weight: .semibold))
                         Text(selected.isComposerOnly ? "正在写，还没存成草稿" : "未发送").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -233,13 +254,18 @@ struct ReplyDraftsView: View {
                 .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(CompanionPalette.jade.opacity(0.35)))
 
-                HStack {
+                // Four actions plus a saved-stamp do not fit the detail
+                // column at the workspace's minimum width: the row used to
+                // run past the window edge and clip 继续回复 — the primary
+                // action — out of reach. FlowRow wraps instead of
+                // overflowing, and left-alignment keeps the stamp on its own
+                // line above the buttons.
+                FlowRow(spacing: 8) {
                     if let savedAt {
                         Label("修改已保存 · \(savedAt.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12))
                             .foregroundStyle(CompanionPalette.jade)
                     }
-                    Spacer()
                     Button("复制") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(selected.text, forType: .string)
@@ -253,13 +279,33 @@ struct ReplyDraftsView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Text("继续回复会打开对话，发送前再次确认。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
             .padding(.leading, 16)
             .padding(.vertical, 8)
+            }
         }
+    }
+
+    /// Whether this draft belongs to a group chat.
+    ///
+    /// The pane used to decide this from the username shape
+    /// (`contains("@chatroom")`), which is only true for live WeChat
+    /// accounts: every other source of a chat name — preview fixtures,
+    /// aliases, imported rows — fell through to "私聊". The inbox row and
+    /// the tracked contact both know the real answer, so consult them
+    /// first and keep the username shape as the last resort.
+    private func isGroupChat(_ draft: Draft) -> Bool {
+        if let item = monitor.inboxItems.first(where: { $0.chatUsername == draft.chatUsername }) {
+            return item.isGroup
+        }
+        if let entry = store.getWhitelistEntry(username: draft.chatUsername) {
+            return entry.isGroup
+        }
+        return draft.chatUsername.contains("@chatroom")
     }
 
     private func counterpartQuote(for draft: Draft) -> String {

@@ -395,6 +395,15 @@ struct AISettingsView: View {
     // Debounce helpers
     @State private var saveTask: Task<Void, Never>?
 
+    /// One way to reach the "AI 服务" section. Setting `selectedSection`
+    /// alone only moves an unlocked page: `SettingsView` always passes a
+    /// `section`, so `selectedSection` is otherwise ignored and the tab
+    /// switch is what the user actually sees.
+    private func switchToAIServiceTab() {
+        selectedSection = .service
+        NotificationCenter.default.post(name: .hudSwitchTab, object: "aiService")
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -479,9 +488,11 @@ struct AISettingsView: View {
             }
 
             Spacer(minLength: 12)
-            Button("更换服务") {
-                selectedSection = .service
-            }
+            // On the locked "AI 分析与建议" page, writing `selectedSection`
+            // was a no-op — the body renders `lockedSection ?? selectedSection`
+            // and the picker is hidden — so this button did nothing. It now
+            // goes through the same tab switch the "去 AI 服务配置" row uses.
+            Button("更换服务") { switchToAIServiceTab() }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .accessibilityLabel("更换 AI 服务")
@@ -509,10 +520,7 @@ struct AISettingsView: View {
             if !hasUsableConfiguredService {
                 SettingsSection {
                     SettingsRow("还没有可用的 AI 服务", icon: "exclamationmark.circle", iconColor: .orange) {
-                        Button("去 AI 服务配置") {
-                            selectedSection = .service
-                            NotificationCenter.default.post(name: .hudSwitchTab, object: "aiService")
-                        }
+                        Button("去 AI 服务配置") { switchToAIServiceTab() }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                     }

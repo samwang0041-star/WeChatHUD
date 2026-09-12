@@ -1,80 +1,16 @@
 import SwiftUI
 
-struct GroupContextBriefingButton: View {
-    @EnvironmentObject var monitor: ChatMonitor
-    @EnvironmentObject var panelState: PanelState
-
-    let notification: HUDNotification
-    /// Retained for call-site compatibility. The chip used to render a
-    /// tighter variant here; the island type scale is now dense enough that
-    /// both hosts read the same, so the flag no longer changes the chrome.
-    let compact: Bool
-
-    init(notification: HUDNotification, compact: Bool = false) {
-        self.notification = notification
-        self.compact = compact
-    }
-
-    var body: some View {
-        let state = monitor.groupContextState(for: notification)
-
-        Button {
-            let target = !panelState.briefingExpanded
-            withMotion(CompanionMotion.spring) {
-                panelState.setBriefingExpanded(target)
-            }
-            if target {
-                monitor.loadGroupContextBriefing(for: notification)
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if state.isLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.7)
-                }
-                Text(state.isLoading ? "分析中…" : "看看什么事")
-                    .islandButton()
-                    .lineLimit(1)
-            }
-            .foregroundColor(IslandInk.primary)
-            .padding(.horizontal, IslandMetrics.buttonInset)
-            .padding(.vertical, 6)
-            .background(buttonBackground(state: state))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(IslandInk.divider, lineWidth: 0.5)
-            )
-            .cornerRadius(8)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(panelState.briefingExpanded ? "收起群聊上下文" : "看看什么事")
-    }
-
-    private func buttonBackground(state: GroupContextBriefingLoadState) -> Color {
-        if state.isLoading { return BriefingChipInk.loading }
-        if let briefing = state.briefing {
-            return briefing.source == .ai ? BriefingChipInk.ai : BriefingChipInk.snippet
-        }
-        return BriefingChipInk.idle
-    }
-}
-
-/// Fills for the 「看看什么事」 chip. A bordered control needs a touch more
-/// presence than a row hover, so the neutral states come from the shared
-/// chip washes in `IslandInk`; the two jade states keep the AI-vs-cached
-/// distinction.
-private enum BriefingChipInk {
-    static let idle = IslandInk.chip
-    static let snippet = IslandInk.chipStrong
-    static let ai = CompanionPalette.jade.opacity(0.34)
-    static let loading = CompanionPalette.jade.opacity(0.42)
-}
-
-/// The in-place context-briefing card, rendered inline by the surface
-/// that hosts the trigger button (notification banner below the action
-/// row, conversation detail inside the context section). Lives inside
-/// the panel's AX tree, unlike the removed anchored popover.
+/// The in-place context-briefing card.
+///
+/// This file is named after the standalone 「看看什么事」 trigger button that
+/// used to live in it; that button had no host anywhere in the app (the banner
+/// opens the card from its whole-card tap, and inbox rows render the briefing
+/// line inline), so the orphan view is gone and only the card remains.
+///
+/// The card is rendered inline by the surfaces that own the briefing state —
+/// the notification banner (below the identity line) and conversation detail
+/// (inside the context section). It lives inside the panel's AX tree, unlike
+/// the removed anchored popover.
 struct GroupContextBriefingCard: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
@@ -184,6 +120,16 @@ struct GroupContextBriefingCard: View {
                 .islandRowBody()
                 .foregroundColor(IslandInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 6)
+            // Retry keeps the message's own line, so a failed load does not
+            // grow the card (or the panel ceiling) the way a new row would.
+            Button(BriefingRetryAction.label) {
+                BriefingRetryAction.perform(monitor, notification: notification)
+            }
+            .buttonStyle(.plain)
+            .islandButton()
+            .foregroundStyle(CompanionPalette.islandMint)
+            .accessibilityHint("重新向 AI 要一次这段群聊上下文")
         }
         .padding(.vertical, 4)
     }
@@ -223,14 +169,19 @@ struct GroupContextBriefingCard: View {
         }
         if showSnooze {
             IslandSnoozeMenu { date in
-                showSnooze = false
-                panelState.setSnoozeMenuExpanded(false)
                 let item = monitor.inboxItems.first(where: { $0.chatUsername == notification.chatUsername })
                     ?? notification.actionInboxItem()
-                if monitor.snoozeInboxItem(item, until: date) {
-                    panelState.islandSnoozeUndo = (item, date)
-                    panelState.showToast(CompanionProductCopy.snoozeReceipt(until: date))
-                }
+                // A failed write keeps the card and its menu exactly where they
+                // are: the card is the receipt surface (the reason arrives as a
+                // toast) and the open menu is the retry entry.
+                guard IslandSnoozeOutcome.apply(
+                    item,
+                    until: date,
+                    monitor: monitor,
+                    panelState: panelState
+                ) else { return }
+                showSnooze = false
+                panelState.setSnoozeMenuExpanded(false)
                 panelState.setBriefingExpanded(false)
                 panelState.islandSurface = .inbox
                 panelState.goExtended()
@@ -258,5 +209,20 @@ struct GroupContextBriefingCard: View {
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// The action behind the briefing card's 「重试」 button.
+///
+/// Kept out of the view body so the wiring is assertable without hosting
+/// SwiftUI: the forced refresh is the point — a plain
+/// `loadGroupContextBriefing` no-ops while a briefing is already cached, which
+/// is exactly the stale-briefing-plus-error state the button renders in.
+@MainActor
+enum BriefingRetryAction {
+    static let label = "重试"
+
+    static func perform(_ monitor: ChatMonitor, notification: HUDNotification) {
+        monitor.loadGroupContextBriefing(for: notification, forceRefresh: true)
     }
 }

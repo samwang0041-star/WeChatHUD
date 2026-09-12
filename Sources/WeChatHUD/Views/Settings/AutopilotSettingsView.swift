@@ -1,5 +1,50 @@
 import SwiftUI
 
+/// One place for this page's promises.
+///
+/// The group-chat rule used to be stated as two different promises in this
+/// one file, only one of which matched the send gate. The behaviour these
+/// strings must describe is fixed by ChatMonitor: a group reply is always
+/// held for manual confirmation, so it can exist as a draft and can never be
+/// sent unattended.
+enum AutopilotSettingsCopy {
+    static let autoSendTitle = "自动发出去"
+    static let autoSendOn = "达到阈值则自动发送。"
+    static let autoSendOff = "只写草稿，确认后发送。"
+
+    static let groupAtTitle = "群里 @我 时也准备回复"
+    static let groupRule = "群聊默认只记录；打开上面的开关后只写待确认草稿，不会自动发出。"
+    static let groupAtOff = "群消息默认只记录，不写回复。"
+
+    static let confidenceTitle = "自动发送把握程度"
+    static let confidenceHint = "达到这个门槛才会尝试自动发送，仍受发送限制约束。"
+    static let perHourTitle = "每小时最多"
+    static let perHourHint = "每小时发送上限。"
+    static let sessionTitle = "本次整理最多"
+    static let sessionHint = "本次整理期间最多自动发送的条数。"
+
+    static let alwaysManualTitle = "哪些一定交给你"
+    static let alwaysManualRule = "群聊、转账、红包、小程序不会自动发送。其他敏感内容需人工确认。"
+
+    /// The batch option is a window in seconds, not a message count. The old
+    /// "连着几条一起回" title read as "reply after N messages", which is not
+    /// what `batchWindowSeconds` does.
+    static let batchTitle = "连发时等几秒一起回"
+    static let batchHint = "连续几条消息会先等这个时长，再合成一次回复。单位是秒，不是条数。"
+
+    static func excludedTitle(count: Int) -> String { "不会自动回复的人 (\(count))" }
+    static let excludedEmpty = "还没有添加。这里的人不会被自动回复；要不要真的发出去，仍由上面的开关决定。"
+    static let excludedAddButton = "添加排除对象"
+    static let advancedTitle = "高级设置"
+    static let historyTitle = "自动回复记录"
+    static let historyEmpty = "暂无记录"
+    static let historyClear = "清除历史"
+    static let historyClearConfirmTitle = "确定清除所有自动回复记录？"
+    static let historyClearConfirm = "清除"
+    static let historyClearCancel = "取消"
+    static let historyClearFailed = "记录没清掉，请稍后重试（已发出的消息不受影响）"
+}
+
 struct AutopilotSettingsView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
@@ -45,8 +90,8 @@ struct AutopilotSettingsView: View {
 
             SettingsSection("自动回复") {
                 SettingsToggleRow(
-                    "自动发出去",
-                    subtitle: autoSendEnabled ? "达到阈值则自动发送。" : "只写草稿，确认后发送。",
+                    AutopilotSettingsCopy.autoSendTitle,
+                    subtitle: autoSendEnabled ? AutopilotSettingsCopy.autoSendOn : AutopilotSettingsCopy.autoSendOff,
                     isOn: Binding(
                         get: { autoSendEnabled },
                         set: { newValue in
@@ -61,10 +106,10 @@ struct AutopilotSettingsView: View {
                 )
                 SettingsRowDivider()
                 SettingsToggleRow(
-                    "群里 @我 时也准备回复",
+                    AutopilotSettingsCopy.groupAtTitle,
                     subtitle: handleGroupAt
-                        ? "群 @ 会写成待确认草稿。转账和红包仍不会自动回。"
-                        : "群消息默认只记录，不写回复。",
+                        ? AutopilotSettingsCopy.groupRule
+                        : AutopilotSettingsCopy.groupAtOff,
                     isOn: Binding(
                         get: { handleGroupAt },
                         set: { handleGroupAt = $0; save() }
@@ -115,10 +160,16 @@ struct AutopilotSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 SettingsRowDivider()
+                // The batch window lives in the main section: it is part of
+                // "when do replies go out", not an expert tweak, and its old
+                // home behind 高级设置 hid the answer from the question it
+                // answers.
+                limitsBatchRow
+                SettingsRowDivider()
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("哪些一定交给你")
+                    Text(AutopilotSettingsCopy.alwaysManualTitle)
                         .font(.system(size: 13, weight: .medium))
-                    Text("群聊、转账、红包、小程序不会自动发送。其他敏感内容需人工确认。")
+                    Text(AutopilotSettingsCopy.alwaysManualRule)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -129,9 +180,8 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 SettingsRowDivider()
-                DisclosureGroup("高级设置") {
+                DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
                     VStack(alignment: .leading, spacing: 12) {
-                        limitsBatchRow
                         advancedSection
                         historySection
                     }
@@ -187,9 +237,9 @@ struct AutopilotSettingsView: View {
     }
 
     private var limitsBatchRow: some View {
-        SettingsSection("连着几条一起回") {
-            SettingsRow("连着几条一起回", subtitle: "连发时先等一会儿再回。") {
-                Picker("连着几条一起回", selection: $batchWindowSeconds) {
+        SettingsSection(AutopilotSettingsCopy.batchTitle) {
+            SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
+                Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
                     ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
                 }
                 .pickerStyle(.menu)
@@ -203,9 +253,9 @@ struct AutopilotSettingsView: View {
     // MARK: - Exclusion
 
     private var exclusionSection: some View {
-        SettingsSection("排除联系人 (\(excludedContacts.count))") {
+        SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
             if excludedContacts.isEmpty {
-                Text("还没有排除的人。自动回复会看已经记下的私聊对象；要不要真的发出去，仍由上面的开关决定。")
+                Text(AutopilotSettingsCopy.excludedEmpty)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 10)
@@ -243,7 +293,7 @@ struct AutopilotSettingsView: View {
                             }
                         }
                     } label: {
-                        Label("添加", systemImage: "plus.circle")
+                        Label(AutopilotSettingsCopy.excludedAddButton, systemImage: "plus.circle")
                             .font(.system(size: 11))
                     }
                     .menuStyle(.borderlessButton)
@@ -258,7 +308,7 @@ struct AutopilotSettingsView: View {
 
     private var advancedSection: some View {
         SettingsSection("高级") {
-            Text("群聊消息仅记录，不自动发送回复。需要回答时，请在对话详情中整理并确认回复内容。")
+            Text(AutopilotSettingsCopy.groupRule)
                 .font(.callout).foregroundStyle(.secondary).padding(14)
             SettingsRowDivider()
             SettingsRow(
@@ -281,9 +331,9 @@ struct AutopilotSettingsView: View {
     // MARK: - History
 
     private var historySection: some View {
-        SettingsSection("自动回复记录") {
+        SettingsSection(AutopilotSettingsCopy.historyTitle) {
             if sessions.isEmpty {
-                Text("暂无记录")
+                Text(AutopilotSettingsCopy.historyEmpty)
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 10)
@@ -295,18 +345,25 @@ struct AutopilotSettingsView: View {
                 SettingsRowDivider()
                 HStack {
                     Spacer()
-                    Button("清除历史") { showClearConfirm = true }
-                        .font(.system(size: 10))
-                        .foregroundColor(.red.opacity(0.7))
-                        .alert("确定清除所有自动回复记录？", isPresented: $showClearConfirm) {
-                            Button("取消", role: .cancel) {}
-                            Button("清除", role: .destructive) {
+                    Button(AutopilotSettingsCopy.historyClear) { showClearConfirm = true }
+                        // Was 10pt red at 0.7 opacity — below the AA
+                        // contrast floor and a small hit target for a
+                        // destructive action.
+                        .font(.system(size: 12))
+                        .foregroundColor(.red)
+                        .alert(AutopilotSettingsCopy.historyClearConfirmTitle, isPresented: $showClearConfirm) {
+                            Button(AutopilotSettingsCopy.historyClearCancel, role: .cancel) {}
+                            Button(AutopilotSettingsCopy.historyClearConfirm, role: .destructive) {
                                 do {
                                     try store.clearAutopilotHistory()
                                     sessions = store.loadAutopilotSessions(limit: 10)
                                     saveError = nil
                                 } catch {
-                                    saveError = "记录没清掉。请先停止自动回复，再试一次。"
+                                    // Clearing history has no dependency on
+                                    // autopilot being stopped; the old copy
+                                    // invented a precondition the user could
+                                    // not act on.
+                                    saveError = AutopilotSettingsCopy.historyClearFailed
                                 }
                             }
                         }

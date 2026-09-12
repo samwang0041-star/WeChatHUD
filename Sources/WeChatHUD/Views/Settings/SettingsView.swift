@@ -352,7 +352,12 @@ private struct SettingsSidebarSections: View {
         .accessibilityLabel(tab.label)
         .accessibilityHint("回车打开这一页")
         .accessibilityIdentifier("workspace.\(tab.rawValue)")
-        .accessibilityValue(selected ? "已选中" : "")
+        // Express the current page with the standard selected trait, the way
+        // every other picker in the app does. This row used to announce
+        // selection twice — a custom "已选中" value here plus whatever
+        // selected state the row already carried — so a screen reader read
+        // two different pages as selected.
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func sidebarCount(_ tab: SettingsView.Tab) -> Int? {
@@ -374,9 +379,16 @@ private struct SettingsPreviewChrome: View {
     @EnvironmentObject var store: HUDStore
 
     var body: some View {
-        HStack {
+        // Fifteen buttons in one HStack collapsed into vertical
+        // one-character-per-line labels the moment the workspace was
+        // narrower than the row's ideal width — which is exactly the size
+        // QA screenshots are taken at, so the demo controls became
+        // unreadable. An adaptive grid keeps every label legible at any
+        // window width.
+        VStack(alignment: .leading, spacing: 8) {
             Label("交互演示 · 全部为虚构数据，不读取或操作微信", systemImage: "play.rectangle")
-            Spacer()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 8, alignment: .leading)],
+                      alignment: .leading, spacing: 8) {
             Button("模拟新消息") { PreviewRuntime.simulateNotification(monitor: monitor, panelState: panelState) }
             Button("模拟首次浮窗") {
                 panelState.islandSurface = .firstLaunch
@@ -415,6 +427,7 @@ private struct SettingsPreviewChrome: View {
                 PreviewRuntime.toggleExternalDisplay(store: store); previewA11yNonce += 1
             }
             Button("导出界面快照") { PreviewRuntime.captureSurfaces() }
+            }
         }
         .font(.callout).foregroundStyle(.orange)
         .frame(maxWidth: .infinity, alignment: .leading)
