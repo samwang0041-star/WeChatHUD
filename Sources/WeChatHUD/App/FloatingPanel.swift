@@ -259,6 +259,7 @@ class FloatingPanel: NSPanel {
     deinit {
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor) }
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor) }
+        pointerRecoveryTimer?.invalidate()
     }
 
     /// Which screen preference to use — updated from settings.
@@ -319,6 +320,17 @@ class FloatingPanel: NSPanel {
         let x = notch.notchCenterX - panelWidth / 2
         let y = screen.frame.maxY - frame.height
         setFrameOrigin(NSPoint(x: x, y: y))
+        // Re-anchor the island to the (possibly new) notch. Only the origin
+        // moved, so the mask's offset inside the stage is unchanged — but the
+        // screen-space island the hit test reads has to be re-derived.
+        if let island = visibleFrame {
+            applyIslandMask(painted: NSRect(
+                x: notch.notchCenterX - island.width / 2,
+                y: frame.maxY - island.height,
+                width: island.width,
+                height: island.height
+            ), in: frame)
+        }
         recordIslandScreenIfPreviewing()
     }
 
@@ -358,8 +370,23 @@ class FloatingPanel: NSPanel {
     private var visibleFrame: NSRect?
     private var maskLayer: CALayer?
     var visibleIslandFrame: NSRect? { visibleFrame }
+    /// The island *stage*: the largest island rect this panel has ever needed.
+    ///
+    /// The window is kept at least this big and every later expand/collapse is
+    /// a compositor mask inside it. Growing the window is the one operation
+    /// that cannot be paid off the animation path: the window server
+    /// allocates a new backing store and the hosted SwiftUI tree re-lays out,
+    /// which lands as a dropped frame in the middle of the motion.
+    ///
+    /// Eight in-process expand/collapse cycles measured exactly that
+    /// asymmetry — every *expand* dropped one 29–42 ms frame, while every
+    /// collapse held a clean 16.7 ms, because a collapse's cover is already
+    /// the current window frame and never resizes. Keeping the stage means
+    /// only the first expand pays it.
+    private var stageSize: CGSize = .zero
     private var localPointerMonitor: Any?
     private var globalPointerMonitor: Any?
+    private var pointerRecoveryTimer: Timer?
 
     /// One frame-animation pass, modelled as four damped springs — one per
     /// frame component (x, y, width, height). Velocity is kept across
@@ -504,7 +531,11 @@ class FloatingPanel: NSPanel {
         if CompanionMotion.reduceMotion || fromVisible == target {
             cancelFrameAnimation(notify: false)
             IslandFrameTiming.recordInstant()
-            setFrame(target, display: true)
+            let cover = growStage(toCover: target)
+            if cover != frame {
+                setFrame(cover, display: true)
+            }
+            applyIslandMask(painted: target, in: cover)
             onFrameAnimationEnded?()
             return
         }
@@ -519,11 +550,13 @@ class FloatingPanel: NSPanel {
             run.spring.expanding = IslandMotion.isExpanding(from: fromVisible, to: target)
             run.landing = landing
             run.startedWallClock = Date()
-            let grown = IslandMaskGeometry.covering(run.cover, target)
-            if grown != run.cover {
-                setFrame(grown, display: false)
-                run.cover = grown
-                applyIslandMask(painted: FloatingPanel.rect(from: run.painted), in: grown)
+            // A retarget that needs more room grows the stage the same way a
+            // fresh run does; one that fits inside it resizes nothing.
+            let needed = growStage(toCover: target)
+            if needed != run.cover {
+                setFrame(needed, display: false)
+                run.cover = needed
+                applyIslandMask(painted: FloatingPanel.rect(from: run.painted), in: needed)
             }
             animationRun = run
             return
@@ -532,12 +565,31 @@ class FloatingPanel: NSPanel {
         onFrameAnimationStarted?()
 
         let landing = FloatingPanel.landing(target)
-        let cover = IslandMaskGeometry.covering(fromVisible, target)
+        // Cover = the existing stage, grown only if this island needs more
+        // room than it has ever had. A collapse — or any expand the stage
+        // already holds — therefore performs NO window resize at all: the
+        // spring is pure compositor work from its first frame to its last.
+        let cover = growStage(toCover: target)
         // One window-server resize for the whole run: the covering union.
         // SwiftUI lays out once at the destination size; later ticks only
         // move a compositor mask. That is what removes the 19 ms first-tick
         // hitch of setFrame-per-vsync.
-        setFrame(cover, display: false)
+        //
+        // The resize itself is timed: it is the one window-server round trip
+        // left in the run, and the SwiftUI layout it triggers lands on the
+        // *next* frame — outside any `slowStep` measurement. Logging it here
+        // is the only way to tell "the island is janky" apart from "one frame
+        // paid for the destination layout".
+        let resizeStart = CACurrentMediaTime()
+        if cover != frame {
+            setFrame(cover, display: false)
+        }
+        let resizeCost = (CACurrentMediaTime() - resizeStart) * 1000
+        if resizeCost > 4 {
+            AnimationDebugger.logEvent(String(format: "stageGrow %.1fms %.0f×%.0f -> %.0f×%.0f",
+                                            resizeCost, fromVisible.width, fromVisible.height,
+                                            cover.width, cover.height))
+        }
         applyIslandMask(painted: fromVisible, in: cover)
         animationRun = SpringRun(
             spring: IslandFrameSpring(
@@ -600,10 +652,24 @@ class FloatingPanel: NSPanel {
 
         // First tick after a retarget/start has no previous timestamp —
         // use one nominal frame instead of a huge dt.
-        let dt = run.lastTimestamp > 0
-            ? min(max(mediaTime - run.lastTimestamp, 0), IslandMotion.maxStep)
-            : 1.0 / 60.0
+        let isFirstTick = run.lastTimestamp <= 0
+        let dt = isFirstTick
+            ? 1.0 / 60.0
+            : min(max(mediaTime - run.lastTimestamp, 0), IslandMotion.maxStep)
         run.lastTimestamp = mediaTime
+
+        // How long the run waited for its first frame. The destination layout
+        // that the covering resize triggers is paid on the main thread before
+        // this tick can run, so a late first tick is the signature of "the
+        // window resized and SwiftUI re-laid out the whole inbox" — jank the
+        // per-tick `slowStep` probe can never see, because it measures only
+        // the tick body.
+        if isFirstTick {
+            let latency = Date().timeIntervalSince(run.startedWallClock) * 1000
+            if latency > 20 {
+                AnimationDebugger.logEvent(String(format: "firstTick %.1fms after run start", latency))
+            }
+        }
 
         // One vsync step of the frame spring. The spring integrates its own
         // continuous position — never the window's read-back frame, which
@@ -658,19 +724,16 @@ class FloatingPanel: NSPanel {
         animationTimer = nil
         animationDisplayLink?.invalidate()
         animationDisplayLink = nil
-        // Land on the whole-point rect the server would store for the target,
-        // and paint once so the final frame is never left to a deferred
-        // composite of the previous step. Setting whole points means the
-        // window stores exactly this rect — no quantizer step is left to
-        // happen after the motion has stopped.
-        // Tell SwiftUI to swap surfaces *before* the covering window shrinks
-        // to the landing rect. A collapse that setFrame'd first would briefly
-        // show the outgoing inbox inside a 32 pt bar; swapping first lets the
-        // compact wings paint into the still-covering window, then the mask
-        // comes off on the already-correct compact frame.
+        // Park the mask on the whole-point rect the spring landed on and
+        // leave the window at the stage. The island the user sees is exactly
+        // this rect; the window around it is invisible either way, and
+        // keeping it means the next expand has nothing to resize.
+        //
+        // Order matters: the mask moves to the landing rect *before* SwiftUI
+        // swaps surfaces, so the incoming surface is already inside the pill
+        // when it appears.
+        applyIslandMask(painted: FloatingPanel.rect(from: run.landing), in: run.cover)
         onFrameAnimationEnded?()
-        setFrame(FloatingPanel.rect(from: run.landing), display: true)
-        clearIslandMask()
         AnimationDebugger.logEnd(frame: frame)
         IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.startedWallClock))
     }
@@ -682,7 +745,12 @@ class FloatingPanel: NSPanel {
     func setFrameInstantly(height: CGFloat, width: CGFloat? = nil) {
         let wasAnimating = isFrameAnimationRunning
         cancelFrameAnimation(notify: false)
-        setFrame(targetFrame(height: height, width: width), display: true)
+        let island = targetFrame(height: height, width: width)
+        let cover = growStage(toCover: island)
+        if cover != frame {
+            setFrame(cover, display: true)
+        }
+        applyIslandMask(painted: island, in: cover)
         if wasAnimating { onFrameAnimationEnded?() }
     }
 
@@ -692,7 +760,12 @@ class FloatingPanel: NSPanel {
         let centerX = frame.midX
         let x = centerX - newWidth / 2
         let y = frame.maxY - newHeight
-        setFrame(NSRect(x: x, y: y, width: newWidth, height: newHeight), display: true)
+        let island = NSRect(x: x, y: y, width: newWidth, height: newHeight)
+        let cover = growStage(toCover: island)
+        if cover != frame {
+            setFrame(cover, display: true)
+        }
+        applyIslandMask(painted: island, in: cover)
         if wasAnimating { onFrameAnimationEnded?() }
     }
 
@@ -711,10 +784,7 @@ class FloatingPanel: NSPanel {
         } else {
             mask = CALayer()
             mask.backgroundColor = NSColor.white.cgColor
-            // Unflipped layer space: MinY is the bottom of the island.
-            // Compact (capsule) rounds every corner; expanded keeps the top
-            // edge square so the body stays flush with the screen.
-            mask.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            mask.maskedCorners = IslandMaskGeometry.maskedCorners
             container.layer?.mask = mask
             maskLayer = mask
         }
@@ -723,27 +793,18 @@ class FloatingPanel: NSPanel {
         CATransaction.setDisableActions(true)
         mask.frame = layerFrame
         mask.cornerRadius = IslandMaskGeometry.cornerRadius(for: layerFrame.size)
-        if layerFrame.height <= 40 {
-            mask.maskedCorners = [
-                .layerMinXMinYCorner, .layerMaxXMinYCorner,
-                .layerMinXMaxYCorner, .layerMaxXMaxYCorner
-            ]
-        } else {
-            mask.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        }
         CATransaction.commit()
         refreshPointerAgainstVisibleIsland()
     }
 
     private func clearIslandMask() {
-        visibleFrame = nil
-        guard maskLayer != nil else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        contentView?.layer?.mask = nil
-        CATransaction.commit()
-        maskLayer = nil
-        refreshPointerAgainstVisibleIsland()
+        // The mask is permanent now: the window is a stage far larger than
+        // the island, so dropping the mask would expose the whole stage.
+        // Cancelling a run therefore leaves the island where the run had
+        // reached — callers that want a different island re-apply the mask
+        // with it.
+        guard maskLayer != nil, let island = visibleFrame else { return }
+        applyIslandMask(painted: island, in: frame)
     }
 
     /// The covering window's tracking area fires enter as soon as the union
@@ -751,7 +812,40 @@ class FloatingPanel: NSPanel {
     /// the yet-to-grow region does not count as hovering, and a cursor that
     /// the shrinking mask has left is reported as an exit.
     private func refreshPointerAgainstVisibleIsland() {
-        pillContainer.publishPointerInside(containsMouse())
+        let inside = containsMouse()
+        // The stage is far larger than the island, so the window has to stop
+        // taking mouse events whenever the cursor is over the part of it that
+        // is not the island — otherwise a transparent overlay would swallow
+        // clicks across the top-centre of the screen. hitTest alone is not
+        // enough: AppKit still routes a click to the window (and can activate
+        // it) when the content view declines it. (Same pairing as
+        // codex-island's IslandWindowController + IslandHostingView.)
+        if ignoresMouseEvents == inside {
+            ignoresMouseEvents = !inside
+            setPointerRecoveryPolling(!inside)
+            AnimationDebugger.logEvent("pointer hit-test -> \(inside ? "hoverable" : "click-through") island=\(String(format: "%.0f×%.0f", visibleFrame?.width ?? 0, visibleFrame?.height ?? 0))")
+        }
+        pillContainer.publishPointerInside(inside)
+    }
+
+    /// While the window is ignoring mouse events it receives none, so the only
+    /// way back to hoverable is the global monitor firing. If that monitor is
+    /// unavailable (no Accessibility grant, a stray sandbox) the island would
+    /// go permanently dead to the pointer, which is a far worse failure than a
+    /// little idle CPU. Polling only runs in that state — while the island is
+    /// hoverable, real events do the work.
+    private func setPointerRecoveryPolling(_ on: Bool) {
+        if on {
+            guard pointerRecoveryTimer == nil else { return }
+            let timer = Timer(timeInterval: 1.0 / 6.0, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshPointerAgainstVisibleIsland() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            pointerRecoveryTimer = timer
+        } else {
+            pointerRecoveryTimer?.invalidate()
+            pointerRecoveryTimer = nil
+        }
     }
 
     /// Tracking areas only fire while the cursor is inside the covering
@@ -781,6 +875,30 @@ class FloatingPanel: NSPanel {
         let x = notch.notchCenterX - newWidth / 2
         let y = (targetScreen?.frame.maxY ?? frame.maxY) - newHeight
         return NSRect(x: x, y: y, width: newWidth, height: newHeight)
+    }
+
+    /// The stage, centred on the notch and pinned to the screen's top edge —
+    /// the same anchoring an island rect uses, so the mask's mapping between
+    /// the two is a pure translation.
+    private func stageFrame(size: CGSize) -> NSRect {
+        let x = notch.notchCenterX - size.width / 2
+        let y = (targetScreen?.frame.maxY ?? frame.maxY) - size.height
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    /// Grow the stage so it can hold `island`, and return the stage frame.
+    ///
+    /// Monotonic on purpose: the stage never shrinks. A smaller island is
+    /// revealed by the mask, not by resizing the window — which is the whole
+    /// point, because the resize is what costs a frame.
+    @discardableResult
+    private func growStage(toCover island: NSRect) -> NSRect {
+        let size = CGSize(
+            width: max(max(stageSize.width, frame.width), island.width),
+            height: max(max(stageSize.height, frame.height), island.height)
+        )
+        stageSize = size
+        return stageFrame(size: size)
     }
 
     /// What the panel is showing, which decides the surface behind it.

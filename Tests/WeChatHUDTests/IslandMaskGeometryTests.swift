@@ -35,6 +35,18 @@ final class IslandMaskGeometryTests: XCTestCase {
         XCTAssertEqual(IslandMotion.maskCornerRadius(width: 40, height: 32), 16)
     }
 
+    /// The island hangs off the screen's top edge, so only its bottom corners
+    /// round. Rounding the top would read as a floating capsule — and it must
+    /// hold at *every* size, compact included, because the compact pill is
+    /// the state where a capsule shape looks most plausible and is still
+    /// wrong.
+    func testMaskRoundsOnlyTheIslandsBottomCorners() {
+        XCTAssertEqual(IslandMaskGeometry.maskedCorners,
+                       [.layerMinXMinYCorner, .layerMaxXMinYCorner])
+        XCTAssertFalse(IslandMaskGeometry.maskedCorners.contains(.layerMinXMaxYCorner))
+        XCTAssertFalse(IslandMaskGeometry.maskedCorners.contains(.layerMaxXMaxYCorner))
+    }
+
     func testHitTestingUsesThePaintedIslandNotTheCover() {
         let painted = NSRect(x: 811, y: 1048, width: 297, height: 32)
         XCTAssertTrue(IslandMaskGeometry.containsMouse(painted: painted, point: NSPoint(x: 960, y: 1060)))

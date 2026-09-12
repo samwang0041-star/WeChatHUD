@@ -131,4 +131,19 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertEqual(IslandMotion.maskCornerRadius(width: 297, height: 32), 16)
         XCTAssertEqual(IslandMotion.maskCornerRadius(width: 560, height: 252), 22)
     }
+
+    func testStrongEaseOutRespectsReduceMotion() {
+        CompanionMotion.reduceMotionProvider = { false }
+        XCTAssertNotNil(CompanionMotion.strongEaseOut())
+        CompanionMotion.reduceMotionProvider = { true }
+        XCTAssertNil(CompanionMotion.strongEaseOut())
+    }
+
+    /// A press has to be visible. 1.0 is a no-op and anything at or below
+    /// 0.92 reads as rubber, so the token is pinned inside the usable band.
+    func testPressScaleIsInsideTheVisibleButNotRubberyBand() {
+        XCTAssertGreaterThanOrEqual(CompanionMotion.pressScale, 0.92)
+        XCTAssertLessThanOrEqual(CompanionMotion.pressScale, 0.97)
+        XCTAssertLessThan(CompanionMotion.pressScale, 1)
+    }
 }
