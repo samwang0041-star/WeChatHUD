@@ -57,8 +57,13 @@ enum SafeNumber {
         case let d as Double:
             return exactInt(d, in: range)
         case let s as String:
-            return Int(s.trimmingCharacters(in: .whitespaces))
-                .flatMap { range.contains($0) ? $0 : nil }
+            let text = s.trimmingCharacters(in: .whitespaces)
+            if let i = Int(text), range.contains(i) { return i }
+            // Models also send whole numbers as decimal strings (`"3.0"`).
+            // Accept those (and only those — `"3.5"` stays nil) instead of
+            // silently dropping the reference.
+            if let d = Double(text), let exact = Int(exactly: d), range.contains(exact) { return exact }
+            return nil
         default:
             return nil
         }

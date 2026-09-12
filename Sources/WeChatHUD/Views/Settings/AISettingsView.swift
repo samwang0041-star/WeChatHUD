@@ -125,6 +125,12 @@ struct ProviderCard: View {
     let onProviderSelected: (String) -> Void
 
     @State private var advancedConnectionExpanded = false
+    /// The preset id `syncProviderPreset` last aligned to. Switching to a
+    /// *different* preset must drop the key even when the URL matches (two
+    /// presets can share an address with different keys); re-syncing the same
+    /// preset keeps it (otherwise two ordinary clicks silently empty a working
+    /// credential). Nil until the first sync so hydration never wipes.
+    @State private var lastSyncedPresetID: String?
 
     private var usesUnencryptedRemoteHTTP: Bool {
         guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -319,7 +325,23 @@ struct ProviderCard: View {
     private func syncProviderPreset() {
         testResult = ""
         guard let preset = provider, !isCustomSource else { return }
-        if baseURL != preset.baseURL {
+        defer { lastSyncedPresetID = preset.id }
+        guard let previous = lastSyncedPresetID else {
+            // First sync after hydration: align address/models, never touch
+            // the key the user already has saved.
+            if baseURL != preset.baseURL { baseURL = preset.baseURL }
+            models = preset.models
+            if model.isEmpty || !preset.models.contains(model) {
+                model = preset.models.first ?? ""
+            }
+            return
+        }
+        if preset.id != previous {
+            // Different service: the address follows the preset and the old
+            // key must not linger, even when the URL is identical.
+            baseURL = preset.baseURL
+            apiKey = ""
+        } else if baseURL != preset.baseURL {
             baseURL = preset.baseURL
             apiKey = ""
         }
@@ -885,15 +907,17 @@ struct AISettingsView: View {
     }
 
     private func applyPresetProvider(_ id: String) {
+        let previousProvider = providerID
         providerID = id
         guard let preset = AIProvider.find(id), preset.id != "custom" else { return }
-        // Clear the key only when the service address actually moves. The
-        // unconditional wipe destroyed a working credential on a path the user
-        // cannot see coming: `onChange(of: serviceSource)` calls this when
-        // flipping back to "预设供应商" while `providerID == "custom"`, so
-        // two ordinary clicks (preset → custom → preset) silently emptied the
-        // field and saved it. `syncProviderPreset` has always had this guard.
-        if baseURL != preset.baseURL {
+        // Clear the key when moving to a different service, even at the same
+        // address (two presets can share one URL with different keys). Coming
+        // back from "custom" keeps the key when the address still matches:
+        // the key in the field is the preset's own unless the user edited it
+        // under custom *and* moved the address — in which case it is dropped
+        // below. Flipping preset → custom → preset with no edits therefore
+        // preserves a working credential instead of silently emptying it.
+        if (preset.id != previousProvider && previousProvider != "custom") || baseURL != preset.baseURL {
             baseURL = preset.baseURL
             apiKey = ""
         }

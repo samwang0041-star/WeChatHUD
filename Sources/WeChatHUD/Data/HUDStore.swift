@@ -143,7 +143,16 @@ final class HUDStore: ObservableObject {
         try? exec("""
             UPDATE discussion_items SET due_at = NULL
             WHERE due_at IS NOT NULL AND typeof(due_at) = 'text' AND TRIM(due_at) = ''
-        """)
+            """)
+        // Belt and braces: any TEXT value sorts after every number in SQLite,
+        // so a stray non-empty TEXT (only non-numeric garbage can survive the
+        // INTEGER column affinity — all-digit strings are stored as INTEGER)
+        // would make `due_at > 0` true for a dateless row while Swift reads
+        // nil. NULL out whatever TEXT is left.
+        try? exec("""
+            UPDATE discussion_items SET due_at = NULL
+            WHERE typeof(due_at) = 'text'
+            """)
         return writeStatementCount - before
     }
 

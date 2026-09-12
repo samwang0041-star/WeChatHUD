@@ -124,6 +124,41 @@ final class DiscussionDueAtStorageTests: XCTestCase {
         XCTAssertNil(loaded.dueAt)
     }
 
+    func testMigrationClearsNonEmptyTextGarbage() throws {
+        // Only non-numeric garbage can survive as TEXT (the INTEGER column
+        // affinity stores all-digit strings as INTEGER). Any TEXT sorts after
+        // every number in SQLite, so a stray 'soon' would make `due_at > 0`
+        // true for a dateless row while Swift reads nil.
+        let store = try makeStore()
+        _ = try store.insertDiscussionItem(
+            chatUsername: "c", chatName: "林晓", kind: .todo, owner: .mine,
+            content: "garbage", detail: nil, anchorMsgUID: "G1",
+            sourceTimestamp: 1_700_000_000, dueAt: nil, confidence: 0.9, promptVersion: "test"
+        )
+        try writeRawDueAt(anchor: "G1", value: "soon")
+        XCTAssertEqual(try textDueAtRowCount(), 1, "precondition: the TEXT row exists")
+        store.normalizeDiscussionDueDates()
+        XCTAssertEqual(try textDueAtRowCount(), 0, "no TEXT deadline values remain")
+        let items = try store.loadDiscussionItems(chatUsername: "c")
+        let garbage = try XCTUnwrap(items.first { $0.anchorMsgUID == "G1" })
+        XCTAssertNil(garbage.dueAt)
+    }
+
+    private func writeRawDueAt(anchor: String, value: String) throws {
+        var handle: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbPath, &handle), SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        var stmt: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_prepare_v2(handle, "UPDATE discussion_items SET due_at = ? WHERE anchor_msg_uid = ?", -1, &stmt, nil),
+            SQLITE_OK
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, value, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_text(stmt, 2, anchor, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_DONE)
+    }
+
     func testMigrationLeavesRealTimestampsAlone() throws {
         // Scoped to the empty string: a dated row must survive untouched, and a
         // second run must be a no-op.

@@ -146,8 +146,24 @@ actor CodexTokenStore {
         refreshInFlight = task
         defer { refreshInFlight = nil }
 
-        let result = try await task.value
-        applyRefreshed(result)
+        do {
+            let result = try await task.value
+            applyRefreshed(result)
+        } catch {
+            // Cross-process race: the codex CLI may have rotated auth.json
+            // mid-flight, so every candidate we just tried is stale. Reread
+            // once and retry with a token we have not tried before giving up
+            // to authExpired (which forces a manual re-login).
+            if let profile = try? CodexAuth.readProfile(env: envProvider()),
+               !profile.refreshToken.isEmpty,
+               !candidates.contains(profile.refreshToken) {
+                fileRefreshToken = profile.refreshToken
+                let retry = try await Self.networkRefresh(refreshToken: profile.refreshToken, session: session)
+                applyRefreshed(retry)
+                return
+            }
+            throw error
+        }
     }
 
     /// Ordered refresh-token candidates for a single refresh attempt.

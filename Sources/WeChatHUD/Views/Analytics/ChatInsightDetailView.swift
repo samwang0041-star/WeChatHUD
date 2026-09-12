@@ -400,7 +400,7 @@ struct ChatInsightDetailView: View {
 
     private var livePendingCount: Int {
         monitor.discussionItems.filter {
-            $0.chatUsername == chatUsername && $0.status == .pending && $0.kind != .info
+            $0.chatUsername == chatUsername && $0.status == .pending && !$0.kind.isRecord
         }.count
     }
 

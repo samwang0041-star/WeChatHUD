@@ -87,6 +87,51 @@ final class AutopilotSafetyTests: XCTestCase {
         )
     }
 
+    func testTraditionalVariantStillHitsSimplifiedKeyword() {
+        // 轉賬 must match the 转账 keyword: without Hant→Hans folding a
+        // one-character variant swaps the whole safety decision.
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "幫我轉賬 5000", replyText: nil, risk: .low,
+                reasonCode: nil, sensitiveKeywords: ["转账"]
+            ),
+            "命中敏感词「转账」"
+        )
+    }
+
+    func testNonHanziMoneyCuesHoldWithoutKeywords() {
+        // Emoji and pinyin spellings cannot live in the keyword list as
+        // Hanzi, so they are built-in tripwires on the incoming text.
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "给你发了个🧧快收", replyText: "好", risk: .low,
+                reasonCode: nil, sensitiveKeywords: []
+            ),
+            "疑似资金往来「🧧」，需本人处理"
+        )
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "wo zhuanzhang gei ni le", replyText: "好", risk: .low,
+                reasonCode: nil, sensitiveKeywords: []
+            ),
+            "疑似资金往来「zhuanzhang」，需本人处理"
+        )
+    }
+
+    func testDefaultKeywordsCoverRedPacketAndSettlement() {
+        let config = AutopilotConfig()
+        XCTAssertTrue(config.sensitiveKeywords.contains("红包"))
+        XCTAssertTrue(config.sensitiveKeywords.contains("到账"))
+    }
+
+    func testNegativeSendCapFallsBackToDefault() throws {
+        // The send path treats <= 0 as unlimited, so a corrupted negative
+        // must not silently lift the per-session cap.
+        let data = #"{"maxSendsPerSession":-5}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(AutopilotConfig.self, from: data)
+        XCTAssertEqual(decoded.maxSendsPerSession, AutopilotConfig().maxSendsPerSession)
+    }
+
     func testEmptyKeywordListReliesOnRiskAndReasonCode() {
         XCTAssertNil(
             AutopilotService.autopilotSafetyHoldReason(

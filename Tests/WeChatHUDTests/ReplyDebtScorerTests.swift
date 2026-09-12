@@ -2,6 +2,24 @@ import XCTest
 @testable import WeChatHUD
 
 final class ReplyDebtScorerTests: XCTestCase {
+    func testLoneZaiMaAfterMyEarlierMessageIsDebtNotACloser() {
+        // "在吗" is an opener demanding a reply, not a trailing ack: an
+        // earlier outbound of mine must not let it skip the anchor.
+        let item = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: "在吗",
+                    latestOutbound: 100,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        ).first
+        XCTAssertEqual(item?.chatUsername, "alice")
+    }
+
     func testPrivateChatWithoutReplyCreatesDebtEvenWhenRead() {
         let item = ReplyDebtScorer.build(
             seeds: [

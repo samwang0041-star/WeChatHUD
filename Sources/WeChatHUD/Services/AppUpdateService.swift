@@ -25,6 +25,13 @@ struct URLSessionAppUpdateClient: AppUpdateHTTPClient {
         )
     }
 
+    /// A client that follows redirects (the default URLSession behaviour).
+    /// Downloads use pre-built URLs that always redirect once, so they need
+    /// this instead of the redirect-inspecting default above.
+    static func followingRedirects() -> URLSessionAppUpdateClient {
+        URLSessionAppUpdateClient(session: URLSession(configuration: .ephemeral))
+    }
+
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
     }
@@ -125,6 +132,11 @@ struct AppUpdateService {
     static let previewIdentifier = "com.wechathud.product-preview"
 
     var http: any AppUpdateHTTPClient
+    /// Downloads follow one 302 (API assets and releases/download both redirect
+    /// to objects.githubusercontent.com), so they need a redirect-following
+    /// client. `http` stays redirect-inspecting for `releases/latest` tag
+    /// resolution.
+    var downloadHTTP: any AppUpdateHTTPClient
     var currentVersion: AppVersion
     var currentBundleIdentifier: String
     var currentBundleURL: URL
@@ -143,6 +155,7 @@ struct AppUpdateService {
 
     init(
         http: any AppUpdateHTTPClient = URLSessionAppUpdateClient(),
+        downloadHTTP: (any AppUpdateHTTPClient)? = nil,
         currentVersion: AppVersion,
         currentBundleIdentifier: String = Bundle.main.bundleIdentifier ?? AppUpdateService.productionIdentifier,
         currentBundleURL: URL = Bundle.main.bundleURL,
@@ -161,6 +174,9 @@ struct AppUpdateService {
         }
     ) {
         self.http = http
+        // An explicit `downloadHTTP` wins (install tests wire their stub to
+        // both). Otherwise downloads follow redirects with a real session.
+        self.downloadHTTP = downloadHTTP ?? URLSessionAppUpdateClient.followingRedirects()
         self.currentVersion = currentVersion
         self.currentBundleIdentifier = currentBundleIdentifier
         self.currentBundleURL = currentBundleURL
@@ -395,11 +411,25 @@ struct AppUpdateService {
     }
 
     static func tagFromReleasePage(_ html: String) -> String? {
-        guard let marker = html.range(of: "/releases/tag/") else { return nil }
-        let rest = html[marker.upperBound...]
+        // The page can link more than one release (sidebar, footer). Collect
+        // every tag candidate and prefer the highest version: this fallback
+        // only runs when the redirect itself gave no tag, and resolving to an
+        // older tag fails safe (fewer upgrades, never a wrong install — the
+        // installer still comes from that tag's own asset list).
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-/+"))
-        let tag = String(rest.prefix { $0.unicodeScalars.allSatisfy(allowed.contains) })
-        return tag.isEmpty ? nil : tag
+        var candidates: [String] = []
+        var searchFrom = html.startIndex
+        while let marker = html.range(of: "/releases/tag/", range: searchFrom..<html.endIndex) {
+            let rest = html[marker.upperBound...]
+            let tag = String(rest.prefix { $0.unicodeScalars.allSatisfy(allowed.contains) })
+            if !tag.isEmpty { candidates.append(tag) }
+            searchFrom = marker.upperBound
+        }
+        let versions: [(AppVersion, String)] = candidates.compactMap { tag in
+            AppVersion(tag).map { ($0, tag) }
+        }
+        if let best = versions.sorted(by: { $0.0 < $1.0 }).last { return best.1 }
+        return candidates.first
     }
 
     func install(_ offer: AppUpdateOffer, destination: URL? = nil) async throws -> URL {
@@ -494,10 +524,13 @@ struct AppUpdateService {
         var request = URLRequest(url: url)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        if let token {
+        // Only the API asset endpoint needs the token. The public
+        // `releases/download` URLs (and the objects host they redirect to)
+        // must never receive it.
+        if let token, url.host?.contains("api.github.com") == true {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await http.data(for: request)
+        let (data, response) = try await downloadHTTP.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {
         case 200:
@@ -568,10 +601,13 @@ struct AppUpdateService {
     /// two must match. A build with no identity of its own cannot pin anything,
     /// and refuses rather than accepting an unknown archive.
     func verifyIncomingSignature(of app: URL) throws {
-        let incomingTeam = try signatureTeamIdentifier(app)
+        // Check our own identity first: an ad-hoc/local build cannot pin
+        // anything, and reporting `signingIdentityUnavailable` (not
+        // `unsignedArchive`) tells the user the real reason updates refuse.
         guard let runningTeam = runningTeamIdentifier() else {
             throw AppUpdateError.signingIdentityUnavailable
         }
+        let incomingTeam = try signatureTeamIdentifier(app)
         guard incomingTeam == runningTeam else {
             throw AppUpdateError.signatureMismatch
         }
@@ -655,15 +691,19 @@ enum AppUpdateSignature {
     /// or an injected component fails here even though the Info.plist still
     /// looks right. `kSecCSCheckAllArchitectures` validates the universal
     /// binary as a whole instead of one slice, and `kSecCSStrictValidate`
-    /// rejects a bundle that carries unsealed content where the signature says
-    /// there should be none.
+    /// looks right. `kSecCSCheckNestedCode` extends the check into nested
+    /// code (Frameworks, Helpers, XPC services) so a swapped nested
+    /// component fails here too. `kSecCSCheckAllArchitectures` validates the
+    /// universal binary as a whole instead of one slice, and
+    /// `kSecCSStrictValidate` rejects a bundle that carries unsealed content
+    /// where the signature says there should be none.
     static func teamIdentifier(ofAppAt url: URL) throws -> String? {
         var staticCode: SecStaticCode?
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
               let staticCode else {
             throw AppUpdateError.unsignedArchive
         }
-        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate)
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
         guard SecStaticCodeCheckValidity(staticCode, flags, nil) == errSecSuccess else {
             throw AppUpdateError.unsignedArchive
         }

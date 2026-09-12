@@ -40,6 +40,26 @@ actor Redactor {
         return (name?.isEmpty == false) ? name : nil
     }
 
+    /// Registers every `@name` mentioned in free text as its own codename, so
+    /// a person who never speaks in the window — or is @-ed by remark while
+    /// registered under their nickname — is still redacted instead of going
+    /// out in plaintext. A mentioned person gets a different codename than
+    /// their speaker codename (identity linkage is lost); privacy is
+    /// preserved, which is the point. Skips `@所有人`/`@all`.
+    func registerMentions(in text: String) {
+        guard text.contains("@") else { return }
+        let pattern = #"@([^\s:：,，。；;、]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+        let ns = text as NSString
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) where match.numberOfRanges >= 2 {
+            let range = match.range(at: 1)
+            guard range.location != NSNotFound else { continue }
+            let name = ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name != "所有人", name.lowercased() != "all" else { continue }
+            _ = codenameFor(username: "mentioned:" + name, displayName: name)
+        }
+    }
+
     /// Replaces registered display names with their codenames + applies
     /// sensitive-pattern masks + strips WeChat placeholders that trigger
     /// provider content filters. Idempotent within a run.

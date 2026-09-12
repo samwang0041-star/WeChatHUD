@@ -169,7 +169,14 @@ actor ChatAnalyzer {
                 inputSummary: "[\(chatName)] group analysis",
                 trackLabel: "聊天分析"
             ),
-            decodeAs: GroupAnalysis.self
+            decodeAs: GroupAnalysis.self,
+            // All-empty decodes fine; require the core fields to carry text
+            // so an empty shell is retried instead of cached as analysis.
+            isUsable: {
+                !$0.topics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.one_liner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         )
 
         guard let (parsed, _) = result else {
@@ -240,7 +247,11 @@ actor ChatAnalyzer {
                 inputSummary: "[\(contactName)] private analysis",
                 trackLabel: "聊天分析"
             ),
-            decodeAs: PrivateAnalysis.self
+            decodeAs: PrivateAnalysis.self,
+            isUsable: {
+                !$0.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.one_liner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         )
 
         guard let (parsed, _) = result else {

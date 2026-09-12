@@ -79,7 +79,15 @@ actor ContextAnalyzer {
                 inputSummary: ask.summary,
                 trackLabel: "上下文分析"
             ),
-            decodeAs: AnalysisResult.self
+            decodeAs: AnalysisResult.self,
+            // An all-empty object decodes fine but caches as a real analysis.
+            // Require the core fields to carry text.
+            isUsable: {
+                !$0.background.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.whatTheyWant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.yourPosition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !$0.suggestedAction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         )
 
         return result?.value

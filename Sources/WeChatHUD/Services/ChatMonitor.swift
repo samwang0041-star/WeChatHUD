@@ -243,6 +243,11 @@ final class ChatMonitor: ObservableObject {
             value: DiscussionStrictnessSetting(level: level)
         )
         refreshWorkspaceChrome()
+        // The report's numbers follow the level (see DailyReportBuilder), so
+        // re-derive its local slice now — otherwise it disagrees with the
+        // badge and the workspace until the 30-minute cache expires. This
+        // skips the AI pass; see refreshDailyReportForStrictnessChange.
+        refreshDailyReportForStrictnessChange()
     }
 
     /// Loads the stored level. Called during start-up, before the first chrome

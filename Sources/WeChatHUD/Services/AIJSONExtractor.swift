@@ -68,12 +68,15 @@ enum AIJSONExtractor {
 
         var seen = Set<String>()
         var results: [String] = []
-        var budget = scanBudget
+        // Each variant gets its own budget: a brace flood inside the fence
+        // must not starve the outside-text variant that holds the real
+        // payload. Worst case is variants × budget visits — still linear and
+        // bounded, since the variant count is fixed at two.
         for variant in variants where !variant.isEmpty {
+            var budget = scanBudget
             for candidate in balancedCandidates(in: variant, open: open, close: close, budget: &budget) {
                 if seen.insert(candidate).inserted { results.append(candidate) }
             }
-            if budget <= 0 { break }
         }
         return results
     }

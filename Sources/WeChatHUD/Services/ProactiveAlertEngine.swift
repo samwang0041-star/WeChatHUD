@@ -173,7 +173,8 @@ final class ProactiveAlertEngine {
                 pushAlert(
                     title: "紧急待回复",
                     body: "\(p0.chatName): \(p0.preview)",
-                    identifier: "p0-debt-\(p0.chatUsername)"
+                    identifier: "p0-debt-\(p0.chatUsername)",
+                    ignoresBudget: true
                 )
             }
         }
@@ -302,11 +303,16 @@ final class ProactiveAlertEngine {
         body: String,
         identifier: String,
         cooldown: TimeInterval = 3600,
+        // P0 bypasses the hourly budget (but never the identifier dedup): a
+        // full hour of low-priority alerts must not swallow a new P0.
+        ignoresBudget: Bool = false,
         onSuccess: (() -> Void)? = nil
     ) -> Bool {
         let submissionNow = now()
         pruneExpiredState(at: submissionNow)
-        guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
+        if !ignoresBudget {
+            guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
+        }
         guard pushedIdentifiers[identifier] == nil else { return false }
         guard inFlightIdentifiers.insert(identifier).inserted else { return false }
 

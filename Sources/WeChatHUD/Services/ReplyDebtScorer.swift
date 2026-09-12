@@ -45,7 +45,11 @@ enum ReplyDebtScorer {
     }
 
     private static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
-    private static let askSignals = ["?", "？", "麻烦", "请", "帮忙", "发我", "确认", "看看"]
+    // "在吗"-class openers are explicit bids for attention, not trailing acks:
+    // without them a lone "在吗" after my earlier message is skipped as a
+    // closer by anchorInbound and never becomes debt. They live here (not in
+    // AckVocabulary) so both isAckMessage and the ask-signal gates see them.
+    private static let askSignals = ["?", "？", "麻烦", "请", "帮忙", "发我", "确认", "看看", "在吗", "在么", "在嘛", "在不在"]
 
     /// Messages that don't warrant a reply — ack words, emoji, stickers, media-only.
     /// Returns true if the message is a short ack that doesn't need a reply.

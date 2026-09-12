@@ -87,6 +87,42 @@ extension ChatMonitor {
         return debts + "|" + tasks + "|" + commits + "|" + sync
     }
 
+    /// Re-derives the level-dependent slice of the loaded report after the user
+    /// moves the strictness control, without re-running the AI pass. The
+    /// builder's base pass is local and cheap; AI enrichment is keyed by action
+    /// id, so insights for still-visible actions stay valid and the numbers
+    /// agree with the badge/今天/the workspace immediately instead of going
+    /// stale for the rest of the 30-minute cache window.
+    func refreshDailyReportForStrictnessChange() {
+        guard let current = dailyReport,
+              current.date.dailyReportDateKey == dailyReportViewedDate.dailyReportDateKey else { return }
+        let builder = DailyReportBuilder(
+            store: store,
+            replyDebtItems: replyDebtItems,
+            stats: stats,
+            strictness: discussionStrictness
+        )
+        let base = builder.build(for: dailyReportViewedDate)
+        dailyReport = DailyReport(
+            date: base.date,
+            dateRange: base.dateRange,
+            generatedAt: base.generatedAt,
+            metrics: base.metrics,
+            highlights: base.highlights,
+            actions: base.actions,
+            risks: base.risks,
+            pendingAsks: base.pendingAsks,
+            retrospectiveRunID: base.retrospectiveRunID,
+            status: current.status,
+            statusMessage: current.statusMessage,
+            aiErrorMessage: current.aiErrorMessage,
+            narrative: current.narrative,
+            tomorrowFocus: current.tomorrowFocus,
+            wechatDraft: current.wechatDraft
+        )
+        dailyReportGeneratedAt = base.generatedAt
+    }
+
     func markDailyReportActionDone(_ action: DailyReportAction) {
         let dateKey = dailyReportViewedDate.dailyReportDateKey
         let state = DailyReportCommandState(
