@@ -199,12 +199,8 @@ final class AppUpdateController: ObservableObject {
         guard let version = AppUpdateService.runningVersion() else {
             throw AppUpdateError.currentVersionUnknown
         }
-        let storedToken = config.githubToken
         return AppUpdateService(
-            currentVersion: version,
-            tokenProvider: {
-                storedToken.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+            currentVersion: version
         )
     }
 }

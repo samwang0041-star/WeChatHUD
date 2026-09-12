@@ -50,14 +50,13 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(offer?.version, AppVersion("1.4.0-beta.1"))
     }
 
-    func testCheckSendsGitHubHeadersAndBearerToken() async throws {
+    func testCheckSendsGitHubHeadersWithoutCredentials() async throws {
         let client = MockUpdateClient(responses: [
             MockUpdateClient.response(status: 200, body: Self.releaseListJSON, url: "https://api.github.com/repos/samwang0041-star/WeChatHUD/releases?per_page=20")
         ])
         let service = AppUpdateService(
             http: client,
             currentVersion: AppVersion("1.2.0")!,
-            tokenProvider: { "secret-token" },
             userAgent: "WeChatHUD/1.2.0 (macOS)"
         )
 
@@ -66,8 +65,8 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(client.requests.count, 1)
         XCTAssertEqual(client.requests[0].value(forHTTPHeaderField: "User-Agent"), "WeChatHUD/1.2.0 (macOS)")
         XCTAssertEqual(client.requests[0].value(forHTTPHeaderField: "Accept"), "application/vnd.github+json")
-        XCTAssertEqual(client.requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
-        XCTAssertFalse((client.requests[0].url?.absoluteString ?? "").contains("secret-token"))
+        // Public releases: anonymous check, no credential anywhere.
+        XCTAssertNil(client.requests[0].value(forHTTPHeaderField: "Authorization"))
     }
 
     func testPrivateRepoStatusBecomesUnauthorized() async {
@@ -234,7 +233,6 @@ final class AppUpdateServiceTests: XCTestCase {
             currentVersion: AppVersion("1.2.0")!,
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: current,
-            tokenProvider: { "secret-token" },
             allowsNonApplicationDestination: true,
             // The synthetic bundle is not signed; the signature policy itself is
             // covered by AppUpdateSignatureTests. What this test pins is that the
@@ -269,8 +267,9 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(installed.standardizedFileURL.path, current.standardizedFileURL.path)
         XCTAssertEqual(verifiedPaths.paths.count, 1, "the extracted bundle must be signature-checked")
         XCTAssertEqual(verifiedPaths.paths.first?.lastPathComponent, "WeChatHUD.app")
-        XCTAssertEqual(client.requests[0].url?.absoluteString, "https://api.github.com/repos/samwang0041-star/WeChatHUD/releases/assets/9")
-        XCTAssertEqual(client.requests[0].value(forHTTPHeaderField: "Authorization"), "Bearer secret-token")
+        // Public releases download from the browser URL with no credential.
+        XCTAssertEqual(client.requests[0].url?.absoluteString, "https://github.com/samwang0041-star/WeChatHUD/releases/download/v1.3.0/WeChatHUD-1.3.0-macOS14-arm64.zip")
+        XCTAssertNil(client.requests[0].value(forHTTPHeaderField: "Authorization"))
         let plist = NSDictionary(contentsOf: current.appendingPathComponent("Contents/Info.plist"))
         XCTAssertEqual(plist?["CFBundleShortVersionString"] as? String, "1.3.0")
     }
@@ -458,7 +457,7 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertNil(GitHubReleaseFeed.parseSHA256Manifest(Data("not-a-hash".utf8)))
     }
 
-    func testPrivateAssetDownloadUsesAPIURLWhenTokenPresent() {
+    func testPublicDownloadAlwaysUsesBrowserURL() {
         let asset = GitHubReleaseAsset(
             id: 9,
             name: "WeChatHUD-1.3.0-macOS14-arm64.zip",
@@ -468,11 +467,7 @@ final class AppUpdateServiceTests: XCTestCase {
             state: "uploaded"
         )
         XCTAssertEqual(
-            GitHubReleaseFeed.downloadURL(for: asset, hasToken: true)?.absoluteString,
-            "https://api.github.com/repos/samwang0041-star/WeChatHUD/releases/assets/9"
-        )
-        XCTAssertEqual(
-            GitHubReleaseFeed.downloadURL(for: asset, hasToken: false)?.absoluteString,
+            GitHubReleaseFeed.downloadURL(for: asset)?.absoluteString,
             asset.browserDownloadURL.absoluteString
         )
     }

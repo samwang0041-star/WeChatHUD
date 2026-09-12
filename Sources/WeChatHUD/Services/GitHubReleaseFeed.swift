@@ -85,10 +85,8 @@ enum GitHubReleaseFeed {
     }
 
     /// Private assets must be fetched from the Releases API URL when a token is present.
-    static func downloadURL(for asset: GitHubReleaseAsset, hasToken: Bool) -> URL? {
-        if hasToken, let api = asset.apiURL, api.scheme?.lowercased() == "https" {
-            return api
-        }
+    /// Public releases only: the browser download URL needs no credential.
+    static func downloadURL(for asset: GitHubReleaseAsset) -> URL? {
         guard asset.browserDownloadURL.scheme?.lowercased() == "https" else { return nil }
         return asset.browserDownloadURL
     }
