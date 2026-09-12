@@ -356,6 +356,62 @@ enum PreviewRuntime {
         panelState.goExtended()
     }
 
+    /// `--preview-peek` drives compact → peek → inbox from inside the process
+    /// (no cursor). Captures each landing and writes geometry so QA can tell
+    /// a mask spring from `setFrameInstantly`.
+    @MainActor static func runPeekMorphCapture(panelState: PanelState) {
+        guard isEnabled, CommandLine.arguments.contains("--preview-peek") else { return }
+        CompanionMotion.hoverExpandDelayProvider = { 0.85 }
+        panelState.collapse()
+        panelState.islandSurface = .inbox
+        panelState.popoverOpen = false
+
+        func facts(_ tag: String) -> [String: Any] {
+            let island = (NSApp.delegate as? AppDelegate)?.panel?.visibleIslandFrame
+            return [
+                "tag": tag,
+                "currentState": "\(panelState.currentState)",
+                "presentedState": "\(panelState.presentedState)",
+                "width": island?.width ?? 0,
+                "height": island?.height ?? 0,
+                "instant": IslandFrameTiming.lastWasInstant,
+                "durationMs": IslandFrameTiming.lastDuration * 1000,
+                "fps": IslandFrameTiming.estimatedFPS,
+                "worstMs": IslandFrameTiming.worstInterval * 1000,
+            ]
+        }
+
+        var notes: [[String: Any]] = []
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            notes.append(facts("compact"))
+            captureSurfaces(as: "peek-compact")
+            panelState.mouseEntered()
+            // No real cursor: keep the island from collapsing when the mask
+            // spring lands and the hit test reports the pointer outside.
+            panelState.popoverOpen = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                notes.append(facts("peek"))
+                captureSurfaces(as: "peek-hover")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+                    notes.append(facts("peek-landed"))
+                    captureSurfaces(as: "peek-landed")
+                    panelState.goExtended()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    notes.append(facts("extended"))
+                    captureSurfaces(as: "peek-inbox")
+                    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+                        .appendingPathComponent("wechathud-peek-qa.json")
+                    if let data = try? JSONSerialization.data(
+                        withJSONObject: notes, options: [.prettyPrinted, .sortedKeys]
+                    ) {
+                        try? data.write(to: url)
+                    }
+                    }
+                }
+            }
+        }
+    }
+
     /// `--preview-hold-island` pins the expanded island open and
     /// `--preview-disconnected` forces the connection-error banner, so a
     /// snapshot can capture expanded surfaces that normally collapse the

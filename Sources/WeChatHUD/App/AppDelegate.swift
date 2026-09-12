@@ -438,6 +438,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if store.getSetting("onboarded") == nil {
             showOnboarding()
         } else if PreviewRuntime.isEnabled {
+            if CommandLine.arguments.contains("--preview-peek") {
+                PreviewRuntime.runPeekMorphCapture(panelState: panelState)
+            } else {
             panelState.showDetail()
             // `--preview-notification` renders the notification banner
             // immediately at launch and holds it, so the island's frame
@@ -493,6 +496,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+            }
             }
         }
 

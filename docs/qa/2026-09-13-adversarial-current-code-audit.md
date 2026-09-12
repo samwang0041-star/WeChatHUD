@@ -167,8 +167,8 @@ let sweep = snap.phase == .working(.analyzing) || snap.glow != .none
 
 - 子代理分面：island 状态机、island UI、P0 回归、发送/隐私、`3ff24ac..HEAD`、测试诚实度、崩溃/并发。
 - 根代理对每条结论回源码；两条独立代理同时打到 P1-1，视为高置信。
-- **没有**用 computer-use 看真实悬停 morph（上次状态精修用过 preview hold）。P1-1 是代码路径论证。要实锤需要 `make preview` + 悬停，且不要动用户鼠标。
-- 质检当时只跑了与 WIP 相关的 37 条。修复后过滤跑 **178 条，0 失败**；全量 `swift test` / 真机悬停 morph 仍未做。
+- 质检当时没有真机悬停。修复后用隔离预览 `--preview-peek` 驱动 compact→peek→inbox（不移动光标），见文末验证。
+- 质检当时只跑了与 WIP 相关的 37 条。修复后全量测试已跑。
 
 ---
 
@@ -184,4 +184,7 @@ let sweep = snap.phase == .working(.analyzing) || snap.glow != .none
 | P1-6 飞行中 resize | 行为保留（stage 不够必须长高）；文档改成「live run 可以再长 stage」。换屏时 `positionAtTop` 先取消弹簧。 |
 | P2 菜单 / timer / 预览刘海 / token / -rc / stdout | peek 不算打开；dwell timer 进 `.common`；刘海回退 200；启动 scrub `githubToken`；网页通道忽略 prerelease；日志去掉会话名。 |
 
-验证：`swift test` 过滤 IslandRowExpand / IslandPeek / CompactIslandPolicy / CompanionMotion / AutopilotSafety / AutopilotGuardrailPipeline / AIService / RetrospectivePrivacy / AppUpdate* → **178 条，0 失败，5 条 live 门禁跳过**。
+验证：
+- 过滤测试 178 条 0 失败；随后全量 `swift test` **1477 XCTest + 70 swift-testing，0 失败，11 条 live 门禁跳过**。
+- `swift build -c release` 通过、无警告。
+- 隔离预览 `--preview-peek`（不移动光标）：compact 297×32 → peek 弹簧 453×32（`instant: false`，~116 fps，caller=`AppDelegate.currentState.peek`，没有 `setFrameInstantly`）→ inbox 560×252。截图在 `/tmp/wchud-peek-qa/`。
