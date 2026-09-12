@@ -4,6 +4,9 @@ import Foundation
 // MARK: - Chat Insight Result (per-chat AI output)
 
 struct ChatInsightResult: Codable {
+    /// Keys that 单聊分析 must never grow. 关系雷达 owns these.
+    static let reservedInferenceKeys = ["attitudes", "tone_changes", "mood_shift"]
+
     let headline: String
     let topics: [TopicInsight]
     let decisions: [String]

@@ -30,4 +30,7 @@ JSON schema:
 各聊天分析结果:
 {chat_insights}
 
+关系雷达摘要（跨天/跨周态度与沉默，可能为空）:
+{radar_summaries}
+
 只输出 JSON，不要任何其它文字。

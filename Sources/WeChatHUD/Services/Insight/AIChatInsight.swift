@@ -139,7 +139,8 @@ actor AIChatInsight {
         selfName: String,
         date: String,
         chatInsights: [(chatName: String, result: ChatInsightResult)],
-        globalStats: BriefingStats
+        globalStats: BriefingStats,
+        radarSummaries: [String] = []
     ) async -> GlobalBriefing? {
         let template: String
         do {
@@ -180,11 +181,25 @@ actor AIChatInsight {
             statsJSON = "{}"
         }
 
+        let radarJSON: String
+        if radarSummaries.isEmpty {
+            radarJSON = "[]"
+        } else {
+            let redacted = radarSummaries.map(Redactor.applyMasks)
+            if let data = try? encoder.encode(redacted),
+               let text = String(data: data, encoding: .utf8) {
+                radarJSON = text
+            } else {
+                radarJSON = "[]"
+            }
+        }
+
         let prompt = template
             .replacingOccurrences(of: "{self_name}", with: selfName)
             .replacingOccurrences(of: "{date}", with: date)
             .replacingOccurrences(of: "{chat_insights}", with: insightsJSON)
             .replacingOccurrences(of: "{global_stats}", with: statsJSON)
+            .replacingOccurrences(of: "{radar_summaries}", with: radarJSON)
 
         let result = await pipeline.executeRaw(
             prompt: prompt,
