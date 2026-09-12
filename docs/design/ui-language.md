@@ -9,12 +9,12 @@
 3. 语义色只走 CompanionPalette：accent=可推进的主操作；red=仅破坏性操作（且必须有二次确认）；orange=需要用户行动的警示；secondary text 用于解释，不用 red/orange 表达普通信息。
 4. 每个可操作控件都有 accessibilityLabel；浮层类内容（卡片/展开区）必须留在宿主窗口 AX 树内（参照简报卡从 popover 改原位展开的先例）。
 5. 动画：非线性、有物理感、方向不对称。
-   - 形态（compact ↔ extended ↔ notification）走弹簧：展开 response 0.42 / damping 0.82（略欠阻尼，从刘海"弹"出来），收起 response 0.30 / damping 0.88（临界阻尼，收进去不晃）。
+   - 形态（compact → peek → extended / notification）走弹簧：悬停先 peek（同高加宽，不打开收件箱），短停留或点击再展开。展开 response 0.42 / damping 0.82（略欠阻尼，从刘海"弹"出来）；窗口收起仍是临界阻尼 0.26 / 1.0 以免尾段抖像素。SwiftUI 侧 closeMorph 用 0.30 / 0.88。
    - 就地显隐（disclosure、toast、行内展开）用强 ease-out cubic-bezier(0.23, 1, 0.32, 1)：用户已经做出动作，曲线要在起始段立刻响应，只把落点软化。整页切换 0.22s，行内 0.20s，hover 洗层 0.10s easeOut。
-   - 面板形态由合成器遮罩驱动（固定的 island stage + CALayer mask），窗口在动画期间不 resize；display link 只在弹簧未收敛时运行。
+   - 面板形态由合成器遮罩驱动（固定的 island stage + CALayer mask），窗口在动画期间不 resize（首次扩张一次性付掉 stage 成本；若新的 island 比当前 cover 更大，一次实跑会先扩大 stage 再动画，属于预期的一次性窗口 resize）；display link 只在弹簧未收敛时运行。
    - 按压必须有可见反馈：scale 0.96（可用区间 0.92–0.97），配 100–140ms 曲线。
    - 尊重 reduceMotion：所有动画与 hover 触感一并关闭；尊重 reduceTransparency。
-   - 悬停展开补一次触控板轻反馈（`.levelChange`）。
+   - 悬停进入 peek 补一次触控板轻反馈（`.levelChange`）。边框：离开 compact 后 0.5pt 白发丝线；VIP 紧急用琥珀/红色光晕（只变色相、不改变不透明度）；AI 整理中 30Hz 扫光。
 
 ## 模块三级界面逻辑
 

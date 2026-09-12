@@ -28,9 +28,14 @@ struct CompactInboxBar: View {
     @State private var idleTimer: Timer? = nil
     @State private var heldAIActive = false
     @State private var aiHoldTask: Task<Void, Never>? = nil
+    @State private var pillsVisible = false
 
     var body: some View {
         HStack(spacing: 0) {
+            if isPeeking {
+                peekPill(alignment: .trailing)
+                    .frame(width: IslandChrome.peekSlotWidth, height: notchHeight, alignment: .trailing)
+            }
             // The left wing is the only way out when WeChat itself is
             // unreachable: see CompactLeftWingCopy for the promise the tooltip
             // and the click both have to keep.
@@ -65,6 +70,12 @@ struct CompactInboxBar: View {
             .help("打开今天")
             .padding(.leading, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
+
+            if isPeeking {
+                Color.clear
+                    .frame(width: IslandChrome.peekSlotWidth, height: notchHeight)
+                    .allowsHitTesting(false)
+            }
         }
         // Horizontal: natural content width (drives panel width via
         // the PreferenceKey feedback loop below).
@@ -78,7 +89,13 @@ struct CompactInboxBar: View {
         // and bottom.
         .fixedSize(horizontal: true, vertical: false)
         .frame(height: notchHeight)
-        .background(escalationGlow)
+        .background {
+            IslandGlowLayer(
+                notchWidth: notchWidth,
+                notchHeight: notchHeight,
+                heldAIActive: heldAIActive
+            )
+        }
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -92,6 +109,10 @@ struct CompactInboxBar: View {
             idleSince = Date()
             heldAIActive = aiTracker.isActive
             startIdleTimer()
+            syncPeekPills(isPeeking)
+        }
+        .onChange(of: isPeeking) { _, peeking in
+            syncPeekPills(peeking)
         }
         .onChange(of: aiTracker.isActive) { _, active in
             holdAIActivity(active)
@@ -144,16 +165,43 @@ struct CompactInboxBar: View {
         return 32
     }
 
-    /// Static rim only. A repeating pulse made the whole island look like it was blinking.
-    private var escalationGlow: some View {
-        let glow = island.glow
-        return ZStack {
-            if glow != .none {
-                Capsule(style: .continuous)
-                    .strokeBorder(Color.red.opacity(glow == .critical ? 0.45 : 0.28), lineWidth: 1)
-                    .allowsHitTesting(false)
+
+    private var isPeeking: Bool {
+        panelState.presentedState == .peek || panelState.currentState == .peek
+    }
+
+    private func syncPeekPills(_ peeking: Bool) {
+        if peeking {
+            pillsVisible = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                guard isPeeking else { return }
+                withMotion(CompanionMotion.easeOut(0.18)) { pillsVisible = true }
             }
+        } else {
+            withMotion(CompanionMotion.easeOut(0.08)) { pillsVisible = false }
         }
+    }
+
+    private func peekPill(alignment: Alignment) -> some View {
+        Button { CompactWingRouter.activate(leftWingCopy.route, panelState: panelState) } label: {
+            Text(island.glance)
+                .islandMicro()
+                .foregroundStyle(IslandInk.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(pillsVisible ? 1 : 0)
+        .offset(x: pillsVisible ? 0 : (alignment == .trailing ? -6 : 6))
+        .transaction { $0.animation = CompanionMotion.easeOut(0.18) }
+        .accessibilityLabel(leftWingCopy.accessibilityLabel)
+        .accessibilityValue(island.glance)
+        .help(leftWingCopy.help)
+        .allowsHitTesting(pillsVisible)
     }
 
     // MARK: - Left wing

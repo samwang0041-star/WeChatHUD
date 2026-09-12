@@ -94,13 +94,27 @@ enum CompanionMotion {
     /// Island leave collapse: retract into the notch.
     static func islandCollapse() -> Animation? { easeIn(IslandMotion.collapseDuration) }
 
+    /// Shape growth. Leisurely: the user is reaching toward the island and tracks the morph.
+    static var openMorph: Animation? {
+        springResponse(response: 0.42, dampingFraction: 0.82)
+    }
+
+    /// Shape shrink. Snappier than open. Window-frame collapse stays critically damped.
+    static var closeMorph: Animation? {
+        springResponse(response: 0.30, dampingFraction: 0.88)
+    }
+
+    /// Compact hover stays in .peek this long before opening the inbox.
+    /// Tests replace this so they do not wait on the live 180ms.
+    static var hoverExpandDelayProvider: () -> TimeInterval = { 0.18 }
+
     /// In-row expand.
     ///
-    /// A spring from the window frame's family: a row's height change
-    /// re-drives the panel frame through the measurement pipe, so the content
-    /// curve and the frame curve must be the same physics or they visibly
-    /// desync while the panel grows around the expanding row.
-    static func rowExpand() -> Animation? { springResponse(response: 0.32, dampingFraction: 0.92) }
+    /// Same spring as the island open morph: a row's height change re-drives
+    /// the panel frame through the measurement pipe, so the content curve and
+    /// the frame curve must be the same physics or they visibly desync while
+    /// the panel grows around the expanding row.
+    static func rowExpand() -> Animation? { openMorph }
     /// Source drawer (200–240ms).
     static func drawer() -> Animation? { ease(0.22) }
     /// Modal fade (140–180ms).
@@ -155,11 +169,109 @@ extension View {
     }
 }
 
+extension AnyTransition {
+    /// Codex Island detailReveal: small anchored scale + fade, no slide.
+    /// A translation would fight the panel-frame spring on row expand.
+    static var islandDetailReveal: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+    }
+}
+
 /// Sizes for the notch-anchored island. Compact stays notch-height;
 /// expanded is wide enough that a headline and three rows can breathe.
+/// How the island reads SwiftUI's reported size.
+///
+/// The hosting view fills a grow-only stage. `.frame(width:)` without a
+/// following `.fixedSize(vertical: true)` takes the stage's proposed
+/// height, so a GeometryReader reports the window instead of the inbox.
+/// That is the tall black plate under a short list after a row click.
+enum IslandMeasurement {
+    static let maxExtendedHeight: CGFloat = 720
+
+    /// What the AppDelegate measurement sink should do with a reported size.
+    enum SizeAction: Equatable {
+        case ignore
+        case animate
+        case snapInstantly
+    }
+
+    static func clamped(_ size: CGSize) -> CGSize {
+        CGSize(
+            width: max(0, size.width),
+            height: min(max(0, size.height), maxExtendedHeight)
+        )
+    }
+
+    /// What the AppDelegate measurement sink should do with a reported size.
+    ///
+    /// Peek is a same-height width morph: snapping it would call
+    /// `setFrameInstantly`, whose `cancelFrameAnimation` kills the mask spring
+    /// that the peek morph is riding — the pill would jump to the new width and
+    /// the hover expansion would read as a stutter. So every state that morphs
+    /// — and anything that has left the notch — animates.
+    ///
+    /// A compact-only width change (idle → pending → urgent wing relayout) is
+    /// layout jitter, not motion the user asked for: it snaps, which also
+    /// re-centers the pill on the notch so a bad compact self-measurement
+    /// cannot poison the next hover. A compact measurement that is genuinely
+    /// *taller* than the visible island is a real collapse out of an expanded
+    /// state, and animates back into the notch.
+    static func sizeAction(
+        state: HUDState,
+        visible: CGSize,
+        target: CGSize,
+        isAnimating: Bool
+    ) -> SizeAction {
+        let tolerance = IslandMotion.retargetTolerance(isAnimating: isAnimating)
+        if abs(target.width - visible.width) < tolerance,
+           abs(target.height - visible.height) < tolerance {
+            return .ignore
+        }
+        switch state {
+        case .peek, .extended, .notification, .detail:
+            return .animate
+        case .compact:
+            // A genuine collapse out of a taller island is motion.
+            if visible.height > target.height + 8 {
+                return .animate
+            }
+            // Peek → compact is a same-height width morph (~156 pt). Snapping
+            // would cancel the in-flight mask spring the same way peek
+            // widening used to. If a spring is already running, leave it
+            // alone; otherwise start one.
+            if abs(visible.width - target.width) > 48 {
+                return isAnimating ? .ignore : .animate
+            }
+            // Compact-only width jitter (idle → pending → urgent) snaps at
+            // rest so a bad self-measurement cannot poison the next hover.
+            // Mid-flight, ignore it — snapping would kill the collapse.
+            if isAnimating {
+                return .ignore
+            }
+            return .snapInstantly
+        }
+    }
+
+    /// True when `size` is the covering stage, not the inbox content.
+    static func isCoveringStage(_ size: CGSize, cover: CGSize, lastContent: CGSize) -> Bool {
+        guard lastContent.height > 1 else { return false }
+        let matchesCover = abs(size.height - cover.height) < 2
+            && abs(size.width - cover.width) < 2
+        return matchesCover && size.height > lastContent.height + 24
+    }
+}
+
 enum IslandChrome {
     static let expandedWidth: CGFloat = 560
     static let notificationMinWidth: CGFloat = 580
+    /// Per-side outboard slot in .peek. Fixed so a count flip cannot jitter the silhouette.
+    static let peekSlotWidth: CGFloat = 78
+    /// Hairline on the outer silhouette once the island has left compact.
+    static let hairlineWidth: CGFloat = 0.5
+    static let hairline = Color.white.opacity(0.12)
+    /// Ambient glow hues. Opacity stays constant so only hue signals severity.
+    static let glowAmber = Color(red: 245 / 255, green: 165 / 255, blue: 36 / 255)
+    static let glowRed = Color(red: 229 / 255, green: 72 / 255, blue: 77 / 255)
     /// Below-notch budget used before a banner has measured itself — an
     /// **upper bound on real content**, not an average. It has to stay one,
     /// because it is not only the first frame's size: when the same message is

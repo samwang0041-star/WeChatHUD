@@ -51,6 +51,9 @@ enum IslandMaskGeometry {
     /// a floating capsule instead of a cutout hanging off the bezel. Matches
     /// `IslandShape`, whose cornerRadii are zero on top.
     static let maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+    /// Squircle, matching Apple's notch and the Dynamic Island. Circular
+    /// CALayer corners show a kink at the tangent on this scale.
+    static let cornerCurve: CALayerCornerCurve = .continuous
 
     /// Hit-testing a cursor against the *visible* island, not the covering
     /// window. While a run is in flight the window is the union, so a raw

@@ -44,6 +44,7 @@ final class PanelState: ObservableObject {
                 snoozeMenuExpanded = false
                 autopilotPopoverOpen = false
                 islandTextInputActive = false
+                expandedInboxItemID = nil
             }
             // Expanding content can swap immediately: the covering window
             // is already at the destination size. Collapsing content must
@@ -97,6 +98,9 @@ final class PanelState: ObservableObject {
     @Published var pendingDiscussionChatUsername: String?
     /// Hover inbox vs in-island task preview (figures 19 / 20).
     @Published var islandSurface: IslandSurface = .inbox
+    /// Which inbox row currently shows its action panel. One at a time so a
+    /// click cannot stack two tall panels and leave a black plate under the list.
+    @Published var expandedInboxItemID: String?
     /// Figure 41: snooze receipt + undo, shown on the island after 23.
     @Published var islandSnoozeUndo: (item: InboxItem, until: Date)?
     /// Preview-only send receipts for figures 26 / 27.
@@ -120,6 +124,9 @@ final class PanelState: ObservableObject {
     /// WeChat) so the cursor still hovering over our old frame doesn't
     /// immediately pop the panel back open.
     private var reexpandSuppressedUntil: Date?
+
+    private var hoverExpandTimer: Timer?
+    private var hoverExpandGeneration = UUID()
 
     /// SwiftUI-measured size of the extended inbox content. Published so
     /// AppDelegate can animate the NSPanel frame to hug the content
@@ -219,7 +226,7 @@ final class PanelState: ObservableObject {
         switch currentState {
         case .notification:
             popoverOpen = expanded || snoozeMenuExpanded || autopilotPopoverOpen
-        case .compact, .extended, .detail:
+        case .compact, .peek, .extended, .detail:
             break
         }
     }
@@ -284,6 +291,43 @@ final class PanelState: ObservableObject {
     /// — those skip most of this delay via `scheduleExitCollapse(delay:)`.
     private let exitDebounce: TimeInterval = 0.22
 
+    func cancelHoverExpand() {
+        hoverExpandTimer?.invalidate()
+        hoverExpandTimer = nil
+        hoverExpandGeneration = UUID()
+    }
+
+    /// Compact hover lands on .peek first. After a short dwell, open the inbox
+    /// if the pointer is still inside. Click paths call goExtended() and skip this.
+    private func scheduleHoverExpand() {
+        cancelHoverExpand()
+        let generation = UUID()
+        hoverExpandGeneration = generation
+        let delay = max(0, CompanionMotion.hoverExpandDelayProvider())
+        // `Timer.scheduledTimer` installs into `.default` mode only, so the
+        // dwell stalls while the run loop is tracking a menu or a scroll —
+        // the pointer sits on the pill and the inbox never opens until the
+        // tracking ends. Add the timer to `.common` so it fires through
+        // tracking loops, same as the hit-test monitor above.
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.hoverExpandGeneration == generation else { return }
+                self.hoverExpandTimer = nil
+                guard self.currentState == .peek, self.isMouseInside else { return }
+                self.currentState = .extended
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        hoverExpandTimer = timer
+    }
+
+    /// Test seam: fire the pending peek-to-inbox dwell immediately.
+    func finishHoverExpandIfPending() {
+        guard currentState == .peek else { return }
+        cancelHoverExpand()
+        currentState = .extended
+    }
+
     /// Called when mouse enters the panel area.
     func mouseEntered() {
         isMouseInside = true
@@ -309,7 +353,15 @@ final class PanelState: ObservableObject {
         // on entry used to remove the very controls the user was aiming at.
         if currentState == .compact {
             CompanionMotion.performHoverTick()
-            currentState = .extended
+            if CompanionMotion.reduceMotion {
+                currentState = .extended
+            } else {
+                currentState = .peek
+                scheduleHoverExpand()
+            }
+        } else if currentState == .peek, hoverExpandTimer == nil {
+            // Re-entry during peek cancelled the dwell on the way out.
+            scheduleHoverExpand()
         }
     }
 
@@ -318,6 +370,7 @@ final class PanelState: ObservableObject {
     func mouseExited() {
         if currentState == .notification, isMouseInside { notificationWasInteractedWith = true }
         isMouseInside = false
+        cancelHoverExpand()
         // AppKit can report an exit while the newly expanded frame sweeps
         // past a pointer that never entered this banner. Keep its duration.
         if currentState == .notification, !notificationWasInteractedWith { return }
@@ -380,7 +433,8 @@ final class PanelState: ObservableObject {
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         let generation = exitGeneration
-        exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: delay ?? exitDebounce, repeats: false) { [weak self] _ in
+        let wait = delay ?? (currentState == .peek ? 0.10 : exitDebounce)
+        exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.exitGeneration == generation else { return }
                 // Only collapse if the mouse actually stayed outside AND
@@ -404,7 +458,9 @@ final class PanelState: ObservableObject {
     }
 
     private var collapsesWhenMouseOutside: Bool {
-        currentState == .extended || (currentState == .notification && notificationWasInteractedWith)
+        currentState == .peek
+            || currentState == .extended
+            || (currentState == .notification && notificationWasInteractedWith)
     }
 
     /// Open settings in a separate window (gear click).
@@ -457,6 +513,7 @@ final class PanelState: ObservableObject {
         exitDebounceTimer = nil
         notificationTimer?.invalidate()
         notificationTimer = nil
+        cancelHoverExpand()
         currentState = .detail
     }
 
@@ -471,6 +528,7 @@ final class PanelState: ObservableObject {
 
     /// Dismiss the detail view back to the compact bar.
     func collapse() {
+        cancelHoverExpand()
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
@@ -493,6 +551,7 @@ final class PanelState: ObservableObject {
     /// open the inbox without the collapse-then-expand flicker of
     /// `collapse()` + `mouseEntered()`.
     func goExtended() {
+        cancelHoverExpand()
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
@@ -511,6 +570,7 @@ final class PanelState: ObservableObject {
     /// being clipped. Dedup at the setter level: avoid re-publishing if
     /// the size hasn't changed (SwiftUI can fire the same value).
     func reportExtendedSize(_ size: CGSize) {
+        let size = IslandMeasurement.clamped(size)
         guard size != .zero, size != measuredExtendedSize else { return }
         AnimationDebugger.logEvent("reportSize state=\(currentState) size=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) ready=\(isReady)")
         measuredExtendedSize = size
@@ -562,6 +622,7 @@ final class PanelState: ObservableObject {
     /// another app (WeChat) — without this, the cursor still hovering
     /// over our old frame would pop the panel right back open.
     func collapseAndYield(duration: TimeInterval = 1.5) {
+        cancelHoverExpand()
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
         exitDebounceTimer = nil
@@ -610,6 +671,7 @@ final class PanelState: ObservableObject {
         // panel height. Until it arrives the panel uses the static
         // fallback instead of the previous banner's size.
         invalidateNotificationSize()
+        cancelHoverExpand()
         notificationDuration = max(0.1, duration)
         exitGeneration = UUID()
         exitDebounceTimer?.invalidate()
@@ -634,7 +696,7 @@ final class PanelState: ObservableObject {
 
     static func height(for state: HUDState) -> CGFloat {
         switch state {
-        case .compact, .extended:
+        case .compact, .peek, .extended:
             // These states are measurement-driven; the static value is
             // only a placeholder for SwiftUI previews.
             return 32
@@ -645,7 +707,7 @@ final class PanelState: ObservableObject {
 
     static func width(for state: HUDState) -> CGFloat {
         switch state {
-        case .compact, .extended:
+        case .compact, .peek, .extended:
             // These states are measurement-driven; the static value is
             // only a placeholder for SwiftUI previews.
             return 320

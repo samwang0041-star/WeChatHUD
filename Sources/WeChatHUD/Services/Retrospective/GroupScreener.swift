@@ -10,6 +10,10 @@ actor GroupScreener {
     private let aiService: any AIServiceProtocol
     private let promptLoader: PromptLoader
     private let dataLedger: DataLedger
+    /// Codenames group display names and sample text before the screen prompt
+    /// leaves the machine. Owned per-screener by default; a caller may inject a
+    /// shared instance so codenames stay stable across a whole run.
+    private let redactor: Redactor
 
     /// Guards an extended outage from re-sending every undecided group's full
     /// sample set on every run. A single failure retries immediately next run
@@ -25,12 +29,14 @@ actor GroupScreener {
         store: HUDStore,
         aiService: any AIServiceProtocol,
         promptLoader: PromptLoader = PromptLoader(),
-        dataLedger: DataLedger
+        dataLedger: DataLedger,
+        redactor: Redactor = Redactor()
     ) {
         self.store = store
         self.aiService = aiService
         self.promptLoader = promptLoader
         self.dataLedger = dataLedger
+        self.redactor = redactor
     }
 
     struct ScreenResult: Sendable {
@@ -118,15 +124,39 @@ actor GroupScreener {
     /// Nil when no decision could be obtained (prompt load failure, AI error,
     /// or a reply with no parseable items).
     private func runAIScreen(_ candidates: [ScopeCandidate], samples: [String: [String]]) async -> [(ScopeCandidate, ScopeDecision, Double)]? {
-        let groupsArr: [[String: Any]] = candidates.map { c in
-            [
-                // Stable key: the model echoes it back and `parse` matches on it,
-                // so two groups that happen to share a display name cannot be
-                // given the same decision.
+        // The prompt leaves the machine, so the group's display name travels as
+        // a codename and sample text is run through the redactor (display names
+        // → codenames, phone/email/money masked). `chat_username` stays the
+        // real id: `parse` matches each decision on it, and it is the only key
+        // that uniquely identifies a group whose display name is a codename.
+        // Pass 1: register every group name and @-mention up front, so the
+        // redaction below knows all of them. A sample can name a group that is
+        // itself screened later, and redacting that name needs the codename to
+        // already exist.
+        for c in candidates {
+            _ = await redactor.codenameFor(username: c.chatUsername, displayName: c.chatName)
+            for line in samples[c.chatUsername] ?? [] {
+                await redactor.registerMentions(in: line)
+            }
+        }
+        // Pass 2: build the redacted payload.
+        var groupsArr: [[String: Any]] = []
+        groupsArr.reserveCapacity(candidates.count)
+        for c in candidates {
+            let sample = samples[c.chatUsername] ?? []
+            var redactedSample: [String] = []
+            redactedSample.reserveCapacity(sample.count)
+            for line in sample {
+                redactedSample.append(await redactor.redactText(line))
+            }
+            let codename = await redactor.codenameFor(
+                username: c.chatUsername, displayName: c.chatName
+            )
+            groupsArr.append([
                 "chat_username": c.chatUsername,
-                "chat_name": c.chatName,
-                "sample_messages": samples[c.chatUsername] ?? []
-            ]
+                "chat_name": codename,
+                "sample_messages": redactedSample
+            ])
         }
         let groupsData = (try? JSONSerialization.data(withJSONObject: groupsArr)) ?? Data()
         let groupsStr = String(data: groupsData, encoding: .utf8) ?? "[]"
@@ -162,7 +192,7 @@ actor GroupScreener {
             chatCount: candidates.count, msgCount: nil,
             byteCount: userPrompt.utf8.count,
             tokenIn: nil, tokenOut: nil,
-            redacted: false  // group screen sees plain chat names + sample text
+            redacted: true  // chat names are codenames; sample text is masked
         )])
 
         return GroupScreener.parse(response.text, candidates: candidates)

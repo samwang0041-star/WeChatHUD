@@ -412,6 +412,55 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertNil(AppUpdateService.tagFromReleasePage("<p>no release links</p>"))
     }
 
+    /// The page can list a newer prerelease above an older real release. The
+    /// stable channel must take the highest non-prerelease, never the newest
+    /// tag of any kind.
+    func testTagFromReleasePageIgnoresPrereleaseWhenStableExists() {
+        let html = #"<a href="/o/r/releases/tag/v1.4.0-rc.1">rc</a><a href="/o/r/releases/tag/v1.3.1">stable</a>"#
+        XCTAssertEqual(AppUpdateService.tagFromReleasePage(html), "v1.3.1")
+    }
+
+    /// When every candidate is a prerelease, report nothing rather than
+    /// quietly steering the user onto an `-rc` build.
+    func testTagFromReleasePageReturnsNilWhenOnlyPrereleases() {
+        XCTAssertNil(AppUpdateService.tagFromReleasePage(#"<a href="/o/r/releases/tag/v1.4.0-rc.1">rc</a>"#))
+        XCTAssertNil(AppUpdateService.tagFromReleasePage(#"<a href="/o/r/releases/tag/v1.4.0-beta.2">b</a><a href="/o/r/releases/tag/v1.4.0-rc.1">rc</a>"#))
+    }
+
+    /// A stored `update` blob from a build that still had `githubToken` must be
+    /// re-saved on load so the secret does not sit in the settings table.
+    @MainActor
+    func testControllerScrubsLegacyGitHubTokenFromRawSetting() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("update-scrub-\(UUID().uuidString).sqlite3").path
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        defer { store.close() }
+
+        // A real, decodable config with the legacy key spliced in — the same
+        // shape an older build would have written.
+        var legacy = AppUpdateConfig()
+        legacy.repository = "samwang0041-star/WeChatHUD"
+        legacy.autoCheckEnabled = false
+        let encoded = try JSONEncoder().encode(legacy)
+        var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["githubToken"] = "ghp_legacysecret"
+        let raw = try XCTUnwrap(
+            String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)
+        )
+        try store.setSetting(AppUpdateConfig.settingKey, value: raw)
+        XCTAssertTrue(try XCTUnwrap(store.getSetting(AppUpdateConfig.settingKey)).contains("githubToken"))
+
+        let controller = AppUpdateController()
+        controller.bind(store: store)
+
+        let scrubbed = try XCTUnwrap(store.getSetting(AppUpdateConfig.settingKey))
+        XCTAssertFalse(scrubbed.contains("githubToken"), "the legacy key must be dropped from the raw blob")
+        XCTAssertFalse(scrubbed.contains("ghp_legacysecret"))
+        XCTAssertEqual(controller.config.repository, "samwang0041-star/WeChatHUD")
+        XCTAssertFalse(controller.config.autoCheckEnabled)
+    }
+
     @MainActor
     func testControllerPersistsCheckTimestampAndOffer() async throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent("update-store-\(UUID().uuidString).sqlite3").path

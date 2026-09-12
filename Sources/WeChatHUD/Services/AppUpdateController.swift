@@ -37,6 +37,13 @@ final class AppUpdateController: ObservableObject {
     func bind(store: HUDStore) {
         self.store = store
         config = store.getSettingJSON(AppUpdateConfig.settingKey, as: AppUpdateConfig.self) ?? AppUpdateConfig()
+        // Legacy builds persisted a `githubToken` inside this setting. The key
+        // is no longer part of `AppUpdateConfig`, so decoding drops it on read —
+        // but the raw JSON blob keeps it on disk. Re-save the decoded value once
+        // so the token is not left sitting in the settings table.
+        if let raw = store.getSetting(AppUpdateConfig.settingKey), raw.contains("githubToken") {
+            saveConfig()
+        }
         if PreviewRuntime.isEnabled {
             phase = .previewDisabled
             return
