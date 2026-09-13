@@ -820,6 +820,11 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(TodayCopy.waitingWork(1), "等对方 1")
         XCTAssertEqual(TodayCopy.allUpdates(5), "全部 5 条")
         XCTAssertEqual(TodayCopy.backToReplies, "只看需要回复的")
+        XCTAssertEqual(TodayCopy.reply, "理解上下文与回复")
+        XCTAssertEqual(TodayCopy.handled, "已处理")
+        XCTAssertEqual(TodayCopy.viewOriginal, "查看原文")
+        XCTAssertEqual(TodayCopy.aiReading, "AI 解读")
+        XCTAssertEqual(TodayCopy.collapsedSummary(String(repeating: "字", count: 40)).count, 29)
     }
 
     private func workspaceCommitment(
