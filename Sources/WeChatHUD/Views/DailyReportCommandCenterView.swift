@@ -14,6 +14,7 @@ struct DailyReportCommandCenterView: View {
     @State private var hoveredRiskID: String?
     @State private var commandStates: [DailyReportCommandState] = []
     @State private var loadedDateKey: String?
+    @State private var followReceipt: String?
 
     init(isWorkspace: Bool = true) {
         self.isWorkspace = isWorkspace
@@ -72,6 +73,12 @@ struct DailyReportCommandCenterView: View {
         loadedDateKey = key
     }
 
+    private func followDoneReceipt(for action: DailyReportAction) -> String {
+        let title = action.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clipped = title.count > 18 ? String(title.prefix(18)) + "…" : title
+        return "「\(clipped)」已完成。"
+    }
+
     private func content(vm: DailyReportPresentationPolicy.CommandCenterViewModel, report: DailyReport) -> some View {
         let isHistorical = !Calendar.current.isDateInToday(report.date)
         return VStack(alignment: .leading, spacing: 0) {
@@ -79,6 +86,14 @@ struct DailyReportCommandCenterView: View {
                 historicalHeader(report.date)
             } else {
                 progressCard(vm.progress)
+            }
+            if let followReceipt {
+                Text(followReceipt)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, isWorkspace ? 20 : 14)
+                    .padding(.vertical, 8)
+                    .accessibilityLabel(followReceipt)
             }
             divider
 
@@ -155,6 +170,7 @@ struct DailyReportCommandCenterView: View {
         .onChange(of: report.date) { _, _ in
             historicalHighlightsCollapsed = false
             showHighlights = false
+            followReceipt = nil
         }
     }
 
@@ -362,7 +378,10 @@ struct DailyReportCommandCenterView: View {
             }
 
             HStack(spacing: 4) {
-                Button(action: { monitor.markDailyReportActionDone(action) }) {
+                Button(action: {
+                    monitor.markDailyReportActionDone(action)
+                    followReceipt = followDoneReceipt(for: action)
+                }) {
                     actionButtonLabel(
                         icon: "checkmark",
                         title: "标记完成",

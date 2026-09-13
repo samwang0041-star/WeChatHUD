@@ -122,6 +122,17 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(tab.text.contains("导出"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testMarkingAFollowUpSpeaksAReceipt() throws {
+        let source = try DailyReportCommandCenterSource.load()
+        XCTAssertTrue(source.text.contains("followReceipt"))
+        XCTAssertTrue(source.text.contains("已完成。"))
+        XCTAssertTrue(source.text.contains("标记完成"))
+        XCTAssertTrue(source.text.contains("followDoneReceipt"))
+        let tab = try DailyReportTabSource.load()
+        XCTAssertTrue(tab.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportCommandCenterSource {
