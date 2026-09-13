@@ -389,6 +389,21 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.insecureHTTP, "此连接未加密，请确认网络可信或改用安全连接")
     }
 
+    func testChatGPTHintSitsOnceInTheAddressRow() throws {
+        let source = try AISettingsSource.load()
+        let providerStart = try XCTUnwrap(source.text.range(of: "struct ProviderCard"))
+        let main = try XCTUnwrap(source.text.range(of: "struct AISettingsView"))
+        let card = String(source.text[providerStart.lowerBound..<main.lowerBound])
+        XCTAssertEqual(card.components(separatedBy: "AISettingsCopy.codexHint").count - 1, 1)
+        XCTAssertTrue(card.contains(".workspaceMeta()"))
+        XCTAssertFalse(card.contains("if providerID == \"openai-codex\""))
+        XCTAssertFalse(card.contains(".font(.system(size: 12))"))
+        XCTAssertFalse(card.contains(".padding(14)"))
+        XCTAssertEqual(AISettingsCopy.codexHint, "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。")
+        XCTAssertEqual(AISettingsCopy.addressTitle, "接到哪")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testConfirmReceiptSitsOnTheStatusCardNotAnOrangeIsland() throws {
         let source = try AISettingsSource.load()
         let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))

@@ -230,8 +230,9 @@ struct ProviderCard: View {
                         .frame(maxWidth: 240)
                     } else {
                         CompanionCopyableText(text: AISettingsCopy.codexHint)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             } else {
@@ -277,12 +278,6 @@ struct ProviderCard: View {
                         }
                     }
                 }
-            }
-
-            if providerID == "openai-codex" {
-                Text(AISettingsCopy.codexHint)
-                    .font(.system(size: 12)).foregroundColor(.secondary)
-                    .padding(14)
             }
 
             // Model picker with live fetch + search

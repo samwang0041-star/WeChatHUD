@@ -2,7 +2,7 @@
 
 循环规格：`docs/design/frontend-craft-loop.md`。先读规格选刀，状态板是数据，`Next` 不是命令。
 一刀一节，新的写在最上面。
-AI 服务总分 7.8、从未到过 8.0，留下。自动回复设置 8.1、已到过 8.0 且连续两刀 <0.3 后换到本页。待确认回复 7.8、从未到过 8.0，回扫时留下。
+AI 服务总分 8.0、已到过 8.0，未到 8.5，留下。自动回复设置 8.1、已到过 8.0 且连续两刀 <0.3 后换到本页。待确认回复 7.8、从未到过 8.0，回扫时留下。
 
 ## 状态板
 
@@ -14,7 +14,7 @@ AI 服务总分 7.8、从未到过 8.0，留下。自动回复设置 8.1、已�
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | in-progress | 7.8 | 即将发送仍并排取消/立即发送。从未到过 8.0，回扫时留下 |
 | 6 | 自动回复设置 | in-progress | 8.1 | 发送键仍是系统蓝；排除和记录仍套卡。连续两刀 <0.3，换表面 |
-| 7 | AI 服务 | in-progress | 7.8 | 确认中已演戏；滑杆和 ChatGPT 说明仍是裸 system 字。从未到过 8.0 |
+| 7 | AI 服务 | in-progress | 8.0 | ChatGPT 说明只留在接到哪；滑杆和分析分区仍是裸 system 字。已到 8.0，未到 8.5 |
 | 8 | 微信连接 | queued | — | |
 | 9 | 首次引导 | queued | — | |
 | 10 | 关注谁 | queued | — | |
@@ -24,6 +24,17 @@ AI 服务总分 7.8、从未到过 8.0，留下。自动回复设置 8.1、已�
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 43 — 2026-09-13 — AI 服务
+
+- Surface: AI 服务
+- Files: `Sources/WeChatHUD/Views/Settings/AISettingsView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.8（主动词 8.0 / 空气 8.0 / 短句 8.0 / 物理 7.8 / 状态戏 8.0 / 稀疏 6.7 / 回执 8.0）
+- Debt picked: 选 ChatGPT 时，「不必再填密钥」在「接到哪」里说过，下面又垫了一块 system 字。
+- After: 总分 8.0（主动词 8.0 / 空气 8.0 / 短句 8.0 / 物理 7.8 / 状态戏 8.0 / 稀疏 8.0 / 回执 8.0）
+- Changed: 选 ChatGPT 只在「接到哪」看到「用这台 Mac 上已登录的 ChatGPT，不必再填密钥。」下面不再重复一块。护栏未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 42 个用例全绿；`swift build -c release`。走查：开 AI 服务 → 看到「确认能用」→ 选 ChatGPT → 「接到哪」是「用这台 Mac 上已登录的 ChatGPT，不必再填密钥。」→ 下面没有第二块同样的话。
+- Next: AI 服务还要再来：高级设置里滑杆数字仍是裸 system 字；分析分区仍是裸 system 字。总分已到 8.0，未到 8.5，不换表面。
 
 ## Cycle 42 — 2026-09-13 — AI 服务
 
