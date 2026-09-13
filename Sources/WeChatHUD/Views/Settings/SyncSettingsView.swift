@@ -653,12 +653,6 @@ struct SyncSettingsView: View {
         SettingsSection {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
-                    CompanionClipboardField(
-                        text: $dataSearch,
-                        placeholder: LocalDataCopy.searchPlaceholder,
-                        kind: .plain,
-                        accessibilityLabel: LocalDataCopy.searchPlaceholder
-                    )
                     HStack(spacing: 8) {
                         ForEach(DataSection.allCases, id: \.self) { section in
                             CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
@@ -667,6 +661,16 @@ struct SyncSettingsView: View {
                             }
                         }
                     }
+                    DisclosureGroup(LocalDataCopy.findDisclosure) {
+                        CompanionClipboardField(
+                            text: $dataSearch,
+                            placeholder: LocalDataCopy.searchPlaceholder,
+                            kind: .plain,
+                            accessibilityLabel: LocalDataCopy.searchPlaceholder
+                        )
+                    }
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -964,6 +968,7 @@ enum LocalDataCopy {
 
     static let exportDisclosure = "还要导出"
     static let searchPlaceholder = "找人或内容"
+    static let findDisclosure = "还要找"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
