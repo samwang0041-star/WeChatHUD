@@ -715,6 +715,31 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(menu.contains("CompanionPressStyle()"))
         XCTAssertFalse(menu.contains(".buttonStyle(.plain)"))
     }
+
+    func testConnectedConnectionPrimaryGoesToPickConversations() throws {
+        let setup = try ConnectionSetupSource.load()
+        XCTAssertTrue(setup.text.contains("connectedContinueTitle"))
+        XCTAssertTrue(setup.text.contains("onConnectedContinue"))
+        XCTAssertTrue(setup.text.contains("CompanionPalette.jade"))
+        XCTAssertTrue(setup.text.contains("recheckConnection"))
+        XCTAssertFalse(setup.text.contains(".tint(CompanionPalette.accent)"))
+
+        let sync = try SyncSettingsSource.load()
+        XCTAssertTrue(sync.text.contains("WeChatConnectionCopy.pickConversations"))
+        XCTAssertTrue(sync.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"contacts\")"))
+
+        let onboarding = try OnboardingViewSource.load()
+        XCTAssertTrue(onboarding.text.contains("WeChatConnectionSetupView()"))
+        XCTAssertFalse(onboarding.text.contains("connectedContinueTitle"))
+
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        let connected = FirstLaunchGuide.connection(
+            state: .connected, wechatRunning: true, accessReady: true, connected: true
+        )
+        XCTAssertEqual(connected.title, "微信已连接")
+        XCTAssertEqual(connected.detail, "下一步：选择要整理的对话。")
+        XCTAssertEqual(connected.buttonTitle, "检查更新")
+    }
 }
 
 // MARK: - Source readers
@@ -799,6 +824,30 @@ private struct ApprovalWorkspaceSource {
     let text: String
     static func load() throws -> ApprovalWorkspaceSource {
         ApprovalWorkspaceSource(text: try read("Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct ConnectionSetupSource {
+    let text: String
+    static func load() throws -> ConnectionSetupSource {
+        ConnectionSetupSource(text: try read("Sources/WeChatHUD/Views/WeChatConnectionSetupView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct SyncSettingsSource {
+    let text: String
+    static func load() throws -> SyncSettingsSource {
+        SyncSettingsSource(text: try read("Sources/WeChatHUD/Views/Settings/SyncSettingsView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct OnboardingViewSource {
+    let text: String
+    static func load() throws -> OnboardingViewSource {
+        OnboardingViewSource(text: try read("Sources/WeChatHUD/Views/OnboardingView.swift"))
     }
     init(text: String) { self.text = text }
 }

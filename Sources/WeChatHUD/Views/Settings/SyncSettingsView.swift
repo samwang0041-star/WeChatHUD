@@ -92,7 +92,12 @@ struct SyncSettingsView: View {
             }
             settingsPane(.connection) {
                 VStack(alignment: .leading, spacing: 16) {
-                    WeChatConnectionSetupView()
+                    WeChatConnectionSetupView(
+                        connectedContinueTitle: WeChatConnectionCopy.pickConversations,
+                        onConnectedContinue: {
+                            NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                        }
+                    )
                         .companionSurface(padding: 22)
                     connectionCapabilityList
                     DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
