@@ -112,6 +112,35 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(IslandInboxCopy.openToday, "今天")
     }
 
+    func testApprovalPageLeadsWithTheQueueNotASessionDashboard() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertTrue(source.text.contains("ApprovalCopy.confirmSend"))
+        XCTAssertTrue(source.text.contains("AutopilotStartCopy.start"))
+        XCTAssertTrue(source.text.contains("ApprovalWorkspacePolicy.statusSentence"))
+        XCTAssertFalse(source.text.contains("ContentUnavailableView"))
+        XCTAssertFalse(source.text.contains("arrow.triangle.2.circlepath"))
+        XCTAssertEqual(ApprovalCopy.confirmSend, "确认发送")
+        XCTAssertEqual(ApprovalCopy.emptyPending, "还没有待确认的回复")
+
+        guard let toolbar = source.text.range(of: "private var toolbar"),
+              let empty = source.text.range(of: "private var emptyState"),
+              let start = source.text.range(of: "AutopilotStartCopy.start") else {
+            XCTFail("toolbar, empty state, and 开始整理 should all still exist")
+            return
+        }
+        XCTAssertLessThan(toolbar.lowerBound, empty.lowerBound)
+        XCTAssertGreaterThan(start.lowerBound, empty.lowerBound, "开始整理 belongs in the empty state, not the header dashboard")
+
+        guard let confirm = source.text.range(of: "ApprovalCopy.confirmSend"),
+              let save = source.text.range(of: "ApprovalCopy.saveDraft") else {
+            XCTFail("confirm and save should sit together")
+            return
+        }
+        let actions = String(source.text[confirm.lowerBound..<save.lowerBound])
+        XCTAssertTrue(actions.contains("tint(CompanionPalette.jade)"))
+        XCTAssertTrue(actions.contains("borderedProminent"))
+    }
+
     func testIslandGearNamesTheWorkspaceItOpens() throws {
         let source = try InboxViewSource.load()
         guard let wingStart = source.text.range(of: "Right wing —"),
@@ -299,6 +328,14 @@ private struct CompactInboxBarSource {
     let text: String
     static func load() throws -> CompactInboxBarSource {
         CompactInboxBarSource(text: try read("Sources/WeChatHUD/Views/CompactInboxBar.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct ApprovalWorkspaceSource {
+    let text: String
+    static func load() throws -> ApprovalWorkspaceSource {
+        ApprovalWorkspaceSource(text: try read("Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift"))
     }
     init(text: String) { self.text = text }
 }

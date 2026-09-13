@@ -12,6 +12,30 @@ enum ApprovalWorkspacePolicy {
         }
         return queue
     }
+
+    static func statusSentence(active: Bool, paused: Bool, autoSendOn: Bool) -> String {
+        let run: String
+        if !active {
+            run = "尚未开始整理"
+        } else if paused {
+            run = "已暂停"
+        } else {
+            run = "正在整理"
+        }
+        let send = autoSendOn ? "自动发送开启" : "自动发送关闭"
+        return "\(run) · \(send)"
+    }
+}
+
+enum ApprovalCopy {
+    static let confirmSend = "确认发送"
+    static let saveDraft = "保存修改"
+    static let cancelItem = "取消本条"
+    static let pause = "暂停"
+    static let resume = "恢复"
+    static let emptyPending = "还没有待确认的回复"
+    static let emptyOther = "这一栏还没有记录"
+    static let emptyHint = "点开始整理，草稿会出现在这里。发不发都由你决定。"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -115,7 +139,7 @@ struct ApprovalWorkspaceView: View {
     }
 
     private var toolbar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ForEach(Filter.allCases) { value in
                     let count = value == .pending ? pendingCount : nil
@@ -125,43 +149,49 @@ struct ApprovalWorkspaceView: View {
                     ) { filter = value }
                 }
                 Spacer()
-                HStack(spacing: 8) {
-                    Image(systemName: monitor.autopilotActive ? "arrow.triangle.2.circlepath" : "pause.circle")
-                    Text(monitor.autopilotActive ? "正在整理" : "尚未开始整理")
-                    Text("·")
-                    Text(autoSendOn ? "自动发送开启" : "自动发送关闭")
-                    if monitor.autopilotActive {
-                        Button(monitor.autopilotManuallyPaused ? "恢复" : "暂停") {
-                            Task {
-                                if monitor.autopilotManuallyPaused {
-                                    await monitor.autopilotService?.manualResume()
-                                } else {
-                                    await monitor.autopilotService?.manualPause()
-                                }
+            }
+            HStack(spacing: 8) {
+                Text(ApprovalWorkspacePolicy.statusSentence(
+                    active: monitor.autopilotActive,
+                    paused: monitor.autopilotManuallyPaused,
+                    autoSendOn: autoSendOn
+                ))
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                Spacer()
+                if monitor.autopilotActive {
+                    Button(monitor.autopilotManuallyPaused ? ApprovalCopy.resume : ApprovalCopy.pause) {
+                        Task {
+                            if monitor.autopilotManuallyPaused {
+                                await monitor.autopilotService?.manualResume()
+                            } else {
+                                await monitor.autopilotService?.manualPause()
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    } else if showsSessionToggle {
-                        Button("开始整理") { monitor.toggleAutopilot() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
                     }
+                    .workspaceMeta()
+                    .buttonStyle(CompanionPressStyle())
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
             }
         }
         .padding(.bottom, 12)
     }
 
     private var emptyState: some View {
-        ContentUnavailableView(
-            filter == .pending ? "还没有待确认的回复" : "这一栏还没有记录",
-            systemImage: "bubble.left.and.bubble.right",
-            description: Text("点开始整理后，助理会写成草稿。发不发都由你决定。暂停不会删除现有草稿。")
-        )
-        .frame(maxWidth: .infinity, minHeight: 280)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(filter == .pending ? ApprovalCopy.emptyPending : ApprovalCopy.emptyOther)
+                .workspaceTitle()
+            Text(ApprovalCopy.emptyHint)
+                .workspaceBody()
+                .foregroundStyle(.secondary)
+            if showsSessionToggle && filter == .pending && !monitor.autopilotActive {
+                Button(AutopilotStartCopy.start) { monitor.toggleAutopilot() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(CompanionPalette.jade)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 24)
     }
 
     private var listPane: some View {
@@ -297,11 +327,12 @@ struct ApprovalWorkspaceView: View {
                 }
 
                 if selected.action == .pending {
-                    HStack(spacing: 8) {
-                        Button("确认发送") { showSendConfirm = true }
+                    HStack(spacing: 12) {
+                        Button(ApprovalCopy.confirmSend) { showSendConfirm = true }
                             .buttonStyle(.borderedProminent)
+                            .tint(CompanionPalette.jade)
                             .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
-                        Button("保存修改") {
+                        Button(ApprovalCopy.saveDraft) {
                             do {
                                 try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
                                 receipt = "已保存草稿"
@@ -309,23 +340,25 @@ struct ApprovalWorkspaceView: View {
                                 receipt = "草稿没有保存，请重试。"
                             }
                         }
-                        .buttonStyle(.bordered)
-                        Button("取消本条") {
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(.secondary)
+                        Button(ApprovalCopy.cancelItem) {
                             monitor.rejectAutopilotItem(logId: selected.id)
                             receipt = "已取消本条，现有草稿仍保留。"
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
             .padding(.leading, 16)
             .padding(.vertical, 12)
         } else if !humanNeededSends.isEmpty {
-            ContentUnavailableView(
-                autoSendOn ? "这些回复需要你确认后再发" : "自动发送已关，左侧是即将发送的回复",
-                systemImage: "paperplane",
-                description: Text("立即发送或取消都可以在左侧完成。草稿仍在待确认列表里。")
-            )
+            Text(autoSendOn ? "这些回复需要你确认后再发" : "自动发送已关，在左侧发送或取消。")
+                .workspaceBody()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 16)
         }
     }
 
