@@ -75,6 +75,16 @@ final class NotificationSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
         XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
     }
+
+    func testSavedReceiptIsHeavierThanIdleHint() throws {
+        let source = try NotificationSettingsSource.load()
+        XCTAssertTrue(source.text.contains("已经记下。"))
+        XCTAssertTrue(source.text.contains("fontWeight(saved ? .semibold : .regular)"))
+        XCTAssertTrue(source.text.contains("saved ? Color.primary : Color.secondary"))
+        XCTAssertTrue(source.text.contains("现在会弹出"))
+        XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
+        XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
+    }
 }
 
 private struct NotificationSettingsSource {
