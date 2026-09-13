@@ -67,7 +67,8 @@ struct CompactIslandSnapshot: Equatable {
     var buddy: BuddyMood
     var glow: CompactIslandGlow
     var spoken: String
-    /// Short outboard peek label. No hover hint, no message body.
+    /// Short outboard peek label. Names the next move when there is one;
+    /// never a hover hint, never a message body.
     var glance: String
 }
 
@@ -214,7 +215,7 @@ enum CompactIslandPolicy {
     private static func glance(for phase: CompactIslandPhase) -> String {
         switch phase {
         case .connectionProblem:
-            return "连不上"
+            return "去连接"
         case .urgent(let priority, let count):
             return priority == .p0
                 ? "紧急 · \(spokenCount(count))"
