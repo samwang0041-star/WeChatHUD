@@ -182,6 +182,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains(".buttonStyle(.plain)"))
     }
 
+    func testCompactWingsUseIslandInkNotTrafficLights() throws {
+        let source = try CompactInboxBarSource.load()
+        XCTAssertTrue(source.text.contains("IslandChrome.glowRed"))
+        XCTAssertTrue(source.text.contains("IslandChrome.glowAmber"))
+        XCTAssertTrue(source.text.contains(".islandMeta()"))
+        XCTAssertFalse(source.text.contains("Color.red"))
+        XCTAssertFalse(source.text.contains("Color.yellow"))
+        XCTAssertFalse(source.text.contains("Color.blue"))
+        XCTAssertFalse(source.text.contains("badgeSize"))
+        XCTAssertFalse(source.text.contains(".font(.system(size: CompactInboxMetrics.badgeSize"))
+    }
+
     func testIslandSnoozeMenuRowsPress() throws {
         let source = try InboxRowViewSource.load()
         guard let menuStart = source.text.range(of: "struct IslandSnoozeMenu"),
@@ -261,6 +273,14 @@ private struct InboxRowViewSource {
     let text: String
     static func load() throws -> InboxRowViewSource {
         InboxRowViewSource(text: try read("Sources/WeChatHUD/Views/InboxRowView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct CompactInboxBarSource {
+    let text: String
+    static func load() throws -> CompactInboxBarSource {
+        CompactInboxBarSource(text: try read("Sources/WeChatHUD/Views/CompactInboxBar.swift"))
     }
     init(text: String) { self.text = text }
 }

@@ -10,7 +10,7 @@
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
-| 4 | 岛·紧凑/peek | queued | — | |
+| 4 | 岛·紧凑/peek | in-progress | 8.0 | 口述仍说「AI 正在整理」 |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 12 — 2026-09-13 — 岛·紧凑/peek
+
+- Surface: 岛·紧凑/peek
+- Files: `Sources/WeChatHUD/Views/CompactInboxBar.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.7（主动词 8.0 / 空气 6.5 / 短句 7.5 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 7.5）
+- Debt picked: 左翼圆点用系统红黄蓝，数字还是裸 11pt。
+- After: 总分 8.0（主动词 8.0 / 空气 8.2 / 短句 7.5 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 7.5）
+- Changed: 紧急是岛上的红/琥珀，整理仍是薄荷。数字走 islandMeta。弹簧和 peek 宽度未动。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter CompactErrorAffordanceTests --filter CompactIslandPolicyTests --filter IslandPeekTests --filter PixelBuddyTests` 等 84 个用例全绿；`swift build -c release`。走查：悬停 peek 只加宽；按下左翼仍打开收件箱；连不上仍是琥珀感叹号。
+- Next: 岛·紧凑/peek 第二刀 — 口述「AI 正在整理」改成人话；不要动弹簧
 
 ## Cycle 11 — 2026-09-13 — 岛·通知横幅
 
