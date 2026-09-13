@@ -692,6 +692,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains(".buttonStyle(.plain)"))
     }
 
+    func testClosingTheBannerSpeaksAReceipt() throws {
+        let source = try NotificationBannerViewSource.load()
+        XCTAssertTrue(source.text.contains("IslandBannerCopy.dismissed"))
+        XCTAssertTrue(source.text.contains("Self.dismiss(panelState)"))
+        XCTAssertTrue(source.text.contains("关闭"))
+        XCTAssertTrue(source.text.contains("稍后"))
+        XCTAssertEqual(IslandBannerCopy.dismissed, "还在收件箱。")
+    }
+
     func testCompactWingsUseIslandInkNotTrafficLights() throws {
         let source = try CompactInboxBarSource.load()
         XCTAssertTrue(source.text.contains("IslandChrome.glowRed"))

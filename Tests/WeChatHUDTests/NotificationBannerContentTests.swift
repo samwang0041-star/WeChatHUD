@@ -239,4 +239,18 @@ final class NotificationBannerContentTests: XCTestCase {
             "打开这段对话"
         )
     }
+
+    /// 关闭 is not a silent vanish: the interrupt leaves, the item stays,
+    /// and the compact island has to say so.
+    @MainActor
+    func testDismissingTheBannerLeavesAReceipt() {
+        let panelState = PanelState()
+        panelState.isReady = true
+        panelState.showNotification(duration: 30)
+        NotificationBannerView.dismiss(panelState)
+        XCTAssertEqual(panelState.currentState, .compact, "关闭 collapses the island")
+        XCTAssertEqual(panelState.toastMessage, IslandBannerCopy.dismissed)
+        XCTAssertTrue(panelState.toastIsSuccess, "关闭 is a quiet success, not a warning")
+        XCTAssertEqual(IslandBannerCopy.dismissed, "还在收件箱。")
+    }
 }

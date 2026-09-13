@@ -175,10 +175,11 @@ private struct HUDToastLayer: View {
 
     private func toastView(_ message: String) -> some View {
         let snoozeUndo = panelState.islandSnoozeUndo
+        let success = snoozeUndo != nil || panelState.toastIsSuccess
         return HStack(spacing: 6) {
-            Image(systemName: snoozeUndo == nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+            Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(snoozeUndo == nil ? .orange : CompanionPalette.islandMint)
+                .foregroundColor(success ? CompanionPalette.islandMint : .orange)
             Text(message)
                 .islandMeta()
                 .foregroundColor(IslandInk.primary)
@@ -215,7 +216,7 @@ private struct HUDToastLayer: View {
                 .fill(Color.black.opacity(0.92))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 0.5)
+                        .stroke((success ? CompanionPalette.islandMint : Color.orange).opacity(0.4), lineWidth: 0.5)
                 )
         )
         .frame(maxWidth: 400)
