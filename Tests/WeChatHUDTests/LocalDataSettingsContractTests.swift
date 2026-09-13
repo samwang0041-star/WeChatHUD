@@ -134,6 +134,20 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("提问"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testExportActionPressesQuietly() throws {
+        let source = try LocalDataSettingsSource.load()
+        let exportStart = try XCTUnwrap(source.text.range(of: "private var exportReportSection"))
+        let retroStart = try XCTUnwrap(source.text.range(of: "private var retrospectionSection"))
+        let export = String(source.text[exportStart.lowerBound..<retroStart.lowerBound])
+        XCTAssertTrue(export.contains("导出到桌面"))
+        XCTAssertTrue(export.contains("CompanionPressStyle()"))
+        XCTAssertFalse(export.contains("borderedProminent"))
+        XCTAssertFalse(export.contains("CompanionPalette.jade"))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
