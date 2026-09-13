@@ -70,6 +70,10 @@ actor WeChatReaderActor {
         reader.mySelfNames
     }
 
+    func dbDir() -> String {
+        reader.dbDir
+    }
+
     func hasAccountSwitched() -> Bool {
         reader.hasAccountSwitched()
     }
