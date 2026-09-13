@@ -573,6 +573,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
     }
 
+    func testSwitchingServiceSourceAsksToConfirmAgain() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertTrue(source.text.contains("testResult = AISettingsCopy.sourceChanged"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.sourceChanged"))
+        XCTAssertTrue(source.text.contains("testResult != AISettingsCopy.sourceChanged"))
+        XCTAssertEqual(AISettingsCopy.sourceChanged, "换了来源，还要再确认。")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+        XCTAssertEqual(AISettingsCopy.sourcePreset, "常用服务")
+        XCTAssertEqual(AISettingsCopy.sourceCustom, "自己填")
+        XCTAssertFalse(AISettingsCopy.sourceChanged.contains("还没点"))
+    }
+
     func testConfirmingDoesNotLeaveSaveOkOnTheCard() throws {
         let source = try AISettingsSource.load()
         let save = try XCTUnwrap(source.text.range(of: "private var saveStatus"))
