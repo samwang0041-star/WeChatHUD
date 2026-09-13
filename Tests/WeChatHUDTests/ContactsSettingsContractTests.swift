@@ -92,6 +92,21 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testInspectorSpeaksAccountAndLookAgain() throws {
+        let source = try ContactsSettingsSource.load()
+        XCTAssertFalse(source.text.contains("微信 ID"))
+        XCTAssertFalse(source.text.contains("重新整理"))
+        XCTAssertTrue(source.text.contains("再看看"))
+        let inspectorStart = try XCTUnwrap(source.text.range(of: "private struct ContactInspectorView"))
+        let block = try XCTUnwrap(source.text.range(of: "// MARK: - Block Rules"))
+        let inspector = String(source.text[inspectorStart.lowerBound..<block.lowerBound])
+        XCTAssertTrue(inspector.contains("账号"))
+        XCTAssertTrue(inspector.contains("再看看"))
+        XCTAssertTrue(inspector.contains("TA 是谁"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {
