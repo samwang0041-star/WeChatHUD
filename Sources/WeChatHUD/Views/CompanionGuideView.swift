@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum GuideCopy {
+    static let statusLine = "先连接微信，再选人，再看今天。"
+    static let moreDisclosure = "还要看其余说明"
+}
+
 /// In-app help for everyday use. Navigation is owned by SettingsView so the
 /// guide stays independent from the workspace's selected-tab state.
 struct CompanionGuideView: View {
@@ -24,13 +29,24 @@ struct CompanionGuideView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                introCard
+                Text(GuideCopy.statusLine)
+                    .workspaceTitle()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                 quickStartCard
-                dailyUseCard
-                privacyCard
-                troubleshootingCard
-                shortcutsCard
-                aboutCard
+                DisclosureGroup(GuideCopy.moreDisclosure) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        faqColumn
+                        dailyUseCard
+                        privacyCard
+                        troubleshootingCard
+                        shortcutsCard
+                        aboutCard
+                    }
+                    .padding(.top, 8)
+                }
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
@@ -42,30 +58,20 @@ struct CompanionGuideView: View {
         .accessibilityLabel("怎么用 WeChatHUD")
     }
 
-    private var introCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("怎么用")
-                .workspaceDisplay()
+    private var quickStartCard: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            guideStep(number: "1", title: "连接微信", detail: "读取这台 Mac 上已登录的微信。", buttonTitle: "连接微信", action: showIntroduction)
+            guideStep(number: "2", title: "选择关注的人", detail: "选一个联系人或群。", buttonTitle: "选择对话", action: { navigate(.contacts) })
+            guideStep(number: "3", title: "看清下一步", detail: "「今天」里看待回和待办。", buttonTitle: "打开今天", action: { navigate(.today) })
         }
-        .padding(.bottom, 8)
     }
 
-    private var quickStartCard: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 18) {
-                guideStep(number: "1", title: "连接微信", detail: "读取这台 Mac 上已登录的微信。", buttonTitle: "连接微信", action: showIntroduction)
-                guideStep(number: "2", title: "选择关注的人", detail: "选一个联系人或群。", buttonTitle: "选择对话", action: { navigate(.contacts) })
-                guideStep(number: "3", title: "看清下一步", detail: "「今天」里看待回和待办。", buttonTitle: "打开今天", action: { navigate(.today) })
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("常见问题").font(.system(size: 15, weight: .semibold))
-                faqRow("看不到消息？") { navigate(.system) }
-                faqRow("AI 没有生成摘要？") { navigate(.aiService) }
-                faqRow("发送没有成功？") { navigate(.system) }
-            }
-            .frame(width: 240, alignment: .leading)
+    private var faqColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("常见问题").font(.system(size: 15, weight: .semibold))
+            faqRow("看不到消息？") { navigate(.system) }
+            faqRow("AI 没有生成摘要？") { navigate(.aiService) }
+            faqRow("发送没有成功？") { navigate(.system) }
         }
     }
 
