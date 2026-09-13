@@ -23,6 +23,8 @@ enum AISettingsCopy {
     static let pickModel = "请选一个模型。"
     static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
     static let retryOnce = "再试一次"
+    static let writingHabits = "写作习惯"
+    static let privacyTitle = "数据与隐私"
     static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
 }
 
@@ -582,11 +584,7 @@ struct AISettingsView: View {
     }
 
     private var serviceSection: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            serviceForm
-            generationPreferences
-            privacySection
-        }
+        serviceForm
     }
 
     private var hasUsableConfiguredService: Bool {
@@ -611,6 +609,10 @@ struct AISettingsView: View {
             }
             SettingsRowDivider()
             providerCard
+            SettingsRowDivider()
+            generationPreferences
+            SettingsRowDivider()
+            privacySection
         }
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
@@ -631,7 +633,7 @@ struct AISettingsView: View {
 
     private var generationPreferences: some View {
         DisclosureGroup(isExpanded: $preferencesExpanded) {
-            SettingsSection {
+            VStack(spacing: 0) {
                 SettingsToggleRow("慢慢想清楚再答", subtitle: "写摘要和草稿时多想一会儿，可能会更慢。", isOn: $thinkingEnabled)
                 SettingsRowDivider()
                 SettingsRow("回复最长写多少") {
@@ -656,18 +658,19 @@ struct AISettingsView: View {
                     }
                 }
                 Text("这是平时写摘要和草稿的习惯。有的整理任务会单独处理；用 ChatGPT 登录时，上面两项长度和随意度不会生效。")
-                    .font(.caption)
+                    .workspaceMeta()
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
             }
         } label: {
-            Label("写作习惯", systemImage: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
+            Text(AISettingsCopy.writingHabits)
+                .workspaceRowTitle()
         }
         .tint(CompanionPalette.accent)
-        .companionSurface(padding: 16)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .onChange(of: thinkingEnabled) { _, _ in debouncedSave() }
         .onChange(of: maxTokens) { _, _ in debouncedSave() }
         .onChange(of: temperature) { _, _ in debouncedSave() }
@@ -732,17 +735,18 @@ struct AISettingsView: View {
                 Text("访问凭据仅保存在本机私有设置中，不会显示在界面或测试结果里。")
                 Text("预设与自定义服务多为远程服务，请确认你信任其数据处理方式。")
             }
-            .font(.system(size: 12))
+            .workspaceMeta()
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 10)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         } label: {
-            Label("数据与隐私", systemImage: "lock.shield")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
+            Text(AISettingsCopy.privacyTitle)
+                .workspaceRowTitle()
         }
         .tint(CompanionPalette.accent)
-        .companionSurface(padding: 16)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var saveStatus: some View {
