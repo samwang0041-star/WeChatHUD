@@ -227,6 +227,21 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testAddDialogFailIsAWorkspacePlayNotAnOrangeDump() throws {
+        let source = try ContactsSettingsSource.load()
+        let dialogStart = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let candidatesStart = try XCTUnwrap(source.text.range(of: "private func addCandidates"))
+        let dialog = String(source.text[dialogStart.lowerBound..<candidatesStart.lowerBound])
+        XCTAssertTrue(dialog.contains("刚才没读到人。"))
+        XCTAssertTrue(dialog.contains("FirstLaunchGuide.saveRetry"))
+        XCTAssertFalse(dialog.contains("Text(candidateLoadError)"))
+        XCTAssertFalse(dialog.contains(".foregroundStyle(.orange)"))
+        XCTAssertTrue(dialog.contains("CompanionProductCopy.addFollow"))
+        XCTAssertEqual(FirstLaunchGuide.saveRetry, "再试一次")
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {

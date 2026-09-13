@@ -361,18 +361,28 @@ private struct ContactsListSubView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else if available.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    if let candidateLoadError, addSearchText.isEmpty {
-                        Text(candidateLoadError)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
+                if candidateLoadError != nil, addSearchText.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("刚才没读到人。")
+                            .workspaceMeta()
+                            .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(FirstLaunchGuide.saveRetry) {
+                            candidateReloadToken += 1
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(FirstLaunchGuide.saveRetry)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                } else {
+                    Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
                     ForEach(available.prefix(8), id: \.username) { contact in
