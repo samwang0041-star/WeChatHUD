@@ -37,6 +37,7 @@ enum ApprovalCopy {
     static let emptyOther = "这一栏还没有记录"
     static let emptyHint = "点开始整理，草稿会出现在这里。发不发都由你决定。"
     static let reply = "回复"
+    static let openChat = "查看聊天记录"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -281,22 +282,23 @@ struct ApprovalWorkspaceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(selected.chatName).workspaceTitle()
                         Text("收件人 \(selected.senderName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")")
-                            .font(.system(size: 12))
+                            .workspaceBody()
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("查看聊天记录") {
+                    Button(ApprovalCopy.openChat) {
                         panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                     }
-                    .buttonStyle(.plain)
+                    .workspaceMeta()
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jade)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(selected.triggerText)
-                        .font(.system(size: 14))
+                        .workspaceBody()
                     Text(CommitmentPresentation.timeLabel(selected.createdAt))
-                        .font(.system(size: 11))
+                        .workspaceMeta()
                         .foregroundStyle(.secondary)
                 }
                 .padding(12)
@@ -308,18 +310,18 @@ struct ApprovalWorkspaceView: View {
                         .workspaceRowTitle()
                     TextEditor(text: $editedReply)
                         .accessibilityLabel(ApprovalCopy.reply)
-                        .font(.system(size: 14))
+                        .workspaceBody()
                         .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)
                     HStack {
                         if !autoSendOn {
                             Label("当前未开启自动发送，这条回复尚未发出。", systemImage: "info.circle")
-                                .font(.system(size: 12))
+                                .workspaceBody()
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text("\(editedReply.count) / 500")
-                            .font(.system(size: 11))
+                            .workspaceMeta()
                             .foregroundStyle(.secondary)
                     }
                 }
