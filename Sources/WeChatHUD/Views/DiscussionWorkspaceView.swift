@@ -348,9 +348,9 @@ struct DiscussionWorkspaceView: View {
                     }
                     .accessibilityLabel("更多操作")
                 }
-                metaRow("归属", systemImage: "person", value: item.owner.workspaceLabel)
-                metaRow("截止时间", systemImage: "calendar", value: DiscussionPresentation.absoluteDueLabel(item.dueAt))
-                metaRow("来源", systemImage: "bubble.left", value: item.chatName)
+                Text(detailBeat(item))
+                    .workspaceBody()
+                    .foregroundStyle(.secondary)
                 if let detail = item.detail, !detail.isEmpty {
                     Text(detail)
                         .font(.system(size: 13))
@@ -397,15 +397,13 @@ struct DiscussionWorkspaceView: View {
         .background(CompanionPalette.canvas)
     }
 
-    private func metaRow(_ title: String, systemImage: String, value: String) -> some View {
-        HStack(spacing: 10) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .frame(width: 88, alignment: .leading)
-            Text(value).font(.system(size: 13, weight: .medium))
-            Spacer()
+    private func detailBeat(_ item: DiscussionItem) -> String {
+        let due = DiscussionPresentation.absoluteDueLabel(item.dueAt)
+        let chat = item.chatName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if chat.isEmpty {
+            return "\(item.owner.workspaceLabel)，\(due)。"
         }
+        return "\(item.owner.workspaceLabel) · \(due) · \(chat)"
     }
 
     private func receiptBar(_ text: String) -> some View {
