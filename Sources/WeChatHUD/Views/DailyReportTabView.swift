@@ -31,7 +31,7 @@ struct DailyReportTabView: View {
             }
         }
         .foregroundStyle(.primary)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(isWorkspace ? CompanionPalette.canvas : Color(nsColor: .windowBackgroundColor))
         .onChange(of: monitor.dailyReportViewedDate) { _, _ in
             if scope == .weekly { reloadWeeklyCatalog() }
         }
@@ -49,7 +49,6 @@ struct DailyReportTabView: View {
             if let exportMessage {
                 exportStatus(exportMessage)
             }
-            Divider().background(Color.secondary.opacity(0.2))
             if scope == .weekly {
                 weeklySummary
                     .onAppear { reloadWeeklyCatalog() }
@@ -57,6 +56,7 @@ struct DailyReportTabView: View {
                 DailyReportCommandCenterView(isWorkspace: true)
             }
         }
+        .background(CompanionPalette.canvas)
     }
 
     private var compactBody: some View {

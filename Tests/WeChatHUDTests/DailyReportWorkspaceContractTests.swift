@@ -16,6 +16,17 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(toolbar.contains("tint(CompanionPalette.jade)"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testWorkspaceSitsOnTheCanvasWithoutADivider() throws {
+        let source = try DailyReportTabSource.load()
+        let workspaceStart = try XCTUnwrap(source.text.range(of: "private var workspaceBody"))
+        let compactStart = try XCTUnwrap(source.text.range(of: "private var compactBody"))
+        let workspace = String(source.text[workspaceStart.lowerBound..<compactStart.lowerBound])
+        XCTAssertFalse(workspace.contains("Divider()"))
+        XCTAssertTrue(workspace.contains("CompanionPalette.canvas"))
+        XCTAssertTrue(source.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportTabSource {
