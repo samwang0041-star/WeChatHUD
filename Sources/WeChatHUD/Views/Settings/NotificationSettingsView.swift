@@ -5,6 +5,19 @@ enum NotificationSettingsCopy {
     static let atMentionPart = "群 @"
     static let importantPart = "重点的人"
     static let whitelistPart = "关注里的普通消息"
+    static let atMentionTitle = "群里 @ 我的消息"
+    static let atMentionSubtitle = "有人 @ 你时浮窗会展开。"
+    static let importantTitle = "重点关注的人"
+    static let importantSubtitle = "这些人私聊会弹出。"
+    static let whitelistTitle = "关注的人普通说话"
+    static let whitelistSubtitle = "已经进收件箱的私聊也会弹出。群闲聊不会一条条弹。"
+    static let durationTitle = "展示时间"
+    static let durationSubtitle = "鼠标移入后可继续看。"
+    static let canvasNote = "这里管顶部浮窗。承诺到期走系统通知。"
+    static let saved = "已经记下。"
+    static let unsaved = "改了就生效。"
+    static let saveFailed = "没记住。点「再试一次」。"
+    static let saveRetry = "再试一次"
 
     static func popupLine(atMention: Bool, important: Bool, allWhitelist: Bool) -> String {
         var parts: [String] = []
@@ -40,14 +53,14 @@ struct NotificationSettingsView: View {
             ))
 
             SettingsSection("谁来的消息要弹出") {
-                SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗，帮助你理解上下文。", isOn: $config.atMention)
+                SettingsToggleRow(NotificationSettingsCopy.atMentionTitle, subtitle: NotificationSettingsCopy.atMentionSubtitle, isOn: $config.atMention)
                 SettingsRowDivider()
-                SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
+                SettingsToggleRow(NotificationSettingsCopy.importantTitle, subtitle: NotificationSettingsCopy.importantSubtitle, isOn: $config.important)
                 SettingsRowDivider()
-                SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
+                SettingsToggleRow(NotificationSettingsCopy.whitelistTitle, subtitle: NotificationSettingsCopy.whitelistSubtitle, isOn: $config.allWhitelist)
                 SettingsRowDivider()
-                SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
-                    Picker("展示时间", selection: $config.durationSeconds) {
+                SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
+                    Picker(NotificationSettingsCopy.durationTitle, selection: $config.durationSeconds) {
                         ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
                             Text("\(seconds) 秒").tag(seconds)
                         }
@@ -56,7 +69,7 @@ struct NotificationSettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
+                Text(NotificationSettingsCopy.canvasNote)
                     .workspaceMeta()
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -66,13 +79,13 @@ struct NotificationSettingsView: View {
                             .workspaceMeta()
                             .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("重试保存", action: save)
+                        Button(NotificationSettingsCopy.saveRetry, action: save)
                             .buttonStyle(CompanionPressStyle())
                             .workspaceMeta()
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
+                    Text(saved ? NotificationSettingsCopy.saved : NotificationSettingsCopy.unsaved)
                         .workspaceMeta()
                         .foregroundStyle(.secondary)
                 }
@@ -95,7 +108,7 @@ struct NotificationSettingsView: View {
             error = nil
             saved = true
         } catch {
-            self.error = "提醒设置未保存，请重试。"
+            self.error = NotificationSettingsCopy.saveFailed
             saved = false
         }
     }
