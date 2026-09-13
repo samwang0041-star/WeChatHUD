@@ -93,9 +93,17 @@ struct DailyReportTabView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 ForEach(ReportScope.allCases, id: \.self) { value in
-                    CompanionFilterPill(title: value.rawValue, selected: scope == value) {
-                        scope = value
+                    Button { scope = value } label: {
+                        Text(value.rawValue)
+                            .workspaceBody()
+                            .fontWeight(scope == value ? .semibold : .regular)
+                            .foregroundStyle(scope == value ? .primary : .secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(scope == value ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
                     }
+                    .buttonStyle(CompanionPressStyle())
+                    .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
                 Spacer()
                 Button(action: previousDay) {
@@ -117,6 +125,7 @@ struct DailyReportTabView: View {
                     Label("导出", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(CompanionPalette.jade)
                 .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
                 .accessibilityLabel("导出今日小结")
             }
