@@ -20,6 +20,22 @@ final class NotificationSettingsContractTests: XCTestCase {
             "现在浮窗不会自己弹出。"
         )
     }
+
+    func testSaveNotesSitOnTheCanvasNotInsideTheSwitchCard() throws {
+        let source = try NotificationSettingsSource.load()
+        let sectionStart = try XCTUnwrap(source.text.range(of: "SettingsSection(\"谁来的消息要弹出\")"))
+        let noteStart = try XCTUnwrap(source.text.range(of: "这些开关控制顶部浮窗"))
+        let section = String(source.text[sectionStart.lowerBound..<noteStart.lowerBound])
+        XCTAssertTrue(section.contains("展示时间"))
+        XCTAssertFalse(section.contains("设置已保存"))
+        XCTAssertFalse(section.contains(".font(.caption)"))
+        XCTAssertTrue(source.text.contains("workspaceMeta()"))
+        XCTAssertFalse(source.text.contains(".font(.caption)"))
+        XCTAssertFalse(source.text.contains(".font(.callout)"))
+        XCTAssertTrue(source.text.contains("现在会弹出"))
+        XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
+        XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
+    }
 }
 
 private struct NotificationSettingsSource {
