@@ -321,3 +321,9 @@
 - ChatMonitor wires `readerActor:` init; tests still use `reader:`
 - Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
 
+## 2026-09-13 Slice 20 — InboxContextBuilder via WeChatReaderActor
+
+- Async `InboxContextBuilder.build(… readerActor:)` + shared core; ChatMonitor inbox summaries await actor path
+- Sync reader overload kept for compat; Autopilot guardrails unchanged
+- Tests: 1522 + 70 green; release OK
+

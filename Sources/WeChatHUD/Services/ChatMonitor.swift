@@ -2585,7 +2585,6 @@ final class ChatMonitor: ObservableObject {
             return $0.timestamp > $1.timestamp
         }
 
-        let readerRef = reader
         let storeRef = store
         let summarizer = inboxSummarizer
         let readerActor = WeChatReaderActor(reader)
@@ -2638,20 +2637,17 @@ final class ChatMonitor: ObservableObject {
                         continue
                     }
                     msgs = centered
-                    // Context building reads the message window again; keep it
-                    // off the main actor with the fetch above.
-                    let context = await Self.runOffMain {
-                        InboxContextBuilder.build(
-                            chatUsername: item.chatUsername,
-                            triggerMessage: trigger,
-                            reader: readerRef,
-                            store: storeRef,
-                            myUsername: myUname,
-                            contactEntry: storeRef.getContact(username: item.chatUsername),
-                            whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername),
-                            sourceContextMessages: centered
-                        )
-                    }
+                    // Context building: message/identity hops through WeChatReaderActor.
+                    let context = await InboxContextBuilder.build(
+                        chatUsername: item.chatUsername,
+                        triggerMessage: trigger,
+                        readerActor: readerActor,
+                        store: storeRef,
+                        myUsername: myUname,
+                        contactEntry: storeRef.getContact(username: item.chatUsername),
+                        whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername),
+                        sourceContextMessages: centered
+                    )
                     let summary = await summarizer.summarize(context)
                     guard let summary,
                           self.inboxItems.contains(where: { $0.generationKey == item.generationKey }) else { continue }
@@ -2678,17 +2674,15 @@ final class ChatMonitor: ObservableObject {
                 }
                 guard let triggerMsg = filtered.first else { continue }
 
-                let context = await Self.runOffMain {
-                    InboxContextBuilder.build(
-                        chatUsername: item.chatUsername,
-                        triggerMessage: triggerMsg,
-                        reader: readerRef,
-                        store: storeRef,
-                        myUsername: myUname,
-                        contactEntry: storeRef.getContact(username: item.chatUsername),
-                        whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
-                    )
-                }
+                let context = await InboxContextBuilder.build(
+                    chatUsername: item.chatUsername,
+                    triggerMessage: triggerMsg,
+                    readerActor: readerActor,
+                    store: storeRef,
+                    myUsername: myUname,
+                    contactEntry: storeRef.getContact(username: item.chatUsername),
+                    whitelistEntry: storeRef.getWhitelistEntry(username: item.chatUsername)
+                )
 
                 // Call AI
                 let summary = await summarizer.summarize(context)

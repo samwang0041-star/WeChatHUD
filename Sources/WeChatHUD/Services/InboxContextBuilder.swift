@@ -42,7 +42,7 @@ enum InboxContextBuilder {
         }
     }
 
-    /// Build InboxContext for a single conversation.
+    /// Build InboxContext for a single conversation (sync reader path — tests / compat).
     static func build(
         chatUsername: String,
         triggerMessage: MessageInfo,
@@ -58,15 +58,9 @@ enum InboxContextBuilder {
         let myDisplayName = reader.displayName(for: myUsername)
         let mySelfNames = reader.mySelfNames
 
-        // Fetch recent messages for context
         let recentMessages: [MessageInfo]
         if let sourceContextMessages {
-            recentMessages = sourceContextMessages
-                .filter { $0.chatUsername == chatUsername }
-                .sorted {
-                    if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
-                    return $0.localId > $1.localId
-                }
+            recentMessages = Self.sortedChatMessages(sourceContextMessages, chatUsername: chatUsername)
         } else {
             recentMessages = (try? reader.getMessages(
                 chatUsername: chatUsername,
@@ -74,9 +68,139 @@ enum InboxContextBuilder {
             )) ?? []
         }
 
+        let isGroup = chatUsername.contains("@chatroom")
+        let mentionedMe = MessageHelpers.isAtMe(
+            text,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
+        )
+        let groupFallbackMessages: [MessageInfo]?
+        if isGroup && mentionedMe && sourceContextMessages == nil {
+            groupFallbackMessages = (try? reader.getMessages(
+                chatUsername: chatUsername,
+                limit: windowSize + 10
+            )) ?? []
+        } else {
+            groupFallbackMessages = nil
+        }
+
+        return buildCore(
+            chatUsername: chatUsername,
+            triggerMessage: triggerMessage,
+            store: store,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames,
+            contactEntry: contactEntry,
+            whitelistEntry: whitelistEntry,
+            sourceContextMessages: sourceContextMessages,
+            recentMessages: recentMessages,
+            groupFallbackMessages: groupFallbackMessages,
+            dbDir: reader.dbDir
+        )
+    }
+
+    /// Build InboxContext via `WeChatReaderActor` (production / off-main callers).
+    static func build(
+        chatUsername: String,
+        triggerMessage: MessageInfo,
+        readerActor: WeChatReaderActor,
+        store: HUDStore,
+        myUsername: String,
+        contactEntry: ContactEntry?,
+        whitelistEntry: WhitelistEntry?,
+        sourceContextMessages: [MessageInfo]? = nil
+    ) async -> InboxContext {
+        let text = triggerMessage.text
+        let windowSize = contextWindowSize(messageLength: text.count)
+        let myDisplayName = await readerActor.displayName(for: myUsername)
+        let mySelfNames = await readerActor.mySelfNames()
+        let dbDir = await readerActor.dbDir()
+
+        let recentMessages: [MessageInfo]
+        if let sourceContextMessages {
+            recentMessages = Self.sortedChatMessages(sourceContextMessages, chatUsername: chatUsername)
+        } else {
+            recentMessages = (try? await readerActor.getMessages(
+                chatUsername: chatUsername,
+                limit: windowSize
+            )) ?? []
+        }
+
+        let isGroup = chatUsername.contains("@chatroom")
+        let mentionedMe = MessageHelpers.isAtMe(
+            text,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
+        )
+        let groupFallbackMessages: [MessageInfo]?
+        if isGroup && mentionedMe && sourceContextMessages == nil {
+            groupFallbackMessages = (try? await readerActor.getMessages(
+                chatUsername: chatUsername,
+                limit: windowSize + 10
+            )) ?? []
+        } else {
+            groupFallbackMessages = nil
+        }
+
+        return buildCore(
+            chatUsername: chatUsername,
+            triggerMessage: triggerMessage,
+            store: store,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames,
+            contactEntry: contactEntry,
+            whitelistEntry: whitelistEntry,
+            sourceContextMessages: sourceContextMessages,
+            recentMessages: recentMessages,
+            groupFallbackMessages: groupFallbackMessages,
+            dbDir: dbDir
+        )
+    }
+
+    // MARK: - Shared pure core
+
+    private static func sortedChatMessages(
+        _ messages: [MessageInfo],
+        chatUsername: String
+    ) -> [MessageInfo] {
+        messages
+            .filter { $0.chatUsername == chatUsername }
+            .sorted {
+                if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
+                return $0.localId > $1.localId
+            }
+    }
+
+    /// Pure assembly once identity + message windows + dbDir are already loaded.
+    private static func buildCore(
+        chatUsername: String,
+        triggerMessage: MessageInfo,
+        store: HUDStore,
+        myUsername: String,
+        myDisplayName: String,
+        mySelfNames: Set<String>,
+        contactEntry: ContactEntry?,
+        whitelistEntry: WhitelistEntry?,
+        sourceContextMessages: [MessageInfo]?,
+        recentMessages: [MessageInfo],
+        groupFallbackMessages: [MessageInfo]?,
+        dbDir: String
+    ) -> InboxContext {
+        let text = triggerMessage.text
+
         // Find my last reply
         let myLastReply = recentMessages.first {
-            MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+            MessageHelpers.isFromSelf(
+                $0,
+                chatUsername: chatUsername,
+                myUsername: myUsername,
+                myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames
+            )
         }
         let timeSinceMyLastReply: TimeInterval? = myLastReply.map {
             Date().timeIntervalSince(Date(timeIntervalSince1970: Double($0.createTime)))
@@ -86,12 +210,24 @@ enum InboxContextBuilder {
         let inboundSinceReply: Int
         if let outbound = myLastReply {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+                !MessageHelpers.isFromSelf(
+                    $0,
+                    chatUsername: chatUsername,
+                    myUsername: myUsername,
+                    myDisplayName: myDisplayName,
+                    mySelfNames: mySelfNames
+                )
                 && $0.createTime > outbound.createTime
             }.count
         } else {
             inboundSinceReply = recentMessages.filter {
-                !MessageHelpers.isFromSelf($0, chatUsername: chatUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+                !MessageHelpers.isFromSelf(
+                    $0,
+                    chatUsername: chatUsername,
+                    myUsername: myUsername,
+                    myDisplayName: myDisplayName,
+                    mySelfNames: mySelfNames
+                )
             }.count
         }
 
@@ -129,16 +265,20 @@ enum InboxContextBuilder {
 
         // Group context
         let isGroup = chatUsername.contains("@chatroom")
-        let mentionedMe = MessageHelpers.isAtMe(text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
+        let mentionedMe = MessageHelpers.isAtMe(
+            text,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
+        )
         let groupContext: [MessageInfo]?
         if isGroup && mentionedMe {
-            let allRecent = sourceContextMessages?
-                .filter { $0.chatUsername == chatUsername }
-                .sorted {
-                    if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
-                    return $0.localId > $1.localId
-                }
-                ?? ((try? reader.getMessages(chatUsername: chatUsername, limit: windowSize + 10)) ?? [])
+            let allRecent: [MessageInfo]
+            if let sourceContextMessages {
+                allRecent = Self.sortedChatMessages(sourceContextMessages, chatUsername: chatUsername)
+            } else {
+                allRecent = groupFallbackMessages ?? []
+            }
             let mentionIdx = allRecent.firstIndex(where: { $0.id == triggerMessage.id }) ?? 0
             let start = min(mentionIdx + 1, allRecent.count)
             let end = min(start + 10, allRecent.count)
@@ -167,7 +307,7 @@ enum InboxContextBuilder {
                 chatUsername: chatUsername,
                 messageId: triggerMessage.id,
                 messageTime: triggerMessage.createTime,
-                dbDir: reader.dbDir
+                dbDir: dbDir
             )
             mediaAnalysisText = ImageUnderstandingService
                 .analyzeImage(at: mediaFilePath)
