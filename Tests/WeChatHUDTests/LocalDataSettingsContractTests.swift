@@ -64,6 +64,22 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testSearchWaitsBehindADisclosure() throws {
+        let source = try LocalDataSettingsSource.load()
+        let retroStart = try XCTUnwrap(source.text.range(of: "private var retrospectionSection"))
+        let listsStart = try XCTUnwrap(source.text.range(of: "// MARK: - Data lists"))
+        let card = String(source.text[retroStart.lowerBound..<listsStart.lowerBound])
+        XCTAssertTrue(source.text.contains("还要找"))
+        XCTAssertTrue(card.contains("LocalDataCopy.findDisclosure"))
+        let disclosureStart = try XCTUnwrap(card.range(of: "DisclosureGroup"))
+        let firstScreen = String(card[..<disclosureStart.lowerBound])
+        XCTAssertTrue(firstScreen.contains("CompanionFilterPill"))
+        XCTAssertFalse(firstScreen.contains("CompanionClipboardField"))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
