@@ -38,9 +38,18 @@ enum ConnectionSetupFlow {
 
 /// The same connection task is used in first launch and ongoing settings.
 /// A picker grants access; only the monitor's successful read completes setup.
+enum WeChatConnectionCopy {
+    static let pickConversations = "去选对话"
+}
+
 struct WeChatConnectionSetupView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
+
+    /// Settings overrides the connected primary so it matches「下一步：选择要整理的对话」。
+    /// First launch leaves this nil and keeps「检查更新」as the connection recheck.
+    var connectedContinueTitle: String? = nil
+    var onConnectedContinue: (() -> Void)? = nil
 
     @State private var candidates: [String] = []
     @State private var configuration = SyncConfig()
@@ -197,6 +206,10 @@ struct WeChatConnectionSetupView: View {
     private var title: String { connectionCopy.title }
     private var detail: String { connectionCopy.detail }
     private var buttonTitle: String { connectionCopy.buttonTitle }
+    private var primaryButtonTitle: String {
+        if connected, let connectedContinueTitle { return connectedContinueTitle }
+        return buttonTitle
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -270,10 +283,18 @@ struct WeChatConnectionSetupView: View {
             }
 
             HStack(spacing: 12) {
-                Button(buttonTitle) { performPrimaryAction() }
-                    .buttonStyle(.borderedProminent).tint(CompanionPalette.accent)
+                Button(primaryButtonTitle) { performPrimaryAction() }
+                    .buttonStyle(.borderedProminent).tint(CompanionPalette.jade)
                     .controlSize(.large).disabled(applying || syncing || probing || preparationFlowBusy)
                     .accessibilityIdentifier("connection.setup.primary")
+                if connected, onConnectedContinue != nil {
+                    Button(buttonTitle, action: recheckConnection)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .disabled(applying || syncing || probing)
+                        .accessibilityLabel(buttonTitle)
+                }
                 if PreviewRuntime.isEnabled || (hasConfiguredSelection && !needsAccountSelection) {
                     Button("更换微信账号") { showChangeAccountConfirm = true }
                         .buttonStyle(.link)
@@ -405,8 +426,18 @@ struct WeChatConnectionSetupView: View {
     }
 
     private func performPrimaryAction() {
+        if connected, let onConnectedContinue {
+            onConnectedContinue()
+            return
+        }
+        recheckConnection()
+    }
+
+    private func recheckConnection() {
         guard !PreviewRuntime.isEnabled else {
-            NotificationCenter.default.post(name: .hudOnboardingAdvance, object: nil)
+            if onConnectedContinue == nil {
+                NotificationCenter.default.post(name: .hudOnboardingAdvance, object: nil)
+            }
             errorMessage = "演示里不会读取真实微信。正式使用时，这里会打开系统授权。"
             return
         }
