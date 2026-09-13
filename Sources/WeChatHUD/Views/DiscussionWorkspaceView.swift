@@ -93,8 +93,6 @@ struct DiscussionWorkspaceView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var strictnessBinding: Binding<DiscussionStrictness> {
@@ -216,14 +214,11 @@ struct DiscussionWorkspaceView: View {
                     .accessibilityLabel("搜索待办或对话")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
             }
-            .padding(10)
-            .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
             Text(showHistory
                  ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
                  : "当前只显示还没做完的。过期太久的会收起，不占这个列表。")

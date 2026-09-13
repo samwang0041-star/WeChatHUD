@@ -16,6 +16,24 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertFalse(detail.contains("foregroundStyle(CompanionPalette.jade)"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testFiltersSitOnTheCanvasNotACard() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        let barStart = try XCTUnwrap(source.text.range(of: "private var strictnessBar"))
+        let bindingStart = try XCTUnwrap(source.text.range(of: "private var strictnessBinding"))
+        let bar = String(source.text[barStart.lowerBound..<bindingStart.lowerBound])
+        XCTAssertTrue(bar.contains("保留"))
+        XCTAssertFalse(bar.contains("secondarySurface"))
+
+        let filtersStart = try XCTUnwrap(source.text.range(of: "private var filters"))
+        let emptyStart = try XCTUnwrap(source.text.range(of: "private var emptyState"))
+        let filters = String(source.text[filtersStart.lowerBound..<emptyStart.lowerBound])
+        XCTAssertTrue(filters.contains("搜索待办或对话"))
+        XCTAssertTrue(filters.contains("清除搜索"))
+        XCTAssertFalse(filters.contains("strokeBorder"))
+        XCTAssertFalse(filters.contains("foregroundStyle(CompanionPalette.jade)"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {
