@@ -1924,6 +1924,19 @@ final class ChatMonitor: ObservableObject {
         (try? recentMessagesThrowing(chatUsername: chatUsername, limit: limit)) ?? []
     }
 
+    /// Newest-first (sender, body) rows via `WeChatReaderActor`.
+    /// Maps with `senderName` (same as `ContactRecommendationScanSource`).
+    /// Sync `recentMessages` / `recentMessagesThrowing` remain for WhitelistScan.
+    func recentMessagesAsync(chatUsername: String, limit: Int = 20) async -> [(sender: String, body: String)] {
+        let readerActor = WeChatReaderActor(reader)
+        guard let msgs = try? await readerActor.getMessages(
+            chatUsername: chatUsername, limit: limit, sinceLocalId: nil
+        ) else {
+            return []
+        }
+        return msgs.map { (sender: $0.senderName, body: $0.text) }
+    }
+
     /// Newest-first messages for manual-send receipt confirmation.
     /// Routes through `WeChatReaderActor` so the detail view does not touch
     /// the raw reader on the MainActor hot path.
@@ -2299,14 +2312,20 @@ final class ChatMonitor: ObservableObject {
         guard discussionWorker == nil, discussionPendingCount > 0,
               !reader.dbDir.isEmpty, !reader.hasAccountSwitched() else { return }
         let tracker = discussionTracker
-        let username = reader.myUsername()
-        guard !username.isEmpty else { return }
-        let displayName = reader.displayName(for: username)
-        let names = reader.mySelfNames
+        let readerActor = WeChatReaderActor(reader)
         let generation = UUID()
         discussionWorkerGeneration = generation
         discussionProcessing = true
         discussionWorker = Task { @MainActor [weak self] in
+            let username = await readerActor.myUsername()
+            guard !username.isEmpty else {
+                guard let self, self.discussionWorkerGeneration == generation else { return }
+                self.discussionWorker = nil
+                self.discussionProcessing = false
+                return
+            }
+            let displayName = await readerActor.displayName(for: username)
+            let names = await readerActor.mySelfNames()
             let inserted = await tracker.resumePending(myUsername: username, myDisplayName: displayName, mySelfNames: names)
             guard let self, self.discussionWorkerGeneration == generation else { return }
             self.discussionWorker = nil

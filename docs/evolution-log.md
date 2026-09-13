@@ -341,3 +341,9 @@
 - ConversationDetailView no longer reads raw `monitor.reader` for send receipt
 - Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
 
+## 2026-09-13 Slice 23 — detail transcript + discussion identity via WeChatReaderActor
+
+- `recentMessagesAsync` + discussion-extraction identity hop through WeChatReaderActor; ConversationDetailView transcript/selfNames cached async
+- Sync WhitelistScan `recentMessages` kept; Autopilot guardrails unchanged
+- Tests: 1522 + 70 green; release OK
+

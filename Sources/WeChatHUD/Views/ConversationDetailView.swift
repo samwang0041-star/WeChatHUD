@@ -22,6 +22,8 @@ struct ConversationDetailView: View {
     @State private var showSendConfirm = false
     @State private var sourceSavedDraftID: Int64?
     @State private var isRenaming = false
+    @State private var transcriptMessages: [(sender: String, body: String)] = []
+    @State private var selfNames: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -103,6 +105,9 @@ struct ConversationDetailView: View {
                 currentName: monitor.displayName(for: chatUsername),
                 memberNames: reader.groupMemberNames(for: chatUsername)
             )
+        }
+        .task(id: chatUsername) {
+            await loadTranscriptAndIdentity()
         }
     }
 
@@ -428,15 +433,22 @@ struct ConversationDetailView: View {
 
     private static let transcriptLimit = 20
 
-    /// Newest-first reader rows flipped into WeChat order (oldest at top).
-    /// recentMessages itself stays newest-first for the rest of the app.
-    private var transcriptMessages: [(sender: String, body: String)] {
-        let newestFirst = monitor.recentMessages(chatUsername: chatUsername, limit: Self.transcriptLimit)
+    /// Load newest-first rows via actor helper, then flip into WeChat order
+    /// (oldest at top). Sync `recentMessages` stays for WhitelistScan.
+    private func loadTranscriptAndIdentity() async {
+        // Clear stale rows when routing between chats before the async hop returns.
+        transcriptMessages = []
+        async let rowsTask = monitor.recentMessagesAsync(
+            chatUsername: chatUsername, limit: Self.transcriptLimit
+        )
+        async let identityTask = monitor.selfMessageIdentity()
+        let newestFirst = await rowsTask
             .map { (sender: $0.sender, body: MessageHelpers.displayText($0.body)) }
-        return MessageHelpers.chronologicalWindow(
+        transcriptMessages = MessageHelpers.chronologicalWindow(
             newestFirst: newestFirst,
             visible: Self.transcriptLimit
         )
+        selfNames = await identityTask.selfNames
     }
 
     private var messagesSection: some View {
@@ -469,7 +481,7 @@ struct ConversationDetailView: View {
     }
 
     private func messageBubble(_ msg: (sender: String, body: String)) -> some View {
-        let mine = msg.sender == "我" || monitor.reader.mySelfNames.contains(msg.sender)
+        let mine = msg.sender == "我" || selfNames.contains(msg.sender)
         return HStack(alignment: .top, spacing: 8) {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
