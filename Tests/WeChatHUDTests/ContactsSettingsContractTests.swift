@@ -12,7 +12,8 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertTrue(list.contains("contactFilterChip"))
         XCTAssertTrue(list.contains("CompanionPalette.selectedFill"))
         XCTAssertFalse(list.contains("CompanionPalette.jade"))
-        XCTAssertTrue(list.contains("搜索联系人或群聊"))
+        XCTAssertTrue(list.contains("FirstLaunchGuide.findPeopleField"))
+        XCTAssertTrue(list.contains("FirstLaunchGuide.findPeople"))
         XCTAssertTrue(list.contains("更多"))
         XCTAssertTrue(list.contains("全部"))
         XCTAssertTrue(list.contains("重点关注"))
@@ -72,6 +73,23 @@ final class ContactsSettingsContractTests: XCTestCase {
         let list = String(source.text[listStart.lowerBound..<addDialog.lowerBound])
         XCTAssertFalse(list.contains("controlBackgroundColor"))
         XCTAssertTrue(source.text.contains("看看这些人是谁"))
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
+
+    func testListLeadsWithFiltersNotASearchField() throws {
+        let source = try ContactsSettingsSource.load()
+        let listStart = try XCTUnwrap(source.text.range(of: "private struct ContactsListSubView"))
+        let addDialog = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let list = String(source.text[listStart.lowerBound..<addDialog.lowerBound])
+        let filters = try XCTUnwrap(list.range(of: "contactFilterChip"))
+        let search = try XCTUnwrap(list.range(of: "FirstLaunchGuide.findPeopleField"))
+        XCTAssertLessThan(filters.lowerBound, search.lowerBound)
+        XCTAssertTrue(list.contains("Button(FirstLaunchGuide.findPeople)"))
+        XCTAssertTrue(list.contains("还没有关注的人"))
+        XCTAssertTrue(list.contains("CompanionProductCopy.addFollow"))
+        XCTAssertEqual(FirstLaunchGuide.findPeople, "找人")
+        XCTAssertEqual(FirstLaunchGuide.findPeopleField, "搜索联系人或群聊")
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
 }
