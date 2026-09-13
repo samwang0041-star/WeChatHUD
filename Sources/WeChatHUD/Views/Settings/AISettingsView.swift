@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// Promises for the AI service page. The first thing on this screen is
+/// whether the service can be used, not a vendor picker.
+enum AISettingsCopy {
+    static let confirmWorks = "确认能用"
+    static let notReady = "还不能用"
+    static let unverified = "还没确认能不能用"
+    static let ready = "可以用"
+    static let statusHint = "改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。"
+}
+
 extension Notification.Name {
     static let hudAIConfigDidChange = Notification.Name("WeChatHUD.AIConfigDidChange")
     static let hudSwitchTab = Notification.Name("WeChatHUD.SwitchTab")
@@ -306,10 +316,12 @@ struct ProviderCard: View {
                 if isTesting {
                     ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
                 } else {
-                    Text("测试连接").font(.system(size: 12))
+                    Text("测试连接")
+                        .workspaceMeta()
                 }
             }
-            .buttonStyle(.bordered).controlSize(.mini)
+            .buttonStyle(CompanionPressStyle())
+            .foregroundStyle(.secondary)
             .disabled(isTesting || isFetching)
         }
     }
@@ -479,45 +491,46 @@ struct AISettingsView: View {
         return ("未验证", .orange, "exclamationmark.circle")
     }
 
-    private var serviceStatusCard: some View {
-        HStack(alignment: .top, spacing: 16) {
-            Image(systemName: "sparkles")
-                .font(.system(size: WorkspaceType.title, weight: .semibold))
-                .foregroundStyle(CompanionPalette.accent)
-                .frame(width: 30, height: 30)
+    private var serviceUsabilityTitle: String {
+        switch activeServiceStatus.label {
+        case "未配置": return AISettingsCopy.notReady
+        case "已验证": return AISettingsCopy.ready
+        default: return AISettingsCopy.unverified
+        }
+    }
 
+    private var serviceStatusCard: some View {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("当前 AI 服务")
-                        .workspaceTitle()
-                    CompanionBadge(
-                        title: activeServiceStatus.label,
-                        systemImage: activeServiceStatus.icon,
-                        tint: activeServiceStatus.color
-                    )
-                }
+                Text(serviceUsabilityTitle)
+                    .workspaceTitle()
                 let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? "未选择模型" : configuredSlot.model)"
                 Text(summary)
-                    .font(.system(size: 13, weight: .medium))
+                    .workspaceBody()
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .contextMenu {
                         Button("复制") { CompanionClipboard.write(summary) }
                     }
-                Text("改完会自动保存。打开后，相关聊天会发给这个服务来写摘要和草稿。请先点测试，确认能用。")
-                    .font(.system(size: 12))
+                Text(AISettingsCopy.statusHint)
+                    .workspaceMeta()
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 12)
-            // On the locked "AI 分析与建议" page, writing `selectedSection`
-            // was a no-op — the body renders `lockedSection ?? selectedSection`
-            // and the picker is hidden — so this button did nothing. It now
-            // goes through the same tab switch the "去 AI 服务配置" row uses.
-            Button("更换服务") { switchToAIServiceTab() }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityLabel("更换 AI 服务")
+            Button(action: testSlot) {
+                if isTesting {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .frame(width: 18, height: 18)
+                } else {
+                    Text(AISettingsCopy.confirmWorks)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(CompanionPalette.jade)
+            .disabled(isTesting || isFetching)
+            .accessibilityLabel(AISettingsCopy.confirmWorks)
         }
         .companionSurface(padding: 20)
     }

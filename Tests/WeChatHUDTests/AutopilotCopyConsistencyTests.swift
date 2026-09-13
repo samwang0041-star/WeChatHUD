@@ -261,12 +261,31 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
 
     func testChangeServiceButtonGoesThroughTheRealTabSwitch() throws {
         let source = try AISettingsSource.load()
-        XCTAssertTrue(source.text.contains("Button(\"更换服务\") { switchToAIServiceTab() }"))
+        XCTAssertTrue(source.text.contains("Button(\"去 AI 服务配置\") { switchToAIServiceTab() }"))
         XCTAssertFalse(
-            source.text.contains("Button(\"更换服务\") {\n                selectedSection = .service"),
+            source.text.contains("Button(\"去 AI 服务配置\") {\n                selectedSection = .service"),
             "Writing selectedSection alone is a no-op while lockedSection is set."
         )
         XCTAssertTrue(source.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"aiService\")"))
+    }
+
+    func testServicePageLeadsWithConfirmWorksNotChangeService() throws {
+        let source = try AISettingsSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))
+        let end = try XCTUnwrap(source.text.range(of: "private var sectionPicker"))
+        let card = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(card.contains("AISettingsCopy.confirmWorks"))
+        XCTAssertTrue(card.contains("AISettingsCopy.ready") || card.contains("serviceUsabilityTitle"))
+        XCTAssertTrue(card.contains("testSlot"))
+        XCTAssertTrue(card.contains("borderedProminent"))
+        XCTAssertTrue(card.contains("CompanionPalette.jade"))
+        XCTAssertFalse(card.contains("更换服务"), "this page is already the service page")
+        XCTAssertFalse(card.contains("sparkles"))
+        XCTAssertFalse(card.contains(".font(.system"))
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+        XCTAssertEqual(AISettingsCopy.ready, "可以用")
+        XCTAssertEqual(AISettingsCopy.notReady, "还不能用")
+        XCTAssertEqual(AISettingsCopy.unverified, "还没确认能不能用")
     }
 
     func testOpenEverythingRowSaysItOpensToday() throws {
