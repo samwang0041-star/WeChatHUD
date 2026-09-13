@@ -177,15 +177,18 @@ struct AutopilotSettingsView: View {
                 }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.autoSendConfirmMessage)
-                            .font(.system(size: 13))
+                            .workspaceBody()
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack {
+                        HStack(spacing: 8) {
                             Spacer()
                             Button(CompanionProductCopy.autoSendKeepManual) {
                                 pendingEnableAutoSend = false
                                 autoSendEnabled = false
                             }
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                             Button(CompanionProductCopy.autoSendAllow) {
                                 pendingEnableAutoSend = false
                                 autoSendEnabled = true
