@@ -298,6 +298,22 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         )
     }
 
+    func testClearingHistorySpeaksAReceipt() throws {
+        let source = try AutopilotViewSource.load()
+        XCTAssertTrue(source.text.contains("receipt = .historyCleared"))
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.historyCleared"))
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.historyClear"))
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.openPending"))
+        XCTAssertEqual(AutopilotSettingsCopy.historyCleared, "记录已清除。")
+        XCTAssertEqual(AutopilotSettingsCopy.historyClear, "清除历史")
+        let start = try XCTUnwrap(source.text.range(of: "private var receiptBar"))
+        let end = try XCTUnwrap(source.text.range(of: "private var confidenceRow"))
+        let bar = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(bar.contains("case .historyCleared"))
+        XCTAssertTrue(bar.contains("CompanionPalette.jade"))
+        XCTAssertFalse(AutopilotConfig().autoSendEnabled, "自动发送默认关")
+    }
+
     // MARK: - Reachability of the service switcher
 
     func testChangeServiceButtonGoesThroughTheRealTabSwitch() throws {

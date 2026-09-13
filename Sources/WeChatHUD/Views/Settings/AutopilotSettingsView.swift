@@ -45,6 +45,7 @@ enum AutopilotSettingsCopy {
     static let historyClearConfirm = "清除"
     static let historyClearCancel = "取消"
     static let historyClearFailed = "记录没清掉，请稍后重试（已发出的消息不受影响）"
+    static let historyCleared = "记录已清除。"
 
     static let statusActive = "正在整理回复"
     static let statusIdle = "尚未开始整理"
@@ -88,6 +89,7 @@ struct AutopilotSettingsView: View {
         case saved
         case saveFailed
         case historyFailed
+        case historyCleared
     }
 
     var body: some View {
@@ -211,6 +213,10 @@ struct AutopilotSettingsView: View {
             saveFailureRow(AutopilotSettingsCopy.saveFailed, retry: save)
         case .historyFailed:
             saveFailureRow(AutopilotSettingsCopy.historyClearFailed, retry: retryClearHistory)
+        case .historyCleared:
+            Text(AutopilotSettingsCopy.historyCleared)
+                .workspaceMeta()
+                .foregroundStyle(CompanionPalette.jade)
         }
     }
 
@@ -542,7 +548,7 @@ struct AutopilotSettingsView: View {
         do {
             try store.clearAutopilotHistory()
             sessions = store.loadAutopilotSessions(limit: 10)
-            receipt = .idle
+            receipt = .historyCleared
         } catch {
             receipt = .historyFailed
         }
