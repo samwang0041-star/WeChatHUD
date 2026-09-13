@@ -363,6 +363,10 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(card.contains("更换服务"), "this page is already the service page")
         XCTAssertFalse(card.contains("sparkles"))
         XCTAssertFalse(card.contains(".font(.system"))
+        XCTAssertFalse(
+            card.contains("AISettingsCopy.statusHint"),
+            "能不能用 is the first beat; the save/privacy lecture used to sit under it"
+        )
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
         XCTAssertEqual(AISettingsCopy.ready, "可以用")
         XCTAssertEqual(AISettingsCopy.notReady, "还不能用")

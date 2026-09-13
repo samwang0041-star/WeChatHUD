@@ -488,9 +488,6 @@ struct AISettingsView: View {
                         .contextMenu {
                             Button("复制") { CompanionClipboard.write(summary) }
                         }
-                    Text(AISettingsCopy.statusHint)
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 12)
