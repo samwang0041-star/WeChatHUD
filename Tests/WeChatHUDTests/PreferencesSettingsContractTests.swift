@@ -54,6 +54,24 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(prefs.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testUpdatesWaitBehindADisclosure() throws {
+        let source = try PreferencesSettingsSource.load()
+        let prefsStart = try XCTUnwrap(source.text.range(of: "settingsPane(.preferences)"))
+        let dataStart = try XCTUnwrap(source.text.range(of: "settingsPane(.data)"))
+        let pane = String(source.text[prefsStart.lowerBound..<dataStart.lowerBound])
+        XCTAssertTrue(pane.contains("PreferencesCopy.updatesDisclosure"))
+        XCTAssertTrue(source.text.contains("还要看版本"))
+        XCTAssertTrue(pane.contains("DisclosureGroup"))
+        let disclosureStart = try XCTUnwrap(pane.range(of: "DisclosureGroup"))
+        let firstScreen = String(pane[..<disclosureStart.lowerBound])
+        XCTAssertTrue(firstScreen.contains("displaySection"))
+        XCTAssertTrue(firstScreen.contains("MacExperienceSettingsView"))
+        XCTAssertFalse(firstScreen.contains("AppUpdateSettingsView"))
+        XCTAssertTrue(source.text.contains("浮窗在"))
+        XCTAssertTrue(source.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {

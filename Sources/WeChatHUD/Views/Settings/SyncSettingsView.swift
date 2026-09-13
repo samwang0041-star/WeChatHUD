@@ -13,6 +13,7 @@ enum PreferencesCopy {
 
     static let displayTitle = "显示位置"
     static let displaySubtitle = "浮窗出现在哪块屏。那块屏不在时用还连着的。"
+    static let updatesDisclosure = "还要看版本"
 }
 
 struct SyncSettingsView: View {
@@ -144,7 +145,11 @@ struct SyncSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     displaySection
                     MacExperienceSettingsView()
-                    AppUpdateSettingsView()
+                    DisclosureGroup(PreferencesCopy.updatesDisclosure) {
+                        AppUpdateSettingsView()
+                    }
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 }
             }
             settingsPane(.data) {
