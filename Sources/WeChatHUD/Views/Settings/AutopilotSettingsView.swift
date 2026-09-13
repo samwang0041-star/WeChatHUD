@@ -315,13 +315,17 @@ struct AutopilotSettingsView: View {
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        SettingsSection("高级") {
+        VStack(spacing: 0) {
             replyStyleRow
             SettingsRowDivider()
             alwaysManualRow
             SettingsRowDivider()
             Text(AutopilotSettingsCopy.groupRule)
-                .font(.callout).foregroundStyle(.secondary).padding(14)
+                .workspaceBody()
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             SettingsRowDivider()
             SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
                 Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
