@@ -36,6 +36,7 @@ struct NotificationSettingsView: View {
     @State private var loaded = false
     @State private var error: String?
     @State private var saved = false
+    @State private var showDuration = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -60,7 +61,16 @@ struct NotificationSettingsView: View {
                 SettingsRowDivider()
                 SettingsToggleRow(NotificationSettingsCopy.whitelistTitle, subtitle: NotificationSettingsCopy.whitelistSubtitle, isOn: $config.allWhitelist)
                 SettingsRowDivider()
-                DisclosureGroup(NotificationSettingsCopy.durationDisclosure) {
+                Button(NotificationSettingsCopy.durationDisclosure) {
+                    showDuration.toggle()
+                }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .accessibilityLabel(NotificationSettingsCopy.durationDisclosure)
+                if showDuration {
                     SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
                         Picker(NotificationSettingsCopy.durationTitle, selection: $config.durationSeconds) {
                             ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
@@ -69,8 +79,6 @@ struct NotificationSettingsView: View {
                         }.labelsHidden().frame(width: 100)
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
             }
 
             VStack(alignment: .leading, spacing: 8) {
