@@ -106,7 +106,7 @@ struct ApprovalWorkspaceView: View {
             }
             if let receipt {
                 Label(receipt, systemImage: receipt.contains("失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .medium))
+                    .workspaceRowTitle()
                     .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jade)
                     .padding(.top, 10)
             }
@@ -120,7 +120,7 @@ struct ApprovalWorkspaceView: View {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showSendConfirm = false }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: selected?.chatName ?? "", text: editedReply))
-                            .font(.system(size: 13))
+                            .workspaceBody()
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
@@ -202,9 +202,9 @@ struct ApprovalWorkspaceView: View {
                 if !humanNeededSends.isEmpty {
                     HStack {
                         Text(autoSendOn ? "需人工确认" : "即将发送")
-                            .font(.system(size: 12, weight: .semibold))
+                            .workspaceRowTitle()
                         Text("\(humanNeededSends.count)")
-                            .font(.system(size: 11, weight: .medium))
+                            .workspaceMeta()
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -228,14 +228,14 @@ struct ApprovalWorkspaceView: View {
                             CompanionAvatar(name: entry.senderName, size: 32)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(entry.senderName).font(.system(size: 13, weight: .semibold))
+                                    Text(entry.senderName).workspaceRowTitle()
                                     Spacer()
                                     Text(CommitmentPresentation.timeLabel(entry.createdAt))
-                                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                                        .workspaceMeta().foregroundStyle(.secondary)
                                 }
                                 statusLabel(entry)
                                 Text(entry.triggerText)
-                                    .font(.system(size: 12))
+                                    .workspaceBody()
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
@@ -256,11 +256,11 @@ struct ApprovalWorkspaceView: View {
     private func statusLabel(_ entry: AutopilotLogEntry) -> some View {
         if entry.riskLevel == .high || (entry.aiReasoning?.contains("转账") == true) {
             Text("涉及转账需人工处理")
-                .font(.system(size: 11, weight: .medium))
+                .workspaceMeta()
                 .foregroundStyle(.orange)
         } else {
             Text(entry.action == .pending ? "待确认回复" : actionTitle(entry.action))
-                .font(.system(size: 11))
+                .workspaceMeta()
                 .foregroundStyle(.secondary)
         }
     }
@@ -420,20 +420,21 @@ private struct ApprovalPendingSendRow: View {
                 CompanionAvatar(name: item.senderName, size: 32)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(item.chatName).font(.system(size: 13, weight: .semibold))
+                        Text(item.chatName).workspaceRowTitle()
                         Spacer()
                         Text("\(item.remainingSeconds)s")
-                            .font(.system(size: 11, design: .monospaced))
+                            .workspaceMeta()
+                            .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
                     Text(item.replyText)
-                        .font(.system(size: 12))
+                        .workspaceBody()
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     if let reason = item.manualOnlyReason {
                         Text(reason)
-                            .font(.system(size: 11, weight: .medium))
+                            .workspaceMeta()
                             .foregroundStyle(.orange)
                             .lineLimit(2)
                     }
@@ -465,7 +466,7 @@ private struct ApprovalPendingSendRow: View {
             }
             if let error {
                 Text(error)
-                    .font(.system(size: 11))
+                    .workspaceMeta()
                     .foregroundStyle(.orange)
             }
         }
