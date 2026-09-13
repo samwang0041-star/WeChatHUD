@@ -152,6 +152,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.reply, "回复")
     }
 
+    func testApprovalQueueRowsPress() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        guard let listStart = source.text.range(of: "private var listPane"),
+              let listEnd = source.text.range(of: "private func statusLabel") else {
+            XCTFail("queue rows live in listPane")
+            return
+        }
+        let list = String(source.text[listStart.lowerBound..<listEnd.lowerBound])
+        XCTAssertTrue(list.contains("CompanionPressStyle()"))
+        XCTAssertFalse(list.contains(".buttonStyle(.plain)"))
+    }
+
     func testIslandGearNamesTheWorkspaceItOpens() throws {
         let source = try InboxViewSource.load()
         guard let wingStart = source.text.range(of: "Right wing —"),

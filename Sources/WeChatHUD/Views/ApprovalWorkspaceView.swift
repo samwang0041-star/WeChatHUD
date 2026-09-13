@@ -243,7 +243,7 @@ struct ApprovalWorkspaceView: View {
                         .padding(10)
                         .background(selected?.id == entry.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                 }
             }
             .padding(.trailing, 10)
