@@ -28,6 +28,7 @@ enum AISettingsCopy {
     static let needChatGPTLogin = "请先在这台 Mac 上登录 ChatGPT。"
     static let retryOnce = "再试一次"
     static let confirmOk = "刚才确认过了。"
+    static let sourceChanged = "换了来源，还要再确认。"
     static let confirmOkUnsaved = "可以用，但这次没记下，请再点「确认能用」。"
     static let confirmUnsaved = "这次没记下。"
     static let confirmFailedDemo = "这次没通过。"
@@ -605,7 +606,7 @@ struct AISettingsView: View {
     }
 
     private var isFailedTestResult: Bool {
-        !testResult.isEmpty && !isSuccessfulTestResult
+        !testResult.isEmpty && !isSuccessfulTestResult && testResult != AISettingsCopy.sourceChanged
     }
 
     private var serviceForm: some View {
@@ -624,7 +625,7 @@ struct AISettingsView: View {
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
             testRequestID = UUID()
-            testResult = ""
+            testResult = AISettingsCopy.sourceChanged
             modelFetchNote = ""
             switch source {
             case .preset:
@@ -808,7 +809,7 @@ struct AISettingsView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 CompanionCopyableText(text: testResult, lineLimit: nil)
                     .workspaceMeta()
-                    .foregroundStyle(isFailedTestResult ? .primary : CompanionPalette.jade)
+                    .foregroundStyle(isFailedTestResult ? .primary : (isSuccessfulTestResult ? CompanionPalette.jade : .secondary))
                     .fixedSize(horizontal: false, vertical: true)
                 if isFailedTestResult {
                     Spacer(minLength: 8)
