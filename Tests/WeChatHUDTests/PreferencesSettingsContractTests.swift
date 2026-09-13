@@ -146,6 +146,17 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(prefs.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testUnauthorizedAccessSpeaksANextStep() throws {
+        let source = try MacExperienceSettingsSource.load()
+        XCTAssertTrue(source.text.contains("还没授权跳转微信。点「打开辅助功能设置」。"))
+        XCTAssertFalse(source.text.contains("exclamationmark.bubble"))
+        XCTAssertTrue(source.text.contains("打开辅助功能设置"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
