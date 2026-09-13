@@ -49,6 +49,7 @@ enum WeChatConnectionCopy {
     static let saveFailed = "刚才没存上。"
     static let saveRetry = "再试一次"
     static let bindFailed = "旧版资料没绑上。请先备份，再确认目录后重试。"
+    static let restartToApply = "下次打开助手后生效。"
 }
 
 struct WeChatConnectionSetupView: View {

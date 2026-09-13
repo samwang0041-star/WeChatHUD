@@ -814,6 +814,29 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
 
+    func testRestartReceiptSitsOnTheConnectionPlateNotInThePathForm() throws {
+        let sync = try SyncSettingsSource.load()
+        let start = try XCTUnwrap(sync.text.range(of: "settingsPane(.connection)"))
+        let prefs = try XCTUnwrap(sync.text.range(of: "settingsPane(.preferences)"))
+        let pane = String(sync.text[start.lowerBound..<prefs.lowerBound])
+        let receipt = try XCTUnwrap(pane.range(of: "connectionSaveReceipt"))
+        let restart = try XCTUnwrap(pane.range(of: "WeChatConnectionCopy.restartToApply"))
+        let advanced = try XCTUnwrap(pane.range(of: "DisclosureGroup(WeChatConnectionCopy.advanced"))
+        let maintenance = try XCTUnwrap(pane.range(of: "DisclosureGroup(WeChatConnectionCopy.syncAndChecks"))
+        XCTAssertLessThan(receipt.lowerBound, restart.lowerBound)
+        XCTAssertLessThan(restart.lowerBound, advanced.lowerBound)
+        XCTAssertLessThan(advanced.lowerBound, maintenance.lowerBound)
+        let restartBlock = String(pane[restart.lowerBound..<advanced.lowerBound])
+        XCTAssertTrue(restartBlock.contains(".workspaceMeta()"))
+        XCTAssertTrue(restartBlock.contains("CompanionPalette.jade"))
+        XCTAssertFalse(restartBlock.contains(".font(.callout"))
+        XCTAssertFalse(String(pane[maintenance.lowerBound...]).contains("WeChatConnectionCopy.restartToApply"))
+        XCTAssertFalse(sync.text.contains("高级连接设置将在助手重新打开后应用"))
+        XCTAssertEqual(WeChatConnectionCopy.restartToApply, "下次打开助手后生效。")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        XCTAssertTrue(sync.text.contains("轮询间隔"))
+    }
+
     func testCapabilityActionsPressLikeWorkspaceSecondaries() throws {
         let sync = try SyncSettingsSource.load()
         let start = try XCTUnwrap(sync.text.range(of: "private func capabilityRow"))

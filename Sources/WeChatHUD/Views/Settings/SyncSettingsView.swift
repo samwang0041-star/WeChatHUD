@@ -102,6 +102,11 @@ struct SyncSettingsView: View {
                     )
                         .companionSurface(padding: 22)
                     connectionSaveReceipt
+                    if needsRestart {
+                        Text(WeChatConnectionCopy.restartToApply)
+                            .workspaceMeta()
+                            .foregroundStyle(CompanionPalette.jade)
+                    }
                     DisclosureGroup(WeChatConnectionCopy.advanced, isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
                             connectionCapabilityList
@@ -112,10 +117,6 @@ struct SyncSettingsView: View {
                                     if let device = store.deviceSettings,
                                        (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
                                         legacyRecordsSection(device: device)
-                                    }
-                                    if needsRestart {
-                                        Text("高级连接设置将在助手重新打开后应用。")
-                                            .font(.callout).foregroundStyle(.secondary)
                                     }
                                     DisclosureGroup(WeChatConnectionCopy.diagnostics, isExpanded: $showConnectionDiagnostics) {
                                         SupportDiagnosticsView()
