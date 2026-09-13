@@ -127,6 +127,24 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertTrue(list.contains("静音"))
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testListRowsAndLookAgainGiveUnderPress() throws {
+        let source = try ContactsSettingsSource.load()
+        let rowStart = try XCTUnwrap(source.text.range(of: "private func contactRow"))
+        let saveStart = try XCTUnwrap(source.text.range(of: "private func saveContact"))
+        let row = String(source.text[rowStart.lowerBound..<saveStart.lowerBound])
+        XCTAssertTrue(row.contains("CompanionPressStyle()"))
+        XCTAssertFalse(row.contains("buttonStyle(.plain)"))
+
+        let profileStart = try XCTUnwrap(source.text.range(of: "private func aiProfileSection"))
+        let opsStart = try XCTUnwrap(source.text.range(of: "private func operationsSection"))
+        let profile = String(source.text[profileStart.lowerBound..<opsStart.lowerBound])
+        XCTAssertTrue(profile.contains("再看看"))
+        XCTAssertTrue(profile.contains("CompanionPressStyle()"))
+        XCTAssertFalse(profile.contains("buttonStyle(.bordered)"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {

@@ -539,7 +539,7 @@ private struct ContactsListSubView: View {
             .cornerRadius(6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .accessibilityLabel(contact.displayName)
         .contextMenu {
             Button("编辑") {
@@ -694,8 +694,9 @@ private struct ContactInspectorView: View {
                         Label("再看看", systemImage: "arrow.clockwise")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 .accessibilityLabel("再看看这个人是谁")
                 .disabled(inferenceStatus?.isRunning == true)
                 .help("再看看这个人是谁，不影响你继续用")
