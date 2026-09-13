@@ -49,6 +49,22 @@ final class NotificationSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
         XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
     }
+
+    func testDurationSitsBehindADisclosure() throws {
+        let source = try NotificationSettingsSource.load()
+        XCTAssertTrue(source.text.contains("还要改展示多久"))
+        XCTAssertTrue(source.text.contains("DisclosureGroup"))
+        let sectionStart = try XCTUnwrap(source.text.range(of: "SettingsSection(\"谁来的消息要弹出\")"))
+        let disclosureStart = try XCTUnwrap(source.text.range(of: "DisclosureGroup"))
+        let firstScreen = String(source.text[sectionStart.lowerBound..<disclosureStart.lowerBound])
+        XCTAssertTrue(firstScreen.contains("atMentionTitle"))
+        XCTAssertTrue(firstScreen.contains("importantTitle"))
+        XCTAssertTrue(firstScreen.contains("whitelistTitle"))
+        XCTAssertFalse(firstScreen.contains("durationTitle"))
+        XCTAssertTrue(source.text.contains("现在会弹出"))
+        XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
+        XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
+    }
 }
 
 private struct NotificationSettingsSource {

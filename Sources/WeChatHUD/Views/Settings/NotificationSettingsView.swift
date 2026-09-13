@@ -13,6 +13,7 @@ enum NotificationSettingsCopy {
     static let whitelistSubtitle = "已经进收件箱的私聊也会弹出。群闲聊不会一条条弹。"
     static let durationTitle = "展示时间"
     static let durationSubtitle = "鼠标移入后可继续看。"
+    static let durationDisclosure = "还要改展示多久"
     static let canvasNote = "这里管顶部浮窗。承诺到期走系统通知。"
     static let saved = "已经记下。"
     static let unsaved = "改了就生效。"
@@ -59,13 +60,17 @@ struct NotificationSettingsView: View {
                 SettingsRowDivider()
                 SettingsToggleRow(NotificationSettingsCopy.whitelistTitle, subtitle: NotificationSettingsCopy.whitelistSubtitle, isOn: $config.allWhitelist)
                 SettingsRowDivider()
-                SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
-                    Picker(NotificationSettingsCopy.durationTitle, selection: $config.durationSeconds) {
-                        ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
-                            Text("\(seconds) 秒").tag(seconds)
-                        }
-                    }.labelsHidden().frame(width: 100)
+                DisclosureGroup(NotificationSettingsCopy.durationDisclosure) {
+                    SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
+                        Picker(NotificationSettingsCopy.durationTitle, selection: $config.durationSeconds) {
+                            ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
+                                Text("\(seconds) 秒").tag(seconds)
+                            }
+                        }.labelsHidden().frame(width: 100)
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
 
             VStack(alignment: .leading, spacing: 8) {
