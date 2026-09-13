@@ -580,6 +580,10 @@ struct SyncSettingsView: View {
                 .workspaceTitle()
                 .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
+            Text(LocalDataRetrospection.windowCaption)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             retrospectionSection
             DisclosureGroup(LocalDataCopy.exportDisclosure) {
                 exportReportSection
@@ -649,24 +653,12 @@ struct SyncSettingsView: View {
         SettingsSection {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        sectionHeaderIcon("clock.arrow.circlepath", color: CompanionPalette.jade)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("记录回溯")
-                                .font(.system(size: 13, weight: .medium))
-                            Text(LocalDataRetrospection.windowCaption)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 8)
-                        CompanionClipboardField(
-                            text: $dataSearch,
-                            placeholder: "搜索标题、联系人或内容",
-                            kind: .plain,
-                            accessibilityLabel: "搜索整理过的记录"
-                        )
-                        .frame(maxWidth: 240)
-                    }
+                    CompanionClipboardField(
+                        text: $dataSearch,
+                        placeholder: "搜索标题、联系人或内容",
+                        kind: .plain,
+                        accessibilityLabel: "搜索整理过的记录"
+                    )
                     HStack(spacing: 8) {
                         ForEach(DataSection.allCases, id: \.self) { section in
                             CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
