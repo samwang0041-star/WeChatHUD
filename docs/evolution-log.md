@@ -4,6 +4,11 @@
 
 
 
+
+### [Overnight] 2026-09-13 Slice 6 — VIP/recalled/audit/asks on query cache
+- Fixed-SQL variants for filtered audit/feedback/asks loaders
+- Autopilot guardrails unchanged; tests 1518+70 green
+
 ### [Overnight] 2026-09-13 Slice 5 — more HUDStore readers on query cache
 - ignored/dismissed/asks/cache/memory/timing/pending sends/profiles + open autopilot pending variants
 - Autopilot guardrails unchanged; tests 1518+70 green

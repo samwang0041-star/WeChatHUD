@@ -1294,68 +1294,83 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         status: AskStatus? = nil,
         relevantSince: Int? = nil
     ) -> [PendingAsk] {
-        var sql = """
-            SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
-                   summary, ask_type, deadline_at, confidence, bucket, status,
-                   prompt_version, created_at, updated_at,
-                   sender_level, sender_role, urgency
-            FROM pending_asks
-        """
-        var clauses: [String] = []
-        var params: [String] = []
-        if let bucket = bucket {
-            clauses.append("bucket=?")
-            params.append(bucket.rawValue)
-        }
-        if let status = status {
-            clauses.append("status=?")
-            params.append(status.rawValue)
-        }
-        if !clauses.isEmpty {
-            sql += " WHERE " + clauses.joined(separator: " AND ")
-        }
-        sql += " ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC"
-
-        var results: [PendingAsk] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        for (i, p) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(i + 1), p, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        let decode: (OpaquePointer?) -> PendingAsk? = { stmt in
+            guard let stmt else { return nil }
             let deadlineRaw = sqlite3_column_int64(stmt, 8)
             let deadline: Date? = sqlite3_column_type(stmt, 8) == SQLITE_NULL || deadlineRaw == 0
                 ? nil
                 : Date(timeIntervalSince1970: TimeInterval(deadlineRaw))
-            // Read nullable new columns (15, 16, 17)
             let senderLevelStr: String? = sqlite3_column_type(stmt, 15) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 15))
+                ? nil : Self.textColumn(stmt, 15)
             let senderRoleStr: String? = sqlite3_column_type(stmt, 16) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 16))
+                ? nil : Self.textColumn(stmt, 16)
             let urgencyStr: String? = sqlite3_column_type(stmt, 17) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 17))
-            let ask = PendingAsk(
+                ? nil : Self.textColumn(stmt, 17)
+            return PendingAsk(
                 id: sqlite3_column_int64(stmt, 0),
-                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
-                chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
-                chatName: String(cString: sqlite3_column_text(stmt, 3)),
-                senderName: String(cString: sqlite3_column_text(stmt, 4)),
-                rawText: String(cString: sqlite3_column_text(stmt, 5)),
-                summary: String(cString: sqlite3_column_text(stmt, 6)),
-                askType: AskType(rawValue: String(cString: sqlite3_column_text(stmt, 7))) ?? .none,
+                msgUID: Self.textColumn(stmt, 1),
+                chatUsername: Self.textColumn(stmt, 2),
+                chatName: Self.textColumn(stmt, 3),
+                senderName: Self.textColumn(stmt, 4),
+                rawText: Self.textColumn(stmt, 5),
+                summary: Self.textColumn(stmt, 6),
+                askType: AskType(rawValue: Self.textColumn(stmt, 7)) ?? .none,
                 deadlineAt: deadline,
                 confidence: sqlite3_column_double(stmt, 9),
-                bucket: AskBucket(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .review,
-                status: AskStatus(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .pending,
-                promptVersion: String(cString: sqlite3_column_text(stmt, 12)),
+                bucket: AskBucket(rawValue: Self.textColumn(stmt, 10)) ?? .review,
+                status: AskStatus(rawValue: Self.textColumn(stmt, 11)) ?? .pending,
+                promptVersion: Self.textColumn(stmt, 12),
                 createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 13))),
                 updatedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 14))),
                 senderLevel: senderLevelStr.flatMap { s in s.isEmpty ? nil : AttentionLevel(rawValue: s) },
                 senderRole: senderRoleStr.flatMap { s in s.isEmpty ? nil : ContactRole(rawValue: s) },
                 urgency: urgencyStr.flatMap { s in s.isEmpty ? nil : AskUrgency(rawValue: s) }
             )
-            results.append(ask)
+        }
+        let results: [PendingAsk]
+        switch (bucket, status) {
+        case (nil, nil):
+            results = queryAll("""
+                SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
+                       summary, ask_type, deadline_at, confidence, bucket, status,
+                       prompt_version, created_at, updated_at,
+                       sender_level, sender_role, urgency
+                FROM pending_asks
+                ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC
+                """, bind: { _ in }, decode: decode)
+        case let (bucket?, nil):
+            results = queryAll("""
+                SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
+                       summary, ask_type, deadline_at, confidence, bucket, status,
+                       prompt_version, created_at, updated_at,
+                       sender_level, sender_role, urgency
+                FROM pending_asks
+                WHERE bucket=?
+                ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC
+                """, bind: { sqlite3_bind_text($0, 1, bucket.rawValue, -1, Self.sqliteTransient) }, decode: decode)
+        case let (nil, status?):
+            results = queryAll("""
+                SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
+                       summary, ask_type, deadline_at, confidence, bucket, status,
+                       prompt_version, created_at, updated_at,
+                       sender_level, sender_role, urgency
+                FROM pending_asks
+                WHERE status=?
+                ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC
+                """, bind: { sqlite3_bind_text($0, 1, status.rawValue, -1, Self.sqliteTransient) }, decode: decode)
+        case let (bucket?, status?):
+            results = queryAll("""
+                SELECT id, msg_uid, chat_username, chat_name, sender_name, raw_text,
+                       summary, ask_type, deadline_at, confidence, bucket, status,
+                       prompt_version, created_at, updated_at,
+                       sender_level, sender_role, urgency
+                FROM pending_asks
+                WHERE bucket=? AND status=?
+                ORDER BY (deadline_at IS NULL OR deadline_at = 0), deadline_at ASC, created_at DESC
+                """, bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, bucket.rawValue, -1, Self.sqliteTransient)
+                    sqlite3_bind_text(stmt, 2, status.rawValue, -1, Self.sqliteTransient)
+                }, decode: decode)
         }
         if let relevantSince {
             return results.filter { DiscussionLiveWindow.contains($0, cutoff: relevantSince) }
@@ -1420,55 +1435,73 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         role: AIRole? = nil,
         promptVersionPrefix: String? = nil
     ) -> [AIAuditEntry] {
-        var results: [AIAuditEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        var sql = """
-            SELECT id, ts, role, model, prompt_version, input_text, output_text,
-                   latency_ms, status, error_message
-            FROM ai_audit
-        """
-        var clauses: [String] = []
-        var params: [String] = []
-        if let role {
-            clauses.append("role=?")
-            params.append(role.rawValue)
-        }
-        if let promptVersionPrefix, !promptVersionPrefix.isEmpty {
-            clauses.append("prompt_version LIKE ?")
-            params.append("\(promptVersionPrefix)%")
-        }
-        if !clauses.isEmpty {
-            sql += " WHERE " + clauses.joined(separator: " AND ")
-        }
-        sql += """
-            ORDER BY ts DESC
-            LIMIT ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        for (index, param) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(index + 1), param, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        sqlite3_bind_int64(stmt, Int32(params.count + 1), Int64(limit))
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        let prefix = (promptVersionPrefix?.isEmpty == false) ? promptVersionPrefix : nil
+        let decode: (OpaquePointer?) -> AIAuditEntry? = { stmt in
+            guard let stmt else { return nil }
             let errMsg: String? = sqlite3_column_type(stmt, 9) == SQLITE_NULL
-                ? nil
-                : String(cString: sqlite3_column_text(stmt, 9))
-            let entry = AIAuditEntry(
+                ? nil : Self.textColumn(stmt, 9)
+            return AIAuditEntry(
                 id: sqlite3_column_int64(stmt, 0),
                 ts: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1))),
-                role: AIRole(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .classifier,
-                model: String(cString: sqlite3_column_text(stmt, 3)),
-                promptVersion: String(cString: sqlite3_column_text(stmt, 4)),
-                inputText: String(cString: sqlite3_column_text(stmt, 5)),
-                outputText: String(cString: sqlite3_column_text(stmt, 6)),
+                role: AIRole(rawValue: Self.textColumn(stmt, 2)) ?? .classifier,
+                model: Self.textColumn(stmt, 3),
+                promptVersion: Self.textColumn(stmt, 4),
+                inputText: Self.textColumn(stmt, 5),
+                outputText: Self.textColumn(stmt, 6),
                 latencyMs: Int(sqlite3_column_int64(stmt, 7)),
-                status: AIAuditStatus(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .ok,
+                status: AIAuditStatus(rawValue: Self.textColumn(stmt, 8)) ?? .ok,
                 errorMessage: (errMsg?.isEmpty == true) ? nil : errMsg
             )
-            results.append(entry)
         }
-        return results
+        switch (role, prefix) {
+        case (nil, nil):
+            return queryAll("""
+                SELECT id, ts, role, model, prompt_version, input_text, output_text,
+                       latency_ms, status, error_message
+                FROM ai_audit
+                ORDER BY ts DESC
+                LIMIT ?
+                """, bind: { sqlite3_bind_int64($0, 1, Int64(limit)) }, decode: decode)
+        case let (role?, nil):
+            return queryAll("""
+                SELECT id, ts, role, model, prompt_version, input_text, output_text,
+                       latency_ms, status, error_message
+                FROM ai_audit
+                WHERE role=?
+                ORDER BY ts DESC
+                LIMIT ?
+                """, bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, role.rawValue, -1, Self.sqliteTransient)
+                    sqlite3_bind_int64(stmt, 2, Int64(limit))
+                }, decode: decode)
+        case let (nil, prefix?):
+            let like = "\(prefix)%"
+            return queryAll("""
+                SELECT id, ts, role, model, prompt_version, input_text, output_text,
+                       latency_ms, status, error_message
+                FROM ai_audit
+                WHERE prompt_version LIKE ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """, bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, like, -1, Self.sqliteTransient)
+                    sqlite3_bind_int64(stmt, 2, Int64(limit))
+                }, decode: decode)
+        case let (role?, prefix?):
+            let like = "\(prefix)%"
+            return queryAll("""
+                SELECT id, ts, role, model, prompt_version, input_text, output_text,
+                       latency_ms, status, error_message
+                FROM ai_audit
+                WHERE role=? AND prompt_version LIKE ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """, bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, role.rawValue, -1, Self.sqliteTransient)
+                    sqlite3_bind_text(stmt, 2, like, -1, Self.sqliteTransient)
+                    sqlite3_bind_int64(stmt, 3, Int64(limit))
+                }, decode: decode)
+        }
     }
 
     // MARK: - AI housekeeping
@@ -1562,46 +1595,41 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadAIFeedback(limit: Int = 200, msgUIDPrefix: String? = nil) -> [AIFeedbackEntry] {
-        var results: [AIFeedbackEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        var sql = """
-            SELECT id, ts, msg_uid, feedback_type, original_output, user_action, note
-            FROM ai_feedback
-        """
-        var params: [String] = []
-        if let msgUIDPrefix, !msgUIDPrefix.isEmpty {
-            sql += " WHERE msg_uid LIKE ?"
-            params.append("\(msgUIDPrefix)%")
-        }
-        sql += """
-            ORDER BY ts DESC
-            LIMIT ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        for (index, param) in params.enumerated() {
-            sqlite3_bind_text(stmt, Int32(index + 1), param, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        sqlite3_bind_int64(stmt, Int32(params.count + 1), Int64(limit))
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        let decode: (OpaquePointer?) -> AIFeedbackEntry? = { stmt in
+            guard let stmt else { return nil }
             let userAction: String? = sqlite3_column_type(stmt, 5) == SQLITE_NULL
-                ? nil
-                : String(cString: sqlite3_column_text(stmt, 5))
+                ? nil : Self.textColumn(stmt, 5)
             let note: String? = sqlite3_column_type(stmt, 6) == SQLITE_NULL
-                ? nil
-                : String(cString: sqlite3_column_text(stmt, 6))
-            let entry = AIFeedbackEntry(
+                ? nil : Self.textColumn(stmt, 6)
+            return AIFeedbackEntry(
                 id: sqlite3_column_int64(stmt, 0),
                 ts: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1))),
-                msgUID: String(cString: sqlite3_column_text(stmt, 2)),
-                feedbackType: AIFeedbackType(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .truePositive,
-                originalOutput: String(cString: sqlite3_column_text(stmt, 4)),
+                msgUID: Self.textColumn(stmt, 2),
+                feedbackType: AIFeedbackType(rawValue: Self.textColumn(stmt, 3)) ?? .truePositive,
+                originalOutput: Self.textColumn(stmt, 4),
                 userAction: (userAction?.isEmpty == true) ? nil : userAction,
                 note: (note?.isEmpty == true) ? nil : note
             )
-            results.append(entry)
         }
-        return results
+        if let msgUIDPrefix, !msgUIDPrefix.isEmpty {
+            let like = "\(msgUIDPrefix)%"
+            return queryAll("""
+                SELECT id, ts, msg_uid, feedback_type, original_output, user_action, note
+                FROM ai_feedback
+                WHERE msg_uid LIKE ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """, bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, like, -1, Self.sqliteTransient)
+                    sqlite3_bind_int64(stmt, 2, Int64(limit))
+                }, decode: decode)
+        }
+        return queryAll("""
+            SELECT id, ts, msg_uid, feedback_type, original_output, user_action, note
+            FROM ai_feedback
+            ORDER BY ts DESC
+            LIMIT ?
+            """, bind: { sqlite3_bind_int64($0, 1, Int64(limit)) }, decode: decode)
     }
 
     func loadLatestAIFeedbackByMsgUID(
@@ -2006,73 +2034,51 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    private func decodeVIPTrace(_ stmt: OpaquePointer?) -> VIPTrace? {
+        guard let stmt else { return nil }
+        let batchID: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL
+            ? nil : Self.textColumn(stmt, 8)
+        return VIPTrace(
+            id: sqlite3_column_int64(stmt, 0),
+            vipUsername: Self.textColumn(stmt, 1),
+            vipName: Self.textColumn(stmt, 2),
+            chatUsername: Self.textColumn(stmt, 3),
+            chatName: Self.textColumn(stmt, 4),
+            msgUID: Self.textColumn(stmt, 5),
+            rawText: Self.textColumn(stmt, 6),
+            msgTime: Int(sqlite3_column_int64(stmt, 7)),
+            batchID: (batchID?.isEmpty == true) ? nil : batchID,
+            createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 9)))
+        )
+    }
+
     func loadVIPTraces(vipUsername: String, since: Int = 0, limit: Int = 100) -> [VIPTrace] {
-        var results: [VIPTrace] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        queryAll("""
             SELECT id, vip_username, vip_name, chat_username, chat_name,
                    msg_uid, raw_text, msg_time, batch_id, created_at
             FROM vip_traces
             WHERE vip_username=? AND msg_time >= ?
             ORDER BY msg_time DESC
             LIMIT ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        sqlite3_bind_text(stmt, 1, vipUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        sqlite3_bind_int64(stmt, 2, Int64(since))
-        sqlite3_bind_int64(stmt, 3, Int64(limit))
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let batchID: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 8))
-            results.append(VIPTrace(
-                id: sqlite3_column_int64(stmt, 0),
-                vipUsername: String(cString: sqlite3_column_text(stmt, 1)),
-                vipName: String(cString: sqlite3_column_text(stmt, 2)),
-                chatUsername: String(cString: sqlite3_column_text(stmt, 3)),
-                chatName: String(cString: sqlite3_column_text(stmt, 4)),
-                msgUID: String(cString: sqlite3_column_text(stmt, 5)),
-                rawText: String(cString: sqlite3_column_text(stmt, 6)),
-                msgTime: Int(sqlite3_column_int64(stmt, 7)),
-                batchID: (batchID?.isEmpty == true) ? nil : batchID,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 9)))
-            ))
-        }
-        return results
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, vipUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_int64(stmt, 2, Int64(since))
+            sqlite3_bind_int64(stmt, 3, Int64(limit))
+        }, decode: decodeVIPTrace)
     }
 
     func loadUnbatchedVIPTraces(vipUsername: String, limit: Int = 50) -> [VIPTrace] {
-        var results: [VIPTrace] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        queryAll("""
             SELECT id, vip_username, vip_name, chat_username, chat_name,
                    msg_uid, raw_text, msg_time, batch_id, created_at
             FROM vip_traces
             WHERE vip_username=? AND batch_id IS NULL
             ORDER BY msg_time ASC
             LIMIT ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        sqlite3_bind_text(stmt, 1, vipUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        sqlite3_bind_int64(stmt, 2, Int64(limit))
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let batchID: String? = sqlite3_column_type(stmt, 8) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 8))
-            results.append(VIPTrace(
-                id: sqlite3_column_int64(stmt, 0),
-                vipUsername: String(cString: sqlite3_column_text(stmt, 1)),
-                vipName: String(cString: sqlite3_column_text(stmt, 2)),
-                chatUsername: String(cString: sqlite3_column_text(stmt, 3)),
-                chatName: String(cString: sqlite3_column_text(stmt, 4)),
-                msgUID: String(cString: sqlite3_column_text(stmt, 5)),
-                rawText: String(cString: sqlite3_column_text(stmt, 6)),
-                msgTime: Int(sqlite3_column_int64(stmt, 7)),
-                batchID: (batchID?.isEmpty == true) ? nil : batchID,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 9)))
-            ))
-        }
-        return results
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, vipUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
+        }, decode: decodeVIPTrace)
     }
 
     func markVIPTracesBatched(ids: [Int64], batchID: String) throws {
@@ -2127,10 +2133,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadRecalledMessages(since: Int = 0, limit: Int = 100) -> [RecalledMessage] {
-        var results: [RecalledMessage] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        queryAll("""
             SELECT id, msg_uid, sender_username, sender_name, sender_level, sender_role,
                    chat_username, chat_name, chat_type, original_text,
                    sent_at, recalled_at, recall_delay_seconds,
@@ -2141,36 +2144,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             WHERE recalled_at >= ?
             ORDER BY recalled_at DESC
             LIMIT ?
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        sqlite3_bind_int64(stmt, 1, Int64(since))
-        sqlite3_bind_int64(stmt, 2, Int64(limit))
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let aiReason: String? = sqlite3_column_type(stmt, 13) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 13))
-            let aiValue: String? = sqlite3_column_type(stmt, 14) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 14))
-            let aiDetail: String? = sqlite3_column_type(stmt, 15) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 15))
+        """, bind: { stmt in
+            sqlite3_bind_int64(stmt, 1, Int64(since))
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
+        }, decode: { stmt in
+            let aiReason: String? = sqlite3_column_type(stmt, 13) == SQLITE_NULL ? nil : Self.textColumn(stmt, 13)
+            let aiValue: String? = sqlite3_column_type(stmt, 14) == SQLITE_NULL ? nil : Self.textColumn(stmt, 14)
+            let aiDetail: String? = sqlite3_column_type(stmt, 15) == SQLITE_NULL ? nil : Self.textColumn(stmt, 15)
             let aiShouldNotify: Bool? = sqlite3_column_type(stmt, 16) == SQLITE_NULL
                 ? nil : sqlite3_column_int(stmt, 16) != 0
-            let aiNotifyStr: String? = sqlite3_column_type(stmt, 17) == SQLITE_NULL
-                ? nil : String(cString: sqlite3_column_text(stmt, 17))
+            let aiNotifyStr: String? = sqlite3_column_type(stmt, 17) == SQLITE_NULL ? nil : Self.textColumn(stmt, 17)
             let aiAnalyzedRaw = sqlite3_column_int64(stmt, 18)
             let aiAnalyzedAt: Date? = sqlite3_column_type(stmt, 18) == SQLITE_NULL || aiAnalyzedRaw == 0
                 ? nil : Date(timeIntervalSince1970: TimeInterval(aiAnalyzedRaw))
-
-            results.append(RecalledMessage(
+            return RecalledMessage(
                 id: sqlite3_column_int64(stmt, 0),
-                msgUID: String(cString: sqlite3_column_text(stmt, 1)),
-                senderUsername: String(cString: sqlite3_column_text(stmt, 2)),
-                senderName: String(cString: sqlite3_column_text(stmt, 3)),
-                senderLevel: AttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .stranger,
-                senderRole: ContactRole(rawValue: String(cString: sqlite3_column_text(stmt, 5))) ?? .acquaintance,
-                chatUsername: String(cString: sqlite3_column_text(stmt, 6)),
-                chatName: String(cString: sqlite3_column_text(stmt, 7)),
-                chatType: ChatType(rawValue: String(cString: sqlite3_column_text(stmt, 8))) ?? .privateChat,
-                originalText: String(cString: sqlite3_column_text(stmt, 9)),
+                msgUID: Self.textColumn(stmt, 1),
+                senderUsername: Self.textColumn(stmt, 2),
+                senderName: Self.textColumn(stmt, 3),
+                senderLevel: AttentionLevel(rawValue: Self.textColumn(stmt, 4)) ?? .stranger,
+                senderRole: ContactRole(rawValue: Self.textColumn(stmt, 5)) ?? .acquaintance,
+                chatUsername: Self.textColumn(stmt, 6),
+                chatName: Self.textColumn(stmt, 7),
+                chatType: ChatType(rawValue: Self.textColumn(stmt, 8)) ?? .privateChat,
+                originalText: Self.textColumn(stmt, 9),
                 sentAt: Int(sqlite3_column_int64(stmt, 10)),
                 recalledAt: Int(sqlite3_column_int64(stmt, 11)),
                 recallDelaySeconds: Int(sqlite3_column_int64(stmt, 12)),
@@ -2181,9 +2178,8 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 aiNotifyLevel: aiNotifyStr.flatMap { NotifyLevel(rawValue: $0) },
                 aiAnalyzedAt: aiAnalyzedAt,
                 createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 19)))
-            ))
-        }
-        return results
+            )
+        })
     }
 
     func updateRecallAnalysis(
