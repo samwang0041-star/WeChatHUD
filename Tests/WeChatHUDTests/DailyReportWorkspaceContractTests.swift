@@ -1,0 +1,35 @@
+import XCTest
+@testable import WeChatHUD
+
+final class DailyReportWorkspaceContractTests: XCTestCase {
+    func testExportIsTheJadePrimaryAndScopePillsAreQuiet() throws {
+        let source = try DailyReportTabSource.load()
+        let toolbarStart = try XCTUnwrap(source.text.range(of: "private var workspaceToolbar"))
+        let weeklyStart = try XCTUnwrap(source.text.range(of: "private var weeklySummary"))
+        let toolbar = String(source.text[toolbarStart.lowerBound..<weeklyStart.lowerBound])
+        XCTAssertTrue(source.text.contains("日报"))
+        XCTAssertTrue(source.text.contains("周报"))
+        XCTAssertTrue(toolbar.contains("导出"))
+        XCTAssertTrue(toolbar.contains("CompanionPalette.selectedFill"))
+        XCTAssertFalse(toolbar.contains("CompanionFilterPill"))
+        XCTAssertTrue(toolbar.contains("borderedProminent"))
+        XCTAssertTrue(toolbar.contains("tint(CompanionPalette.jade)"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
+}
+
+private struct DailyReportTabSource {
+    let text: String
+
+    static func load() throws -> DailyReportTabSource {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/DailyReportTabView.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("DailyReportTabView.swift not found at \(url.path)")
+        }
+        return DailyReportTabSource(text: text)
+    }
+}
