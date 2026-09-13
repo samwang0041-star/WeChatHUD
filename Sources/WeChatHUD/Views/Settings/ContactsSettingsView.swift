@@ -88,6 +88,9 @@ private struct ContactsListSubView: View {
     @State private var operationError: String?
     @State private var pendingDeleteContact: ContactEntry?
     @State private var candidateReloadToken = 0
+    @State private var cachedAddWechatContacts: [String: String] = [:]
+    @State private var isLoadingCandidates = false
+    @State private var candidateLoadError: String?
     @State private var didLoad = false
 
     private var filtered: [ContactEntry] {
@@ -206,6 +209,7 @@ private struct ContactsListSubView: View {
             addSearchText = ""
             selectedAddUsernames = []
             addKind = .all
+            candidateReloadToken += 1
             showAddPopover = true
         }
         .companionDialogBackdrop(showAddPopover) {
@@ -214,6 +218,10 @@ private struct ContactsListSubView: View {
                     addContactDialog
                 }
             }
+        }
+        .task(id: candidateReloadToken) {
+            guard showAddPopover, !PreviewRuntime.isEnabled else { return }
+            await loadContactCandidatesAsync()
         }
         .onAppear { if !didLoad { reload(); didLoad = true } }
         .alert("联系人操作失败", isPresented: Binding(
@@ -287,11 +295,27 @@ private struct ContactsListSubView: View {
                     CompanionFilterPill(title: kind.rawValue, selected: addKind == kind) { addKind = kind }
                 }
             }
-            if available.isEmpty {
-                Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            if isLoadingCandidates && available.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取微信联系人…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            } else if available.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    if let candidateLoadError, addSearchText.isEmpty {
+                        Text(candidateLoadError)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
                     ForEach(available.prefix(8), id: \.username) { contact in
@@ -346,10 +370,11 @@ private struct ContactsListSubView: View {
                 ("preview-client-group", "客户沟通群", true)
             ]
             : []
+        // Live candidates come from async-loaded cache (WeChatReaderActor), never
+        // sync reader work in the view body.
         let live: [(username: String, displayName: String, isGroup: Bool)] = {
             guard !PreviewRuntime.isEnabled else { return [] }
-            let source = loadContactCandidates()
-            return source.wechatContacts
+            return cachedAddWechatContacts
                 .filter { !existingSet.contains($0.key) && !$0.key.hasPrefix("gh_") && $0.key != "filehelper" }
                 .map { (username: $0.key, displayName: $0.value, isGroup: $0.key.contains("@chatroom")) }
         }()
@@ -393,28 +418,27 @@ private struct ContactsListSubView: View {
         }
     }
 
-    private func loadContactCandidates() -> (
-        wechatContacts: [String: String],
-        sessions: [SessionInfo],
-        error: String?
-    ) {
-        _ = candidateReloadToken
+    /// Refresh contact-index + sessions via `WeChatReaderActor` (off body sync).
+    private func loadContactCandidatesAsync() async {
+        isLoadingCandidates = true
+        defer { isLoadingCandidates = false }
+        let readerActor = WeChatReaderActor(reader)
         var errors: [String] = []
         do {
-            _ = try reader.refreshContactsIfChanged()
+            _ = try await readerActor.refreshContactsIfChanged()
         } catch {
             errors.append("联系人索引读取失败，请检查微信数据目录和密钥后重试。")
             print("[WCHUD] contacts settings: refresh contact index failed: \(error)")
         }
-        let indexed = reader.allContacts()
-        var sessions: [SessionInfo] = []
+        let indexed = await readerActor.allContacts()
         do {
-            sessions = try reader.getSessions()
+            _ = try await readerActor.sessions()
         } catch {
             errors.append("最近会话读取失败；可先使用已读取的联系人索引，或重试。")
             print("[WCHUD] contacts settings: load sessions failed: \(error)")
         }
-        return (indexed, sessions, errors.isEmpty ? nil : errors.joined(separator: "\n"))
+        cachedAddWechatContacts = indexed
+        candidateLoadError = errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
 
     // MARK: - Contact sections

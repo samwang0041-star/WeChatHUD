@@ -78,6 +78,30 @@ actor WeChatReaderActor {
         reader.hasAccountSwitched()
     }
 
+    func refreshContactsIfChanged(strict: Bool = false) throws -> Bool {
+        try reader.refreshContactsIfChanged(strict: strict)
+    }
+
+    func allContacts() -> [String: String] {
+        reader.allContacts()
+    }
+
+    func weChatRemark(for username: String) -> String? {
+        reader.weChatRemark(for: username)
+    }
+
+    func weChatNickName(for username: String) -> String? {
+        reader.weChatNickName(for: username)
+    }
+
+    func weChatSearchNames(for username: String) -> [String] {
+        reader.weChatSearchNames(for: username)
+    }
+
+    func hasWeChatName(for username: String) -> Bool {
+        reader.hasWeChatName(for: username)
+    }
+
     func normalizeContactMentions(in text: String) -> String {
         reader.normalizeContactMentions(in: text)
     }

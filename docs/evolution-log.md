@@ -352,3 +352,9 @@
 - Autopilot `processBatch` / `verifySend` / `latestOutgoingMessage` / `stalePendingSendReason` / proactive last-msg hop through WeChatReaderActor
 - Helpers made async where needed; guardrails + naming helpers unchanged
 - Tests: 1522 + 70 green; release OK
+
+## 2026-09-13 Slice 25 — contacts/sessions via WeChatReaderActor
+
+- Actor contact wrappers + async ChatMonitor wechatContacts/activePrivateChatCandidates; ContactsSettingsView caches async-loaded candidates
+- ChatNaming left as debt; Autopilot guardrails unchanged
+- Tests: 1522 + 70 green; release OK
