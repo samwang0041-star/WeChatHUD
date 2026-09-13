@@ -881,12 +881,36 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(keep.contains("CompanionPressStyle()"))
         XCTAssertTrue(keep.contains(".workspaceMeta()"))
         XCTAssertFalse(keep.contains("borderedProminent"), "jade stays on 继续更换")
-        let dialogEnd = try XCTUnwrap(setup.text.range(of: ".confirmationDialog(connectionCopy.consentTitle"))
+        let dialogEnd = try XCTUnwrap(setup.text.range(of: "else if showPreparationConsent"))
         let confirmBlock = String(setup.text[confirm.lowerBound..<dialogEnd.lowerBound])
         XCTAssertTrue(confirmBlock.contains("borderedProminent"))
         XCTAssertTrue(confirmBlock.contains("CompanionPalette.jade"))
         XCTAssertEqual(WeChatConnectionCopy.changeAccount, "更换微信账号")
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
+
+    func testPreparationConsentIsAWorkspaceBeatNotASystemAlert() throws {
+        let setup = try ConnectionSetupSource.load()
+        XCTAssertFalse(setup.text.contains(".confirmationDialog("))
+        let start = try XCTUnwrap(setup.text.range(of: "else if showPreparationConsent"))
+        let appear = try XCTUnwrap(setup.text.range(of: ".onAppear(perform: refresh)"))
+        let dialog = String(setup.text[start.lowerBound..<appear.lowerBound])
+        XCTAssertTrue(dialog.contains("connectionCopy.consentTitle"))
+        XCTAssertTrue(dialog.contains("connectionCopy.consentMessage"))
+        XCTAssertTrue(dialog.contains(".workspaceBody()"))
+        let keep = try XCTUnwrap(dialog.range(of: "Button(\"暂不\")"))
+        let startPrep = try XCTUnwrap(dialog.range(of: "Button(\"开始准备\")"))
+        let keepBlock = String(dialog[keep.lowerBound..<startPrep.lowerBound])
+        XCTAssertTrue(keepBlock.contains("CompanionPressStyle()"))
+        XCTAssertTrue(keepBlock.contains(".workspaceMeta()"))
+        XCTAssertFalse(keepBlock.contains("borderedProminent"), "jade stays on 开始准备")
+        let startBlock = String(dialog[startPrep.lowerBound...])
+        XCTAssertTrue(startBlock.contains("borderedProminent"))
+        XCTAssertTrue(startBlock.contains("CompanionPalette.jade"))
+        XCTAssertTrue(startBlock.contains("startPreparationFlow()"))
+        XCTAssertEqual(FirstLaunchGuide.consentTitle, "需要一次本机准备")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        XCTAssertTrue(FirstLaunchGuide.consentMessage.contains("聊天记录不会改动"))
     }
 }
 
