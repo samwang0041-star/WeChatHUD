@@ -83,6 +83,18 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("已标记完成"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testReceiptUndoGivesUnderPress() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private func receiptBar"))
+        let refresh = try XCTUnwrap(source.text.range(of: "private func refreshHistory"))
+        let bar = String(source.text[start.lowerBound..<refresh.lowerBound])
+        XCTAssertTrue(bar.contains("撤销"))
+        XCTAssertTrue(bar.contains("CompanionPressStyle()"))
+        XCTAssertFalse(bar.contains("buttonStyle(.plain)"))
+        XCTAssertTrue(source.text.contains("标记完成"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {
