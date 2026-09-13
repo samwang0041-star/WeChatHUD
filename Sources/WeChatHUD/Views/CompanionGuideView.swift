@@ -9,9 +9,31 @@ enum GuideCopy {
     static let shortcutsDisclosure = "快捷键"
     static let aboutDisclosure = "关于"
     static let faqDisclosure = "常见问题"
+    static let updateChecking = "正在看有没有新版本。"
+    static let updateCurrent = "已经是最新。"
+    static let updateFailed = "刚才没查上。"
+    static let updatePreview = "演示模式不查版本。"
     static let step1Detail = "登录这台 Mac 的微信。"
     static let step2Detail = "选一个人或一个群。"
     static let step3Detail = "今天看待回和待办。"
+
+    static func updateReceipt(phase: AppUpdateController.Phase, version: String?) -> String? {
+        switch phase {
+        case .checking:
+            return updateChecking
+        case .upToDate:
+            return updateCurrent
+        case .available:
+            if let version, !version.isEmpty { return "有新版本 \(version)。" }
+            return "有新版本。"
+        case .failed:
+            return updateFailed
+        case .previewDisabled:
+            return updatePreview
+        default:
+            return nil
+        }
+    }
 }
 
 /// In-app help for everyday use. Navigation is owned by SettingsView so the
@@ -19,6 +41,8 @@ enum GuideCopy {
 struct CompanionGuideView: View {
     let navigate: (SettingsView.Tab) -> Void
     let showIntroduction: () -> Void
+    @ObservedObject private var updates = AppUpdateController.shared
+    @State private var askedUpdate = false
 
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -140,13 +164,19 @@ struct CompanionGuideView: View {
                     .workspaceMeta()
                     .foregroundStyle(.secondary)
                 Button("检查更新") {
-                    navigate(.preferences)
+                    askedUpdate = true
                     Task { await AppUpdateController.shared.check(force: true, installIfEnabled: false) }
                 }
                 .buttonStyle(CompanionPressStyle())
                 .workspaceMeta()
                 .foregroundStyle(.secondary)
                 Spacer()
+            }
+            if askedUpdate, let receipt = GuideCopy.updateReceipt(phase: updates.phase, version: updates.offer.map { $0.version.description }) {
+                Text(receipt)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text("资料保存在本机；启用线上 AI 时，相关聊天会交给所选服务处理。")
                 .guideSecondary()

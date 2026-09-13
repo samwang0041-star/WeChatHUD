@@ -106,6 +106,22 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("每天怎么用"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testUpdateCheckSpeaksAReceipt() throws {
+        XCTAssertEqual(GuideCopy.updateChecking, "正在看有没有新版本。")
+        XCTAssertEqual(GuideCopy.updateCurrent, "已经是最新。")
+        XCTAssertEqual(GuideCopy.updateReceipt(phase: .checking, version: nil), "正在看有没有新版本。")
+        XCTAssertEqual(GuideCopy.updateReceipt(phase: .upToDate, version: nil), "已经是最新。")
+        XCTAssertEqual(GuideCopy.updateReceipt(phase: .idle, version: nil), nil)
+        let source = try CompanionGuideSource.load()
+        XCTAssertTrue(source.text.contains("askedUpdate"))
+        XCTAssertTrue(source.text.contains("GuideCopy.updateReceipt"))
+        XCTAssertFalse(source.text.contains("navigate(.preferences)"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertTrue(source.text.contains("每天怎么用"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
