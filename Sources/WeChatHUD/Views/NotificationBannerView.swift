@@ -349,7 +349,7 @@ struct NotificationBannerView: View {
     /// banner. `contentShape` has to be *inside* the label: applied to the
     /// Button it has no effect.
     private var closeButton: some View {
-        Button { panelState.collapseAndYield() } label: {
+        Button { Self.dismiss(panelState) } label: {
             Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(hovering ? IslandInk.secondary : IslandInk.tertiary)
                 .frame(width: 24, height: 22)
@@ -418,6 +418,16 @@ struct NotificationBannerView: View {
         }
         showSnooze = false
         panelState.setSnoozeMenuExpanded(false)
+    }
+
+    /// 关闭 is a real action: the interrupt goes away, the item stays in
+    /// the inbox. The compact island would otherwise swallow that with no
+    /// words, so the receipt is a quiet toast on the same overlay snooze
+    /// already uses.
+    @MainActor
+    static func dismiss(_ panelState: PanelState) {
+        panelState.showToast(IslandBannerCopy.dismissed, success: true)
+        panelState.collapseAndYield()
     }
 
     /// The banner's 稍后提醒 handler, split out of the view body so the routing
@@ -491,4 +501,8 @@ enum IslandSnoozeOutcome {
 
 enum IslandSnoozeCopy {
     static let failed = "稍后提醒没设置成功，消息还在。请重试。"
+}
+
+enum IslandBannerCopy {
+    static let dismissed = "还在收件箱。"
 }
