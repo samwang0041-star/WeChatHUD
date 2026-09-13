@@ -94,12 +94,18 @@ struct MacExperienceSettingsView: View {
                     }
                 }
                 SettingsRowDivider()
-                SettingsRow("动画与透明度", subtitle: "系统开了减少动态或减少透明，这里会跟着走。", icon: "circle.dotted", iconColor: .secondary) {
-                    Text(accessibilityStatus)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.trailing)
+                DisclosureGroup("还要看动画") {
+                    SettingsRow("动画与透明度", subtitle: "系统开了减少动态或减少透明，这里会跟着走。", icon: "circle.dotted", iconColor: .secondary) {
+                        Text(accessibilityStatus)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
                 }
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
 
             Text("关闭这个窗口后，助手仍留在顶部和菜单栏。")
