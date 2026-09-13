@@ -733,7 +733,9 @@ struct SyncSettingsView: View {
     private var commitmentsList: some View {
         Group {
             if commitments.isEmpty {
-                emptyRow(LocalDataRetrospection.emptyCommitments)
+                emptyRow(LocalDataRetrospection.emptyCommitments, nextTitle: LocalDataCopy.openTasks) {
+                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
+                }
             } else {
                 ForEach(commitments.filter { matchesDataSearch($0.content, $0.commitTo) }) { item in
                     SettingsRowDivider()
@@ -789,7 +791,9 @@ struct SyncSettingsView: View {
     private var pendingAsksList: some View {
         Group {
             if pendingAsks.isEmpty {
-                emptyRow(LocalDataRetrospection.emptyPendingAsks)
+                emptyRow(LocalDataRetrospection.emptyPendingAsks, nextTitle: LocalDataCopy.openTasks) {
+                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
+                }
             } else {
                 ForEach(pendingAsks.filter { matchesDataSearch($0.senderName, $0.chatName, $0.summary) }) { ask in
                     SettingsRowDivider()
@@ -845,12 +849,21 @@ struct SyncSettingsView: View {
         return fields.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
-    private func emptyRow(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 13))
-            .foregroundColor(.secondary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
+    private func emptyRow(_ text: String, nextTitle: String? = nil, next: (() -> Void)? = nil) -> some View {
+        VStack(spacing: 8) {
+            Text(text)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+            if let nextTitle, let next {
+                Button(nextTitle, action: next)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
     }
 
     private func pill(_ text: String, color: Color) -> some View {
@@ -968,6 +981,7 @@ enum LocalDataCopy {
     static let searchPlaceholder = "找人或内容"
     static let findDisclosure = "还要找"
     static let saveFailed = "刚才没记上。"
+    static let openTasks = "去待办里看"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
