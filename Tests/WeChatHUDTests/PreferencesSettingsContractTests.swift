@@ -72,6 +72,19 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testDisplayCardDoesNotRepeatItsTitle() throws {
+        let source = try PreferencesSettingsSource.load()
+        let displayStart = try XCTUnwrap(source.text.range(of: "private var displaySection"))
+        let footerStart = try XCTUnwrap(source.text.range(of: "static func connectionFooter"))
+        let display = String(source.text[displayStart.lowerBound..<footerStart.lowerBound])
+        XCTAssertTrue(display.contains("SettingsSection {"))
+        XCTAssertFalse(display.contains("SettingsSection(\"显示位置\")"))
+        XCTAssertTrue(display.contains("displayTitle"))
+        XCTAssertTrue(source.text.contains("浮窗在"))
+        XCTAssertTrue(source.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
