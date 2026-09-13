@@ -132,6 +132,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // Idempotent CREATE TABLE IF NOT EXISTS for 7 tables + indexes.
         // Then mark stale 'running' runs as failed and clean expired undo.
         migrateRetrospective()
+        try SchemaMigrator.applyAfterRetrospective(to: self)
         let reapedRuns = reapStaleRuns()
         let reapedUndo = reapStaleUndo(olderThanSeconds: 30 * 60)
         if reapedRuns > 0 || reapedUndo > 0 {

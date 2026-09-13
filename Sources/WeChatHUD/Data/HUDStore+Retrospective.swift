@@ -122,6 +122,8 @@ extension HUDStore {
         execIgnoringError("CREATE INDEX IF NOT EXISTS idx_ai_data_ledger_ts ON ai_data_ledger(ts);")
         execIgnoringError("CREATE INDEX IF NOT EXISTS idx_undo_stack_ts ON undo_stack(ts);")
         execIgnoringError("CREATE INDEX IF NOT EXISTS idx_review_runs_status_gen ON review_runs(status, generated_at);")
+        execIgnoringError("CREATE INDEX IF NOT EXISTS idx_red_banner_dismissals_todo_created ON red_banner_dismissals(todo_id, created_at);")
+        execIgnoringError("CREATE INDEX IF NOT EXISTS idx_review_todos_status_created ON review_todos(status, created_at);")
     }
 }
 

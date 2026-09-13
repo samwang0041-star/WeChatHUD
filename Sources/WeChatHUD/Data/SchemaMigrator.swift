@@ -5,8 +5,10 @@ import SQLite3
 /// bootstraps a new file; this records `PRAGMA user_version` so later
 /// columns/tables are applied exactly once and can be replayed safely.
 enum SchemaMigrator {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
+    /// Runs immediately after `createTables()`. Relationship-radar tables are
+    /// created here; retrospective tables do not exist yet.
     static func apply(to store: HUDStore) throws {
         if store.schemaUserVersion() < 1 {
             store.setSchemaUserVersion(1)
@@ -14,6 +16,15 @@ enum SchemaMigrator {
         if store.schemaUserVersion() < 2 {
             try store.migrateToV2RelationshipRadar()
             store.setSchemaUserVersion(2)
+        }
+    }
+
+    /// Runs after `migrateRetrospective()` so review/red-banner indexes have
+    /// tables to attach to. Idempotent for stores already at `currentVersion`.
+    static func applyAfterRetrospective(to store: HUDStore) throws {
+        if store.schemaUserVersion() < 3 {
+            try store.migrateToV3RetrospectiveIndexes()
+            store.setSchemaUserVersion(3)
         }
         if store.schemaUserVersion() < currentVersion {
             store.setSchemaUserVersion(currentVersion)
@@ -60,6 +71,17 @@ extension HUDStore {
         """)
         try execProbeThrowing(
             "CREATE INDEX IF NOT EXISTS idx_chat_insight_daily_day ON chat_insight_daily(day DESC)"
+        )
+    }
+
+    /// Retrospective query indexes called out by the evolution plan (P2):
+    /// red-banner lookups by todo + time, and pending todos by status/created.
+    func migrateToV3RetrospectiveIndexes() throws {
+        try execProbeThrowing(
+            "CREATE INDEX IF NOT EXISTS idx_red_banner_dismissals_todo_created ON red_banner_dismissals(todo_id, created_at)"
+        )
+        try execProbeThrowing(
+            "CREATE INDEX IF NOT EXISTS idx_review_todos_status_created ON review_todos(status, created_at)"
         )
     }
 }

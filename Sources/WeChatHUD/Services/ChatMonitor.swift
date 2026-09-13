@@ -2538,11 +2538,7 @@ final class ChatMonitor: ObservableObject {
     /// (the fetch cannot otherwise be observed from XCTest without a real
     /// multi-shard WeChat directory).
     static func runOffMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: work())
-            }
-        }
+        await OffMainWork.run(qos: .utility, work)
     }
 
     /// Off-main scan hop that does not use `Task.detached` or
