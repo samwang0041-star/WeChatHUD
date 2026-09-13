@@ -74,6 +74,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains("DisclosureGroup(\"高级设置\")"), "the window left the advanced disclosure group")
     }
 
+    func testBatchWindowIsARowNotANestedCard() throws {
+        let source = try AutopilotViewSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var limitsBatchRow"))
+        let end = try XCTUnwrap(source.text.range(of: "// MARK: - Exclusion"))
+        let row = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(row.contains("SettingsRow(AutopilotSettingsCopy.batchTitle"))
+        XCTAssertFalse(row.contains("SettingsSection("), "a second card inside 自动回复 broke the one-surface rule")
+    }
+
     func testSendLimitsAndExclusionsSitUnderAdvanced() throws {
         let source = try AutopilotViewSource.load()
         let advanced = try XCTUnwrap(source.text.range(of: "DisclosureGroup(AutopilotSettingsCopy.advancedTitle)"))

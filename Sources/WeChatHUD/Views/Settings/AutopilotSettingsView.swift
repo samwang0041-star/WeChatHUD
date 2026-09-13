@@ -225,16 +225,14 @@ struct AutopilotSettingsView: View {
     }
 
     private var limitsBatchRow: some View {
-        SettingsSection(AutopilotSettingsCopy.batchTitle) {
-            SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
-                Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
-                    ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 80)
-                .onChange(of: batchWindowSeconds) { save() }
+        SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
+            Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
+                ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
             }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(width: 80)
+            .onChange(of: batchWindowSeconds) { save() }
         }
     }
 
