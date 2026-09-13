@@ -76,13 +76,30 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                 }
                 if showsWizardPrimary {
-                    Button(primaryCTA) {
-                        if step == 0 { step = 1; refresh() }
-                        else { finish(openWorkspace: true) }
+                    if primaryCTA == FirstLaunchGuide.finishCTA {
+                        Button {
+                            finish(openWorkspace: true)
+                        } label: {
+                            Text(FirstLaunchGuide.finishCTA)
+                                .workspaceBody()
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(CompanionPalette.jade, in: Capsule())
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityLabel(FirstLaunchGuide.finishCTA)
+                    } else {
+                        Button(primaryCTA) {
+                            step = 1
+                            refresh()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                        .keyboardShortcut(.defaultAction)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-                    .keyboardShortcut(.defaultAction)
                 }
             }
             .padding(20)
