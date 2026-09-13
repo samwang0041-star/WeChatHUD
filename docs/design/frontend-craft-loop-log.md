@@ -12,7 +12,7 @@
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | in-progress | 7.8 | 连续两刀 <0.3，换表面；即将发送仍并排取消/立即发送 |
-| 6 | 自动回复设置 | in-progress | 6.9 | 连发卡仍套在卡片里；页头链接仍无按下 |
+| 6 | 自动回复设置 | in-progress | 7.2 | 把握程度/哪些一定交给你仍裸字号；页头链接仍无按下 |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
 | 9 | 首次引导 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 22 — 2026-09-13 — 自动回复设置
+
+- Surface: 自动回复设置
+- Files: `Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 6.9（主动词 8.0 / 空气 5.5 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 7.5 / 回执 7.5）
+- Debt picked: 连发窗口是卡片套卡片，同一层两个分组底。
+- After: 总分 7.2（主动词 8.0 / 空气 7.5 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 7.5 / 回执 7.5）
+- Changed: 「连发时等几秒一起回」和其他设置同一行高、同一层底。仍在首屏。护栏未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 25 个用例全绿；`swift build -c release`。走查：开页 → 自动发出去 → 连发是同一张卡里的一行，展开菜单改秒数 → 设置已保存；开自动发出去仍弹确认。
+- Next: 自动回复设置第四刀 — 把握程度、哪些一定交给你仍用裸 system 字号。总分未过 8.0。
 
 ## Cycle 21 — 2026-09-13 — 自动回复设置
 
