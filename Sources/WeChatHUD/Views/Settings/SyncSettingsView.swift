@@ -241,7 +241,7 @@ struct SyncSettingsView: View {
     }
 
     private var displaySection: some View {
-        SettingsSection("显示位置") {
+        SettingsSection {
             SettingsRow(PreferencesCopy.displayTitle, subtitle: PreferencesCopy.displaySubtitle, icon: "display", iconColor: .secondary) {
                 Picker("显示位置", selection: $displayScreen) {
                     ForEach(DisplayScreen.allCases, id: \.self) { s in
