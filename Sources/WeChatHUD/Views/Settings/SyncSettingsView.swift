@@ -84,7 +84,7 @@ struct SyncSettingsView: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("设置分区")
             }
-            if !saveError.isEmpty {
+            if selectedSettingsSection != .connection, !saveError.isEmpty {
                 HStack {
                     Text(saveError).font(.system(size: 12)).foregroundColor(.red)
                     Spacer()
@@ -100,6 +100,7 @@ struct SyncSettingsView: View {
                         }
                     )
                         .companionSurface(padding: 22)
+                    connectionSaveReceipt
                     DisclosureGroup(WeChatConnectionCopy.advanced, isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
                             connectionCapabilityList
@@ -160,6 +161,26 @@ struct SyncSettingsView: View {
             .clipped()
             .allowsHitTesting(active)
             .accessibilityHidden(!active)
+    }
+
+    @ViewBuilder
+    private var connectionSaveReceipt: some View {
+        if syncSaveFailed || saveError == WeChatConnectionCopy.bindFailed {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(syncSaveFailed ? WeChatConnectionCopy.saveFailed : WeChatConnectionCopy.bindFailed)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if syncSaveFailed {
+                    Button(WeChatConnectionCopy.saveRetry, action: save)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(WeChatConnectionCopy.saveRetry)
+                }
+            }
+        }
     }
 
     // MARK: - Sync
@@ -360,7 +381,7 @@ struct SyncSettingsView: View {
             saveError = ""
             needsRestart = true
         } catch {
-            saveError = "旧版资料绑定失败。请先备份数据，再确认当前目录后重试。"
+            saveError = WeChatConnectionCopy.bindFailed
         }
     }
 
@@ -871,7 +892,7 @@ struct SyncSettingsView: View {
                 NotificationCenter.default.post(name: .hudDisplayPreferenceDidChange, object: nil)
             }
         } catch {
-            saveError = "同步设置保存失败，请重试。"
+            saveError = WeChatConnectionCopy.saveFailed
             syncSaveFailed = true
         }
     }

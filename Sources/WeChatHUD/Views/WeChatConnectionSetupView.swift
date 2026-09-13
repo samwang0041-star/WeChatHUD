@@ -45,6 +45,9 @@ enum WeChatConnectionCopy {
     static let changeAccountScope = "更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。"
     static let advanced = "高级连接设置"
     static let syncAndChecks = "库路径与同步"
+    static let saveFailed = "刚才没存上。"
+    static let saveRetry = "再试一次"
+    static let bindFailed = "旧版资料没绑上。请先备份，再确认目录后重试。"
 }
 
 struct WeChatConnectionSetupView: View {
