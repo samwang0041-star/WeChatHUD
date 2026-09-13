@@ -43,6 +43,8 @@ enum WeChatConnectionCopy {
     static let changeAccount = "更换微信账号"
     static let readOnly = "只读取聊天，不改微信里的内容。"
     static let changeAccountScope = "更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。"
+    static let advanced = "高级连接设置"
+    static let syncAndChecks = "库路径与同步"
 }
 
 struct WeChatConnectionSetupView: View {
