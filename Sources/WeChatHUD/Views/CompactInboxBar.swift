@@ -28,6 +28,8 @@ struct CompactInboxBar: View {
     @State private var heldAIActive = false
     @State private var aiHoldTask: Task<Void, Never>? = nil
     @State private var pillsVisible = false
+    @State private var hoveringLeft = false
+    @State private var hoveringRight = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -41,11 +43,17 @@ struct CompactInboxBar: View {
             Button { CompactWingRouter.activate(leftWingCopy.route, panelState: panelState) } label: {
                 leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
+                    .background {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(hoveringLeft ? IslandInk.hover : Color.clear)
+                    }
             }
             .buttonStyle(CompanionPressStyle())
             .accessibilityLabel(leftWingCopy.accessibilityLabel)
             .accessibilityValue(accessibilityStatus)
             .help(leftWingCopy.help)
+            .onHover { hoveringLeft = $0 }
+            .companionAnimation(CompanionMotion.hover(), value: hoveringLeft)
             .padding(.trailing, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
@@ -62,10 +70,16 @@ struct CompactInboxBar: View {
             } label: {
                 rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
+                    .background {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(hoveringRight ? IslandInk.hover : Color.clear)
+                    }
             }
             .buttonStyle(CompanionPressStyle())
             .accessibilityLabel("打开今天")
             .help("打开今天")
+            .onHover { hoveringRight = $0 }
+            .companionAnimation(CompanionMotion.hover(), value: hoveringRight)
             .padding(.leading, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
 
