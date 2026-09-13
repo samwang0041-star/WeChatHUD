@@ -288,6 +288,22 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.unverified, "还没确认能不能用")
     }
 
+    func testServiceSourceSitsInTheSameCardAsTheProvider() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertFalse(source.text.contains("SettingsSection(\"服务来源\")"), "source used to be its own card")
+        XCTAssertFalse(source.text.contains("iconColor: .purple"))
+        XCTAssertFalse(source.text.contains("SettingsRow(\"状态\""), "能不能用 already lives on the page header")
+        XCTAssertFalse(source.text.contains("已启用 · 已验证"))
+        let form = try XCTUnwrap(source.text.range(of: "private var serviceForm"))
+        let prefs = try XCTUnwrap(source.text.range(of: "private var generationPreferences"))
+        let block = String(source.text[form.lowerBound..<prefs.lowerBound])
+        XCTAssertTrue(block.contains("AISettingsCopy.sourceTitle"))
+        XCTAssertTrue(block.contains("providerCard"))
+        XCTAssertTrue(block.contains("SettingsSection {"))
+        XCTAssertEqual(AISettingsCopy.sourceTitle, "服务来源")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testOpenEverythingRowSaysItOpensToday() throws {
         let source = try InboxViewSource.load()
         XCTAssertTrue(source.text.contains("IslandInboxCopy.moreInWorkspace"))
