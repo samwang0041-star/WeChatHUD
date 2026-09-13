@@ -107,6 +107,26 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testAddDialogIsAListNotATallyOrLecture() throws {
+        let source = try ContactsSettingsSource.load()
+        let dialogStart = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let candidatesStart = try XCTUnwrap(source.text.range(of: "private func addCandidates"))
+        let dialog = String(source.text[dialogStart.lowerBound..<candidatesStart.lowerBound])
+        XCTAssertFalse(dialog.contains("已选"))
+        XCTAssertFalse(dialog.contains("只开始整理选中的对话"))
+        XCTAssertTrue(dialog.contains("CompanionProductCopy.addFollow"))
+        XCTAssertTrue(dialog.contains("取消"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+
+        let listStart = try XCTUnwrap(source.text.range(of: "private struct ContactsListSubView"))
+        let dialogMark = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let list = String(source.text[listStart.lowerBound..<dialogMark.lowerBound])
+        XCTAssertTrue(list.contains("Menu(\"不看和静音\")"))
+        XCTAssertTrue(list.contains("不看谁"))
+        XCTAssertTrue(list.contains("静音"))
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {

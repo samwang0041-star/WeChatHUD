@@ -165,13 +165,15 @@ private struct ContactsListSubView: View {
 
                 Menu("更多") {
                     Button("什么会提醒我") { organizeTab = .rules }
-                    Divider()
-                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
                     Button("推荐关注") { organizeTab = .aiScan }
-                    Button("不看谁") { organizeTab = .blockRules }
-                    Button("静音") { organizeTab = .silenced }
+                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
                     if monitor.contactInferenceStatus?.isRunning == true {
                         Button("停止整理") { monitor.cancelContactInference() }
+                    }
+                    Divider()
+                    Menu("不看和静音") {
+                        Button("不看谁") { organizeTab = .blockRules }
+                        Button("静音") { organizeTab = .silenced }
                     }
                 }
                 .controlSize(.small)
@@ -330,9 +332,6 @@ private struct ContactsListSubView: View {
     private var addContactDialog: some View {
         let available = addCandidates()
         return VStack(alignment: .leading, spacing: 12) {
-            Text("只开始整理选中的对话")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
             TextField("搜索联系人或群聊", text: $addSearchText)
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: 8) {
@@ -392,9 +391,6 @@ private struct ContactsListSubView: View {
                 }
             }
             HStack {
-                Text("已选 \(selectedAddUsernames.count) 个")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("取消") { showAddPopover = false }
                 Button(CompanionProductCopy.addFollow) { addSelectedContacts() }
