@@ -74,6 +74,19 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains("DisclosureGroup(\"高级设置\")"), "the window left the advanced disclosure group")
     }
 
+    func testSendLimitsAndExclusionsSitUnderAdvanced() throws {
+        let source = try AutopilotViewSource.load()
+        let advanced = try XCTUnwrap(source.text.range(of: "DisclosureGroup(AutopilotSettingsCopy.advancedTitle)"))
+        let hourly = try XCTUnwrap(source.text.range(of: "AutopilotSettingsCopy.perHourTitle"))
+        let session = try XCTUnwrap(source.text.range(of: "AutopilotSettingsCopy.sessionTitle"))
+        XCTAssertGreaterThan(hourly.lowerBound, advanced.lowerBound)
+        XCTAssertGreaterThan(session.lowerBound, advanced.lowerBound)
+        XCTAssertFalse(source.text.contains("DisclosureGroup(\"不自动回复的人\")"))
+        XCTAssertTrue(source.text.contains("exclusionSection"))
+        let advancedBlock = String(source.text[advanced.lowerBound...])
+        XCTAssertTrue(advancedBlock.contains("exclusionSection"))
+    }
+
     // MARK: - Clear history
 
     func testClearHistoryFailureDoesNotInventAPrecondition() {

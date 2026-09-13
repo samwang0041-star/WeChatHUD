@@ -12,7 +12,7 @@
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | in-progress | 7.8 | 连续两刀 <0.3，换表面；即将发送仍并排取消/立即发送 |
-| 6 | 自动回复设置 | queued | — | |
+| 6 | 自动回复设置 | in-progress | 6.6 | 页头「查看待确认回复」和主开关抢视线；连发卡仍套在卡片里 |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
 | 9 | 首次引导 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 20 — 2026-09-13 — 自动回复设置
+
+- Surface: 自动回复设置
+- Files: `Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 6.0（主动词 6.0 / 空气 5.0 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 4.0 / 回执 7.5）
+- Debt picked: 首屏是表单墙：每小时上限、会话上限、排除名单和日常发送规则挤在一起。
+- After: 总分 6.6（主动词 6.5 / 空气 5.5 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 7.5 / 回执 7.5）
+- Changed: 打开这一页先看到能不能发、把握门槛、连发要等几秒、哪些一定交给你。上限和排除名单在「高级设置」里。护栏未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 23 个用例全绿；`swift build -c release`。走查：开页 → 自动发出去（关则草稿）→ 连发窗口仍在首屏 → 展开高级设置才见每小时/本次整理/不会自动回复的人；开自动发出去仍弹确认。
+- Next: 自动回复设置第二刀 — 页头「查看待确认回复」和主开关抢视线；连发卡仍套在卡片里。总分未过 8.0，主动词未到 8。
 
 ## Cycle 19 — 2026-09-13 — 待确认回复
 

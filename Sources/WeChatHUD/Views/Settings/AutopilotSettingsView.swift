@@ -145,21 +145,6 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                SettingsRow("每小时最多", subtitle: "每小时发送上限。") {
-                    Picker("每小时最多", selection: $maxRepliesPerHour) {
-                        ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 80)
-                    .onChange(of: maxRepliesPerHour) { save() }
-                }
-                SettingsRowDivider()
-                SettingsRow("本次整理最多", subtitle: "本次整理期间最多自动发送的条数。") {
-                    Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
-                        .foregroundStyle(.secondary)
-                }
-                SettingsRowDivider()
                 // The batch window lives in the main section: it is part of
                 // "when do replies go out", not an expert tweak, and its old
                 // home behind 高级设置 hid the answer from the question it
@@ -175,14 +160,10 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                DisclosureGroup("不自动回复的人") {
-                    exclusionSection
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                SettingsRowDivider()
                 DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
                     VStack(alignment: .leading, spacing: 12) {
                         advancedSection
+                        exclusionSection
                         historySection
                     }
                 }
@@ -310,6 +291,21 @@ struct AutopilotSettingsView: View {
         SettingsSection("高级") {
             Text(AutopilotSettingsCopy.groupRule)
                 .font(.callout).foregroundStyle(.secondary).padding(14)
+            SettingsRowDivider()
+            SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
+                Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
+                    ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 80)
+                .onChange(of: maxRepliesPerHour) { save() }
+            }
+            SettingsRowDivider()
+            SettingsRow(AutopilotSettingsCopy.sessionTitle, subtitle: AutopilotSettingsCopy.sessionHint) {
+                Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
+                    .foregroundStyle(.secondary)
+            }
             SettingsRowDivider()
             SettingsRow(
                 "微信发送键",
