@@ -17,6 +17,7 @@ struct DiscussionWorkspaceView: View {
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
     @State private var expandArchived = false
     @State private var searching = false
+    @State private var lastFailedUpdate: (id: Int64, to: DiscussionItemStatus, previous: DiscussionItemStatus?, title: String?)?
     /// How much of the extracted material counts as work here. Read from the
     /// monitor so the sidebar badge, 今天 and the daily report all agree.
     private var strictness: DiscussionStrictness { monitor.discussionStrictness }
@@ -143,10 +144,11 @@ struct DiscussionWorkspaceView: View {
                             try monitor.setDiscussionItemCorrection(id: item.id, content: content, owner: owner, dueAt: dueAt)
                             if showHistory { refreshHistory() }
                             error = nil
-                            receipt = "修改已保存"
+                            lastFailedUpdate = nil
+                            receipt = "记下了。"
                             correcting = nil
                         } catch {
-                            self.error = "更正没有保存，原文待办还在。请重试。"
+                            self.error = "刚才没存上。"
                         }
                     } onCancel: {
                         correcting = nil
@@ -210,7 +212,22 @@ struct DiscussionWorkspaceView: View {
                     .accessibilityLabel("找待办")
             }
             if let error {
-                Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(error)
+                        .workspaceMeta()
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if lastFailedUpdate != nil {
+                        Button("再试一次") {
+                            guard let last = lastFailedUpdate else { return }
+                            update(id: last.id, to: last.to, previous: last.previous, title: last.title)
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("再试一次")
+                    }
+                }
             }
         }
         .padding(.bottom, 12)
@@ -459,6 +476,7 @@ struct DiscussionWorkspaceView: View {
             if showHistory { refreshHistory() }
             error = nil
             undo = previous.map { (id, $0) }
+            lastFailedUpdate = nil
             if status == .done, let title {
                 receipt = "\(title)已标记完成"
             } else if previous != nil {
@@ -467,7 +485,8 @@ struct DiscussionWorkspaceView: View {
                 receipt = nil
             }
         } catch {
-            self.error = "保存失败，事项状态未更改。请重试。"
+            lastFailedUpdate = (id, status, previous, title)
+            self.error = "刚才没记下。"
             receipt = nil
         }
     }

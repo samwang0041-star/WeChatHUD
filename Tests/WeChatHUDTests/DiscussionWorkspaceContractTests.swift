@@ -109,6 +109,19 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertEqual(DiscussionItemOwner.mine.workspaceLabel, "我来做")
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testSaveFailureIsAWorkspacePlayNotARedCallout() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        XCTAssertTrue(source.text.contains("刚才没记下。"))
+        XCTAssertTrue(source.text.contains("刚才没存上。"))
+        XCTAssertTrue(source.text.contains("再试一次"))
+        XCTAssertFalse(source.text.contains("保存失败，事项状态未更改"))
+        XCTAssertFalse(source.text.contains("更正没有保存"))
+        XCTAssertFalse(source.text.contains("exclamationmark.triangle"))
+        XCTAssertFalse(source.text.contains("foregroundStyle(.red)"))
+        XCTAssertTrue(source.text.contains("标记完成"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {
