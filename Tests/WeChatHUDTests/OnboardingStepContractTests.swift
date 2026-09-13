@@ -191,6 +191,20 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.saveRetry, "再试一次")
         XCTAssertEqual(FirstLaunchGuide.openTodayFailed, "暂时打不开「今天」。")
     }
+
+    func testContactPickerEmptyAndFailAreWorkspacePlays() throws {
+        let source = try FirstLaunchContactPickerSource.load()
+        XCTAssertTrue(source.body.contains("没有匹配的对话。换个名字试试。"))
+        XCTAssertTrue(source.body.contains("也可以稍后再选。"))
+        XCTAssertTrue(source.body.contains("workspaceMeta()"))
+        XCTAssertTrue(source.body.contains("FirstLaunchGuide.saveFailed"))
+        XCTAssertTrue(source.body.contains("FirstLaunchGuide.saveRetry"))
+        XCTAssertFalse(source.body.contains(".foregroundStyle(.red)"))
+        XCTAssertFalse(source.body.contains("关注范围没有保存成功"))
+        XCTAssertEqual(FirstLaunchGuide.saveFailed, "刚才没存上。")
+        XCTAssertEqual(FirstLaunchGuide.saveRetry, "再试一次")
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
@@ -208,6 +222,24 @@ private enum OnboardingViewSource {
             .appendingPathComponent("Sources/WeChatHUD/Views/OnboardingView.swift")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw XCTSkip("OnboardingView.swift not found at \(url.path)")
+        }
+        return Source(body: text)
+    }
+}
+
+private enum FirstLaunchContactPickerSource {
+    struct Source {
+        let body: String
+    }
+
+    static func load() throws -> Source {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/FirstLaunchContactPicker.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("FirstLaunchContactPicker.swift not found at \(url.path)")
         }
         return Source(body: text)
     }
