@@ -14,6 +14,8 @@ enum PreferencesCopy {
     static let displayTitle = "显示位置"
     static let displaySubtitle = "浮窗出现在哪块屏。那块屏不在时用还连着的。"
     static let updatesDisclosure = "还要看版本"
+    static let saveFailed = "刚才没记上。"
+    static let saveRetry = "再试一次"
 }
 
 struct SyncSettingsView: View {
@@ -95,7 +97,7 @@ struct SyncSettingsView: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("设置分区")
             }
-            if selectedSettingsSection != .connection, !saveError.isEmpty {
+            if selectedSettingsSection == .data, !saveError.isEmpty {
                 HStack {
                     Text(saveError).font(.system(size: 12)).foregroundColor(.red)
                     Spacer()
@@ -143,6 +145,18 @@ struct SyncSettingsView: View {
                         .workspaceTitle()
                         .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if syncSaveFailed {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(PreferencesCopy.saveFailed)
+                                .workspaceMeta()
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button(PreferencesCopy.saveRetry, action: save)
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     displaySection
                     MacExperienceSettingsView()
                     DisclosureGroup(PreferencesCopy.updatesDisclosure) {

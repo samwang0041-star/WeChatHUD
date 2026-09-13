@@ -102,6 +102,23 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testPreferenceSaveFailureIsAWorkspaceReceipt() throws {
+        let source = try PreferencesSettingsSource.load()
+        let prefsStart = try XCTUnwrap(source.text.range(of: "settingsPane(.preferences)"))
+        let dataStart = try XCTUnwrap(source.text.range(of: "settingsPane(.data)"))
+        let pane = String(source.text[prefsStart.lowerBound..<dataStart.lowerBound])
+        XCTAssertTrue(pane.contains("PreferencesCopy.saveFailed"))
+        XCTAssertTrue(pane.contains("PreferencesCopy.saveRetry"))
+        XCTAssertTrue(pane.contains("CompanionPressStyle()"))
+        XCTAssertFalse(pane.contains("foregroundColor(.red)"))
+        XCTAssertFalse(pane.contains("重试保存设置"))
+        XCTAssertEqual(PreferencesCopy.saveFailed, "刚才没记上。")
+        XCTAssertEqual(PreferencesCopy.saveRetry, "再试一次")
+        XCTAssertTrue(source.text.contains("浮窗在"))
+        XCTAssertTrue(source.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
