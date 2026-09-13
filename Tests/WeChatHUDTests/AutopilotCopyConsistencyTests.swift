@@ -172,6 +172,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(IslandBriefingCopy.situation, "在聊")
         XCTAssertEqual(IslandBriefingCopy.next, "下一步")
     }
+
+    func testCollapsedBannerPressesTheMessageNotTheHitLayer() throws {
+        let source = try NotificationBannerViewSource.load()
+        XCTAssertTrue(source.text.contains("BannerCardPressStyle"))
+        XCTAssertTrue(source.text.contains("CompanionMotion.pressScale"))
+        XCTAssertTrue(source.text.contains("IslandInk.hoverPressed"))
+        XCTAssertTrue(source.text.contains(".buttonStyle(BannerCardPressStyle(pressed: $pressingCard))"))
+        XCTAssertFalse(source.text.contains(".buttonStyle(.plain)"))
+    }
 }
 
 // MARK: - Source readers
@@ -224,6 +233,14 @@ private struct GroupContextBriefingSource {
     let text: String
     static func load() throws -> GroupContextBriefingSource {
         GroupContextBriefingSource(text: try read("Sources/WeChatHUD/Views/GroupContextBriefingButton.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct NotificationBannerViewSource {
+    let text: String
+    static func load() throws -> NotificationBannerViewSource {
+        NotificationBannerViewSource(text: try read("Sources/WeChatHUD/Views/NotificationBannerView.swift"))
     }
     init(text: String) { self.text = text }
 }
