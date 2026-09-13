@@ -112,6 +112,24 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(IslandInboxCopy.openToday, "今天")
     }
 
+    func testIslandGearNamesTheWorkspaceItOpens() throws {
+        let source = try InboxViewSource.load()
+        guard let wingStart = source.text.range(of: "Right wing —"),
+              let wingEnd = source.text.range(of: "private var liveNotchWidth") else {
+            XCTFail("the notch right wing should still be the gear's home")
+            return
+        }
+        let wing = String(source.text[wingStart.lowerBound..<wingEnd.lowerBound])
+        XCTAssertTrue(wing.contains("IslandInboxCopy.openSettings"))
+        XCTAssertTrue(wing.contains("IslandInboxCopy.openSettingsHelp"))
+        XCTAssertTrue(wing.contains("CompanionPressStyle()"))
+        XCTAssertFalse(wing.contains(".buttonStyle(.plain)"))
+        XCTAssertFalse(wing.contains("CompanionProductCopy.openCompanion"))
+        XCTAssertFalse(wing.contains(".font(.system(size: 11))"))
+        XCTAssertEqual(IslandInboxCopy.openSettings, "设置")
+        XCTAssertEqual(IslandInboxCopy.openSettingsHelp, "打开设置")
+    }
+
     func testIslandActionPanelSpeaksHumanWhenOrganizingOrStuck() throws {
         let panel = try ActionPanelViewSource.load()
         XCTAssertTrue(panel.text.contains("IslandActionCopy.organizing"))
