@@ -175,8 +175,8 @@ extension InboxItem {
         case .replyOptional: return "可以回一句"
         case .commitmentDue: return isOverdue ? "承诺已到期" : "承诺快到期"
         case .autopilotReview: return "待确认回复"
-        case .aiLoading: return "AI 正在整理"
-        case .aiFailed: return "分析暂不可用"
+        case .aiLoading: return IslandActionCopy.organizingShort
+        case .aiFailed: return IslandActionCopy.unreadTitle
         case .syncIssue: return "同步异常"
         case .idle: return ""
         }
@@ -270,9 +270,9 @@ extension InboxItem {
         case .autopilotReview:
             return "待确认回复"
         case .aiLoading:
-            return "AI 正在整理重点"
+            return IslandActionCopy.organizingTitle
         case .aiFailed:
-            return "分析暂不可用"
+            return IslandActionCopy.unreadTitle
         case .idle, .syncIssue:
             return ""
         }
@@ -353,4 +353,16 @@ extension InboxItem {
             contextNotification: contextNotification
         )
     }
+}
+
+enum IslandActionCopy {
+    static let organizing = "正在整理这条消息…"
+    static let organizingTitle = "正在整理这条消息"
+    static let organizingShort = "正在整理"
+    static let unreadTitle = "先看原文"
+    static let unreadHint = "这次没整理完，可以直接打开微信。"
+    static let replyWriting = "正在写回复建议…"
+    static let replyFailed = "回复建议没写出来"
+    static let retry = "再试一次"
+    static let briefing = "正在整理…"
 }

@@ -310,7 +310,7 @@ struct InboxRowView: View {
                     Image(systemName: "sparkles")
                         .islandMicro()
                         .foregroundColor(.orange.opacity(0.7))
-                    Text("分析中…")
+                    Text(IslandActionCopy.briefing)
                         .islandMeta()
                         .foregroundColor(IslandInk.tertiary)
                 }

@@ -8,7 +8,7 @@
 | 序 | 表面 | 状态 | 最近总分 | 下一刀提示 |
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
-| 2 | 岛·展开收件箱 | in-progress | 8.4 | 解读仍说「分析」；刘海齿轮仍是无字图标 |
+| 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
 | 3 | 岛·通知横幅 | queued | — | |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 7 — 2026-09-13 — 岛·展开收件箱
+
+- Surface: 岛·展开收件箱
+- Files: `Sources/WeChatHUD/Views/ActionPanelView.swift`、`Sources/WeChatHUD/Data/InboxItem.swift`、`Sources/WeChatHUD/Views/InboxRowView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 8.4（主动词 8.3 / 空气 8.3 / 短句 8.3 / 物理 8.4 / 状态戏 7.6 / 稀疏 8.0 / 回执 8.0）
+- Debt picked: 展开区仍说「分析暂不可用 / AI 正在整理重点」，失败还把内部错误摊在用户眼前。
+- After: 总分 8.5（主动词 8.3 / 空气 8.3 / 短句 8.6 / 物理 8.4 / 状态戏 8.2 / 稀疏 8.0 / 回执 8.2）
+- Changed: 整理中改成「正在整理这条消息…」。失败改成「先看原文」加一句去向，不再出现「分析」。失败可「再试一次」；回复建议同样说人话。内部超时文案不再上屏。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter IslandStyleTests --filter CompanionProductCopyTests --filter CompanionMotionTests` 39 个用例全绿；`swift build -c release`。走查：展开等待中 → 正在整理这条消息；失败 → 先看原文 + 再试一次；主按钮仍是打开微信。
+- Next: 岛·通知横幅。刘海齿轮仍无字，不要在横幅那一刀顺手改弹簧。
 
 ## Cycle 6 — 2026-09-13 — 岛·展开收件箱
 
