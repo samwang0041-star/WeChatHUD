@@ -149,7 +149,7 @@ struct FirstLaunchContactPicker: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .accessibilityLabel(following ? "取消关注 \(displayName(for: session))" : "关注 \(displayName(for: session))")
     }
 

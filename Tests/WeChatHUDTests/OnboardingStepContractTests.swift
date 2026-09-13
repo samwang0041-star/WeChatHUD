@@ -229,6 +229,18 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
     }
+
+    func testContactRowsPressLikeWorkspaceSecondaries() throws {
+        let source = try FirstLaunchContactPickerSource.load()
+        let start = try XCTUnwrap(source.body.range(of: "private func candidateRow"))
+        let display = try XCTUnwrap(source.body.range(of: "private func displayName"))
+        let row = String(source.body[start.lowerBound..<display.lowerBound])
+        XCTAssertTrue(row.contains("CompanionPressStyle()"))
+        XCTAssertFalse(row.contains(".buttonStyle(.plain)"))
+        XCTAssertFalse(row.contains("borderedProminent"), "jade stays on 开始使用")
+        XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
