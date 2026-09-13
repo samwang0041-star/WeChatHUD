@@ -1660,7 +1660,7 @@ final class ChatMonitor: ObservableObject {
         // 4. Commitment tracking for self outgoing messages (async)
         if !outcome.selfOutgoingMessages.isEmpty {
             let tracker = commitmentTracker
-            let readerRef = reader
+            let readerActor = WeChatReaderActor(reader)
             // Resolve names off the main actor: `canonicalDisplayName` reads
             // the reader's contact cache under its own lock.
             let resolveName: (String) -> String? = { [weak self] username in
@@ -1671,8 +1671,8 @@ final class ChatMonitor: ObservableObject {
                     let contact = storeRef.getContact(username: item.chatUsername)
                     let role = contact?.role ?? .acquaintance
 
-                    // Build minimal context
-                    let contextMsgs = (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 10)) ?? []
+                    // Build minimal context via WeChatReaderActor (not raw reader).
+                    let contextMsgs = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 10)) ?? []
                     let contactLookup: ContextWindowBuilder.ContactLookup = { username in
                         guard let c = storeRef.getContact(username: username) else { return nil }
                         return (c.attentionLevel, c.role)
@@ -1752,10 +1752,10 @@ final class ChatMonitor: ObservableObject {
         let unanalyzed = recalledMessages.filter { $0.aiReason == nil }
         if !unanalyzed.isEmpty {
             let analyzer = recallAnalyzer
-            let readerRef = reader
+            let readerActor = WeChatReaderActor(reader)
             Task {
                 for recalled in unanalyzed {
-                    let context = (try? readerRef.getMessages(chatUsername: recalled.chatUsername, limit: 10)) ?? []
+                    let context = (try? await readerActor.getMessages(chatUsername: recalled.chatUsername, limit: 10)) ?? []
                     guard let result = await analyzer.analyze(recalled: recalled, context: context) else { continue }
                     try? storeRef.updateRecallAnalysis(
                         msgUID: recalled.msgUID,
