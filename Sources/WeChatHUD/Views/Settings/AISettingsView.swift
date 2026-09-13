@@ -13,6 +13,7 @@ enum AISettingsCopy {
     static let sourceCustom = "自己填"
     static let vendorTitle = "哪一家"
     static let addressTitle = "接到哪"
+    static let insecureHTTP = "此连接未加密，请确认网络可信或改用安全连接"
     static let secretTitle = "密钥"
     static let getKey = "去拿密钥"
     static let modelTitle = "用哪个模型"
@@ -177,7 +178,6 @@ struct ProviderCard: View {
     let onFetch: () -> Void
     let onProviderSelected: (String) -> Void
 
-    @State private var advancedConnectionExpanded = false
     /// The preset id `syncProviderPreset` last aligned to. Switching to a
     /// *different* preset must drop the key even when the URL matches (two
     /// presets can share an address with different keys); re-syncing the same
@@ -231,28 +231,23 @@ struct ProviderCard: View {
                     }
                 }
             } else {
-                DisclosureGroup("高级连接设置", isExpanded: $advancedConnectionExpanded) {
-                    SettingsRowDivider()
-                    SettingsRow(AISettingsCopy.addressTitle) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            CompanionClipboardField(
-                                text: $baseURL,
-                                placeholder: AISettingsCopy.addressTitle,
-                                kind: .url,
-                                accessibilityLabel: AISettingsCopy.addressTitle
-                            )
-                            .frame(maxWidth: 220)
-                            if usesUnencryptedRemoteHTTP {
-                                Text("此连接未加密，请确认网络可信或改用安全连接")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.orange)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                SettingsRow(AISettingsCopy.addressTitle) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        CompanionClipboardField(
+                            text: $baseURL,
+                            placeholder: AISettingsCopy.addressTitle,
+                            kind: .url,
+                            accessibilityLabel: AISettingsCopy.addressTitle
+                        )
+                        .frame(maxWidth: 220)
+                        if usesUnencryptedRemoteHTTP {
+                            Text(AISettingsCopy.insecureHTTP)
+                                .workspaceMeta()
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
-                .font(.system(size: 12, weight: .medium))
-                .tint(CompanionPalette.accent)
             }
 
             // Access credential — only for providers that require a key

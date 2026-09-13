@@ -372,6 +372,23 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
     }
 
+    func testCustomAddressSitsOnTheFormNotBehindAdvancedConnection() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertFalse(source.text.contains("高级连接设置"))
+        XCTAssertFalse(source.text.contains("advancedConnectionExpanded"))
+        let providerStart = try XCTUnwrap(source.text.range(of: "struct ProviderCard"))
+        let main = try XCTUnwrap(source.text.range(of: "struct AISettingsView"))
+        let card = String(source.text[providerStart.lowerBound..<main.lowerBound])
+        XCTAssertTrue(card.contains("AISettingsCopy.addressTitle"))
+        XCTAssertTrue(card.contains("AISettingsCopy.insecureHTTP"))
+        XCTAssertTrue(card.contains(".workspaceMeta()"))
+        XCTAssertFalse(card.contains("DisclosureGroup(\"高级连接设置\""))
+        XCTAssertFalse(card.contains(".font(.system(size: 12, weight: .medium)"))
+        XCTAssertFalse(card.contains(".font(.system(size: 11)"))
+        XCTAssertEqual(AISettingsCopy.addressTitle, "接到哪")
+        XCTAssertEqual(AISettingsCopy.insecureHTTP, "此连接未加密，请确认网络可信或改用安全连接")
+    }
+
     func testConfirmReceiptSitsOnTheStatusCardNotAnOrangeIsland() throws {
         let source = try AISettingsSource.load()
         let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))
