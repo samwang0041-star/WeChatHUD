@@ -5,6 +5,15 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 12 — WeChatReader getMessagesBatch
+- Extracted getMessagesLocked; batch API holds one lock across chats
+- ScanEngine unread + autopilot loops use batch (fewer lock hops)
+- Test WeChatReaderBatchMessagesTests; 1521+70 green
+
+
+
+
+
 ### [Overnight] 2026-09-13 Slice 11 — ClipboardGuard @MainActor
 - Moved ClipboardGuard into Utilities; pasteboard save/restore MainActor-only
 - Autopilot serialSend awaits save/restore (no detached restore Task race)
