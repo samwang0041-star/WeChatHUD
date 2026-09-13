@@ -34,7 +34,8 @@ enum AutopilotSettingsCopy {
     static let batchHint = "连续几条消息会先等这个时长，再合成一次回复。单位是秒，不是条数。"
 
     static func excludedTitle(count: Int) -> String { "不会自动回复的人 (\(count))" }
-    static let excludedEmpty = "还没有添加。这里的人不会被自动回复；要不要真的发出去，仍由上面的开关决定。"
+    static let excludedEmpty = "还没有排除的人。"
+    static let excludedGoContacts = "去关注谁"
     static let excludedAddButton = "添加排除对象"
     static let advancedTitle = "高级设置"
     static let historyTitle = "自动回复记录"
@@ -259,13 +260,26 @@ struct AutopilotSettingsView: View {
     // MARK: - Exclusion
 
     private var exclusionSection: some View {
-        SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
+        let available = allContacts.filter { !excludedContacts.contains($0.username) }
+        return SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
             if excludedContacts.isEmpty {
-                Text(AutopilotSettingsCopy.excludedEmpty)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AutopilotSettingsCopy.excludedEmpty)
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                    if available.isEmpty {
+                        Button(AutopilotSettingsCopy.excludedGoContacts) {
+                            panelState.pendingSettingsTab = "contacts"
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                    } else {
+                        addExclusionMenu(available: available)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             } else {
                 ForEach(Array(excludedContacts.enumerated()), id: \.element) { idx, username in
                     if idx > 0 { SettingsRowDivider() }
@@ -287,32 +301,34 @@ struct AutopilotSettingsView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                 }
-            }
-
-            let available = allContacts.filter { !excludedContacts.contains($0.username) }
-            if !available.isEmpty {
-                SettingsRowDivider()
-                HStack {
-                    Spacer()
-                    Menu {
-                        ForEach(available, id: \.username) { contact in
-                            Button("\(contact.role.icon) \(contact.displayName)") {
-                                excludedContacts.append(contact.username)
-                                save()
-                            }
-                        }
-                    } label: {
-                        Text(AutopilotSettingsCopy.excludedAddButton)
-                            .workspaceMeta()
+                if !available.isEmpty {
+                    SettingsRowDivider()
+                    HStack {
+                        Spacer()
+                        addExclusionMenu(available: available)
                     }
-                    .menuStyle(.borderlessButton)
-                    .buttonStyle(CompanionPressStyle())
-                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
             }
         }
+    }
+
+    private func addExclusionMenu(available: [ContactEntry]) -> some View {
+        Menu {
+            ForEach(available, id: \.username) { contact in
+                Button("\(contact.role.icon) \(contact.displayName)") {
+                    excludedContacts.append(contact.username)
+                    save()
+                }
+            }
+        } label: {
+            Text(AutopilotSettingsCopy.excludedAddButton)
+                .workspaceMeta()
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(CompanionPressStyle())
+        .foregroundStyle(.secondary)
     }
 
     // MARK: - Advanced

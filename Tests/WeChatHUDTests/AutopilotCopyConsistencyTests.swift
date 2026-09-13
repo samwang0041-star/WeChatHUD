@@ -42,7 +42,8 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         // described backwards.
         XCTAssertEqual(AutopilotSettingsCopy.excludedTitle(count: 3), "不会自动回复的人 (3)")
         XCTAssertEqual(AutopilotSettingsCopy.excludedAddButton, "添加排除对象")
-        XCTAssertTrue(AutopilotSettingsCopy.excludedEmpty.contains("不会被自动回复"))
+        XCTAssertEqual(AutopilotSettingsCopy.excludedEmpty, "还没有排除的人。")
+        XCTAssertEqual(AutopilotSettingsCopy.excludedGoContacts, "去关注谁")
         XCTAssertEqual(AutopilotSettingsCopy.excludedTitle(count: 0), "不会自动回复的人 (0)")
     }
 
@@ -242,6 +243,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(excluded.contains(".workspaceBody()"))
         XCTAssertTrue(excluded.contains(".workspaceMeta()"))
         XCTAssertEqual(AutopilotSettingsCopy.excludedAddButton, "添加排除对象")
+        XCTAssertEqual(AutopilotSettingsCopy.excludedEmpty, "还没有排除的人。")
+        XCTAssertEqual(AutopilotSettingsCopy.excludedGoContacts, "去关注谁")
+        XCTAssertTrue(excluded.contains("pendingSettingsTab = \"contacts\""))
+        XCTAssertTrue(excluded.contains("AutopilotSettingsCopy.excludedGoContacts"))
+        XCTAssertFalse(
+            excluded.contains("仍由上面的开关决定"),
+            "empty exclusion is a next step, not a lecture about the send switch"
+        )
+        XCTAssertFalse(
+            excluded.contains("CompanionPalette.jade"),
+            "jade stays off 去关注谁 and 添加排除对象"
+        )
 
         let history = try XCTUnwrap(source.text.range(of: "// MARK: - History"))
         let helpers = try XCTUnwrap(source.text.range(of: "// MARK: - Helpers"))
