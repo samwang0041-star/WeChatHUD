@@ -320,7 +320,7 @@ struct NotificationBannerView: View {
                         .islandRowTitle()
                         .foregroundStyle(IslandInk.primary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .accessibilityLabel("返回通知")
                 Spacer()
                 closeButton

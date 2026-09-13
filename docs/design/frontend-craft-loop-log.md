@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
-| 3 | 岛·通知横幅 | queued | — | |
+| 3 | 岛·通知横幅 | in-progress | 7.8 | 简报里三张套卡仍在；收起横幅按下无缩放 |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 8 — 2026-09-13 — 岛·通知横幅
+
+- Surface: 岛·通知横幅
+- Files: `Sources/WeChatHUD/Views/GroupContextBriefingButton.swift`、`Sources/WeChatHUD/Views/NotificationBannerView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`、`Tests/WeChatHUDTests/BriefingRetryTests.swift`
+- Before: 总分 7.2（主动词 6.5 / 空气 6.5 / 短句 6.5 / 物理 7.5 / 状态戏 8.0 / 稀疏 8.0 / 回执 8.0）
+- Debt picked: 点开横幅后，「去微信回复」和「稍后提醒」一样宽；标题还写「AI 解读」。
+- After: 总分 7.8（主动词 8.2 / 空气 6.5 / 短句 8.0 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.2 / 回执 8.0）
+- Changed: 简报标题改成「为什么找你」，不再提 AI。主按钮是一条青玉「去微信回复」；稍后收成旁边的安静胶囊。失败是「再试一次」。高度仍走测量，弹簧未动。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter BriefingRetryTests --filter NotificationBanner*` 等 78 个用例全绿（含点击与 hug）；`swift build -c release`。走查：点消息 → 为什么找你；按下青玉去微信；稍后不抢主位；失败 → 再试一次。
+- Next: 岛·通知横幅第二刀 — 拿掉简报里三张套卡，改成岛上的安静行；收起横幅的按下缩放另算一刀
 
 ## Cycle 7 — 2026-09-13 — 岛·展开收件箱
 
