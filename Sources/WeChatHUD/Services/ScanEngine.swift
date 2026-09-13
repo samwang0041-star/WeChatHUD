@@ -44,21 +44,24 @@ enum ScanEngine {
         autopilotActive: Bool
     ) async -> ScanOutcome? {
         do {
-            try reader.loadKeys()
-            try reader.refreshContactsIfChanged()
+            // Actor facade: scan prep + identity snapshot go through WeChatReaderActor.
+            // Remaining per-message reads still use `reader` (lock-backed) until
+            // whitelist paging is migrated onto batch/actor APIs.
+            let readerActor = WeChatReaderActor(reader)
+            try await readerActor.prepareForScan()
 
             let chatActions = store.loadChatActions()
             let nowEpoch = Int(Date().timeIntervalSince1970)
 
             let sessions: [SessionInfo]
             do {
-                sessions = try reader.getSessions()
+                sessions = try await readerActor.sessions()
             } catch {
                 print("[WCHUD] getSessions failed (DB locked?): \(error) — using empty session list")
                 sessions = []
             }
-            let myUname = reader.myUsername()
-            let myDisplayName = reader.displayName(for: myUname)
+            let myUname = await readerActor.myUsername()
+            let myDisplayName = await readerActor.displayName(for: myUname)
             let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
@@ -74,19 +77,19 @@ enum ScanEngine {
             // When FSEvents told us exactly which files changed, only refresh those.
             // On timer-based fallback scans (changedRelPaths == nil), check all DBs
             // but refreshIfChanged is cheap (mtime compare) for unchanged files.
-            let msgDBs = reader.findMessageDBs()
+            let msgDBs = await readerActor.findMessageDBs()
             if let changed = changedRelPaths {
                 let changedSet = Set(changed)
                 for relPath in msgDBs where changedSet.contains(relPath) {
-                    _ = try? reader.refreshIfChanged(relPath: relPath)
+                    _ = try? await readerActor.refreshIfChanged(relPath: relPath)
                 }
             } else {
                 for relPath in msgDBs {
-                    _ = try? reader.refreshIfChanged(relPath: relPath)
+                    _ = try? await readerActor.refreshIfChanged(relPath: relPath)
                 }
             }
 
-            let selfNames = reader.mySelfNames
+            let selfNames = await readerActor.mySelfNames()
             let replyDebtItems = buildReplyDebtItems(
                 sessions: sessions,
                 reader: reader,
@@ -110,7 +113,7 @@ enum ScanEngine {
             var activeConversations: Set<String> = []
 
             let unreadSessions = sessions.filter { $0.unreadCount > 0 }
-            let unreadBatch = (try? reader.getMessagesBatch(
+            let unreadBatch = (try? await readerActor.messagesBatch(
                 unreadSessions.map { session in
                     // Private chats fetch 20, not 5: `latestSelfTime` feeds the
                     // live-exchange suppression — with 5, a rapid-fire reply
@@ -678,7 +681,7 @@ enum ScanEngine {
                     && !whitelistSet.contains(session.username)
                     && session.unreadCount > 0
             }
-            let autopilotBatch = (try? reader.getMessagesBatch(
+            let autopilotBatch = (try? await readerActor.messagesBatch(
                 autopilotSessions.map {
                     WeChatReader.MessageBatchRequest(chatUsername: $0.username, limit: 20)
                 }

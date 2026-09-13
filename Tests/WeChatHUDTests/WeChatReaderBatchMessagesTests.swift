@@ -39,4 +39,25 @@ final class WeChatReaderBatchMessagesTests: XCTestCase {
         XCTAssertEqual(batch[chatA]?.map(\.text), ["A2", "A1"])
         XCTAssertEqual(batch[chatB]?.map(\.text), ["B1"])
     }
+
+    func testActorMessagesBatchMatchesDirectBatch() async throws {
+        let fixture = try WeChatReaderPerfFixture()
+        defer { fixture.cleanUp() }
+
+        let chat = "wxid_actor_batch"
+        let relPath = "message/message_0.db"
+        try fixture.createMessageDB(
+            relPath: relPath,
+            chats: [chat: [.init(localId: 1, createTime: 1_000, senderId: 1, text: "hello")]],
+            name2id: [chat]
+        )
+        let reader = try fixture.makeReader(cacheStrategy: .memory)
+        XCTAssertTrue(try reader.refreshIfChanged(relPath: relPath))
+        let actor = WeChatReaderActor(reader)
+        let req = [WeChatReader.MessageBatchRequest(chatUsername: chat, limit: 5)]
+        let viaActor = try await actor.messagesBatch(req)
+        let direct = try reader.getMessagesBatch(req)
+        XCTAssertEqual(viaActor[chat]?.map(\.text), direct[chat]?.map(\.text))
+        XCTAssertEqual(viaActor[chat]?.map(\.text), ["hello"])
+    }
 }

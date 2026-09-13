@@ -1,0 +1,50 @@
+import Foundation
+
+/// Async facade over `WeChatReader` for scan/off-main callers.
+///
+/// SwiftUI still owns the `ObservableObject` reader. Scan paths hop through
+/// this actor so mutable cache access has a clear isolation boundary while
+/// the class + `NSRecursiveLock` migration continues.
+actor WeChatReaderActor {
+    /// Underlying reader. Still `@unchecked Sendable` with an internal lock;
+    /// prefer actor methods from async scan code instead of capturing `reader`
+    /// into detached work.
+    nonisolated let reader: WeChatReader
+
+    init(_ reader: WeChatReader) {
+        self.reader = reader
+    }
+
+    func prepareForScan() throws {
+        try reader.loadKeys()
+        try reader.refreshContactsIfChanged()
+    }
+
+    func sessions() throws -> [SessionInfo] {
+        try reader.getSessions()
+    }
+
+    func findMessageDBs() -> [String] {
+        reader.findMessageDBs()
+    }
+
+    func refreshIfChanged(relPath: String) throws -> Bool {
+        try reader.refreshIfChanged(relPath: relPath)
+    }
+
+    func messagesBatch(_ requests: [WeChatReader.MessageBatchRequest]) throws -> [String: [MessageInfo]] {
+        try reader.getMessagesBatch(requests)
+    }
+
+    func myUsername() -> String {
+        reader.myUsername()
+    }
+
+    func displayName(for username: String) -> String {
+        reader.displayName(for: username)
+    }
+
+    func mySelfNames() -> Set<String> {
+        reader.mySelfNames
+    }
+}
