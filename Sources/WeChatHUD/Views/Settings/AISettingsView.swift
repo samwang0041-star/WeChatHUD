@@ -22,6 +22,7 @@ enum AISettingsCopy {
     static let needAddress = "请填一个能用的地址。"
     static let pickModel = "请选一个模型。"
     static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
+    static let retryOnce = "再试一次"
     static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
 }
 
@@ -36,6 +37,7 @@ struct ModelPicker: View {
     @Binding var model: String
     let models: [String]
     let isFetching: Bool
+    var fetchNote: String = ""
     let onRefresh: () -> Void
 
     @State private var searchText = ""
@@ -80,6 +82,13 @@ struct ModelPicker: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel(isExpanded ? "收起模型列表" : "展开模型列表")
                 }
+            }
+
+            if !fetchNote.isEmpty {
+                Text(fetchNote)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if isExpanded, !models.isEmpty {
@@ -140,6 +149,7 @@ struct ProviderCard: View {
     @Binding var apiKey: String
     @Binding var models: [String]
     @Binding var testResult: String
+    @Binding var modelFetchNote: String
     @Binding var isTesting: Bool
     @Binding var isFetching: Bool
 
@@ -261,37 +271,10 @@ struct ProviderCard: View {
                     model: $model,
                     models: models,
                     isFetching: isFetching || isTesting,
+                    fetchNote: modelFetchNote,
                     onRefresh: onFetch
                 )
                 .frame(maxWidth: 280)
-            }
-            if !testResult.isEmpty {
-                SettingsRowDivider()
-                if isFailedTestResult {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("连接没有通过", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.orange)
-                        CompanionCopyableText(text: testResult, lineLimit: nil)
-                            .font(.system(size: 12))
-                            .foregroundColor(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(AISettingsCopy.checkAgain)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(14)
-                } else {
-                    CompanionCopyableText(text: testResult, lineLimit: nil)
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                }
             }
         }
 
@@ -301,12 +284,9 @@ struct ProviderCard: View {
         !(provider?.baseURL.isEmpty ?? true)
     }
 
-    private var isFailedTestResult: Bool {
-        testResult.hasPrefix("失败") || testResult.hasPrefix("连接未完成") || testResult.hasPrefix("获取失败") || testResult.hasPrefix("上次测试失败")
-    }
-
     private func syncProviderPreset() {
         testResult = ""
+        modelFetchNote = ""
         guard let preset = provider, !isCustomSource else { return }
         defer { lastSyncedPresetID = preset.id }
         guard let previous = lastSyncedPresetID else {
@@ -368,6 +348,7 @@ struct AISettingsView: View {
     @State private var apiKey = ""
     @State private var models: [String] = []
     @State private var testResult = ""
+    @State private var modelFetchNote = ""
     @State private var isTesting = false
     @State private var isFetching = false
     @State private var testRequestID = UUID()
@@ -471,37 +452,57 @@ struct AISettingsView: View {
     }
 
     private var serviceStatusCard: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(serviceUsabilityTitle)
-                    .workspaceTitle()
-                let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? AISettingsCopy.noModel : configuredSlot.model)"
-                Text(summary)
-                    .workspaceBody()
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .contextMenu {
-                        Button("复制") { CompanionClipboard.write(summary) }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(serviceUsabilityTitle)
+                        .workspaceTitle()
+                    let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? AISettingsCopy.noModel : configuredSlot.model)"
+                    Text(summary)
+                        .workspaceBody()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .contextMenu {
+                            Button("复制") { CompanionClipboard.write(summary) }
+                        }
+                    Text(AISettingsCopy.statusHint)
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 12)
+                Button(action: testSlot) {
+                    if isTesting {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Text(AISettingsCopy.confirmWorks)
                     }
-                Text(AISettingsCopy.statusHint)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(CompanionPalette.jade)
+                .disabled(isTesting || isFetching)
+                .accessibilityLabel(AISettingsCopy.confirmWorks)
             }
 
-            Spacer(minLength: 12)
-            Button(action: testSlot) {
-                if isTesting {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Text(AISettingsCopy.confirmWorks)
+            if !testResult.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    CompanionCopyableText(text: testResult, lineLimit: nil)
+                        .workspaceMeta()
+                        .foregroundStyle(isFailedTestResult ? .primary : CompanionPalette.jade)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if isFailedTestResult {
+                        Spacer(minLength: 8)
+                        Button(AISettingsCopy.retryOnce, action: testSlot)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                            .disabled(isTesting || isFetching)
+                            .accessibilityLabel(AISettingsCopy.retryOnce)
+                    }
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(CompanionPalette.jade)
-            .disabled(isTesting || isFetching)
-            .accessibilityLabel(AISettingsCopy.confirmWorks)
         }
         .companionSurface(padding: 20)
     }
@@ -592,6 +593,10 @@ struct AISettingsView: View {
         AISettingsValidation.connectionError(configuredSlot, requireModel: true) == nil
     }
 
+    private var isFailedTestResult: Bool {
+        testResult.hasPrefix("失败") || testResult.hasPrefix("连接未完成") || testResult.hasPrefix("获取失败") || testResult.hasPrefix("上次测试失败")
+    }
+
     private var serviceForm: some View {
         SettingsSection {
             SettingsRow(AISettingsCopy.sourceTitle) {
@@ -611,6 +616,7 @@ struct AISettingsView: View {
             guard !isHydrating else { return }
             testRequestID = UUID()
             testResult = ""
+            modelFetchNote = ""
             switch source {
             case .preset:
                 if providerID == "custom" || AIProvider.find(providerID) == nil {
@@ -680,6 +686,7 @@ struct AISettingsView: View {
             apiKey: $apiKey,
             models: $models,
             testResult: $testResult,
+            modelFetchNote: $modelFetchNote,
             isTesting: $isTesting,
             isFetching: $isFetching,
             onFetch: { fetchModels() },
@@ -792,6 +799,7 @@ struct AISettingsView: View {
         let requestID = UUID()
         let requestStartedAt = Date()
         testRequestID = requestID
+        modelFetchNote = ""
         if let error = AISettingsValidation.connectionError(slot, requireModel: true) {
             let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
             let suffix = saved ? "" : "；测试结果未保存，请重试"
@@ -843,10 +851,11 @@ struct AISettingsView: View {
     private func fetchModels() {
         let slot = buildSlot()
         if let error = AISettingsValidation.connectionError(slot, requireModel: false) {
-            testResult = "获取失败：\(userFacingConfigurationError(error))"
+            modelFetchNote = "获取失败：\(userFacingConfigurationError(error))"
             return
         }
         isFetching = true
+        modelFetchNote = ""
         let service = AIService(config: buildConfig())
         Task {
             do {
@@ -855,16 +864,16 @@ struct AISettingsView: View {
                     isFetching = false
                     guard slot == buildSlot() else { return }
                     models = list
-                    // If current model not in list, keep it but notify via test result
+                    // Keep a model not in the list; say so under the field.
                     if !list.isEmpty, !list.contains(model) {
-                        testResult = "已获取 \(list.count) 个模型"
+                        modelFetchNote = "已获取 \(list.count) 个模型"
                     }
                 }
             } catch {
                 await MainActor.run {
                     isFetching = false
                     guard slot == buildSlot() else { return }
-                    testResult = "获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
+                    modelFetchNote = "获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
                 }
             }
         }
@@ -876,6 +885,7 @@ struct AISettingsView: View {
         guard !isHydrating else { return }
         testRequestID = UUID()
         testResult = ""
+        modelFetchNote = ""
         debouncedSave()
     }
 

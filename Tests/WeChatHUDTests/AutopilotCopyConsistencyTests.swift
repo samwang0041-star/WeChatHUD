@@ -322,6 +322,26 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.noModel, "还没选模型")
     }
 
+    func testConfirmReceiptSitsOnTheStatusCardNotAnOrangeIsland() throws {
+        let source = try AISettingsSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))
+        let end = try XCTUnwrap(source.text.range(of: "private var sectionPicker"))
+        let card = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(card.contains("testResult"))
+        XCTAssertTrue(card.contains("AISettingsCopy.retryOnce"))
+        XCTAssertTrue(card.contains("CompanionPressStyle()"))
+        XCTAssertTrue(card.contains("testSlot"))
+        XCTAssertFalse(card.contains("Color.orange"))
+        XCTAssertFalse(source.text.contains("Label(\"连接没有通过\""))
+        XCTAssertFalse(source.text.contains("Color.orange.opacity(0.08)"))
+        XCTAssertFalse(source.text.contains("testResult = \"已获取"))
+        XCTAssertFalse(source.text.contains("testResult = \"获取失败"))
+        XCTAssertTrue(source.text.contains("modelFetchNote"))
+        XCTAssertTrue(source.text.contains("fetchNote: modelFetchNote"))
+        XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testOpenEverythingRowSaysItOpensToday() throws {
         let source = try InboxViewSource.load()
         XCTAssertTrue(source.text.contains("IslandInboxCopy.moreInWorkspace"))
