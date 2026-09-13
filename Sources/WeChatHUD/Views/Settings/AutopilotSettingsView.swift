@@ -48,6 +48,9 @@ enum AutopilotSettingsCopy {
     static let statusActive = "正在整理回复"
     static let statusIdle = "尚未开始整理"
     static let openPending = "查看待确认回复"
+    static let saveOk = "设置已保存"
+    static let saveFailed = "设置没保存成功，现在还是上次的规则。请再试一次。"
+    static let saveRetry = "再试一次"
 }
 
 struct AutopilotSettingsView: View {
@@ -65,17 +68,23 @@ struct AutopilotSettingsView: View {
     @State private var sendKey: WeChatSendKey = .cmdEnter
 
     @State private var isHydrating = true
-    @State private var saveError: String?
     @State private var didLoad = false
     @State private var showClearConfirm = false
     @State private var sessions: [AutopilotSession] = []
     @State private var allContacts: [ContactEntry] = []
     @State private var safetyConfig = AutopilotConfig()
-    @State private var saved = false
     @State private var pendingEnableAutoSend = false
+    @State private var receipt: Receipt = .idle
 
     let replyLimits = [5, 10, 20, 50]
     let batchOptions = [5, 10, 15, 30]
+
+    private enum Receipt {
+        case idle
+        case saved
+        case saveFailed
+        case historyFailed
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -142,14 +151,7 @@ struct AutopilotSettingsView: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
 
-            if let saveError {
-                Label(saveError, systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.red)
-                Button("重试保存设置") { save() }
-            } else if saved {
-                Label("设置已保存", systemImage: "checkmark.circle.fill")
-                    .font(.callout).foregroundStyle(CompanionPalette.jade)
-            }
+            receiptBar
         }
         .onAppear {
             if !didLoad {
@@ -189,6 +191,36 @@ struct AutopilotSettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var receiptBar: some View {
+        switch receipt {
+        case .idle:
+            EmptyView()
+        case .saved:
+            Text(AutopilotSettingsCopy.saveOk)
+                .workspaceMeta()
+                .foregroundStyle(CompanionPalette.jade)
+        case .saveFailed:
+            saveFailureRow(AutopilotSettingsCopy.saveFailed, retry: save)
+        case .historyFailed:
+            saveFailureRow(AutopilotSettingsCopy.historyClearFailed, retry: retryClearHistory)
+        }
+    }
+
+    private func saveFailureRow(_ message: String, retry: @escaping () -> Void) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(message)
+                .workspaceMeta()
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(AutopilotSettingsCopy.saveRetry, action: retry)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -362,17 +394,7 @@ struct AutopilotSettingsView: View {
                         .alert(AutopilotSettingsCopy.historyClearConfirmTitle, isPresented: $showClearConfirm) {
                             Button(AutopilotSettingsCopy.historyClearCancel, role: .cancel) {}
                             Button(AutopilotSettingsCopy.historyClearConfirm, role: .destructive) {
-                                do {
-                                    try store.clearAutopilotHistory()
-                                    sessions = store.loadAutopilotSessions(limit: 10)
-                                    saveError = nil
-                                } catch {
-                                    // Clearing history has no dependency on
-                                    // autopilot being stopped; the old copy
-                                    // invented a precondition the user could
-                                    // not act on.
-                                    saveError = AutopilotSettingsCopy.historyClearFailed
-                                }
+                                retryClearHistory()
                             }
                         }
                 }
@@ -457,11 +479,20 @@ struct AutopilotSettingsView: View {
         cfg.sendKey = sendKey
         do {
             try store.setSettingJSON("autopilot", value: cfg)
-            saveError = nil
             safetyConfig = cfg
-            saved = true
+            receipt = .saved
         } catch {
-            saveError = "设置没保存成功，现在还是上次的规则。请再试一次。"
+            receipt = .saveFailed
+        }
+    }
+
+    private func retryClearHistory() {
+        do {
+            try store.clearAutopilotHistory()
+            sessions = store.loadAutopilotSessions(limit: 10)
+            receipt = .idle
+        } catch {
+            receipt = .historyFailed
         }
     }
 

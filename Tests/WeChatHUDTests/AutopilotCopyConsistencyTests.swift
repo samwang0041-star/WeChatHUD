@@ -175,6 +175,31 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.autoSendAllow, "允许发送")
     }
 
+    func testSaveReceiptUsesWorkspaceTypeAndRetriesTheFailedAct() throws {
+        let source = try AutopilotViewSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var receiptBar"))
+        let end = try XCTUnwrap(source.text.range(of: "private var confidenceRow"))
+        let receipt = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(receipt.contains("AutopilotSettingsCopy.saveOk"))
+        XCTAssertTrue(receipt.contains("AutopilotSettingsCopy.saveFailed"))
+        XCTAssertTrue(receipt.contains("AutopilotSettingsCopy.historyClearFailed"))
+        XCTAssertTrue(receipt.contains("retryClearHistory"), "clearing history must retry the clear, not save()")
+        XCTAssertTrue(receipt.contains("CompanionPressStyle()"))
+        XCTAssertTrue(receipt.contains(".workspaceMeta()"))
+        XCTAssertFalse(receipt.contains(".font(.callout)"))
+        XCTAssertFalse(receipt.contains("exclamationmark.triangle"))
+        let retry = try XCTUnwrap(receipt.range(of: "Button(AutopilotSettingsCopy.saveRetry"))
+        XCTAssertFalse(
+            String(receipt[retry.lowerBound...]).contains("CompanionPalette.jade"),
+            "jade is the saved line, not 再试一次"
+        )
+        XCTAssertTrue(source.text.contains("receipt = .saveFailed"))
+        XCTAssertTrue(source.text.contains("receipt = .historyFailed"))
+        XCTAssertEqual(AutopilotSettingsCopy.saveOk, "设置已保存")
+        XCTAssertEqual(AutopilotSettingsCopy.saveRetry, "再试一次")
+        XCTAssertTrue(AutopilotSettingsCopy.saveFailed.contains("上次的规则"))
+    }
+
     // MARK: - Clear history
 
     func testClearHistoryFailureDoesNotInventAPrecondition() {
