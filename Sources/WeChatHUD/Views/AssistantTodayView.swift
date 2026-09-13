@@ -174,7 +174,29 @@ struct AssistantTodayView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(visible) { item in
-                        messageCard(item, expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id))
+                        TodayMessageCard(
+                            item: item,
+                            expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id),
+                            originalRevealed: revealedOriginalIDs.contains(item.id),
+                            onToggle: {
+                                withMotion(CompanionMotion.rowExpand()) {
+                                    let pinned = expandedID == item.id
+                                    expandedID = pinned ? "" : item.id
+                                }
+                            },
+                            onRevealOriginal: { isOn in
+                                if isOn { revealedOriginalIDs.insert(item.id) }
+                                else { revealedOriginalIDs.remove(item.id) }
+                            },
+                            onReply: {
+                                panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
+                            },
+                            onSnooze: { snooze(item, until: $0) },
+                            onHandled: {
+                                guard monitor.dismissInboxItem(item) else { return }
+                                withMotion(CompanionMotion.complete()) { dismissed = item }
+                            }
+                        )
                     }
                 }
                 .companionAnimation(CompanionMotion.ease(), value: showUpdates)
@@ -182,25 +204,25 @@ struct AssistantTodayView: View {
             if let dismissed {
                 HStack {
                     Label("已处理 · \(dismissed.chatName)", systemImage: "checkmark.circle.fill")
+                        .workspaceBody()
                         .foregroundStyle(CompanionPalette.accent)
                     Spacer()
                     Button("撤销") { if monitor.restoreInboxItem(dismissed) { self.dismissed = nil } }
-                }.font(.callout).companionSurface(padding: 14)
+                        .buttonStyle(CompanionPressStyle())
+                }.companionSurface(padding: 14)
                     .transition(.opacity)
             }
             if let snoozeReceipt {
                 HStack {
                     Label(snoozeReceipt, systemImage: "checkmark.circle.fill")
+                        .workspaceBody()
                         .foregroundStyle(CompanionPalette.jade)
                     Spacer()
                     Button("知道了") { self.snoozeReceipt = nil }
-                }.font(.callout).companionSurface(padding: 14)
+                        .buttonStyle(CompanionPressStyle())
+                }.companionSurface(padding: 14)
             }
         }
-    }
-
-    private func collapsedSummary(_ summary: String) -> String {
-        summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
     }
 
     private func snooze(_ item: InboxItem, until: Date) {
@@ -341,84 +363,161 @@ struct AssistantTodayView: View {
         switch monitor.stats.syncStatus { case .ok: return "checkmark.circle"; case .syncing, .idle: return "arrow.triangle.2.circlepath"; default: return "exclamationmark.triangle" }
     }
 
-    private func messageCard(_ item: InboxItem, expanded: Bool) -> some View {
+}
+
+private struct TodayMessageCard: View {
+    let item: InboxItem
+    let expanded: Bool
+    let originalRevealed: Bool
+    let onToggle: () -> Void
+    let onRevealOriginal: (Bool) -> Void
+    let onReply: () -> Void
+    let onSnooze: (Date) -> Void
+    let onHandled: () -> Void
+
+    @State private var hovered = false
+    @State private var hoverEnabled = false
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button {
-                withMotion(CompanionMotion.rowExpand()) {
-                    expandedID = expanded && expandedID == item.id ? "" : item.id
-                }
-            } label: {
+            Button(action: onToggle) {
                 HStack(spacing: 10) {
-                    CompanionAvatar(name: item.chatName, size: 36)
+                    CompanionAvatar(name: item.chatName)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(item.chatName).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
-                        Text(item.timestamp, format: .dateTime.hour().minute()).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(item.chatName)
+                            .workspaceRowTitle()
+                            .foregroundStyle(.primary)
+                        Text(item.timestamp, format: .dateTime.hour().minute())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     if item.isAtMention { CompanionBadge(title: "@ 我") }
-                    if !expanded { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary) }
+                    if !expanded {
+                        Image(systemName: "chevron.right")
+                            .workspaceMicro()
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
+            .accessibilityLabel(item.chatName)
+            .accessibilityHint(expanded ? "收起这条" : "展开后回复")
 
-            Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : collapsedSummary(item.aiSummary!)) : item.preview)
-                .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
-                .lineSpacing(4).textSelection(.enabled).lineLimit(expanded ? 6 : 1)
+            previewLine
 
             if expanded {
-                if let summary = item.aiSummary, !summary.isEmpty {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jade)
-                            Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
-                        }
-                        Spacer(minLength: 8)
-                        Button(revealedOriginalIDs.contains(item.id) ? "原文已展开" : "查看原文") {
-                            revealedOriginalIDs.insert(item.id)
-                        }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(CompanionPalette.jade)
-                    }
-                    .padding(12)
-                    .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    DisclosureGroup(isExpanded: Binding(
-                        get: { revealedOriginalIDs.contains(item.id) },
-                        set: { isOn in
-                            if isOn { revealedOriginalIDs.insert(item.id) }
-                            else { revealedOriginalIDs.remove(item.id) }
-                        }
-                    )) {
-                        Text(item.preview).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
-                    } label: {
-                        Text("消息原文")
-                    }
-                }
-                HStack {
-                    Button { panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName) } label: {
-                        Label("理解上下文与回复", systemImage: "text.bubble")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Menu {
-                        ForEach(CompanionProductCopy.snoozeChoices()) { choice in
-                            Button("\(choice.label)  \(choice.whenLabel)") { snooze(item, until: choice.until) }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .help("稍后提醒")
-                    .accessibilityLabel("稍后提醒")
-                    Spacer()
-                    Button("已处理") {
-                        guard monitor.dismissInboxItem(item) else { return }
-                        withMotion(CompanionMotion.complete()) { dismissed = item }
-                    }.buttonStyle(.bordered)
-                }
-                .controlSize(.regular)
+                expandedBody
+                    .transition(.islandDetailReveal)
             }
         }
-        .companionSurface()
+        .padding(20)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(CompanionPalette.surface)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(cardWash)
+                }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(CompanionPalette.border, lineWidth: 1)
+        }
+        .onHover { inside in
+            guard hoverEnabled else { return }
+            hovered = inside
+        }
+        .companionAnimation(CompanionMotion.hover(), value: hovered)
+        .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                hoverEnabled = true
+            }
+        }
+    }
+
+    private var cardWash: Color {
+        if expanded { return CompanionPalette.selectedFill }
+        if hovered { return Color.primary.opacity(0.04) }
+        return .clear
+    }
+
+    private var previewLine: some View {
+        let text = item.aiSummary?.isEmpty == false
+            ? (expanded ? item.aiSummary! : TodayCopy.collapsedSummary(item.aiSummary!))
+            : item.preview
+        return Text(text)
+            .companionFont(size: expanded ? WorkspaceType.title : WorkspaceType.body, weight: expanded ? .semibold : .regular)
+            .lineSpacing(4)
+            .textSelection(.enabled)
+            .lineLimit(expanded ? 6 : 1)
+    }
+
+    @ViewBuilder
+    private var expandedBody: some View {
+        if let summary = item.aiSummary, !summary.isEmpty {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(TodayCopy.aiReading)
+                        .workspaceMicro()
+                        .foregroundStyle(CompanionPalette.jade)
+                    Text(summary)
+                        .workspaceBody()
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                Button(originalRevealed ? TodayCopy.originalOpen : TodayCopy.viewOriginal) {
+                    onRevealOriginal(true)
+                }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(CompanionPalette.jade)
+            }
+            DisclosureGroup(isExpanded: Binding(
+                get: { originalRevealed },
+                set: onRevealOriginal
+            )) {
+                Text(item.preview)
+                    .workspaceBody()
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
+            } label: {
+                Text(TodayCopy.originalSection)
+                    .workspaceMeta()
+            }
+        }
+        HStack {
+            Button(action: onReply) {
+                Label(TodayCopy.reply, systemImage: "text.bubble")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(CompanionPalette.jade)
+            .accessibilityLabel(TodayCopy.reply)
+            Menu {
+                ForEach(CompanionProductCopy.snoozeChoices()) { choice in
+                    Button("\(choice.label)  \(choice.whenLabel)") { onSnooze(choice.until) }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .help("稍后提醒")
+            .accessibilityLabel("稍后提醒")
+            Spacer()
+            Button(TodayCopy.handled, action: onHandled)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+        }
+        .controlSize(.regular)
     }
 }
 
@@ -437,6 +536,16 @@ enum TodayCopy {
     static func waitingWork(_ count: Int) -> String { "等对方 \(count)" }
     static func allUpdates(_ count: Int) -> String { "全部 \(count) 条" }
     static let backToReplies = "只看需要回复的"
+    static let reply = "理解上下文与回复"
+    static let handled = "已处理"
+    static let viewOriginal = "查看原文"
+    static let originalOpen = "原文已展开"
+    static let aiReading = "AI 解读"
+    static let originalSection = "消息原文"
+
+    static func collapsedSummary(_ summary: String) -> String {
+        summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
+    }
 }
 
 /// Testable 今天 feed rules. The page labels must match these arrays, not a
