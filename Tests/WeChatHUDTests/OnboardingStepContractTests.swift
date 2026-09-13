@@ -143,11 +143,24 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertTrue(footer.contains("wizardSecondary(FirstLaunchGuide.skipCTA)"))
         XCTAssertTrue(footer.contains("workspaceMeta()"))
         XCTAssertFalse(footer.contains(".font(.system"))
-        XCTAssertFalse(footer.contains("CompanionPalette.jade"))
         XCTAssertTrue(source.body.contains("CompanionPressStyle()"))
         XCTAssertTrue(source.body.contains("workspaceBody()"))
         XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
         XCTAssertEqual(FirstLaunchGuide.backCTA, "上一步")
+    }
+
+    func testFinishCTAIsJadeAndGivesUnderPress() throws {
+        let source = try OnboardingViewSource.load()
+        let start = try XCTUnwrap(source.body.range(of: "Divider()"))
+        let background = try XCTUnwrap(source.body.range(of: ".background(Color(nsColor: .windowBackgroundColor))"))
+        let footer = String(source.body[start.lowerBound..<background.lowerBound])
+        XCTAssertTrue(footer.contains("FirstLaunchGuide.finishCTA"))
+        XCTAssertTrue(footer.contains("CompanionPalette.jade"))
+        XCTAssertTrue(footer.contains("CompanionPressStyle()"))
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+        let skip = try XCTUnwrap(footer.range(of: "wizardSecondary(FirstLaunchGuide.skipCTA)"))
+        let finish = try XCTUnwrap(footer.range(of: "FirstLaunchGuide.finishCTA"))
+        XCTAssertLessThan(skip.lowerBound, finish.lowerBound)
     }
 
     func testContactsPageIsHeadingAndPickerNotAFooterLecture() throws {
