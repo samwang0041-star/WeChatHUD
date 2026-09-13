@@ -109,18 +109,25 @@ enum ScanEngine {
             var suppressedCollected: [UnreadItem] = []
             var activeConversations: Set<String> = []
 
-            for session in sessions where session.unreadCount > 0 {
+            let unreadSessions = sessions.filter { $0.unreadCount > 0 }
+            let unreadBatch = (try? reader.getMessagesBatch(
+                unreadSessions.map { session in
+                    // Private chats fetch 20, not 5: `latestSelfTime` feeds the
+                    // live-exchange suppression — with 5, a rapid-fire reply
+                    // burst (peer sends 6 within the window) pushed your last
+                    // outbound out of view and alerts fired while you were
+                    // literally typing in that chat.
+                    let fetchLimit = session.isGroup ? min(session.unreadCount, 30) : 20
+                    return WeChatReader.MessageBatchRequest(
+                        chatUsername: session.username,
+                        limit: fetchLimit
+                    )
+                }
+            )) ?? [:]
+
+            for session in unreadSessions {
                 let isSnoozed = (chatActions[session.username]?.snoozedUntil ?? 0) > nowEpoch
-                // Private chats fetch 20, not 5: `latestSelfTime` feeds the
-                // live-exchange suppression — with 5, a rapid-fire reply
-                // burst (peer sends 6 within the window) pushed your last
-                // outbound out of view and alerts fired while you were
-                // literally typing in that chat.
-                let fetchLimit = session.isGroup ? min(session.unreadCount, 30) : 20
-                let recentMsgs = (try? reader.getMessages(
-                    chatUsername: session.username,
-                    limit: fetchLimit
-                )) ?? []
+                let recentMsgs = unreadBatch[session.username] ?? []
 
                 let latestSelfTime: Int = recentMsgs
                     .filter { MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
@@ -666,17 +673,20 @@ enum ScanEngine {
             // SQL round trips into dictionary hits. The snapshot is taken before
             // this loop and nothing in the scan writes contacts, so it observes
             // the same rows the per-message query would have.
-            for session in sessions {
-                // Skip group chats, already-scanned whitelist chats, and chatrooms
-                guard !session.username.contains("@chatroom"),
-                      !whitelistSet.contains(session.username),
-                      session.unreadCount > 0 else { continue }
+            let autopilotSessions = sessions.filter { session in
+                !session.username.contains("@chatroom")
+                    && !whitelistSet.contains(session.username)
+                    && session.unreadCount > 0
+            }
+            let autopilotBatch = (try? reader.getMessagesBatch(
+                autopilotSessions.map {
+                    WeChatReader.MessageBatchRequest(chatUsername: $0.username, limit: 20)
+                }
+            )) ?? [:]
 
+            for session in autopilotSessions {
                 // Only scan recent private chats with unread messages
-                let messages: [MessageInfo]
-                do {
-                    messages = try reader.getMessages(chatUsername: session.username, limit: 20, sinceLocalId: nil)
-                } catch { continue }
+                guard let messages = autopilotBatch[session.username] else { continue }
 
                 guard let baseline = store.getAutopilotCursor(username: session.username) else {
                     let seed = messages.first.map { ($0.createTime, $0.localId) }

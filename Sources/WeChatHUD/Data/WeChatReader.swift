@@ -826,6 +826,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     // MARK: - Message Queries
 
+    /// One chat's page request for `getMessagesBatch`.
+    struct MessageBatchRequest: Sendable {
+        let chatUsername: String
+        let limit: Int
+    }
+
     func getMessages(chatUsername: String, limit: Int = 50, sinceLocalId: Int? = nil) throws -> [MessageInfo] {
         try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId,
                         afterCursor: nil)
@@ -838,6 +844,52 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                      beforeCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil) throws -> [MessageInfo] {
         lock.lock()
         defer { lock.unlock() }
+        return try getMessagesLocked(
+            chatUsername: chatUsername,
+            limit: limit,
+            sinceLocalId: sinceLocalId,
+            afterCursor: afterCursor,
+            oldestFirst: oldestFirst,
+            startTime: startTime,
+            endTime: endTime,
+            beforeCursor: beforeCursor
+        )
+    }
+
+    /// Fetch recent pages for many chats under a single lock acquisition.
+    /// ScanEngine unread/autopilot loops use this so shard/handle caches warm once
+    /// and MainActor readers are not interleaved between every chat.
+    func getMessagesBatch(_ requests: [MessageBatchRequest]) throws -> [String: [MessageInfo]] {
+        lock.lock()
+        defer { lock.unlock() }
+        var out: [String: [MessageInfo]] = [:]
+        out.reserveCapacity(requests.count)
+        for req in requests {
+            out[req.chatUsername] = try getMessagesLocked(
+                chatUsername: req.chatUsername,
+                limit: req.limit,
+                sinceLocalId: nil,
+                afterCursor: nil,
+                oldestFirst: false,
+                startTime: nil,
+                endTime: nil,
+                beforeCursor: nil
+            )
+        }
+        return out
+    }
+
+    /// Assumes `lock` is already held (recursive OK for nested helpers).
+    private func getMessagesLocked(
+        chatUsername: String,
+        limit: Int,
+        sinceLocalId: Int?,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)?,
+        oldestFirst: Bool,
+        startTime: Int?,
+        endTime: Int?,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)?
+    ) throws -> [MessageInfo] {
         var results: [MessageInfo] = []
         var seenIDs = Set<String>()
         let effectiveLimit = max(1, limit)
@@ -999,10 +1051,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // or dropped it). Retry with a full probe.
         if !foundTable && usedCachedMapping {
             chatShardCache.removeValue(forKey: chatUsername)
-            return try getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: sinceLocalId,
-                                   afterCursor: afterCursor, oldestFirst: oldestFirst,
-                                           startTime: startTime, endTime: endTime,
-                                           beforeCursor: beforeCursor)
+            return try getMessagesLocked(
+                chatUsername: chatUsername,
+                limit: limit,
+                sinceLocalId: sinceLocalId,
+                afterCursor: afterCursor,
+                oldestFirst: oldestFirst,
+                startTime: startTime,
+                endTime: endTime,
+                beforeCursor: beforeCursor
+            )
         }
 
         // Full scan found nothing — remember so we skip next time.

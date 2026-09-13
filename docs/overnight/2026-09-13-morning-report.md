@@ -34,3 +34,5 @@ Default off; confidence 0.8; sensitive words; finance pending; **group chats man
 Already uses `NSRecursiveLock` for wrapper state. Full actor facade deferred to next session (ScanEngine batch APIs + caller migration).
 
 - Slice 11: ClipboardGuard @MainActor; Autopilot serialSend await restore (1520+70).
+
+- Slice 12: WeChatReader getMessagesBatch + ScanEngine unread/autopilot wiring (1521+70).
