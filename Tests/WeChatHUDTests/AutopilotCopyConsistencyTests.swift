@@ -740,6 +740,16 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains(".font(.system(size: CompactInboxMetrics.badgeSize"))
     }
 
+    func testCompactWingsWashOnHover() throws {
+        let source = try CompactInboxBarSource.load()
+        XCTAssertTrue(source.text.contains("IslandInk.hover"))
+        XCTAssertTrue(source.text.contains("CompanionMotion.hover()"))
+        XCTAssertTrue(source.text.contains("hoveringLeft"))
+        XCTAssertTrue(source.text.contains("hoveringRight"))
+        XCTAssertTrue(source.text.contains("打开今天"))
+        XCTAssertFalse(source.text.contains("withAnimation"))
+    }
+
     func testCompactBuddyOpeningTodaySpeaksAReceipt() throws {
         let source = try CompactInboxBarSource.load()
         XCTAssertTrue(source.text.contains("CompactInboxCopy.openedToday"))
