@@ -155,10 +155,9 @@ struct CompanionGuideView: View {
     private func guideStep(number: String, title: String, detail: String, buttonTitle: String, action: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text(number)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(Color.accentColor, in: Circle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .frame(width: 22, alignment: .leading)
                 .accessibilityLabel("第 \(number) 步")
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.body.weight(.semibold))

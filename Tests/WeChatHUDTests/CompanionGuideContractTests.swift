@@ -30,6 +30,19 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("选择对话"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testStepNumbersAreNotSystemAccent() throws {
+        let source = try CompanionGuideSource.load()
+        let stepStart = try XCTUnwrap(source.text.range(of: "private func guideStep"))
+        let topicStart = try XCTUnwrap(source.text.range(of: "private func guideTopic"))
+        let step = String(source.text[stepStart.lowerBound..<topicStart.lowerBound])
+        XCTAssertFalse(step.contains("Color.accentColor"))
+        XCTAssertFalse(step.contains(".background("))
+        XCTAssertTrue(step.contains("workspaceMeta()"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("选择对话"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
