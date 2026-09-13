@@ -164,6 +164,23 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(list.contains(".buttonStyle(.plain)"))
     }
 
+    func testApprovalDetailUsesWorkspaceTypeAndPressesOpenChat() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        guard let detailStart = source.text.range(of: "private var detailPane"),
+              let detailEnd = source.text.range(of: "private func reconcileSelection") else {
+            XCTFail("detail pane should still sit above reconcileSelection")
+            return
+        }
+        let detail = String(source.text[detailStart.lowerBound..<detailEnd.lowerBound])
+        XCTAssertTrue(detail.contains("ApprovalCopy.openChat"))
+        XCTAssertTrue(detail.contains("CompanionPressStyle()"))
+        XCTAssertFalse(detail.contains(".buttonStyle(.plain)"))
+        XCTAssertFalse(detail.contains(".font(.system"))
+        XCTAssertTrue(detail.contains(".workspaceBody()"))
+        XCTAssertTrue(detail.contains(".workspaceMeta()"))
+        XCTAssertEqual(ApprovalCopy.openChat, "查看聊天记录")
+    }
+
     func testIslandGearNamesTheWorkspaceItOpens() throws {
         let source = try InboxViewSource.load()
         guard let wingStart = source.text.range(of: "Right wing —"),
