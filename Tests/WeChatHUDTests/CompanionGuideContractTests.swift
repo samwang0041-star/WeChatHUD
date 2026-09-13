@@ -8,8 +8,8 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("workspaceTitle()"))
         XCTAssertEqual(GuideCopy.statusLine, "先连接微信，再选人，再看今天。")
         XCTAssertTrue(source.text.contains("连接微信"))
-        XCTAssertTrue(source.text.contains("选择对话"))
-        XCTAssertTrue(source.text.contains("打开今天"))
+        XCTAssertTrue(source.text.contains("选择关注的人"))
+        XCTAssertTrue(source.text.contains("今天看待回和待办"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
 
@@ -27,7 +27,7 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertFalse(firstScreen.contains("faqColumn"))
         XCTAssertTrue(source.text.contains("每天怎么用"))
         XCTAssertTrue(source.text.contains("连接微信"))
-        XCTAssertTrue(source.text.contains("选择对话"))
+        XCTAssertTrue(source.text.contains("选择关注的人"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
 
@@ -40,7 +40,7 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertFalse(step.contains(".background("))
         XCTAssertTrue(step.contains("workspaceMeta()"))
         XCTAssertTrue(source.text.contains("先连接微信"))
-        XCTAssertTrue(source.text.contains("选择对话"))
+        XCTAssertTrue(source.text.contains("选择关注的人"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
 
@@ -52,8 +52,21 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertFalse(GuideCopy.step2Detail.contains("联系人"))
         let source = try CompanionGuideSource.load()
         XCTAssertTrue(source.text.contains("先连接微信"))
-        XCTAssertTrue(source.text.contains("选择对话"))
-        XCTAssertTrue(source.text.contains("打开今天"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertTrue(source.text.contains("选择关注的人"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
+
+    func testOnlyTheFirstStepHasAButton() throws {
+        let source = try CompanionGuideSource.load()
+        let quickStart = try XCTUnwrap(source.text.range(of: "private var quickStartCard"))
+        let faq = try XCTUnwrap(source.text.range(of: "private var faqColumn"))
+        let card = String(source.text[quickStart.lowerBound..<faq.lowerBound])
+        XCTAssertTrue(card.contains("buttonTitle: \"连接微信\""))
+        XCTAssertFalse(card.contains("选择对话"))
+        XCTAssertFalse(card.contains("打开今天"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("选择关注的人"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
 }

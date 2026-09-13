@@ -64,8 +64,8 @@ struct CompanionGuideView: View {
     private var quickStartCard: some View {
         VStack(alignment: .leading, spacing: 18) {
             guideStep(number: "1", title: "连接微信", detail: GuideCopy.step1Detail, buttonTitle: "连接微信", action: showIntroduction)
-            guideStep(number: "2", title: "选择关注的人", detail: GuideCopy.step2Detail, buttonTitle: "选择对话", action: { navigate(.contacts) })
-            guideStep(number: "3", title: "看清下一步", detail: GuideCopy.step3Detail, buttonTitle: "打开今天", action: { navigate(.today) })
+            guideStep(number: "2", title: "选择关注的人", detail: GuideCopy.step2Detail)
+            guideStep(number: "3", title: "看清下一步", detail: GuideCopy.step3Detail)
         }
     }
 
@@ -155,7 +155,7 @@ struct CompanionGuideView: View {
         .buttonStyle(.plain)
     }
 
-    private func guideStep(number: String, title: String, detail: String, buttonTitle: String, action: @escaping () -> Void) -> some View {
+    private func guideStep(number: String, title: String, detail: String, buttonTitle: String? = nil, action: (() -> Void)? = nil) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text(number)
                 .workspaceMeta()
@@ -165,9 +165,11 @@ struct CompanionGuideView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.body.weight(.semibold))
                 Text(detail).guideSecondary().textSelection(.enabled)
-                Button(buttonTitle) { action() }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel(buttonTitle)
+                if let buttonTitle, let action {
+                    Button(buttonTitle, action: action)
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel(buttonTitle)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
