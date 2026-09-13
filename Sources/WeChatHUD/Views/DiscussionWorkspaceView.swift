@@ -222,28 +222,44 @@ struct DiscussionWorkspaceView: View {
         // level is holding material back. The third case is the dangerous one
         // — it looks identical to "nothing to do" unless we say otherwise.
         let hiddenHere = strictness.hidden(from: monitor.discussionItems)
-        // The memo tab bypasses the level (see sourceItems), so the level can
-        // never be the reason it looks empty.
         let heldBackByLevel = !showHistory && query.isEmpty && scope != .notes && !hiddenHere.isEmpty
-        return ContentUnavailableView(
-            query.isEmpty ? "还没有待办" : "没有匹配的待办",
-            systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
-            description: Text(query.isEmpty
-                ? (showHistory
-                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。过期太久自动收起的在「较早收起」里。"
-                    : (heldBackByLevel
-                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全部都记」能看到它们。"
-                        : "连上微信并选好对话后，还没做完的事会出现在这里。"))
-                : "当前搜索：\(query)")
-        )
-        .frame(maxWidth: .infinity, minHeight: 280)
-        .overlay(alignment: .bottom) {
-            if !query.isEmpty {
+        let title: String
+        let hint: String
+        if !query.isEmpty {
+            title = "没有匹配的待办"
+            hint = "没有叫「\(query)」的。"
+        } else if showHistory {
+            title = "还没有已处理的"
+            hint = "近 \(DiscussionLiveWindow.historyDays) 天完成或忽略的会留在这里。"
+        } else if heldBackByLevel {
+            title = "有 \(hiddenHere.count) 条被收起"
+            hint = "当前是「\(strictness.label)」。点「全部都记」能看到它们。"
+        } else {
+            title = "还没有待办"
+            hint = "连上微信并选好对话后，还没做完的事会出现在这里。"
+        }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .workspaceTitle()
+            Text(hint)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if heldBackByLevel {
+                Button("全部都记") { monitor.setDiscussionStrictness(.everything) }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("全部都记")
+            } else if !query.isEmpty {
                 Button("清除搜索") { query = "" }
-                    .buttonStyle(.bordered)
-                    .padding(.bottom, 24)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
             }
         }
+        .frame(maxWidth: .infinity, minHeight: 200, alignment: .leading)
+        .padding(.top, 24)
     }
 
     private func listPane(items: [DiscussionItem], selectedID: Int64?) -> some View {
@@ -303,7 +319,15 @@ struct DiscussionWorkspaceView: View {
             } else if let item = selected {
                 taskDetail(item)
             } else {
-                ContentUnavailableView("选择一条待办", systemImage: "checklist", description: Text("看清谁来做、截止时间和原文。"))
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("从左边选一条")
+                        .workspaceTitle()
+                    Text("看谁来做、什么时候到，以及原文。")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.top, 24)
             }
         }
     }
