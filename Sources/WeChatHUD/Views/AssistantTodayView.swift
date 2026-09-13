@@ -232,116 +232,197 @@ struct AssistantTodayView: View {
 
     private var companionRail: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("接下来").font(.system(size: 15, weight: .semibold))
-                    Spacer()
-                    if !upcoming.isEmpty { CompanionBadge(title: "\(upcoming.count) 项") }
-                }
-                if upcoming.isEmpty {
-                    Text("现在没有排上日程的事")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("答应过的截止时间会按顺序出现在这里。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                } else {
-                    ForEach(Array(upcoming.prefix(3))) { commitment in
-                        Button { navigate(.commitments) } label: {
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(commitment.content).font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading)
-                                Text(commitment.chatName).font(.system(size: 11)).foregroundStyle(.secondary)
-                                if let deadline = commitment.deadlineAt {
-                                    Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(deadline < Date() ? Color.orange : CompanionPalette.accent)
-                                } else if !commitment.deadlineLabel.isEmpty {
-                                    Text(commitment.deadlineLabel).font(.system(size: 11)).foregroundStyle(.secondary)
-                                }
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(CompanionPressStyle())
-                        if commitment.id != upcoming.prefix(3).last?.id { Divider() }
-                    }
-                }
-                Button { navigate(.commitments) } label: {
-                    HStack { Text("查看我答应的事"); Spacer(); Image(systemName: "chevron.right") }
-                        .font(.system(size: 12, weight: .medium))
-                }.buttonStyle(.borderless)
-            }.companionSurface()
-            connectionCard
+            if !upcoming.isEmpty {
+                upcomingCard
+            }
+            if TodayRail.showsAlert(
+                status: monitor.stats.syncStatus,
+                classificationPending: monitor.classificationPendingCount,
+                discussionPending: monitor.discussionPendingCount
+            ) {
+                connectionCard
+            }
             VStack(spacing: 0) {
-                quickLink("今日小结", subtitle: SettingsView.Tab.dailyReport.subtitle, icon: "doc.text") { navigate(.dailyReport) }
+                quickLink(
+                    SettingsView.Tab.dailyReport.label,
+                    subtitle: SettingsView.Tab.dailyReport.subtitle,
+                    icon: SettingsView.Tab.dailyReport.icon
+                ) { navigate(.dailyReport) }
                 Divider().padding(.horizontal, 16)
-                quickLink("按时间回顾", subtitle: "回到发生过的对话", icon: "calendar") { RetrospectiveWindowManager.shared.showWindow(monitor: monitor) }
+                quickLink(TodayCopy.reviewTime, subtitle: TodayCopy.reviewTimeDetail, icon: "calendar") {
+                    RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
+                }
             }.companionSurface(padding: 0)
         }
+    }
+
+    private var upcomingCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(TodayCopy.nextUp).workspaceTitle()
+                Spacer()
+                CompanionBadge(title: "\(upcoming.count)")
+            }
+            ForEach(Array(upcoming.prefix(3))) { commitment in
+                Button { navigate(.commitments) } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(commitment.content)
+                            .workspaceRowTitle()
+                            .foregroundStyle(.primary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                        Text(commitment.chatName)
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                        if let deadline = commitment.deadlineAt {
+                            Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
+                                .workspaceMeta()
+                                .foregroundStyle(deadline < Date() ? Color.orange : CompanionPalette.accent)
+                        } else if !commitment.deadlineLabel.isEmpty {
+                            Text(commitment.deadlineLabel)
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(CompanionPressStyle())
+                if commitment.id != upcoming.prefix(3).last?.id { Divider() }
+            }
+            Button { navigate(.commitments) } label: {
+                HStack {
+                    Text(TodayCopy.viewCommitments)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(CompanionPressStyle())
+        }
+        .companionSurface()
     }
 
     private func quickLink(_ title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: icon).foregroundStyle(CompanionPalette.accent).frame(width: 22)
+                Image(systemName: icon)
+                    .workspaceRowTitle()
+                    .foregroundStyle(CompanionPalette.accent)
+                    .frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(title).workspaceRowTitle().foregroundStyle(.primary)
+                    Text(subtitle).workspaceMeta().foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
-            }.padding(16).contentShape(Rectangle())
-        }.buttonStyle(CompanionPressStyle())
+                Image(systemName: "chevron.right")
+                    .workspaceMicro()
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(CompanionPressStyle())
     }
 
     private var connectionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                Image(systemName: syncSymbol).foregroundStyle(syncColor).font(.title2)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(syncTitle).font(.headline)
-                    if let date = monitor.stats.lastSyncAt {
-                        Text("最近同步 \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("还没连上微信").font(.caption).foregroundStyle(.secondary)
+        let kind = TodayRail.alert(
+            status: monitor.stats.syncStatus,
+            classificationPending: monitor.classificationPendingCount,
+            discussionPending: monitor.discussionPendingCount
+        )
+        return VStack(alignment: .leading, spacing: 12) {
+            if kind == .connection {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: syncSymbol)
+                        .workspaceTitle()
+                        .foregroundStyle(Color.orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(syncTitle).workspaceRowTitle()
+                        if let date = monitor.stats.lastSyncAt {
+                            Text("最近同步 \(date.formatted(date: .abbreviated, time: .shortened))")
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(TodayCopy.wechatDisconnected)
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                Button(connectionPrimaryTitle) { connectionPrimaryAction() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(CompanionPalette.jade)
+                    .controlSize(.regular)
+                    .disabled(isSyncing && connectionPrimaryIsRefresh)
             }
-            HStack {
-                Button("检查连接") { navigate(.system) }
-                Button { monitor.refreshNow() } label: { Label("查看新消息", systemImage: "arrow.clockwise") }
-                    .disabled(isSyncing)
-                Spacer()
-            }.controlSize(.small)
             if monitor.classificationPendingCount > 0 {
-                HStack {
-                    Label(monitor.classificationProcessing ? "正在分析 \(monitor.classificationPendingCount) 条消息" : "\(monitor.classificationPendingCount) 条消息等待分析", systemImage: "sparkles")
-                    Spacer()
-                    Button("重试分析") {
-                        do { try store.retryClassificationMessages(); monitor.drainClassificationQueue() }
-                        catch { panelState.showToast("暂时无法重试，请检查本地数据连接") }
-                    }.disabled(monitor.classificationProcessing)
-                }.font(.callout).foregroundStyle(.secondary)
+                processingRow(
+                    monitor.classificationProcessing
+                        ? "正在分析 \(monitor.classificationPendingCount) 条消息"
+                        : "\(monitor.classificationPendingCount) 条消息等待分析",
+                    icon: "sparkles",
+                    actionTitle: TodayCopy.retryAnalysis,
+                    disabled: monitor.classificationProcessing || kind == .connection
+                ) {
+                    do { try store.retryClassificationMessages(); monitor.drainClassificationQueue() }
+                    catch { panelState.showToast("暂时无法重试，请检查本地数据连接") }
+                }
             }
             if monitor.discussionPendingCount > 0 {
-                HStack {
-                    Label(monitor.discussionProcessing ? "正在从 \(monitor.discussionPendingCount) 条消息整理待办" : "\(monitor.discussionPendingCount) 条消息等待整理待办", systemImage: "checklist")
-                    Spacer()
-                    Button("重试整理") {
-                        do { try monitor.retryDiscussionExtraction() }
-                        catch { panelState.showToast("暂时无法重试整理，请检查本地数据连接") }
-                    }.disabled(monitor.discussionProcessing)
-                }.font(.callout).foregroundStyle(.secondary)
-            }
-            Divider()
-            VStack(alignment: .leading, spacing: 10) {
-                Label("关注 \(store.whitelistCount()) 个对话", systemImage: "person.2")
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 14) {
-                    Button("关注谁") { navigate(.contacts) }.buttonStyle(.link)
-                    Button("设置 AI") { navigate(.aiButler) }.buttonStyle(.link)
+                processingRow(
+                    monitor.discussionProcessing
+                        ? "正在从 \(monitor.discussionPendingCount) 条消息整理待办"
+                        : "\(monitor.discussionPendingCount) 条消息等待整理待办",
+                    icon: "checklist",
+                    actionTitle: TodayCopy.retryDiscussion,
+                    disabled: monitor.discussionProcessing || kind == .connection
+                ) {
+                    do { try monitor.retryDiscussionExtraction() }
+                    catch { panelState.showToast("暂时无法重试整理，请检查本地数据连接") }
                 }
             }
-            .font(.callout)
         }
         .companionSurface()
+    }
+
+    private func processingRow(
+        _ title: String,
+        icon: String,
+        actionTitle: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label(title, systemImage: icon)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+            Spacer()
+            if !disabled {
+                Button(actionTitle, action: action)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(CompanionPalette.jade)
+            }
+        }
+    }
+
+    private var connectionPrimaryIsRefresh: Bool {
+        if case .stale = monitor.stats.syncStatus { return true }
+        return false
+    }
+
+    private var connectionPrimaryTitle: String {
+        connectionPrimaryIsRefresh ? CompanionProductCopy.checkNewMessages : TodayCopy.checkConnection
+    }
+
+    private func connectionPrimaryAction() {
+        if connectionPrimaryIsRefresh {
+            monitor.refreshNow()
+        } else {
+            navigate(.system)
+        }
     }
 
     private var isSyncing: Bool { if case .syncing = monitor.stats.syncStatus { return true }; return false }
@@ -356,11 +437,12 @@ struct AssistantTodayView: View {
         case .error: return "微信连接需要处理"
         }
     }
-    private var syncColor: Color {
-        switch monitor.stats.syncStatus { case .ok: return .green; case .syncing, .idle: return .blue; default: return .orange }
-    }
     private var syncSymbol: String {
-        switch monitor.stats.syncStatus { case .ok: return "checkmark.circle"; case .syncing, .idle: return "arrow.triangle.2.circlepath"; default: return "exclamationmark.triangle" }
+        switch monitor.stats.syncStatus {
+        case .ok: return "checkmark.circle"
+        case .syncing, .idle: return "arrow.triangle.2.circlepath"
+        default: return "exclamationmark.triangle"
+        }
     }
 
 }
@@ -542,9 +624,50 @@ enum TodayCopy {
     static let originalOpen = "原文已展开"
     static let aiReading = "AI 解读"
     static let originalSection = "消息原文"
+    static let nextUp = "接下来"
+    static let viewCommitments = "查看我答应的事"
+    static let checkConnection = "检查连接"
+    static let wechatDisconnected = "还没连上微信"
+    static let retryAnalysis = "重试分析"
+    static let retryDiscussion = "重试整理"
+    static let reviewTime = "按时间回顾"
+    static let reviewTimeDetail = "回到发生过的对话"
 
     static func collapsedSummary(_ summary: String) -> String {
         summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
+    }
+}
+
+enum TodayRail {
+    enum Alert: Equatable {
+        case hidden
+        case connection
+        case processing
+    }
+
+    static func alert(
+        status: SyncStatus,
+        classificationPending: Int,
+        discussionPending: Int
+    ) -> Alert {
+        switch status {
+        case .ok, .syncing:
+            return (classificationPending > 0 || discussionPending > 0) ? .processing : .hidden
+        default:
+            return .connection
+        }
+    }
+
+    static func showsAlert(
+        status: SyncStatus,
+        classificationPending: Int,
+        discussionPending: Int
+    ) -> Bool {
+        alert(
+            status: status,
+            classificationPending: classificationPending,
+            discussionPending: discussionPending
+        ) != .hidden
     }
 }
 
