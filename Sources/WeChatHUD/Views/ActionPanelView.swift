@@ -101,7 +101,7 @@ struct ActionPanelView: View {
                 ProgressView().scaleEffect(0.55).frame(width: 14, height: 14)
                 Text("AI 正在整理重点…")
                     .islandMeta()
-                    .foregroundColor(IslandInk.tertiary)
+                    .foregroundStyle(IslandInk.meta)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -136,42 +136,34 @@ struct ActionPanelView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .islandMeta()
-                    .foregroundColor(.accentColor)
+                    .foregroundStyle(CompanionPalette.islandMint)
                 Text(title)
                     .islandSection()
-                    .foregroundColor(.accentColor.opacity(0.85))
+                    .foregroundStyle(CompanionPalette.islandMint)
                 if let vibe = vibe, !vibe.isEmpty {
                     Text(vibe)
                         .islandMicro()
-                        .foregroundColor(.orange.opacity(0.9))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(3)
+                        .foregroundStyle(IslandInk.meta)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(IslandInk.chip, in: Capsule())
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
 
             Text(primary)
                 .islandRowTitle()
-                .foregroundColor(IslandInk.primary)
+                .foregroundStyle(IslandInk.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let context = context, !context.isEmpty {
                 Text(context)
                     .islandMeta()
-                    .foregroundColor(IslandInk.secondary)
+                    .foregroundStyle(IslandInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.accentColor.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
-        )
-        .cornerRadius(8)
     }
 
     private func groupHeadlineCard(_ result: ChatAnalyzer.GroupAnalysis) -> some View {
@@ -179,17 +171,17 @@ struct ActionPanelView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .islandMeta()
-                    .foregroundColor(.accentColor)
+                    .foregroundStyle(CompanionPalette.islandMint)
                 Text(item.actionPanelTitle)
                     .islandSection()
-                    .foregroundColor(.accentColor.opacity(0.9))
+                    .foregroundStyle(CompanionPalette.islandMint)
                 Spacer(minLength: 0)
                 statusPill(for: result.status)
             }
 
             Text(groupPrimary(result))
                 .islandRowTitle()
-                .foregroundColor(IslandInk.primary)
+                .foregroundStyle(IslandInk.primary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -206,36 +198,32 @@ struct ActionPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.accentColor.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
-        )
-        .cornerRadius(8)
     }
 
     private func statusPill(for status: String) -> some View {
         let normalized = status.lowercased()
         let text: String
-        let color: Color
+        let foreground: Color
+        let fill: Color
         if normalized == "waiting_for_me" {
             text = "等你"
-            color = .orange
+            foreground = IslandChrome.glowAmber
+            fill = IslandChrome.glowAmber.opacity(0.16)
         } else if normalized == "concluded" {
             text = "已定"
-            color = .green
+            foreground = CompanionPalette.islandMint
+            fill = CompanionPalette.selectedFill
         } else {
             text = "讨论中"
-            color = .blue
+            foreground = IslandInk.meta
+            fill = IslandInk.chip
         }
         return Text(text)
             .islandMicro()
-            .foregroundColor(color.opacity(0.95))
+            .foregroundStyle(foreground)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(color.opacity(0.16))
-            .cornerRadius(5)
+            .background(fill, in: Capsule())
     }
 
     private func compactInfoLine(icon: String, label: String, text: String) -> some View {
@@ -461,12 +449,9 @@ struct ActionPanelView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(suggestion.recommended
-                ? Color.blue.opacity(0.1)
-                : Color.white.opacity(0.04))
-            .cornerRadius(5)
+            .background(suggestion.recommended ? CompanionPalette.selectedFill : IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
     }
 
     // MARK: - Actions
@@ -637,7 +622,7 @@ struct ActionPanelView: View {
         HStack(spacing: 6) {
             Text(label)
                 .islandMeta()
-                .foregroundColor(.red.opacity(0.6))
+                .foregroundStyle(IslandInk.secondary)
             Button(action: retry) {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.clockwise")
@@ -645,9 +630,9 @@ struct ActionPanelView: View {
                     Text("重试")
                         .islandMicro()
                 }
-                .foregroundColor(.accentColor)
+                .foregroundStyle(CompanionPalette.islandMint)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
         }
         .padding(.vertical, 2)
     }
@@ -666,19 +651,15 @@ struct ActionPanelView: View {
         }()
         let color: Color = {
             switch label {
-            case "推荐": return .accentColor
-            case "友好": return .green
-            case "正式": return .blue
-            case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)
-            default: return .gray
+            case "推荐": return CompanionPalette.islandMint
+            default: return IslandInk.meta
             }
         }()
         return Text(label)
             .islandMicro()
-            .foregroundColor(color)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.12))
-            .cornerRadius(3)
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(label == "推荐" ? CompanionPalette.selectedFill : IslandInk.chip, in: Capsule())
     }
 }

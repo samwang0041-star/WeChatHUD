@@ -8,7 +8,7 @@
 | 序 | 表面 | 状态 | 最近总分 | 下一刀提示 |
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
-| 2 | 岛·展开收件箱 | in-progress | 7.7 | 展开后的解读卡仍用系统 accent 方块；应收进 IslandInk / 青玉 |
+| 2 | 岛·展开收件箱 | in-progress | 8.2 | 底栏只有图标；「查看全部（新窗口）」和解读标题仍偏术语 |
 | 3 | 岛·通知横幅 | queued | — | |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 5 — 2026-09-13 — 岛·展开收件箱
+
+- Surface: 岛·展开收件箱
+- Files: `Sources/WeChatHUD/Views/ActionPanelView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.7（主动词 8.2 / 空气 7.5 / 短句 7.5 / 物理 8.2 / 状态戏 7 / 稀疏 7.5 / 回执 7.5）
+- Debt picked: 解读卡是系统强调色方块，还套了一层边框。
+- After: 总分 8.2（主动词 8.2 / 空气 8.3 / 短句 7.5 / 物理 8.3 / 状态戏 7.5 / 稀疏 8.0 / 回执 7.8）
+- Changed: 展开一行后，重点不再装在彩色卡片里。标题用岛上的薄荷色，等你才用琥珀。建议行按下有缩放；失败重试是薄荷色，不是系统红和系统蓝。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 等 35 个用例全绿；`swift build -c release`。走查：展开 → 一句重点 + 青玉主按钮；失败 → 重试。
+- Next: 岛·展开收件箱第三刀 — 底栏图标补人话；「查看全部（新窗口）」改成用户能懂的去向
 
 ## Cycle 4 — 2026-09-13 — 岛·展开收件箱
 
