@@ -469,7 +469,7 @@ struct IslandSnoozeMenu: View {
                     .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .accessibilityLabel(choice.label)
                 .accessibilityHint(choice.whenLabel)
                 .accessibilityIdentifier("companion.snooze.\(choice.label)")

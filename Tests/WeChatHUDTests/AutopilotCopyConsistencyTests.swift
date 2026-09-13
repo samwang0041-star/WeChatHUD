@@ -181,6 +181,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains(".buttonStyle(BannerCardPressStyle(pressed: $pressingCard))"))
         XCTAssertFalse(source.text.contains(".buttonStyle(.plain)"))
     }
+
+    func testIslandSnoozeMenuRowsPress() throws {
+        let source = try InboxRowViewSource.load()
+        guard let menuStart = source.text.range(of: "struct IslandSnoozeMenu"),
+              let menuEnd = source.text.range(of: "struct SnoozePopoverContent") else {
+            XCTFail("IslandSnoozeMenu should sit next to SnoozePopoverContent")
+            return
+        }
+        let menu = String(source.text[menuStart.lowerBound..<menuEnd.lowerBound])
+        XCTAssertTrue(menu.contains("CompanionPressStyle()"))
+        XCTAssertFalse(menu.contains(".buttonStyle(.plain)"))
+    }
 }
 
 // MARK: - Source readers
@@ -241,6 +253,14 @@ private struct NotificationBannerViewSource {
     let text: String
     static func load() throws -> NotificationBannerViewSource {
         NotificationBannerViewSource(text: try read("Sources/WeChatHUD/Views/NotificationBannerView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct InboxRowViewSource {
+    let text: String
+    static func load() throws -> InboxRowViewSource {
+        InboxRowViewSource(text: try read("Sources/WeChatHUD/Views/InboxRowView.swift"))
     }
     init(text: String) { self.text = text }
 }
