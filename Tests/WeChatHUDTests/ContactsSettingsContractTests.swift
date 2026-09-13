@@ -55,6 +55,25 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
     }
+
+    func testInspectorBreathesWithoutDividersOrAStatusPlate() throws {
+        let source = try ContactsSettingsSource.load()
+        let inspectorStart = try XCTUnwrap(source.text.range(of: "private struct ContactInspectorView"))
+        let block = try XCTUnwrap(source.text.range(of: "// MARK: - Block Rules"))
+        let inspector = String(source.text[inspectorStart.lowerBound..<block.lowerBound])
+        XCTAssertFalse(inspector.contains("Divider()"))
+        XCTAssertTrue(inspector.contains("整理范围"))
+        XCTAssertTrue(inspector.contains("TA 是谁"))
+        XCTAssertTrue(inspector.contains("操作"))
+        XCTAssertTrue(inspector.contains("选择一个人或一个群"))
+
+        let listStart = try XCTUnwrap(source.text.range(of: "private struct ContactsListSubView"))
+        let addDialog = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let list = String(source.text[listStart.lowerBound..<addDialog.lowerBound])
+        XCTAssertFalse(list.contains("controlBackgroundColor"))
+        XCTAssertTrue(source.text.contains("看看这些人是谁"))
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {
