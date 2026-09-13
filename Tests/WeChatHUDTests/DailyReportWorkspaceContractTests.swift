@@ -102,6 +102,21 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(tab.text.contains("导出"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testDailyFollowUpsAreNotAWallOfTaskButtons() throws {
+        let source = try DailyReportCommandCenterSource.load()
+        let contentStart = try XCTUnwrap(source.text.range(of: "private func content("))
+        let historicalStart = try XCTUnwrap(source.text.range(of: "private func historicalHeader"))
+        let content = String(source.text[contentStart.lowerBound..<historicalStart.lowerBound])
+        XCTAssertTrue(content.contains("在待办里看"))
+        XCTAssertFalse(content.contains("查看待办"))
+        XCTAssertTrue(source.text.contains("标记完成"))
+        XCTAssertFalse(source.text.contains("title: \"查看待办\""))
+        XCTAssertTrue(source.text.contains("CompanionPressStyle()"))
+        let tab = try DailyReportTabSource.load()
+        XCTAssertTrue(tab.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportCommandCenterSource {
