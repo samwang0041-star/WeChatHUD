@@ -228,7 +228,10 @@ private struct ContactsListSubView: View {
                     onEdit: { editingContact = $0 },
                     onInfer: { monitor.startContactInference(contacts: [$0]) },
                     onChangeLevel: { contact, level in
-                        if saveContact(contact, level: level) { reload() }
+                        if saveContact(contact, level: level) {
+                            reload()
+                            listReceipt = "已改成\(attentionLevelTitle(level))。"
+                        }
                     },
                     onDelete: { contact in
                         pendingDeleteContact = contact
@@ -266,12 +269,12 @@ private struct ContactsListSubView: View {
         } message: {
             Text(operationError ?? "请重试")
         }
-        .alert("确认删除联系人？", isPresented: Binding(
+        .alert(unfollowConfirmTitle, isPresented: Binding(
             get: { pendingDeleteContact != nil },
             set: { if !$0 { pendingDeleteContact = nil } }
         )) {
             Button("取消", role: .cancel) { pendingDeleteContact = nil }
-            Button("删除联系人", role: .destructive) {
+            Button("移除关注", role: .destructive) {
                 guard let contact = pendingDeleteContact else { return }
                 pendingDeleteContact = nil
                 if deleteContact(contact) {
@@ -304,6 +307,13 @@ private struct ContactsListSubView: View {
         contacts.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFilter == .all
             ? "点「\(CompanionProductCopy.addFollow)」选对话。"
             : "换个关键词或级别筛选"
+    }
+
+    private var unfollowConfirmTitle: String {
+        if let name = pendingDeleteContact?.displayName {
+            return "不再关注「\(name)」？"
+        }
+        return "不再关注？"
     }
 
     private func contactFilterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {

@@ -181,6 +181,10 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertTrue(add.contains("selectedContactID = chosen.first?.username"))
         XCTAssertTrue(source.text.contains("已不再关注「"))
         XCTAssertTrue(source.text.contains("listReceipt"))
+        XCTAssertTrue(source.text.contains("已改成"))
+        XCTAssertTrue(source.text.contains("不再关注「"))
+        XCTAssertFalse(source.text.contains("确认删除联系人"))
+        XCTAssertFalse(source.text.contains("删除联系人"))
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
