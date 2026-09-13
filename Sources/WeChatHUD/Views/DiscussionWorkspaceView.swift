@@ -209,9 +209,9 @@ struct DiscussionWorkspaceView: View {
             }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索待办或对话", text: $query)
+                TextField("找待办", text: $query)
                     .textFieldStyle(.plain)
-                    .accessibilityLabel("搜索待办或对话")
+                    .accessibilityLabel("找待办")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
                         .buttonStyle(CompanionPressStyle())
