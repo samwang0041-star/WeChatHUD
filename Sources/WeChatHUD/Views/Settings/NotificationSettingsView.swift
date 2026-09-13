@@ -79,11 +79,24 @@ struct NotificationSettingsView: View {
                 .accessibilityLabel(NotificationSettingsCopy.durationDisclosure)
                 if showDuration {
                     SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
-                        Picker(NotificationSettingsCopy.durationTitle, selection: $config.durationSeconds) {
-                            ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
-                                Text("\(seconds) 秒").tag(seconds)
+                        HStack(spacing: 6) {
+                            ForEach(durationChoices, id: \.self) { seconds in
+                                Button("\(seconds) 秒") {
+                                    config.durationSeconds = seconds
+                                }
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(config.durationSeconds == seconds ? Color.primary : Color.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    config.durationSeconds == seconds ? CompanionPalette.selectedFill : Color.clear,
+                                    in: Capsule()
+                                )
+                                .accessibilityLabel("展示 \(seconds) 秒")
+                                .accessibilityAddTraits(config.durationSeconds == seconds ? .isSelected : [])
                             }
-                        }.labelsHidden().frame(width: 100)
+                        }
                     }
                 }
             }
@@ -120,6 +133,10 @@ struct NotificationSettingsView: View {
         .onChange(of: config.important) { save() }
         .onChange(of: config.allWhitelist) { save() }
         .onChange(of: config.durationSeconds) { save() }
+    }
+
+    private var durationChoices: [Int] {
+        Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted()
     }
 
     private func save() {
