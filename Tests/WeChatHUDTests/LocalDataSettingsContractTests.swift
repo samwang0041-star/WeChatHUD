@@ -109,6 +109,17 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testEmptyRecordsSpeakANextStep() throws {
+        XCTAssertEqual(LocalDataCopy.openTasks, "去待办里看")
+        let source = try LocalDataSettingsSource.load()
+        XCTAssertTrue(source.text.contains("emptyCommitments"))
+        XCTAssertTrue(source.text.contains("LocalDataCopy.openTasks"))
+        XCTAssertTrue(source.text.contains("object: \"tasks\""))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
