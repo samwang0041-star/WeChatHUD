@@ -36,6 +36,28 @@ actor WeChatReaderActor {
         try reader.getMessagesBatch(requests)
     }
 
+    func getMessages(
+        chatUsername: String,
+        limit: Int = 50,
+        sinceLocalId: Int? = nil,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil,
+        oldestFirst: Bool = false,
+        startTime: Int? = nil,
+        endTime: Int? = nil,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)? = nil
+    ) throws -> [MessageInfo] {
+        try reader.getMessages(
+            chatUsername: chatUsername,
+            limit: limit,
+            sinceLocalId: sinceLocalId,
+            afterCursor: afterCursor,
+            oldestFirst: oldestFirst,
+            startTime: startTime,
+            endTime: endTime,
+            beforeCursor: beforeCursor
+        )
+    }
+
     func myUsername() -> String {
         reader.myUsername()
     }

@@ -44,9 +44,9 @@ enum ScanEngine {
         autopilotActive: Bool
     ) async -> ScanOutcome? {
         do {
-            // Actor facade: scan prep + identity snapshot go through WeChatReaderActor.
-            // Remaining per-message reads still use `reader` (lock-backed) until
-            // whitelist paging is migrated onto batch/actor APIs.
+            // Actor facade: scan prep, identity, batch unread/autopilot, and
+            // whitelist paging go through WeChatReaderActor. ReplyDebt and a
+            // few helpers still take the lock-backed `reader` directly.
             let readerActor = WeChatReaderActor(reader)
             try await readerActor.prepareForScan()
 
@@ -275,7 +275,7 @@ enum ScanEngine {
                     // watermark and this page would never be classified again.
                     // Walk backwards (bounded by a scan-wide page budget) until
                     // the recorded unread backlog is covered.
-                    var page = try reader.getMessages(
+                    var page = try await readerActor.getMessages(
                         chatUsername: entry.id,
                         limit: fetchLimit,
                         sinceLocalId: nil
@@ -302,7 +302,7 @@ enum ScanEngine {
                             var lastFetchWasFull = true
                             while page.count < unreadHint, backlogPageBudget > 0, let cursor = anchor {
                                 backlogPageBudget -= 1
-                                let older = try reader.getMessages(
+                                let older = try await readerActor.getMessages(
                                     chatUsername: entry.id,
                                     limit: fetchLimit,
                                     sinceLocalId: nil,
@@ -1004,9 +1004,14 @@ enum ScanEngine {
         }
         let targetSessions = Array(sortedSessions.prefix(max(1, config.maxSessions)))
         let now = Date()
+        let replyDebtBatch = (try? reader.getMessagesBatch(
+            targetSessions.map {
+                WeChatReader.MessageBatchRequest(chatUsername: $0.username, limit: 30)
+            }
+        )) ?? [:]
 
         let seeds: [ReplyDebtScorer.Seed] = targetSessions.compactMap { session in
-            let recentMsgs = (try? reader.getMessages(chatUsername: session.username, limit: 30)) ?? []
+            let recentMsgs = replyDebtBatch[session.username] ?? []
             guard !recentMsgs.isEmpty else { return nil }
 
             // 预先把身份判定结果算好，评分器只消费结论：它不该知道
