@@ -29,18 +29,18 @@ final class InsightCoordinator: ObservableObject {
     private var requestVersions: [String: UUID] = [:]
     private var resultDays: [String: Date] = [:]
 
-    private let reader: WeChatReader
+    private let readerActor: WeChatReaderActor
     private let store: HUDStore
     private let aiService: AIService
     private lazy var chatInsightService: ChatInsightService = {
-        ChatInsightService(reader: reader, store: store, aiService: aiService)
+        ChatInsightService(readerActor: readerActor, store: store, aiService: aiService)
     }()
 
     /// Insight load task — kept so we can cancel and avoid duplicates.
     private var insightLoadTask: Task<Void, Never>?
 
     init(reader: WeChatReader, store: HUDStore, aiService: AIService) {
-        self.reader = reader
+        self.readerActor = WeChatReaderActor(reader)
         self.store = store
         self.aiService = aiService
     }
@@ -83,8 +83,8 @@ final class InsightCoordinator: ObservableObject {
             return
         }
 
-        let selfUsername = reader.myUsername()
-        let selfDisplayName = reader.displayName(for: selfUsername)
+        let selfUsername = await readerActor.myUsername()
+        let selfDisplayName = await readerActor.displayName(for: selfUsername)
 
         guard let result = await chatInsightService.analyzeEntry(
             entry, date: date,
@@ -130,16 +130,23 @@ final class InsightCoordinator: ObservableObject {
         insightProgressFraction = 0
 
         let whitelist = store.getWhitelist()
-        let selfUsername = reader.myUsername()
-        let selfDisplayName = reader.displayName(for: selfUsername)
+        let selfUsername = await readerActor.myUsername()
+        let selfDisplayName = await readerActor.displayName(for: selfUsername)
         let dateStr = ISO8601DateFormatter().string(from: Date())
 
-        // Filter to chats with today's messages
+        // Filter to chats with today's messages — one batch read (ScanEngine pattern).
         let todayStart = Calendar.current.startOfDay(for: Date())
+        let todayProbe = (try? await readerActor.messagesBatch(
+            whitelist.map {
+                WeChatReader.MessageBatchRequest(chatUsername: $0.id, limit: 50)
+            }
+        )) ?? [:]
         var activeEntries: [WhitelistEntry] = []
         for entry in whitelist {
-            guard let messages = try? reader.getMessages(chatUsername: entry.id, limit: 50) else { continue }
-            let hasToday = messages.contains { Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart }
+            let messages = todayProbe[entry.id] ?? []
+            let hasToday = messages.contains {
+                Date(timeIntervalSince1970: Double($0.createTime)) >= todayStart
+            }
             if hasToday { activeEntries.append(entry) }
         }
 
@@ -147,6 +154,7 @@ final class InsightCoordinator: ObservableObject {
         let initialRequestVersions = requestVersions
         var results: [String: ChatInsightResult] = [:]
         var statsResults: [ChatStatsData] = []
+        let dayLoader = InsightDataLoader()
 
         for (i, entry) in activeEntries.enumerated() {
             // Cooperative cancellation
@@ -162,10 +170,10 @@ final class InsightCoordinator: ObservableObject {
                 results[entry.id] = result
             }
 
-            if let stats = InsightDataLoader().statsForDay(
+            if let stats = await dayLoader.statsForDay(
                 chatUsername: entry.id, chatName: entry.displayName,
                 isGroup: entry.isGroup, category: entry.category,
-                date: todayStart, reader: reader
+                date: todayStart, readerActor: readerActor
             ), stats.messageCount > 0 {
                 statsResults.append(stats)
             }

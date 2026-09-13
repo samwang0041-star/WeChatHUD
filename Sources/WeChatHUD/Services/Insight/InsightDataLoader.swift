@@ -160,6 +160,32 @@ final class InsightDataLoader {
         )
     }
 
+    /// Same day totals as `statsForDay(reader:)`, routed through `WeChatReaderActor`
+    /// so InsightCoordinator / async insight paths share ScanEngine's isolation boundary.
+    func statsForDay(
+        chatUsername: String, chatName: String, isGroup: Bool,
+        category: WhitelistCategory, date: Date, readerActor: WeChatReaderActor
+    ) async -> ChatStatsData? {
+        let range = Self.dayRange(for: date)
+        guard let messages = try? await readerActor.getMessages(
+            chatUsername: chatUsername, limit: Int.max, afterCursor: nil,
+            startTime: range.start, endTime: range.end
+        ) else { return nil }
+        let myUsername = await readerActor.myUsername()
+        let selfDisplayName = await readerActor.displayName(for: myUsername)
+        let selfNames = await readerActor.mySelfNames()
+        return ChatStatsEngine.computeStats(
+            messages: messages,
+            selfUsername: myUsername,
+            selfDisplayName: selfDisplayName,
+            selfNames: selfNames,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            isGroup: isGroup,
+            category: category
+        )
+    }
+
     static func dayRange(for date: Date, calendar: Calendar = .current) -> (start: Int, end: Int) {
         let start = calendar.startOfDay(for: date)
         let end = calendar.date(byAdding: .day, value: 1, to: start)!

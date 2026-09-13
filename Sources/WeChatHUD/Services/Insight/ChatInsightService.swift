@@ -3,13 +3,13 @@ import Foundation
 /// Prepares data and runs AI chat insight analysis for a single whitelist entry.
 /// Extracted from `InsightCoordinator` to separate data preparation from scheduling.
 actor ChatInsightService {
-    private let reader: WeChatReader
+    private let readerActor: WeChatReaderActor
     private let store: HUDStore
     private let chatInsight: AIChatInsight
     static let analysisMessageLimit = 500
 
-    init(reader: WeChatReader, store: HUDStore, aiService: AIService) {
-        self.reader = reader
+    init(readerActor: WeChatReaderActor, store: HUDStore, aiService: AIService) {
+        self.readerActor = readerActor
         self.store = store
         self.chatInsight = AIChatInsight(store: store, aiService: aiService)
     }
@@ -25,7 +25,7 @@ actor ChatInsightService {
         let dayStart = cal.startOfDay(for: date)
         guard let dayEnd = cal.date(byAdding: .day, value: 1, to: dayStart) else { return nil }
 
-        guard let messages = try? reader.getMessages(
+        guard let messages = try? await readerActor.getMessages(
             chatUsername: entry.id, limit: Self.analysisMessageLimit + 1, afterCursor: nil,
             startTime: Int(dayStart.timeIntervalSince1970), endTime: Int(dayEnd.timeIntervalSince1970)
         ) else { return nil }
@@ -37,26 +37,29 @@ actor ChatInsightService {
         }
         guard !dayMessages.isEmpty else { return nil }
 
-        let selfAliases = buildSelfAliases(username: selfUsername, displayName: selfDisplayName)
+        let selfAliases = await buildSelfAliases(username: selfUsername, displayName: selfDisplayName)
         let selfLabel = buildSelfLabel(aliases: selfAliases, fallback: selfDisplayName.isEmpty ? selfUsername : selfDisplayName)
+        let selfNames = await readerActor.mySelfNames()
 
-        let formatted = dayMessages
-            .sorted {
-                $0.createTime == $1.createTime ? $0.localId < $1.localId : $0.createTime < $1.createTime
-            }
-            .map { message in
-                let isSelf = MessageHelpers.isFromSelf(
-                    message,
-                    chatUsername: entry.id,
-                    myUsername: selfUsername,
-                    myDisplayName: selfDisplayName,
-                    mySelfNames: reader.mySelfNames
-                )
-                let sender = isSelf
-                    ? "我（\(selfLabel)）"
-                    : (message.senderName.isEmpty ? message.senderUsername : message.senderName)
-                return (sender: sender, body: reader.normalizeContactMentions(in: message.text), time: message.createTime)
-            }
+        let sortedDay = dayMessages.sorted {
+            $0.createTime == $1.createTime ? $0.localId < $1.localId : $0.createTime < $1.createTime
+        }
+        var formatted: [(sender: String, body: String, time: Int)] = []
+        formatted.reserveCapacity(sortedDay.count)
+        for message in sortedDay {
+            let isSelf = MessageHelpers.isFromSelf(
+                message,
+                chatUsername: entry.id,
+                myUsername: selfUsername,
+                myDisplayName: selfDisplayName,
+                mySelfNames: selfNames
+            )
+            let sender = isSelf
+                ? "我（\(selfLabel)）"
+                : (message.senderName.isEmpty ? message.senderUsername : message.senderName)
+            let body = await readerActor.normalizeContactMentions(in: message.text)
+            formatted.append((sender: sender, body: body, time: message.createTime))
+        }
 
         let memory = Self.memoryForAnalysis(
             store.loadConversationMemory(chatUsername: entry.id), dayStart: dayStart, dayEnd: dayEnd
@@ -197,7 +200,7 @@ actor ChatInsightService {
 
     // MARK: - Helpers
 
-    private func buildSelfAliases(username: String, displayName: String) -> [String] {
+    private func buildSelfAliases(username: String, displayName: String) async -> [String] {
         var aliases: [String] = []
         var seen = Set<String>()
 
@@ -210,7 +213,7 @@ actor ChatInsightService {
 
         add(username)
         add(displayName)
-        for alias in reader.mySelfNames.sorted() {
+        for alias in await readerActor.mySelfNames().sorted() {
             add(alias)
         }
 
