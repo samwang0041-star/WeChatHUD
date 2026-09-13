@@ -149,6 +149,19 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains("color = .green"))
         XCTAssertFalse(source.text.contains("color = .blue"))
     }
+
+    func testIslandBriefingLeadsWithOneJadeReply() throws {
+        let source = try GroupContextBriefingSource.load()
+        XCTAssertTrue(source.text.contains("IslandPillButtonStyle(emphasized: true)"))
+        XCTAssertTrue(source.text.contains("IslandPillButtonStyle()"))
+        XCTAssertTrue(source.text.contains("IslandBriefingCopy.title"))
+        XCTAssertFalse(source.text.contains("AI 解读"))
+        XCTAssertFalse(source.text.contains("为什么 @ 你"))
+        XCTAssertFalse(source.text.contains("查看完整上下文"))
+        XCTAssertFalse(source.text.contains("Color.orange"))
+        XCTAssertEqual(IslandBriefingCopy.title, "为什么找你")
+        XCTAssertEqual(IslandBriefingCopy.retry, "再试一次")
+    }
 }
 
 // MARK: - Source readers
@@ -193,6 +206,14 @@ private struct InboxItemSource {
     let text: String
     static func load() throws -> InboxItemSource {
         InboxItemSource(text: try read("Sources/WeChatHUD/Data/InboxItem.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct GroupContextBriefingSource {
+    let text: String
+    static func load() throws -> GroupContextBriefingSource {
+        GroupContextBriefingSource(text: try read("Sources/WeChatHUD/Views/GroupContextBriefingButton.swift"))
     }
     init(text: String) { self.text = text }
 }
