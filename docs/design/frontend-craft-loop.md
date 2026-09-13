@@ -1,29 +1,27 @@
 # WeChatHUD Frontend Craft Loop
 
-把下面整份文档当作 **长期运行目标** 的工作流提示词。不是 `/loop 1m`，不是分钟闹钟。Agent 一刀做完立刻开下一刀，直到远目标达成或用户说停。不要问用户。做完写日志，停在可编译、可测试的树上。
+长期运行目标的工作流规格。Agent 每次续跑只做 **一刀**：把一个真实界面再逼近一档 CleanMyMac 级工艺。不要问用户。做完写日志、独立 commit，停在可编译、可测试的树上。
 
-启动词（Goal 的同一句，从头到尾不换）：
+**真源**：本文件 + `docs/design/frontend-craft-loop-log.md`。Goal 卡片只负责续跑。卡片若乱码、过时、或写着「当前停在哪」，以日志状态板为准。
+
+启动词（每次续跑同一句）：
 
 ```
 按 docs/design/frontend-craft-loop.md 跑下一刀。
 先读 docs/design/frontend-craft-loop-log.md，再读本文件。
 选队列里下一刀，审计 → 改一处最高杠杆工艺债 → 验证 → 写日志。
-每一刀独立 commit，消息写 why。做完立刻开下一刀，直到队列 1–13 都 done，或用户说停。
+每一刀独立 commit，消息写 why。这一轮只做一刀。
 ```
 
 ---
 
-## 怎么跑（长期目标，不是闹钟）
+## 节奏
 
-1 分钟 `sleep` 循环会在测试+release 还没收工时积压 TICK，把同一刀打断、重复通知，最后被掐掉。**不要再武装分钟级 `/loop`。**
+一轮对话 = 一刀。读日志 → 改 → 验绿 → 写日志 → commit → **这一轮结束**。下一刀等 Goal 下次续跑，或用户再说「下一刀」。
 
-正确跑法：
+用顺序续跑，不用定时器。不要 `sleep` + echo，不要分钟级 `/loop`：测试和 release 比一分钟长，TICK 会堆在同一刀上。
 
-1. 本文件是 Goal 的规格。读日志，选下一刀，改、验、记、commit。
-2. 这一刀的 commit 进树之后，**立刻**开下一刀。中间不要 `sleep`，不要等下一分钟。
-3. 用户插话时，把手头这一刀收到可提交再回；然后继续队列。
-4. 完成条件：队列 1–13 都标 `done`（该表面总分 ≥ 8.5，且主动词 / 空气 / 短句都不低于 8）。14–16 是收尾，1–13 没做完不要跳去巡检充数。
-5. 用户说停，才停。不要用「今晚够了」自己收工。
+用户插话时：把手头这刀收到可提交（或明确丢弃）再回答；然后按新指示走。
 
 ---
 
@@ -74,7 +72,7 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 
 按顺序读，读到够用为止：
 
-1. `docs/design/frontend-craft-loop-log.md` — 上一刀停在哪
+1. `docs/design/frontend-craft-loop-log.md` — 上一刀停在哪（覆盖 Goal 卡片）
 2. 本文件
 3. `docs/design/ui-language.md` — 不变量，本循环不得改写其条文来迁就一刀
 4. 当前表面的 Swift 文件（见队列）
@@ -118,7 +116,14 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 
 ### 1. 选刀
 
-读日志里「下一刀」；若空，取下面队列第一个状态不是 `done` 的表面。一刀 = 一个表面 + 一个最高杠杆工艺债。不要同时改岛和工作台。
+按这个顺序，只选一把：
+
+1. 日志最新一节的 `Next`。若写着换表面，取队列 **1–13** 里下一个状态为 `queued` 的表面。
+2. `Next` 空：取队列 1–13 里序号最小、状态为 `queued` 的表面。
+3. 1–13 没有 `queued` 了：回扫序号最小的 `in-progress`（通知横幅 / 紧凑 / 待确认 这种没做到 8.5 就换走的，要回来收完）。
+4. 1–13 都 `done`：才动 14–16。
+
+一刀 = 一个表面 + 一个最高杠杆工艺债。不要同时改岛和工作台。`in-progress` 不是 `done`，不要为了往前走把它标成完成。
 
 完成：日志或回复里写出 `surface`、文件、这一刀的主动词。
 
@@ -143,7 +148,7 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 典型一刀（只选一种）：
 
 - 把一页收成「现状一句 + 主列表 + 一个主按钮」，次级动作进悬停或披露
-- 设置页日常 3 行，其余进「高级设置」
+- 设置页日常 3 行，其余进「高级设置」。回答「现在能不能发 / 何时发出去」的行留在首屏
 - 补齐悬停洗层、按下缩放、披露 `islandDetailReveal` / `strongEaseOut`
 - 重写该页可见文案：短、后果清楚、与代码一致
 - 空态改成一句人话 + 一个去处，不再居中堆说明
@@ -159,9 +164,9 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 
 ### 5. 记
 
-追加 `docs/design/frontend-craft-loop-log.md` 一节。更新该表面状态与下一刀。有实质代码再 commit。
+追加 `docs/design/frontend-craft-loop-log.md` 一节，并改状态板。有实质代码再 commit。不要把 `docs/overnight/` 未跟踪笔记塞进这一刀。
 
-完成：日志含 before/after 分、改了什么、测了什么、下一刀是谁。
+完成：日志含 before/after 分、改了什么、测了什么、下一刀是谁。这一轮到此。
 
 ---
 
@@ -176,7 +181,7 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 | 3 | 岛·通知横幅 | `NotificationBannerView.swift` | 消息是英雄；身份行安静；按下/悬停洗层完整；高度仍走测量 |
 | 4 | 岛·紧凑/peek | `CompactInboxBar.swift`、`PixelBuddyView.swift` | 翼上无正文；peek 只加宽；Buddy 悬停才展开详情 |
 | 5 | 待确认回复 | `ApprovalWorkspaceView.swift` | 队列 + 一条确认；不是仪表盘 |
-| 6 | 自动回复设置 | `AutopilotSettingsView.swift` | 一个主开关 + 一句后果；限额/排除进高级 |
+| 6 | 自动回复设置 | `AutopilotSettingsView.swift` | 主开关 + 一句后果；连发窗口留在首屏（它回答「何时发出去」，`AutopilotCopyConsistencyTests` 钉死）。每小时上限、会话上限、排除名单进高级 |
 | 7 | AI 服务 | `AISettingsView.swift`（service） | 已连接/未连接一句；表单不要压过「能不能用」 |
 | 8 | 微信连接 | `SyncSettingsView.swift` connection、`WeChatConnectionSetupView.swift` | 已连/缺什么/下一步；诊断进披露 |
 | 9 | 首次引导 | `OnboardingView.swift`、`FirstLaunchAISetupView.swift` | 每步一个决定；点完成不等于已连上或已授权发送 |
@@ -208,30 +213,30 @@ CleanMyMac 页面结构的对应，用来选刀，不用来抄布局：
 
 惩罚（每项 −0.5，可叠）：新开窗口；新色盘；岛弹簧被无测试改动；日常文案出现实现词；主按钮超过一个还同样强调；把必看信息只放进 tooltip。
 
-通过线：总分 ≥ 8.0，且主动词 ≥ 8。低于此，这一刀不算把该表面推近目标，日志里写清为什么还要再来一刀。
+两道门槛，不要混：
+
+| 门槛 | 数字 | 含义 |
+|---|---|---|
+| 这一刀过关 | 总分 ≥ 8.0，且主动词 ≥ 8 | 这一刀把该表面推近了。低于此，日志写清为什么还要再来 |
+| 该表面 `done` | 总分 ≥ 8.5，且主动词 / 空气 / 短句都不低于 8 | 才能把状态板改成 `done`。整轮完成 = 队列 1–13 都 `done` |
 
 ---
 
 ## 验证
 
-最低：
+本刀动到的套件必须绿；`swift build -c release` 必须过。
 
-```bash
-swift build -c release
-swift test --filter CompanionMotionTests
-swift test --filter IslandStyleTests
-swift test --filter CompanionProductCopyTests
-```
+一次 `swift test` 里写多个 `--filter` 是 **或**（并集），不是与。要只跑一个套件就只写一个 `--filter`。相关套件可以写在同一条命令里，靠或来并起来。
 
-动到岛形态 / 测量 / hover 时再加：`IslandRowExpandTests`、`IslandPeekTests`、`IslandFrameSpringTests`、`IslandInteractionTests`、`CompactIslandPolicyTests`。
+没动岛时，不必把 `Island*Tests` 当作本刀证据；release 编过即可证明没把岛编坏。动到岛形态 / 测量 / hover 时再加：`IslandRowExpandTests`、`IslandPeekTests`、`IslandFrameSpringTests`、`IslandInteractionTests`、`CompactIslandPolicyTests`。
 
-动到设置持久化 / Autopilot 文案时再加对应 `*Settings*` / `Autopilot*`。
+动到设置持久化 / Autopilot 文案时加对应 `*Settings*` / `Autopilot*`。
 
-有时间再 `swift test` 全绿（live 用例保持显式 skip）。
+Live 用例只在 `WCHUD_LIVE_COMPANION_AI=1` 时跑；未设置时必须是显式 skip。不要为了「全绿」去设这个变量。
 
 无法在真机点一遍时，用文字走查代替，但必须写到日志：悬停谁、按下谁、展开什么、失败走哪。不要用一张静态布局描述代替交互。
 
-`make preview` 只在本机有图形会话且这一刀改了可见布局时跑；不要在无界面环境假装看过。
+`make preview` 只在本机有图形会话且这一刀改了可见布局时跑。
 
 ---
 
@@ -256,10 +261,14 @@ swift test --filter CompanionProductCopyTests
 
 ## 停
 
-先停的条件（命中一条就收工，不要再开下一刀）：
+三种停，不要混成一种「收工」：
 
-- 相关测试或 release 编不过，且这一刀内修不回
-- 下一刀必须改产品规则（例如默认自动发送）才能「更好看」
-- 连续两刀同一表面总分提升 < 0.3，说明要换表面或先改数据，不要继续磨像素
+| 情况 | 做什么 |
+|---|---|
+| 相关测试或 release 编不过，这一刀内修不回 | 停这一刀。树回到可编译。Goal 保持。不要标 `done` |
+| 下一刀必须改产品规则（例如默认自动发送）才能「更好看」 | 跳过那条债，换债或换表面。整轮继续 |
+| 连续两刀同一表面总分提升 < 0.3 | 换到 1–13 里下一个 `queued`。该表面保持 `in-progress`，留给回扫。整轮继续 |
 
-整轮循环的远目标：队列 1–13 都 `done`。这是本工作流的完成条件。没做完就按日志接着往下，不要用分钟闹钟催，也不要因为「已经过了一晚」自己停。
+用户说停，整轮才停。不要因为「已经过了一晚」或「已经砍了十几刀」把 Goal 标完成。
+
+整轮完成：队列 1–13 都 `done`。那时才可以结束 Goal。14–16 不是完成条件。
