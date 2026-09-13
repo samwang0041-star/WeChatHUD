@@ -97,13 +97,6 @@ struct SyncSettingsView: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("设置分区")
             }
-            if selectedSettingsSection == .data, !saveError.isEmpty {
-                HStack {
-                    Text(saveError).font(.system(size: 12)).foregroundColor(.red)
-                    Spacer()
-                    if syncSaveFailed { Button("重试保存设置", action: save) }
-                }
-            }
             settingsPane(.connection) {
                 VStack(alignment: .leading, spacing: 16) {
                     WeChatConnectionSetupView(
@@ -584,6 +577,12 @@ struct SyncSettingsView: View {
                 .workspaceMeta()
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if !saveError.isEmpty {
+                Text(LocalDataCopy.saveFailed)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             retrospectionSection
             DisclosureGroup(LocalDataCopy.exportDisclosure) {
                 exportReportSection
@@ -947,7 +946,7 @@ struct SyncSettingsView: View {
             reloadData()
             monitor.refreshNow()
         } catch {
-            saveError = "操作未保存，请重试。原记录仍保留。"
+            saveError = LocalDataCopy.saveFailed
         }
     }
 
@@ -968,6 +967,7 @@ enum LocalDataCopy {
     static let exportDisclosure = "还要导出"
     static let searchPlaceholder = "找人或内容"
     static let findDisclosure = "还要找"
+    static let saveFailed = "刚才没记上。"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must

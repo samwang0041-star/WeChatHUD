@@ -93,6 +93,22 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testRecordSaveFailureIsAWorkspaceReceipt() throws {
+        let source = try LocalDataSettingsSource.load()
+        let dataStart = try XCTUnwrap(source.text.range(of: "private var dataSection"))
+        let exportStart = try XCTUnwrap(source.text.range(of: "private var exportReportSection"))
+        let pane = String(source.text[dataStart.lowerBound..<exportStart.lowerBound])
+        XCTAssertTrue(pane.contains("LocalDataCopy.saveFailed"))
+        XCTAssertTrue(source.text.contains("刚才没记上。"))
+        XCTAssertFalse(pane.contains("foregroundColor(.red)"))
+        XCTAssertFalse(pane.contains("重试保存设置"))
+        XCTAssertFalse(source.text.contains("操作未保存，请重试"))
+        XCTAssertEqual(LocalDataCopy.saveFailed, "刚才没记上。")
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
