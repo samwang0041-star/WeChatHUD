@@ -94,6 +94,7 @@ private struct ContactsListSubView: View {
     @State private var candidateLoadError: String?
     @State private var didLoad = false
     @State private var searching = false
+    @State private var listReceipt: String?
 
     private var filtered: [ContactEntry] {
         contacts.filter { contact in
@@ -186,6 +187,13 @@ private struct ContactsListSubView: View {
                 }
             }
 
+            if let listReceipt {
+                Text(listReceipt)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(listReceipt)
+            }
+
             HSplitView {
                 List {
                     if filtered.isEmpty {
@@ -269,6 +277,7 @@ private struct ContactsListSubView: View {
                 if deleteContact(contact) {
                     if selectedContactID == contact.username { selectedContactID = nil }
                     reload()
+                    listReceipt = "已不再关注「\(contact.displayName)」。"
                 }
             }
         } message: {
@@ -452,6 +461,12 @@ private struct ContactsListSubView: View {
                 )
             }
             reload()
+            selectedContactID = chosen.first?.username
+            if let name = chosen.first?.displayName, chosen.count == 1 {
+                listReceipt = "已关注「\(name)」。"
+            } else if chosen.count > 1 {
+                listReceipt = "已关注 \(chosen.count) 个人。"
+            }
             showAddPopover = false
             selectedAddUsernames = []
         } catch {

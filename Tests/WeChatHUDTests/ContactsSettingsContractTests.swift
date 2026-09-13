@@ -165,6 +165,20 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testAddAndRemoveLeaveAFollowReceipt() throws {
+        let source = try ContactsSettingsSource.load()
+        let addStart = try XCTUnwrap(source.text.range(of: "private func addSelectedContacts"))
+        let loadStart = try XCTUnwrap(source.text.range(of: "private func loadContactCandidatesAsync"))
+        let add = String(source.text[addStart.lowerBound..<loadStart.lowerBound])
+        XCTAssertTrue(add.contains("已关注「"))
+        XCTAssertTrue(add.contains("个人。"))
+        XCTAssertTrue(add.contains("selectedContactID = chosen.first?.username"))
+        XCTAssertTrue(source.text.contains("已不再关注「"))
+        XCTAssertTrue(source.text.contains("listReceipt"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {
