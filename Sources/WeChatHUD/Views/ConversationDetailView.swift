@@ -302,8 +302,7 @@ struct ConversationDetailView: View {
 
         // Keep the entire previous window, not only its latest row: repeated
         // identical replies must not turn an old message into a new receipt.
-        let baseline = try? monitor.reader.getMessages(chatUsername: chatUsername, limit: 20)
-        guard let baseline else {
+        guard let baseline = await monitor.messagesForSendReceipt(chatUsername: chatUsername, limit: 20) else {
             sendResult = "无法读取发送前记录，草稿已保留，请在微信中核对后回复"
             sendSucceeded = false
             return
@@ -332,12 +331,12 @@ struct ConversationDetailView: View {
             for _ in 0..<3 {
                 do { try await Task.sleep(nanoseconds: 500_000_000) }
                 catch { break }
-                guard let messages = try? monitor.reader.getMessages(chatUsername: chatUsername, limit: 20) else { continue }
-                let username = monitor.reader.myUsername()
+                guard let messages = await monitor.messagesForSendReceipt(chatUsername: chatUsername, limit: 20) else { continue }
+                let identity = await monitor.selfMessageIdentity()
                 confirmed = ManualReplyReceipt.confirms(messages: messages, previousIDs: previousIDs,
                     chatUsername: chatUsername, expectedText: text, startedAt: startedAt,
-                    myUsername: username, myDisplayName: monitor.reader.displayName(for: username),
-                    mySelfNames: monitor.reader.mySelfNames)
+                    myUsername: identity.username, myDisplayName: identity.displayName,
+                    mySelfNames: identity.selfNames)
                 if confirmed { break }
             }
         }
@@ -353,7 +352,7 @@ struct ConversationDetailView: View {
             // session ledger so the next AI reply doesn't contradict
             // what the user just said.
             if monitor.autopilotActive {
-                let peerLast = monitor.lastPeerMessage(chatUsername: chatUsername)
+                let peerLast = await monitor.lastPeerMessage(chatUsername: chatUsername)
                 monitor.appendLedgerEntry(
                     LedgerEntry(
                         timestamp: Date(),

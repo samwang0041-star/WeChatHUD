@@ -1812,7 +1812,7 @@ final class ChatMonitor: ObservableObject {
         // recover them.
         let pendingCommitments = commitments.filter { $0.status == .pending || $0.status == .overdue }
         if !pendingCommitments.isEmpty {
-            let readerForFulfillment = reader
+            let readerActor = WeChatReaderActor(reader)
             let storeForFulfillment = store
             Task { @MainActor [weak self] in
                 var changed = false
@@ -1820,17 +1820,20 @@ final class ChatMonitor: ObservableObject {
                     // Fetch recent messages in that chat, filter to
                     // the user's own outbound messages AFTER the
                     // commitment was created.
-                    guard let allMsgs = try? readerForFulfillment.getMessages(
+                    guard let allMsgs = try? await readerActor.getMessages(
                         chatUsername: c.chatUsername, limit: 50, sinceLocalId: nil
                     ) else { continue }
                     let commitEpoch = Int(c.createdAt.timeIntervalSince1970)
+                    let myUname = await readerActor.myUsername()
+                    let myDisplay = await readerActor.displayName(for: myUname)
+                    let mySelfNames = await readerActor.mySelfNames()
                     let subsequent = allMsgs.filter { msg in
                         msg.createTime > commitEpoch &&
                         MessageHelpers.isFromSelf(
                             msg, chatUsername: c.chatUsername,
-                            myUsername: readerForFulfillment.myUsername(),
-                            myDisplayName: readerForFulfillment.displayName(for: readerForFulfillment.myUsername()),
-                            mySelfNames: readerForFulfillment.mySelfNames
+                            myUsername: myUname,
+                            myDisplayName: myDisplay,
+                            mySelfNames: mySelfNames
                         )
                     }
                     let signal = CommitmentTracker.evaluateFulfillment(
@@ -1921,18 +1924,36 @@ final class ChatMonitor: ObservableObject {
         (try? recentMessagesThrowing(chatUsername: chatUsername, limit: limit)) ?? []
     }
 
+    /// Newest-first messages for manual-send receipt confirmation.
+    /// Routes through `WeChatReaderActor` so the detail view does not touch
+    /// the raw reader on the MainActor hot path.
+    func messagesForSendReceipt(chatUsername: String, limit: Int = 20) async -> [MessageInfo]? {
+        let readerActor = WeChatReaderActor(reader)
+        return try? await readerActor.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil)
+    }
+
+    /// Self identity for receipt / peer checks via `WeChatReaderActor`.
+    func selfMessageIdentity() async -> (username: String, displayName: String, selfNames: Set<String>) {
+        let readerActor = WeChatReaderActor(reader)
+        let username = await readerActor.myUsername()
+        let displayName = await readerActor.displayName(for: username)
+        let selfNames = await readerActor.mySelfNames()
+        return (username, displayName, selfNames)
+    }
+
     /// Last message in `chatUsername` that did NOT come from the user.
     /// Used when appending a manual send to the autopilot session ledger
     /// so the model knows what the reply was responding to. Returns nil
     /// if the reader can't be read or no peer message is found in the
     /// recent window.
-    func lastPeerMessage(chatUsername: String, limit: Int = 15) -> String? {
-        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil) else {
+    func lastPeerMessage(chatUsername: String, limit: Int = 15) async -> String? {
+        let readerActor = WeChatReaderActor(reader)
+        guard let msgs = try? await readerActor.getMessages(chatUsername: chatUsername, limit: limit, sinceLocalId: nil) else {
             return nil
         }
-        let myUname = reader.myUsername()
-        let myDisplay = reader.displayName(for: myUname)
-        let selfNames = reader.mySelfNames
+        let myUname = await readerActor.myUsername()
+        let myDisplay = await readerActor.displayName(for: myUname)
+        let selfNames = await readerActor.mySelfNames()
         // getMessages returns newest-first; find the first peer message.
         for msg in msgs {
             let fromSelf = MessageHelpers.isFromSelf(
@@ -1995,16 +2016,17 @@ final class ChatMonitor: ObservableObject {
 
     /// Run AI relationship inference for a contact, using the shared inferrer.
     func inferRelationship(contactUsername: String, contactName: String) async -> RelationshipProfile? {
-        let msgs = (try? reader.getMessages(chatUsername: contactUsername, limit: 50)) ?? []
-        let myUname = reader.myUsername()
+        let readerActor = WeChatReaderActor(reader)
+        let msgs = (try? await readerActor.getMessages(chatUsername: contactUsername, limit: 50)) ?? []
+        let myUname = await readerActor.myUsername()
         return await relationshipInferrer.infer(
             contactUsername: contactUsername,
             contactName: contactName,
             isGroup: contactUsername.contains("@chatroom"),
             messages: msgs,
             myUsername: myUname,
-            myDisplayName: reader.displayName(for: myUname),
-            mySelfNames: reader.mySelfNames
+            myDisplayName: await readerActor.displayName(for: myUname),
+            mySelfNames: await readerActor.mySelfNames()
         )
     }
 
@@ -2170,8 +2192,8 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Compute relationship strength score (0-100) for a contact.
-    func relationshipStrength(chatUsername: String) -> RelationshipStrength {
-        let trend = chatTrend(chatUsername: chatUsername)
+    func relationshipStrength(chatUsername: String) async -> RelationshipStrength {
+        let trend = await chatTrend(chatUsername: chatUsername)
         let totalMessages = trend.reduce(0) { $0 + $1.count }
         let daysSinceLastActive = trend.reversed().firstIndex { $0.count > 0 } ?? 7
 
@@ -2196,8 +2218,9 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Compute 7-day message trend for a chat. Returns daily counts (oldest first).
-    func chatTrend(chatUsername: String) -> [DayMessageCount] {
-        let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 200, sinceLocalId: nil)) ?? []
+    func chatTrend(chatUsername: String) async -> [DayMessageCount] {
+        let readerActor = WeChatReaderActor(reader)
+        let messages = (try? await readerActor.getMessages(chatUsername: chatUsername, limit: 200, sinceLocalId: nil)) ?? []
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         var counts: [Int: Int] = [:]  // daysAgo → count
