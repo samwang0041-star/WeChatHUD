@@ -179,6 +179,27 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testAddDialogRowsAndInspectorActionsGiveUnderPress() throws {
+        let source = try ContactsSettingsSource.load()
+        let dialogStart = try XCTUnwrap(source.text.range(of: "private var addContactDialog"))
+        let candidatesStart = try XCTUnwrap(source.text.range(of: "private func addCandidates"))
+        let dialog = String(source.text[dialogStart.lowerBound..<candidatesStart.lowerBound])
+        XCTAssertTrue(dialog.contains("CompanionPressStyle()"))
+        XCTAssertFalse(dialog.contains("buttonStyle(.plain)"))
+        XCTAssertTrue(dialog.contains("取消"))
+        XCTAssertTrue(dialog.contains("CompanionProductCopy.addFollow"))
+
+        let opsStart = try XCTUnwrap(source.text.range(of: "private func operationsSection"))
+        let sectionTitle = try XCTUnwrap(source.text.range(of: "private func sectionTitle"))
+        let ops = String(source.text[opsStart.lowerBound..<sectionTitle.lowerBound])
+        XCTAssertTrue(ops.contains("编辑详情"))
+        XCTAssertTrue(ops.contains("移除关注"))
+        XCTAssertTrue(ops.contains("CompanionPressStyle()"))
+        XCTAssertFalse(ops.contains("buttonStyle(.bordered)"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {

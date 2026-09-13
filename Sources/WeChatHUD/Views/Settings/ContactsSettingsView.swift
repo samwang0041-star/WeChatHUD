@@ -394,7 +394,7 @@ private struct ContactsListSubView: View {
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionPressStyle())
                         .accessibilityLabel(selectedAddUsernames.contains(contact.username) ? "取消选择 \(contact.displayName)" : "选择 \(contact.displayName)")
                     }
                 }
@@ -402,6 +402,9 @@ private struct ContactsListSubView: View {
             HStack {
                 Spacer()
                 Button("取消") { showAddPopover = false }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 Button(CompanionProductCopy.addFollow) { addSelectedContacts() }
                     .buttonStyle(.borderedProminent)
                     .tint(CompanionPalette.jade)
@@ -768,12 +771,13 @@ private struct ContactInspectorView: View {
 
             HStack(spacing: 8) {
                 Button("编辑详情") { onEdit(contact) }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 Spacer(minLength: 16)
                 Button("移除关注", role: .destructive) { onDelete(contact) }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
                     .foregroundStyle(.red)
                     .accessibilityLabel("移除关注")
             }
