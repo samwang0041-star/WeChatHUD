@@ -93,6 +93,7 @@ private struct ContactsListSubView: View {
     @State private var isLoadingCandidates = false
     @State private var candidateLoadError: String?
     @State private var didLoad = false
+    @State private var searching = false
 
     private var filtered: [ContactEntry] {
         contacts.filter { contact in
@@ -119,37 +120,12 @@ private struct ContactsListSubView: View {
         return filtered.first
     }
 
+    private var showsSearchField: Bool {
+        searching || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Toolbar
-            HStack(spacing: 8) {
-                TextField("搜索联系人或群聊", text: $searchText)
-                    .accessibilityLabel("搜索联系人")
-                    .textFieldStyle(.roundedBorder)
-                    .workspaceBody()
-                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
-
-                Spacer()
-
-                if let status = monitor.contactInferenceStatus {
-                    aiJobChip(status)
-                }
-
-                Menu("更多") {
-                    Button("什么会提醒我") { organizeTab = .rules }
-                    Divider()
-                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
-                    Button("推荐关注") { organizeTab = .aiScan }
-                    Button("不看谁") { organizeTab = .blockRules }
-                    Button("静音") { organizeTab = .silenced }
-                    if monitor.contactInferenceStatus?.isRunning == true {
-                        Button("停止整理") { monitor.cancelContactInference() }
-                    }
-                }
-                .controlSize(.small)
-                .accessibilityLabel("整理范围")
-            }
-
             HStack(spacing: 8) {
                 contactFilterChip("全部 \(contacts.count)", selected: selectedFilter == .all) {
                     selectedFilter = .all
@@ -166,6 +142,40 @@ private struct ContactsListSubView: View {
                 ) {
                     selectedFilter = .groups
                 }
+
+                Spacer()
+
+                if let status = monitor.contactInferenceStatus {
+                    aiJobChip(status)
+                }
+
+                if showsSearchField {
+                    TextField(FirstLaunchGuide.findPeopleField, text: $searchText)
+                        .accessibilityLabel(FirstLaunchGuide.findPeopleField)
+                        .textFieldStyle(.roundedBorder)
+                        .workspaceBody()
+                        .frame(minWidth: 140, idealWidth: 180, maxWidth: 220)
+                } else if contacts.count > 8 {
+                    Button(FirstLaunchGuide.findPeople) { searching = true }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel(FirstLaunchGuide.findPeopleField)
+                }
+
+                Menu("更多") {
+                    Button("什么会提醒我") { organizeTab = .rules }
+                    Divider()
+                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
+                    Button("推荐关注") { organizeTab = .aiScan }
+                    Button("不看谁") { organizeTab = .blockRules }
+                    Button("静音") { organizeTab = .silenced }
+                    if monitor.contactInferenceStatus?.isRunning == true {
+                        Button("停止整理") { monitor.cancelContactInference() }
+                    }
+                }
+                .controlSize(.small)
+                .accessibilityLabel("整理范围")
             }
             .onChange(of: selectedFilter) {
                 if let selectedContactID,
@@ -174,11 +184,14 @@ private struct ContactsListSubView: View {
                 }
             }
 
-
             HSplitView {
                 List {
                     if filtered.isEmpty {
-                        emptyState(icon: "person.crop.circle.badge.questionmark", text: "没有匹配联系人", hint: "换个关键词或级别筛选")
+                        emptyState(
+                            icon: "person.crop.circle.badge.questionmark",
+                            text: emptyListTitle,
+                            hint: emptyListHint
+                        )
                             .listRowSeparator(.hidden)
                     } else {
                         contactGroup(level: .vip, title: "重点关注", color: .orange)
@@ -268,6 +281,18 @@ private struct ContactsListSubView: View {
                 onError: { operationError = $0 }
             )
         }
+    }
+
+    private var emptyListTitle: String {
+        contacts.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFilter == .all
+            ? "还没有关注的人"
+            : "没有匹配联系人"
+    }
+
+    private var emptyListHint: String {
+        contacts.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFilter == .all
+            ? "点「\(CompanionProductCopy.addFollow)」选对话。"
+            : "换个关键词或级别筛选"
     }
 
     private func contactFilterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
