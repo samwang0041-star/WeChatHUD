@@ -201,7 +201,7 @@ enum CompactIslandPolicy {
             let what = priority == .p0 ? "有需要尽快处理的事" : "有待回复的消息"
             return "\(what)，共 \(spokenCount(count)) 项。\(CompanionProductCopy.compactHoverHint)"
         case .working(.analyzing):
-            return "AI 正在整理。\(CompanionProductCopy.compactHoverHint)"
+            return "正在整理。\(CompanionProductCopy.compactHoverHint)"
         case .waiting(let count):
             return "收起 · \(spokenCount(count)) 项待处理。\(CompanionProductCopy.compactHoverHint)"
         case .notices(let count):
