@@ -198,15 +198,15 @@ struct DailyReportCommandCenterView: View {
                     .font(.system(size: isWorkspace ? 14 : 11))
                     .foregroundColor(.secondary)
             }
-            Button(action: {
+            Button("重新生成") {
                 guard !monitor.dailyReportIsLoading else { return }
                 Task { await monitor.loadDailyReport(force: true) }
-            }) {
-                Text("重新生成")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
+            .workspaceMeta()
+            .foregroundStyle(.secondary)
+            .disabled(monitor.dailyReportIsLoading)
+            .accessibilityLabel("重新生成")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
