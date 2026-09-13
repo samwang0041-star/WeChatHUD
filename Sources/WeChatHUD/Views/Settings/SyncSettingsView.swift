@@ -603,21 +603,21 @@ struct SyncSettingsView: View {
                     Spacer(minLength: 8)
                     if let url = exportedURL {
                         Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                            .controlSize(.small)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
-                    Button {
+                    Button("导出到桌面") {
                         if let url = monitor.exportReport() {
                             exportedURL = url
                             exportMessage = "已导出 \(url.lastPathComponent)"
                         } else {
                             exportMessage = "导出失败，请检查桌面写入权限"
                         }
-                    } label: {
-                        Label("导出到桌面", systemImage: "square.and.arrow.down")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(CompanionPalette.jade)
-                    .controlSize(.small)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -630,14 +630,15 @@ struct SyncSettingsView: View {
                 if let msg = exportMessage {
                     HStack(spacing: 8) {
                         Image(systemName: msg.hasPrefix("导出失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : CompanionPalette.jade)
+                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : Color.secondary)
                         Text(msg)
                             .font(.system(size: 12))
                             .foregroundColor(msg.hasPrefix("导出失败") ? .red : .secondary)
                         if let url = exportedURL, !msg.hasPrefix("导出失败") {
                             Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(CompanionPalette.jade)
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
