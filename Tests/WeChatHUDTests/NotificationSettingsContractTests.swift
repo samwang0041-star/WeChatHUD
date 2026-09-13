@@ -66,6 +66,15 @@ final class NotificationSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
         XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
     }
+
+    func testAllOffStateTellsYouWhatToDoNext() throws {
+        XCTAssertEqual(NotificationSettingsCopy.popupNoneNext, "打开上面一项，有消息才会弹出。")
+        let source = try NotificationSettingsSource.load()
+        XCTAssertTrue(source.text.contains("popupNoneNext"))
+        XCTAssertTrue(source.text.contains("现在会弹出"))
+        XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
+        XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
+    }
 }
 
 private struct NotificationSettingsSource {

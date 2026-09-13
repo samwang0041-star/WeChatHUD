@@ -2,6 +2,7 @@ import SwiftUI
 
 enum NotificationSettingsCopy {
     static let popupNone = "现在浮窗不会自己弹出。"
+    static let popupNoneNext = "打开上面一项，有消息才会弹出。"
     static let atMentionPart = "群 @"
     static let importantPart = "重点的人"
     static let whitelistPart = "关注里的普通消息"
@@ -53,6 +54,12 @@ struct NotificationSettingsView: View {
                 important: config.important,
                 allWhitelist: config.allWhitelist
             ))
+            if !config.atMention && !config.important && !config.allWhitelist {
+                Text(NotificationSettingsCopy.popupNoneNext)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             SettingsSection("谁来的消息要弹出") {
                 SettingsToggleRow(NotificationSettingsCopy.atMentionTitle, subtitle: NotificationSettingsCopy.atMentionSubtitle, isOn: $config.atMention)
