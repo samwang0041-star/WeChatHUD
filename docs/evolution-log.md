@@ -308,3 +308,10 @@
   - 第一轮(P0-P2): 质量 + 架构（+39 测试, 1 bug fix, God Object → Coordinator）
   - 第二轮(P3): 验证 + 工程实践（零警告, 运行无回归, 开发体验改善）
 - 项目状态: 生产就绪，等待用户决定下一步方向
+
+## 2026-09-13 Slice 18 — Group @ context via WeChatReaderActor
+
+- Async `GroupContextSourceLoader.load(… readerActor:)` + ChatMonitor on-demand / inbox-summary callers
+- Sync provider kept for briefing service + tests
+- Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
+

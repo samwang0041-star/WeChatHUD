@@ -24,9 +24,10 @@ extension ChatMonitor {
         let messages: [MessageInfo]
         let sourceAnchored: Bool
         if let notification = item.contextNotification, notification.kind == .groupAt {
-            // GroupContextSourceLoader still takes GroupContextMessageProvider (sync);
-            // leave that path on the underlying reader for this slice.
-            guard let centered = GroupContextSourceLoader.load(notification: notification, reader: reader) else {
+            guard let centered = await GroupContextSourceLoader.load(
+                notification: notification,
+                readerActor: readerActor
+            ) else {
                 return (nil, "找不到这条 @ 消息，未使用其他消息替代")
             }
             messages = GroupContextSourceLoader.newestFirst(centered)
