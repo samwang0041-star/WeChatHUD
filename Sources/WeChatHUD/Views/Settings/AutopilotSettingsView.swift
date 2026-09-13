@@ -43,6 +43,10 @@ enum AutopilotSettingsCopy {
     static let historyClearConfirm = "清除"
     static let historyClearCancel = "取消"
     static let historyClearFailed = "记录没清掉，请稍后重试（已发出的消息不受影响）"
+
+    static let statusActive = "正在整理回复"
+    static let statusIdle = "尚未开始整理"
+    static let openPending = "查看待确认回复"
 }
 
 struct AutopilotSettingsView: View {
@@ -78,14 +82,17 @@ struct AutopilotSettingsView: View {
                 Circle()
                     .fill(monitor.autopilotActive ? CompanionPalette.jade : Color.secondary.opacity(0.45))
                     .frame(width: 7, height: 7)
-                Text(monitor.autopilotActive ? "正在整理回复" : "尚未开始整理")
-                    .font(.system(size: 13))
+                    .accessibilityHidden(true)
+                Text(monitor.autopilotActive ? AutopilotSettingsCopy.statusActive : AutopilotSettingsCopy.statusIdle)
+                    .workspaceMeta()
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("查看待确认回复") { panelState.pendingSettingsTab = "autopilotDashboard" }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(CompanionPalette.jade)
-                    .font(.system(size: 13, weight: .medium))
+                Button(AutopilotSettingsCopy.openPending) {
+                    panelState.pendingSettingsTab = "autopilotDashboard"
+                }
+                .buttonStyle(.plain)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
             }
 
             SettingsSection("自动回复") {

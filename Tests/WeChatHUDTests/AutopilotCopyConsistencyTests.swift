@@ -87,6 +87,23 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(advancedBlock.contains("exclusionSection"))
     }
 
+    func testPendingLinkIsNotThePrimaryAction() throws {
+        let source = try AutopilotViewSource.load()
+        let body = try XCTUnwrap(source.text.range(of: "var body: some View"))
+        let section = try XCTUnwrap(source.text.range(of: "SettingsSection(\"自动回复\")"))
+        let header = String(source.text[body.lowerBound..<section.lowerBound])
+        XCTAssertTrue(header.contains("AutopilotSettingsCopy.openPending"))
+        XCTAssertTrue(header.contains("pendingSettingsTab = \"autopilotDashboard\""))
+        XCTAssertTrue(header.contains(".workspaceMeta()"))
+        XCTAssertFalse(header.contains("weight: .medium"), "the pending link used to look like the page's next step")
+        let button = try XCTUnwrap(header.range(of: "Button(AutopilotSettingsCopy.openPending)"))
+        let pending = String(header[button.lowerBound...])
+        XCTAssertFalse(pending.contains("CompanionPalette.jade"), "jade is reserved for the send switch, not this navigation")
+        XCTAssertEqual(AutopilotSettingsCopy.openPending, "查看待确认回复")
+        XCTAssertEqual(AutopilotSettingsCopy.statusIdle, "尚未开始整理")
+        XCTAssertEqual(AutopilotSettingsCopy.statusActive, "正在整理回复")
+    }
+
     // MARK: - Clear history
 
     func testClearHistoryFailureDoesNotInventAPrecondition() {
