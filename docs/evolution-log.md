@@ -335,3 +335,9 @@
 - Sync reader overload kept for compat; Autopilot guardrails unchanged
 - Tests: 1522 + 70 green; release OK
 
+## 2026-09-13 Slice 22 — peer/trend/fulfillment via WeChatReaderActor
+
+- Manual send receipt + lastPeerMessage + inferRelationship + chatTrend/relationshipStrength + commitment fulfillment hop through WeChatReaderActor
+- ConversationDetailView no longer reads raw `monitor.reader` for send receipt
+- Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
+
