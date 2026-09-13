@@ -54,7 +54,10 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         let weekly = String(source.text[weeklyStart.lowerBound..<reloadStart.lowerBound])
         XCTAssertTrue(weekly.contains("已经推进"))
         XCTAssertFalse(weekly.contains("background(CompanionPalette.jade, in: Circle())"))
-        XCTAssertTrue(weekly.contains("workspaceMeta()"))
+        XCTAssertTrue(weekly.contains("查看待办"))
+        XCTAssertTrue(weekly.contains("CompanionPressStyle()"))
+        XCTAssertFalse(weekly.contains("buttonStyle(.plain)"))
+        XCTAssertFalse(weekly.contains("foregroundStyle(CompanionPalette.jade)"))
         XCTAssertTrue(source.text.contains("导出"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }

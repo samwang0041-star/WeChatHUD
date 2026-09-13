@@ -196,30 +196,36 @@ struct DailyReportTabView: View {
                         }
                     }
                     if !pending.isEmpty {
-                        Text("还需要跟进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("还需要跟进")
+                            .workspaceMeta()
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
                         ForEach(pending.prefix(8)) { item in
                             HStack {
                                 Image(systemName: "circle")
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.content)
-                                    Text(DiscussionPresentation.dueLabel(item.dueAt)).font(.system(size: 12)).foregroundStyle(.secondary)
+                                        .workspaceBody()
+                                    Text(DiscussionPresentation.dueLabel(item.dueAt))
+                                        .workspaceMeta()
+                                        .foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Button("查看待办") {
                                     panelState.pendingSettingsTab = "tasks"
                                 }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(CompanionPalette.jade)
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                             }
-                           .font(.system(size: 14))
                        }
                         if pending.count > 8 {
                             Button("还有 \(pending.count - 8) 件在待办里") {
                                 panelState.pendingSettingsTab = "tasks"
                             }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(CompanionPalette.jade)
-                            .font(.system(size: 13, weight: .medium))
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                         }
                     }
                 }
