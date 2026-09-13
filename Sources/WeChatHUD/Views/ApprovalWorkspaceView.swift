@@ -36,6 +36,7 @@ enum ApprovalCopy {
     static let emptyPending = "还没有待确认的回复"
     static let emptyOther = "这一栏还没有记录"
     static let emptyHint = "点开始整理，草稿会出现在这里。发不发都由你决定。"
+    static let reply = "回复"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -303,13 +304,10 @@ struct ApprovalWorkspaceView: View {
                 .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("拟回复", systemImage: "sparkles")
-                            .font(.system(size: 13, weight: .semibold))
-                        CompanionBadge(title: "AI 草稿", systemImage: "text.badge.star")
-                    }
+                    Text(ApprovalCopy.reply)
+                        .workspaceRowTitle()
                     TextEditor(text: $editedReply)
-                        .accessibilityLabel("拟回复")
+                        .accessibilityLabel(ApprovalCopy.reply)
                         .font(.system(size: 14))
                         .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)

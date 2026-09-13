@@ -141,6 +141,17 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(actions.contains("borderedProminent"))
     }
 
+    func testApprovalReplyIsAReplyNotAnAIDraft() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertTrue(source.text.contains("ApprovalCopy.reply"))
+        XCTAssertFalse(source.text.contains("拟回复"))
+        XCTAssertFalse(source.text.contains("AI 草稿"))
+        XCTAssertFalse(source.text.contains("sparkles"))
+        XCTAssertFalse(source.text.contains("text.badge.star"))
+        XCTAssertFalse(source.text.contains("CompanionBadge"))
+        XCTAssertEqual(ApprovalCopy.reply, "回复")
+    }
+
     func testIslandGearNamesTheWorkspaceItOpens() throws {
         let source = try InboxViewSource.load()
         guard let wingStart = source.text.range(of: "Right wing —"),
