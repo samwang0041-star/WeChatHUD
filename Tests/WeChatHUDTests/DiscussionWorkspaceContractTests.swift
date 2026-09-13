@@ -75,6 +75,14 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("从左边选一条"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testRestoreReceiptSpeaksRestoredNotSavedStatus() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        XCTAssertFalse(source.text.contains("事项状态已保存"))
+        XCTAssertTrue(source.text.contains("已恢复成未完成"))
+        XCTAssertTrue(source.text.contains("已标记完成"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {
