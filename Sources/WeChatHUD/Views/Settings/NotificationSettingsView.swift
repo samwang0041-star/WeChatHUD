@@ -1,5 +1,21 @@
 import SwiftUI
 
+enum NotificationSettingsCopy {
+    static let popupNone = "现在浮窗不会自己弹出。"
+    static let atMentionPart = "群 @"
+    static let importantPart = "重点的人"
+    static let whitelistPart = "关注里的普通消息"
+
+    static func popupLine(atMention: Bool, important: Bool, allWhitelist: Bool) -> String {
+        var parts: [String] = []
+        if atMention { parts.append(atMentionPart) }
+        if important { parts.append(importantPart) }
+        if allWhitelist { parts.append(whitelistPart) }
+        if parts.isEmpty { return popupNone }
+        return "现在会弹出：\(parts.joined(separator: "、"))。"
+    }
+}
+
 struct NotificationSettingsView: View {
     @EnvironmentObject var store: HUDStore
     @State private var config = NotificationConfig()
@@ -8,35 +24,51 @@ struct NotificationSettingsView: View {
     @State private var saved = false
 
     var body: some View {
-        SettingsSection("谁来的消息要弹出") {
-            SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗，帮助你理解上下文。", isOn: $config.atMention)
-            SettingsRowDivider()
-            SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
-            SettingsRowDivider()
-            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
-            SettingsRowDivider()
-            SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
-                Picker("展示时间", selection: $config.durationSeconds) {
-                    ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
-                        Text("\(seconds) 秒").tag(seconds)
-                    }
-                }.labelsHidden().frame(width: 100)
-            }
-            SettingsRowDivider()
-            VStack(alignment: .leading, spacing: 8) {
-                Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
-                    .font(.caption).foregroundStyle(.secondary)
-                if let error {
-                    HStack {
-                        Text(error).foregroundStyle(.red)
-                        Spacer()
-                        Button("重试保存", action: save)
-                    }.font(.callout)
-                } else {
-                    Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
-                        .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
+            Text(NotificationSettingsCopy.popupLine(
+                atMention: config.atMention,
+                important: config.important,
+                allWhitelist: config.allWhitelist
+            ))
+            .workspaceTitle()
+            .foregroundStyle(.primary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(NotificationSettingsCopy.popupLine(
+                atMention: config.atMention,
+                important: config.important,
+                allWhitelist: config.allWhitelist
+            ))
+
+            SettingsSection("谁来的消息要弹出") {
+                SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗，帮助你理解上下文。", isOn: $config.atMention)
+                SettingsRowDivider()
+                SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
+                SettingsRowDivider()
+                SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
+                SettingsRowDivider()
+                SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
+                    Picker("展示时间", selection: $config.durationSeconds) {
+                        ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
+                            Text("\(seconds) 秒").tag(seconds)
+                        }
+                    }.labelsHidden().frame(width: 100)
                 }
-            }.padding(12)
+                SettingsRowDivider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let error {
+                        HStack {
+                            Text(error).foregroundStyle(.red)
+                            Spacer()
+                            Button("重试保存", action: save)
+                        }.font(.callout)
+                    } else {
+                        Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.padding(12)
+            }
         }
         .onAppear {
             config = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
