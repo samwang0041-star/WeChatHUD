@@ -675,6 +675,23 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.confirmSend, "确认发送")
     }
 
+    func testApprovalUncertainSendIsNotASuccessCheck() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertFalse(source.text.contains("receipt.contains(\"失败\")"))
+        XCTAssertFalse(
+            source.text.contains("exclamationmark.triangle"),
+            "uncertain send is not an error dump"
+        )
+        XCTAssertTrue(source.text.contains(".warn(CompanionProductCopy.sendUncertain)"))
+        XCTAssertTrue(source.text.contains(".ok(ApprovalCopy.savedDraft)"))
+        XCTAssertTrue(source.text.contains(".warn(ApprovalCopy.saveDraftFailed)"))
+        XCTAssertTrue(source.text.contains(".ok(ApprovalCopy.cancelledItem)"))
+        XCTAssertEqual(ApprovalCopy.savedDraft, "已保存草稿")
+        XCTAssertEqual(ApprovalCopy.saveDraftFailed, "草稿没有保存，请重试。")
+        XCTAssertEqual(ApprovalCopy.cancelledItem, "已取消本条，现有草稿仍保留。")
+        XCTAssertTrue(CompanionProductCopy.sendUncertain.contains("发送结果待核对"))
+    }
+
     func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
         let source = try ApprovalWorkspaceSource.load()
         XCTAssertFalse(

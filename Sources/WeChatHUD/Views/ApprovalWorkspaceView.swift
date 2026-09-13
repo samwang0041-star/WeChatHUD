@@ -42,6 +42,9 @@ enum ApprovalCopy {
     static let dismissSend = "取消"
     static let cancelledSend = "这条不发了。"
     static let pendingGone = "这条已经不在队列里。"
+    static let savedDraft = "已保存草稿"
+    static let saveDraftFailed = "草稿没有保存，请重试。"
+    static let cancelledItem = "已取消本条，现有草稿仍保留。"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -64,9 +67,15 @@ struct ApprovalWorkspaceView: View {
     @State private var filter: Filter = .pending
     @State private var selectedID: Int64?
     @State private var editedReply: String = ""
-    @State private var receipt: String?
+    @State private var receipt: Receipt = .idle
     @State private var showSendConfirm = false
     @State private var isSending = false
+
+    private enum Receipt: Equatable {
+        case idle
+        case ok(String)
+        case warn(String)
+    }
 
     private var entries: [AutopilotLogEntry] {
         switch filter {
@@ -108,10 +117,18 @@ struct ApprovalWorkspaceView: View {
                     detailPane.frame(minWidth: 240, idealWidth: 460)
                 }
             }
-            if let receipt {
-                Label(receipt, systemImage: receipt.contains("失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
+            switch receipt {
+            case .idle:
+                EmptyView()
+            case .ok(let text):
+                Label(text, systemImage: "checkmark.circle.fill")
                     .workspaceRowTitle()
-                    .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jade)
+                    .padding(.top, 10)
+            case .warn(let text):
+                Text(text)
+                    .workspaceRowTitle()
+                    .foregroundStyle(.secondary)
                     .padding(.top, 10)
             }
         }
@@ -342,16 +359,16 @@ struct ApprovalWorkspaceView: View {
                         Button(ApprovalCopy.saveDraft) {
                             do {
                                 try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
-                                receipt = "已保存草稿"
+                                receipt = .ok(ApprovalCopy.savedDraft)
                             } catch {
-                                receipt = "草稿没有保存，请重试。"
+                                receipt = .warn(ApprovalCopy.saveDraftFailed)
                             }
                         }
                         .buttonStyle(CompanionPressStyle())
                         .foregroundStyle(.secondary)
                         Button(ApprovalCopy.cancelItem) {
                             monitor.rejectAutopilotItem(logId: selected.id)
-                            receipt = "已取消本条，现有草稿仍保留。"
+                            receipt = .ok(ApprovalCopy.cancelledItem)
                         }
                         .buttonStyle(CompanionPressStyle())
                         .foregroundStyle(.secondary)
@@ -389,8 +406,8 @@ struct ApprovalWorkspaceView: View {
             chatUsername: selected.chatUsername
         )
         receipt = ok
-            ? CompanionProductCopy.sendSuccess(name: selected.chatName)
-            : CompanionProductCopy.sendUncertain
+            ? .ok(CompanionProductCopy.sendSuccess(name: selected.chatName))
+            : .warn(CompanionProductCopy.sendUncertain)
     }
 
     private func sendPendingNow(_ item: PendingSend) async -> String? {
@@ -398,7 +415,7 @@ struct ApprovalWorkspaceView: View {
         await monitor.syncAutopilotPendingQueue()
         switch outcome {
         case .sent:
-            receipt = CompanionProductCopy.sendSuccess(name: item.chatName)
+            receipt = .ok(CompanionProductCopy.sendSuccess(name: item.chatName))
             return nil
         case .blocked(let reason):
             return reason
@@ -410,7 +427,7 @@ struct ApprovalWorkspaceView: View {
     private func cancelPending(_ item: PendingSend) async {
         await monitor.autopilotService?.cancelPendingSend(id: item.id)
         await monitor.syncAutopilotPendingQueue()
-        receipt = ApprovalCopy.cancelledSend
+        receipt = .ok(ApprovalCopy.cancelledSend)
     }
 }
 
