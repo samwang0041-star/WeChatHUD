@@ -14,6 +14,8 @@ struct OnboardingView: View {
     @State private var configuration = AIConfig()
     @State private var saveError: String?
     @State private var refreshID = 0
+    @State private var lastFinishOpensWorkspace = true
+    @State private var lastFinishMarksOnboarded = true
 
     init(onOpenSettings: ((String) -> Void)? = nil, onComplete: @escaping () -> Void) {
         self.onOpenSettings = onOpenSettings
@@ -51,9 +53,7 @@ struct OnboardingView: View {
                     case 0: wechatDetection
                     default: whitelistGuide
                     }
-                    if let saveError {
-                        Text(saveError).font(.callout).foregroundStyle(.red)
-                    }
+                    finishReceipt
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20).padding(.bottom, 20)
@@ -146,6 +146,29 @@ struct OnboardingView: View {
         return nil
     }
 
+    @ViewBuilder
+    private var finishReceipt: some View {
+        if let saveError {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(saveError)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(FirstLaunchGuide.saveRetry) {
+                    finish(
+                        openWorkspace: lastFinishOpensWorkspace,
+                        markOnboarded: lastFinishMarksOnboarded
+                    )
+                }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(FirstLaunchGuide.saveRetry)
+            }
+        }
+    }
+
     private var stepIndicator: some View {
         // Only the rendered pages get a label. The third step title
         // ("开始使用") is the CTA on the last page, and showing it as a
@@ -224,7 +247,7 @@ struct OnboardingView: View {
     private func openSettings(_ tab: String) -> Bool {
         if let onOpenSettings { onOpenSettings(tab); return true }
         guard let app = NSApp.delegate as? AppDelegate, let state = app.panelState else {
-            saveError = "暂时无法打开设置，请使用菜单栏的设置入口。"
+            saveError = FirstLaunchGuide.openTodayFailed
             return false
         }
         state.pendingSettingsTab = tab
@@ -233,8 +256,10 @@ struct OnboardingView: View {
     }
 
     private func finish(openWorkspace: Bool, markOnboarded: Bool = true) {
+        lastFinishOpensWorkspace = openWorkspace
+        lastFinishMarksOnboarded = markOnboarded
         do {
-            // "稍后再设置" opens the workspace without recording the
+            // "稍后设置" opens the workspace without recording the
             // introduction as done, so the next launch still offers it.
             if markOnboarded {
                 try store.setSetting("onboarded", value: "true")
@@ -243,7 +268,7 @@ struct OnboardingView: View {
             if openWorkspace && !openSettings("today") { return }
             onComplete()
         } catch {
-            saveError = "介绍进度未能保存，请重试。连接设置不受影响。"
+            saveError = FirstLaunchGuide.saveFailed
         }
     }
 }

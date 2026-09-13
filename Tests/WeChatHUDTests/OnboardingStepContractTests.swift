@@ -166,6 +166,18 @@ final class OnboardingStepContractTests: XCTestCase {
         )
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
     }
+
+    func testSaveFailureIsAPlateReceiptNotARedCallout() throws {
+        let source = try OnboardingViewSource.load()
+        XCTAssertTrue(source.body.contains("finishReceipt"))
+        XCTAssertTrue(source.body.contains("FirstLaunchGuide.saveFailed"))
+        XCTAssertTrue(source.body.contains("FirstLaunchGuide.saveRetry"))
+        XCTAssertFalse(source.body.contains("介绍进度未能保存"))
+        XCTAssertFalse(source.body.contains(".foregroundStyle(.red)"))
+        XCTAssertEqual(FirstLaunchGuide.saveFailed, "刚才没存上。")
+        XCTAssertEqual(FirstLaunchGuide.saveRetry, "再试一次")
+        XCTAssertEqual(FirstLaunchGuide.openTodayFailed, "暂时打不开「今天」。")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
