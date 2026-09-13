@@ -825,6 +825,14 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(TodayCopy.viewOriginal, "查看原文")
         XCTAssertEqual(TodayCopy.aiReading, "AI 解读")
         XCTAssertEqual(TodayCopy.collapsedSummary(String(repeating: "字", count: 40)).count, 29)
+        XCTAssertEqual(TodayCopy.checkConnection, "检查连接")
+        XCTAssertEqual(TodayCopy.viewCommitments, "查看我答应的事")
+        XCTAssertFalse(TodayRail.showsAlert(status: .ok, classificationPending: 0, discussionPending: 0))
+        XCTAssertFalse(TodayRail.showsAlert(status: .syncing, classificationPending: 0, discussionPending: 0))
+        XCTAssertTrue(TodayRail.showsAlert(status: .stale, classificationPending: 0, discussionPending: 0))
+        XCTAssertTrue(TodayRail.showsAlert(status: .waitingForWeChat, classificationPending: 0, discussionPending: 0))
+        XCTAssertEqual(TodayRail.alert(status: .ok, classificationPending: 2, discussionPending: 0), .processing)
+        XCTAssertEqual(TodayRail.alert(status: .error("x"), classificationPending: 2, discussionPending: 0), .connection)
     }
 
     private func workspaceCommitment(
