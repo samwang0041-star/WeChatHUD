@@ -3,6 +3,12 @@ import SwiftUI
 enum GuideCopy {
     static let statusLine = "先连接微信，再选人，再看今天。"
     static let moreDisclosure = "还要看其余说明"
+    static let dailyDisclosure = "每天怎么用"
+    static let privacyDisclosure = "数据和隐私"
+    static let troubleDisclosure = "遇到问题时"
+    static let shortcutsDisclosure = "快捷键"
+    static let aboutDisclosure = "关于"
+    static let faqDisclosure = "常见问题"
     static let step1Detail = "登录这台 Mac 的微信。"
     static let step2Detail = "选一个人或一个群。"
     static let step3Detail = "今天看待回和待办。"
@@ -38,15 +44,17 @@ struct CompanionGuideView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 quickStartCard
                 DisclosureGroup(GuideCopy.moreDisclosure) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        faqColumn
-                        dailyUseCard
-                        privacyCard
-                        troubleshootingCard
-                        shortcutsCard
-                        aboutCard
+                    VStack(alignment: .leading, spacing: 8) {
+                        DisclosureGroup(GuideCopy.faqDisclosure) { faqColumn }
+                        DisclosureGroup(GuideCopy.dailyDisclosure) { dailyUseCard }
+                        DisclosureGroup(GuideCopy.privacyDisclosure) { privacyCard }
+                        DisclosureGroup(GuideCopy.troubleDisclosure) { troubleshootingCard }
+                        DisclosureGroup(GuideCopy.shortcutsDisclosure) { shortcutsCard }
+                        DisclosureGroup(GuideCopy.aboutDisclosure) { aboutCard }
                     }
                     .padding(.top, 8)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 }
                 .workspaceMeta()
                 .foregroundStyle(.secondary)
@@ -71,7 +79,6 @@ struct CompanionGuideView: View {
 
     private var faqColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("常见问题").font(.system(size: 15, weight: .semibold))
             faqRow("看不到消息？") { navigate(.system) }
             faqRow("AI 没有生成摘要？") { navigate(.aiService) }
             faqRow("发送没有成功？") { navigate(.system) }
