@@ -133,6 +133,23 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AutopilotSettingsCopy.alwaysManualTitle, "哪些一定交给你")
     }
 
+    func testAdvancedDoesNotNestASecondAdvancedCard() throws {
+        let source = try AutopilotViewSource.load()
+        XCTAssertFalse(
+            source.text.contains("SettingsSection(\"高级\")"),
+            "高级设置 used to open onto another card also titled 高级"
+        )
+        let advanced = try XCTUnwrap(source.text.range(of: "private var advancedSection"))
+        let history = try XCTUnwrap(source.text.range(of: "// MARK: - History"))
+        let block = String(source.text[advanced.lowerBound..<history.lowerBound])
+        XCTAssertTrue(block.contains("VStack(spacing: 0)"))
+        XCTAssertFalse(block.contains("SettingsSection("))
+        XCTAssertTrue(block.contains(".workspaceBody()"))
+        XCTAssertFalse(block.contains(".font(.callout)"))
+        XCTAssertEqual(AutopilotSettingsCopy.advancedTitle, "高级设置")
+        XCTAssertTrue(AutopilotSettingsCopy.groupRule.contains("不会自动发出"))
+    }
+
     func testPendingLinkIsNotThePrimaryAction() throws {
         let source = try AutopilotViewSource.load()
         let body = try XCTUnwrap(source.text.range(of: "var body: some View"))
