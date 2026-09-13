@@ -128,6 +128,100 @@ enum GroupContextSourceLoader {
         return Array(history) + [source] + following
     }
 
+
+    /// Actor-isolated variant of `load(notification:reader:)`. Same paging /
+    /// hot-path semantics; message reads hop through `WeChatReaderActor`.
+    static func load(
+        notification: HUDNotification,
+        readerActor: WeChatReaderActor,
+        historyCount: Int = 8,
+        futureCount: Int = 3
+    ) async -> [MessageInfo]? {
+        guard notification.kind == .groupAt, !notification.messageID.isEmpty else { return nil }
+
+        let targetTimestamp = Int(notification.timestamp.timeIntervalSince1970)
+        let startTime = max(0, targetTimestamp - 7 * 24 * 60 * 60)
+        let endTime = targetTimestamp == Int.max ? nil : targetTimestamp + 1
+        let pageSize = 24
+        var beforeCursor: (lastCreateTime: Int, lastLocalId: Int)?
+        var source: MessageInfo?
+
+        let fastPathStartTime = max(startTime, targetTimestamp - fastPathLookbackSeconds)
+        if let page = try? await readerActor.getMessages(
+            chatUsername: notification.chatUsername,
+            limit: fastPathPageLimit,
+            sinceLocalId: nil,
+            afterCursor: nil,
+            oldestFirst: false,
+            startTime: fastPathStartTime,
+            endTime: endTime,
+            beforeCursor: nil
+        ), let match = page.first(where: {
+            $0.id == notification.messageID && $0.chatUsername == notification.chatUsername
+        }) {
+            source = match
+        }
+
+        if source == nil {
+            for _ in 0..<128 {
+                guard let page = try? await readerActor.getMessages(
+                    chatUsername: notification.chatUsername,
+                    limit: pageSize,
+                    sinceLocalId: nil,
+                    afterCursor: nil,
+                    oldestFirst: false,
+                    startTime: startTime,
+                    endTime: endTime,
+                    beforeCursor: beforeCursor
+                ), !page.isEmpty else { break }
+
+                if let match = page.first(where: {
+                    $0.id == notification.messageID && $0.chatUsername == notification.chatUsername
+                }) {
+                    source = match
+                    break
+                }
+
+                guard let oldest = page.min(by: order) else { break }
+                let next = (lastCreateTime: oldest.createTime, lastLocalId: oldest.localId)
+                if beforeCursor?.lastCreateTime == next.lastCreateTime,
+                   beforeCursor?.lastLocalId == next.lastLocalId { break }
+                beforeCursor = next
+                if page.count < pageSize { break }
+            }
+        }
+        guard let source else { return nil }
+
+        let cursor = (lastCreateTime: source.createTime, lastLocalId: source.localId)
+        let before = (try? await readerActor.getMessages(
+            chatUsername: notification.chatUsername,
+            limit: historyCount + 1,
+            sinceLocalId: nil,
+            afterCursor: nil,
+            oldestFirst: false,
+            startTime: startTime,
+            endTime: source.createTime + 1,
+            beforeCursor: cursor
+        )) ?? []
+        let history = before
+            .filter { $0.chatUsername == notification.chatUsername && $0.id != source.id }
+            .sorted(by: order)
+            .suffix(historyCount)
+
+        let future = (try? await readerActor.getMessages(
+            chatUsername: notification.chatUsername,
+            limit: futureCount,
+            sinceLocalId: nil,
+            afterCursor: cursor,
+            oldestFirst: true,
+            startTime: source.createTime,
+            endTime: nil,
+            beforeCursor: nil
+        )) ?? []
+        let following = future.filter { $0.chatUsername == notification.chatUsername }
+        return Array(history) + [source] + following
+    }
+
     private static func order(_ lhs: MessageInfo, _ rhs: MessageInfo) -> Bool {
         if lhs.createTime != rhs.createTime { return lhs.createTime < rhs.createTime }
         return lhs.localId < rhs.localId

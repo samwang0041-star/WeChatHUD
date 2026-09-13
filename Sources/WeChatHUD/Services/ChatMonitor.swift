@@ -2588,6 +2588,7 @@ final class ChatMonitor: ObservableObject {
         let readerRef = reader
         let storeRef = store
         let summarizer = inboxSummarizer
+        let readerActor = WeChatReaderActor(reader)
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
@@ -2598,15 +2599,13 @@ final class ChatMonitor: ObservableObject {
                 }
                 // Validate a group @ source before consulting cache; an old
                 // summary must not survive after its triggering row vanished.
-                // The load walks the group's shards, so it runs off the main
-                // actor — see runOffMain.
+                // Message paging goes through WeChatReaderActor.
                 let sourceCentered: [MessageInfo]?
                 if let sourceNotification {
-                    sourceCentered = await Self.runOffMain {
-                        GroupContextSourceLoader.load(
-                            notification: sourceNotification, reader: readerRef
-                        )
-                    }
+                    sourceCentered = await GroupContextSourceLoader.load(
+                        notification: sourceNotification,
+                        readerActor: readerActor
+                    )
                     guard sourceCentered != nil else { continue }
                 } else {
                     sourceCentered = nil
@@ -2620,9 +2619,9 @@ final class ChatMonitor: ObservableObject {
                 self.summaryInFlight.insert(cacheKey)
                 defer { self.summaryInFlight.remove(cacheKey) }
 
-                let myUname = readerRef.myUsername()
-                let myDisplay = readerRef.displayName(for: myUname)
-                let mySelfNames = readerRef.mySelfNames
+                let myUname = await readerActor.myUsername()
+                let myDisplay = await readerActor.displayName(for: myUname)
+                let mySelfNames = await readerActor.mySelfNames()
                 // Private/debt rows retain the historical latest-inbound
                 // behavior below. Group @ rows take the exact source branch
                 // first, so later chatter cannot replace the trigger.
@@ -2660,10 +2659,8 @@ final class ChatMonitor: ObservableObject {
                     continue
                 } else {
                     // Cross-shard decryption + parsing for up to 50 messages:
-                    // the single biggest main-thread stall in this loop.
-                    msgs = await Self.runOffMain {
-                        (try? readerRef.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
-                    }
+                    // hop through WeChatReaderActor instead of raw reader.
+                    msgs = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
                 }
                 let cutoff48h = Date().addingTimeInterval(-48 * 3600)
                 let filtered = msgs.filter { msg in
