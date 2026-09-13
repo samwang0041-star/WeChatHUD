@@ -90,7 +90,7 @@ struct AutopilotSettingsView: View {
                 Button(AutopilotSettingsCopy.openPending) {
                     panelState.pendingSettingsTab = "autopilotDashboard"
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .workspaceMeta()
                 .foregroundStyle(.secondary)
             }
