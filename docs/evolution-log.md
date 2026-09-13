@@ -5,6 +5,14 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 21 — commitment + recall context via WeChatReaderActor
+- ChatMonitor self-outgoing commitment tracking and recall analysis fetch context through actor
+- Tests 1522+70 green
+
+
+
+
+
 ### [Overnight] 2026-09-13 Slice 17 — ChatMonitor on-demand → WeChatReaderActor
 - OnDemandAnalysis + Classification async reads/identity via actor; hasAccountSwitched wrapper
 - GroupContextSourceLoader still sync provider (debt); Autopilot unchanged
