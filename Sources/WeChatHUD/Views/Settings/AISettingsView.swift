@@ -23,6 +23,9 @@ enum AISettingsCopy {
     static let needAddress = "请填一个能用的地址。"
     static let pickModel = "请选一个模型。"
     static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
+    static let confirmUnreachable = "这次没连上。"
+    static let confirmBusy = "这会儿忙，过会儿再试。"
+    static let needChatGPTLogin = "请先在这台 Mac 上登录 ChatGPT。"
     static let retryOnce = "再试一次"
     static let confirmOk = "刚才确认过了。"
     static let confirmOkUnsaved = "可以用，但这次没记下，请再点「确认能用」。"
@@ -851,16 +854,25 @@ struct AISettingsView: View {
     }
 
     private func userFacingConfigurationError(_ message: String) -> String {
+        if message.contains("超时") || message.contains("无法连接") || message.contains("网络请求失败") {
+            return AISettingsCopy.confirmUnreachable
+        }
+        if message.contains("额度") || message.contains("过多") {
+            return AISettingsCopy.confirmBusy
+        }
+        if message.contains("登录") {
+            return AISettingsCopy.needChatGPTLogin
+        }
         if message.localizedCaseInsensitiveContains("api key") || message.localizedCaseInsensitiveContains("token") {
             return AISettingsCopy.needSecret
         }
         if message.contains("接口地址") || message.contains("http://") || message.contains("https://") {
             return AISettingsCopy.needAddress
         }
-        if message.contains("模型") {
+        if message.contains("请填写模型名称") || message.contains("请选择一个模型") {
             return AISettingsCopy.pickModel
         }
-        return message
+        return AISettingsCopy.checkAgain
     }
 
     private func fetchModels() {
