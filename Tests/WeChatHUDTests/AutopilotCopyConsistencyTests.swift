@@ -614,6 +614,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.dismissSend, "取消")
     }
 
+    func testCancellingAPendingSendSpeaksAReceipt() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertTrue(source.text.contains("ApprovalCopy.cancelledSend"))
+        XCTAssertTrue(source.text.contains("ApprovalCopy.sendNow"))
+        XCTAssertTrue(source.text.contains("即将发送"))
+        XCTAssertFalse(source.text.contains("已取消即将发送的回复"))
+        XCTAssertEqual(ApprovalCopy.cancelledSend, "这条不发了。")
+    }
+
     func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
         let source = try ApprovalWorkspaceSource.load()
         XCTAssertFalse(
