@@ -116,6 +116,12 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
             "The primary action used the system accent, which is not jade on the island."
         )
         XCTAssertFalse(source.text.contains(".cornerRadius(6)"))
+        XCTAssertFalse(
+            source.text.contains("Color.accentColor"),
+            "Expanded analysis chrome must use island mint / IslandInk, not the system accent."
+        )
+        XCTAssertFalse(source.text.contains("color = .green"))
+        XCTAssertFalse(source.text.contains("color = .blue"))
     }
 }
 
