@@ -5,6 +5,11 @@
 
 
 
+
+### [Overnight] 2026-09-13 Slice 7 — DiscussionQueue on serial query helpers
+- Dropped rawDB prepare path; throwing query helpers preserve corrupt-row errors
+- Tests 1518+70 green
+
 ### [Overnight] 2026-09-13 Slice 6 — VIP/recalled/audit/asks on query cache
 - Fixed-SQL variants for filtered audit/feedback/asks loaders
 - Autopilot guardrails unchanged; tests 1518+70 green
