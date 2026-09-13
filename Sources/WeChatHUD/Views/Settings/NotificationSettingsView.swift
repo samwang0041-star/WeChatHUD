@@ -53,21 +53,29 @@ struct NotificationSettingsView: View {
                         }
                     }.labelsHidden().frame(width: 100)
                 }
-                SettingsRowDivider()
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let error {
-                        HStack {
-                            Text(error).foregroundStyle(.red)
-                            Spacer()
-                            Button("重试保存", action: save)
-                        }.font(.callout)
-                    } else {
-                        Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
-                            .font(.caption).foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(error)
+                            .workspaceMeta()
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("重试保存", action: save)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
-                }.padding(12)
+                } else {
+                    Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .onAppear {
