@@ -55,52 +55,20 @@ struct DiscussionWorkspaceView: View {
     /// makes the trade visible.
     private var strictnessBar: some View {
         let hidden = strictness.hidden(from: monitor.discussionItems)
-        // "Work of mine" must mean work, not every record that happens to carry
-        // my owner. Counting records here overstated the cost of a tighter
-        // level by more than an order of magnitude (28 claimed vs 1 real).
         let hiddenMine = hidden.filter { $0.owner == .mine && !$0.kind.isRecord }.count
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("保留")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Picker("保留", selection: strictnessBinding) {
-                    ForEach(DiscussionStrictness.allCases, id: \.self) { level in
-                        Text(level.label).tag(level)
-                    }
+        return Group {
+            if !hidden.isEmpty, !showHistory {
+                Button {
+                    monitor.setDiscussionStrictness(.everything)
+                } label: {
+                    Text(receiptLabel(hidden: hidden.count, mine: hiddenMine))
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .accessibilityLabel("保留哪些内容")
-                Spacer(minLength: 8)
-                if !hidden.isEmpty {
-                    Button {
-                        // Reveal by widening, not by a separate "show hidden"
-                        // mode: one mechanism, and it cannot disagree with the
-                        // picker.
-                        monitor.setDiscussionStrictness(.everything)
-                    } label: {
-                        Text(receiptLabel(hidden: hidden.count, mine: hiddenMine))
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
-                    .accessibilityHint("切到「全部都记」，这些内容会回到列表里")
-                }
-            }
-            Text(strictness.explanation)
-                .font(.system(size: 11))
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHint("切到「全部都记」，这些内容会回到列表里")
+            }
         }
-    }
-
-    private var strictnessBinding: Binding<DiscussionStrictness> {
-        Binding(
-            get: { strictness },
-            set: { monitor.setDiscussionStrictness($0) }
-        )
     }
 
     /// "已收起 N 条（其中 M 条是我要做的） · 展开".
@@ -189,8 +157,7 @@ struct DiscussionWorkspaceView: View {
     }
 
     private var filters: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            strictnessBar
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ForEach(DiscussionScope.allCases) { value in
                     Button {
@@ -208,12 +175,20 @@ struct DiscussionWorkspaceView: View {
                     .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
                 Spacer()
-                Toggle("看已处理的", isOn: $showHistory)
-                    .font(.system(size: 12))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                .fixedSize()
+                Button(showHistory ? "看还没做完的" : "看已处理的") { showHistory.toggle() }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(showHistory ? "看还没做完的" : "看已处理的")
+                Menu("保留") {
+                    ForEach(DiscussionStrictness.allCases, id: \.self) { level in
+                        Button(level.label) { monitor.setDiscussionStrictness(level) }
+                    }
+                }
+                .controlSize(.small)
+                .accessibilityLabel("保留哪些内容")
             }
+            strictnessBar
             if showsSearchField {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -234,11 +209,6 @@ struct DiscussionWorkspaceView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("找待办")
             }
-            Text(showHistory
-                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
-                 : "当前只显示还没做完的。过期太久的会收起，不占这个列表。")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
