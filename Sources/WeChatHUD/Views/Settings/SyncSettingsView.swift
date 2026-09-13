@@ -765,12 +765,15 @@ struct SyncSettingsView: View {
                             Button("完成") {
                                 mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .fulfilled) }
                             }
-                            .controlSize(.mini)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                             Button("取消") {
                                 mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
                             }
-                            .controlSize(.mini)
-                            .foregroundColor(.secondary)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                         } else {
                             Text(commitmentStatusLabel(item.status))
                                 .font(.system(size: 12))
@@ -815,12 +818,15 @@ struct SyncSettingsView: View {
                             Button("已处理") {
                                 mutateData { try store.updatePendingAskStatus(msgUID: ask.msgUID, status: .done) }
                             }
-                            .controlSize(.mini)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                             Button("忽略") {
                                 mutateData { try store.dismissPendingAsk(msgUID: ask.msgUID) }
                             }
-                            .controlSize(.mini)
-                            .foregroundColor(.secondary)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                         } else {
                             Text(ask.status.rawValue).font(.system(size: 12)).foregroundColor(.secondary)
                         }

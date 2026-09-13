@@ -79,6 +79,20 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testRecordActionsPressQuietly() throws {
+        let source = try LocalDataSettingsSource.load()
+        let listsStart = try XCTUnwrap(source.text.range(of: "// MARK: - Data lists"))
+        let helpersStart = try XCTUnwrap(source.text.range(of: "// MARK: - Helpers"))
+        let lists = String(source.text[listsStart.lowerBound..<helpersStart.lowerBound])
+        XCTAssertTrue(lists.contains("Button(\"完成\")"))
+        XCTAssertTrue(lists.contains("CompanionPressStyle()"))
+        XCTAssertFalse(lists.contains(".controlSize(.mini)"))
+        XCTAssertFalse(lists.contains(".bordered"))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
