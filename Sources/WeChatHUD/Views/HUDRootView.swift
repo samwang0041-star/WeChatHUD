@@ -130,6 +130,11 @@ private struct HUDMonitorSurface: View {
                 .onPreferenceChange(SizePreferenceKey.self) { size in
                     panelState.reportExtendedSize(size)
                 }
+                // Same order as the notification banner: measure the
+                // intrinsic list first, *then* let the view fill the
+                // covering stage. Measuring after the infinite frame
+                // reports the window (720 pt) instead of the inbox.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         case .notification:
             if let notif = monitor.latestNotification {
                 StableNotificationBanner(notification: notif)

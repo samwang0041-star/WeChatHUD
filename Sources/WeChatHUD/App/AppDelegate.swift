@@ -222,7 +222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.panel.setFrameInstantly(height: h, width: w)
                 } else if state == .extended {
                     let cached = self.panelState.lastExtendedSize
-                    if cached.width > 1, cached.height > 1 {
+                    if IslandMeasurement.isUsableCachedSize(cached) {
                         self.panel.animateHeight(to: cached.height, width: cached.width, caller: "AppDelegate.currentState.extended.cached")
                     } else {
                         // First hover this session: do not animate to the static
@@ -313,9 +313,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let cover = self.panel.frame.size
                     if IslandMeasurement.isCoveringStage(size, cover: cover, lastContent: self.panelState.lastExtendedSize) {
                         AnimationDebugger.logEvent("ignore stage-sized measurement \(Int(size.width))×\(Int(size.height)) cover=\(Int(cover.width))×\(Int(cover.height))")
-                        return
+                        let remembered = self.panelState.lastExtendedSize
+                        if IslandMeasurement.isUsableCachedSize(remembered),
+                           cover.height > remembered.height + 24 {
+                            targetSize = remembered
+                        } else {
+                            return
+                        }
+                    } else {
+                        targetSize = IslandMeasurement.clamped(size)
                     }
-                    targetSize = IslandMeasurement.clamped(size)
                 }
 
                 AnimationDebugger.logLazyEvent("measurement current=\(current) raw=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) target=(\(String(format: "%.1f", targetSize.width))×\(String(format: "%.1f", targetSize.height))) frame=(\(String(format: "%.1f", self.panel.frame.width))×\(String(format: "%.1f", self.panel.frame.height)))")
@@ -767,7 +774,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func refreshNow() {
-        MainActor.assumeIsolated { monitor.refreshNow() }
+        MainActor.assumeIsolated {
+            monitor.refreshNow()
+            panelState.showNewMessages()
+        }
     }
 
     @objc func checkForUpdates() {

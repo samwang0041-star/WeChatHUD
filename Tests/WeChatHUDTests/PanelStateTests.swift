@@ -194,4 +194,24 @@ final class PanelStateTests: XCTestCase {
         XCTAssertEqual(state.measuredExtendedSize, .zero)
         XCTAssertEqual(state.lastExtendedSize.height, 280)
     }
+
+    @MainActor
+    func testCeilingMeasurementDoesNotPoisonCachedInboxSize() {
+        let state = PanelState()
+        state.currentState = .extended
+        state.reportExtendedSize(CGSize(width: 560, height: 411))
+        XCTAssertEqual(state.lastExtendedSize.height, 411)
+        state.reportExtendedSize(CGSize(width: 560, height: 720))
+        XCTAssertEqual(state.lastExtendedSize.height, 411,
+                       "the 720 pt stage must not replace a real inbox cache")
+    }
+
+    @MainActor
+    func testShowNewMessagesOpensTheInbox() {
+        let state = PanelState()
+        state.islandSurface = .tasks
+        state.showNewMessages()
+        XCTAssertEqual(state.currentState, .extended)
+        XCTAssertEqual(state.islandSurface, .inbox)
+    }
 }

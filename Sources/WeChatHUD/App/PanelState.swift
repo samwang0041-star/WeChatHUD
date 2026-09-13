@@ -571,6 +571,12 @@ final class PanelState: ObservableObject {
         expandedInboxItemID = id
     }
 
+    /// Menu "查看新消息": the label promises the inbox, not a silent scan.
+    func showNewMessages() {
+        islandSurface = .inbox
+        goExtended()
+    }
+
     /// Called by HUDRootView's SwiftUI preference-key callback with the
     /// actual rendered size of the extended inbox. AppDelegate observes
     /// this to animate the NSPanel frame to hug the content — so a row
@@ -582,7 +588,7 @@ final class PanelState: ObservableObject {
         guard size != .zero, size != measuredExtendedSize else { return }
         AnimationDebugger.logEvent("reportSize state=\(currentState) size=(\(String(format: "%.1f", size.width))×\(String(format: "%.1f", size.height))) ready=\(isReady)")
         measuredExtendedSize = size
-        if currentState == .extended {
+        if currentState == .extended, IslandMeasurement.isUsableCachedSize(size) {
             lastExtendedSize = size
         }
     }

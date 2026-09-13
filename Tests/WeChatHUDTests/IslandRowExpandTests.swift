@@ -19,6 +19,26 @@ final class IslandRowExpandTests: XCTestCase {
         XCTAssertFalse(IslandMeasurement.isCoveringStage(cover, cover: cover, lastContent: .zero))
     }
 
+    func testCeilingSizedCoverIsTheStageEvenOnFirstMeasurement() {
+        let cover = CGSize(width: 560, height: IslandMeasurement.maxExtendedHeight)
+        XCTAssertTrue(
+            IslandMeasurement.isCoveringStage(cover, cover: cover, lastContent: .zero),
+            "a first report of the 720 pt grow-only window is the stage, not a 6-row inbox"
+        )
+        XCTAssertFalse(
+            IslandMeasurement.isCoveringStage(CGSize(width: 560, height: 411), cover: cover, lastContent: .zero),
+            "a real first inbox measurement is shorter than the ceiling"
+        )
+    }
+
+    func testCeilingCacheIsNotARememberedInbox() {
+        XCTAssertFalse(IslandMeasurement.isUsableCachedSize(CGSize(width: 560, height: 720)))
+        XCTAssertFalse(IslandMeasurement.isUsableCachedSize(.zero))
+        XCTAssertTrue(IslandMeasurement.isUsableCachedSize(CGSize(width: 560, height: 411)))
+        XCTAssertTrue(IslandMeasurement.isCeilingHeight(720))
+        XCTAssertFalse(IslandMeasurement.isCeilingHeight(411))
+    }
+
     func testClampedHeightNeverExceedsTheInboxCeiling() {
         let huge = IslandMeasurement.clamped(CGSize(width: 560, height: 4000))
         XCTAssertEqual(huge.height, IslandMeasurement.maxExtendedHeight)
