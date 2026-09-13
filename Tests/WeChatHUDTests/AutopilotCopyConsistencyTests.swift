@@ -810,6 +810,25 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
 
+    func testCapabilityActionsPressLikeWorkspaceSecondaries() throws {
+        let sync = try SyncSettingsSource.load()
+        let start = try XCTUnwrap(sync.text.range(of: "private func capabilityRow"))
+        let legacy = try XCTUnwrap(sync.text.range(of: "private func legacyRecordsSection"))
+        let row = String(sync.text[start.lowerBound..<legacy.lowerBound])
+        let action = try XCTUnwrap(row.range(of: "if let actionTitle"))
+        let padding = try XCTUnwrap(row.range(of: ".padding(16)"))
+        let button = String(row[action.lowerBound..<padding.lowerBound])
+        XCTAssertTrue(button.contains("CompanionPressStyle()"))
+        XCTAssertTrue(button.contains(".workspaceMeta()"))
+        XCTAssertFalse(button.contains("CompanionPalette.jade"), "jade stays on 去选对话")
+        XCTAssertFalse(button.contains(".buttonStyle(.plain)"))
+        XCTAssertFalse(button.contains("borderedProminent"))
+        XCTAssertFalse(button.contains("chevron.right"))
+        XCTAssertTrue(sync.text.contains("actionTitle: aiReady ? nil : \"设置 AI\""))
+        XCTAssertTrue(sync.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"aiService\")"))
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
+
     func testConnectionCardDoesNotLectureAboutChangingAccounts() throws {
         let setup = try ConnectionSetupSource.load()
         XCTAssertFalse(setup.text.contains("连接步骤只用于读取聊天"))
