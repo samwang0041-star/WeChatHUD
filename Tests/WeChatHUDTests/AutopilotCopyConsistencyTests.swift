@@ -1185,6 +1185,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.restartFailed, "这次没重新打开助手，请再试一次。")
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
+
+    func testPreparationFailureSpeaksHumanNotADump() throws {
+        let setup = try ConnectionSetupSource.load()
+        XCTAssertFalse(setup.text.contains("setPhase(.failed(reason: error.localizedDescription))"))
+        XCTAssertTrue(setup.text.contains("FirstLaunchGuide.userFacingPreparationError"))
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        XCTAssertEqual(
+            FirstLaunchGuide.userFacingPreparationError(""),
+            "这次准备没有完成，请重试。"
+        )
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
 }
 
 // MARK: - Source readers

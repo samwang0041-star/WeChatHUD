@@ -672,7 +672,7 @@ struct WeChatConnectionSetupView: View {
                 monitor.refreshNow()
             }
         } catch {
-            keyPreparation.setPhase(.failed(reason: error.localizedDescription))
+            keyPreparation.setPhase(.failed(reason: FirstLaunchGuide.userFacingPreparationError(error.localizedDescription)))
         }
     }
 
@@ -692,7 +692,7 @@ struct WeChatConnectionSetupView: View {
                 do {
                     return try keyPreparation.verifyAndStore(rawKeys: rawKeys, dbRoot: dbRoot)
                 } catch {
-                    keyPreparation.setPhase(.failed(reason: error.localizedDescription))
+                    keyPreparation.setPhase(.failed(reason: FirstLaunchGuide.userFacingPreparationError(error.localizedDescription)))
                     return nil
                 }
             case .needsResignAgain:
