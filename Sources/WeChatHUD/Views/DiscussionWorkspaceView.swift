@@ -464,7 +464,7 @@ struct DiscussionWorkspaceView: View {
             if status == .done, let title {
                 receipt = "\(title)已标记完成"
             } else if previous != nil {
-                receipt = "事项状态已保存"
+                receipt = title.map { "「\($0)」已恢复成未完成。" } ?? "已恢复成未完成。"
             } else {
                 receipt = nil
             }
