@@ -8,7 +8,21 @@ enum AISettingsCopy {
     static let unverified = "还没确认能不能用"
     static let ready = "可以用"
     static let statusHint = "改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。"
-    static let sourceTitle = "服务来源"
+    static let sourceTitle = "用哪家"
+    static let sourcePreset = "常用服务"
+    static let sourceCustom = "自己填"
+    static let vendorTitle = "哪一家"
+    static let addressTitle = "接到哪"
+    static let secretTitle = "密钥"
+    static let getKey = "去拿密钥"
+    static let modelTitle = "用哪个模型"
+    static let noModel = "还没选模型"
+    static let refreshModels = "重新获取可用模型"
+    static let needSecret = "请补上这台服务的密钥。"
+    static let needAddress = "请填一个能用的地址。"
+    static let pickModel = "请选一个模型。"
+    static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
+    static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
 }
 
 extension Notification.Name {
@@ -37,10 +51,10 @@ struct ModelPicker: View {
             HStack(spacing: 6) {
                 CompanionClipboardField(
                     text: $model,
-                    placeholder: "模型",
+                    placeholder: AISettingsCopy.modelTitle,
                     kind: .model,
                     monospaced: true,
-                    accessibilityLabel: "模型"
+                    accessibilityLabel: AISettingsCopy.modelTitle
                 )
 
                 Button(action: onRefresh) {
@@ -54,8 +68,8 @@ struct ModelPicker: View {
                     }
                 }
                 .buttonStyle(.borderless)
-                .help("从接口获取模型列表")
-                .accessibilityLabel("获取模型列表")
+                .help(AISettingsCopy.refreshModels)
+                .accessibilityLabel(AISettingsCopy.refreshModels)
                 .disabled(isFetching)
 
                 if !models.isEmpty {
@@ -154,8 +168,8 @@ struct ProviderCard: View {
     var body: some View {
         Group {
             if !isCustomSource {
-                SettingsRow("供应商") {
-                    Picker("供应商", selection: Binding(get: { providerID }, set: { value in
+                SettingsRow(AISettingsCopy.vendorTitle) {
+                    Picker(AISettingsCopy.vendorTitle, selection: Binding(get: { providerID }, set: { value in
                         providerID = value
                         syncProviderPreset()
                         onProviderSelected(value)
@@ -169,18 +183,18 @@ struct ProviderCard: View {
 
                 SettingsRowDivider()
                 // Preset vendors own their service address; show it read-only.
-                SettingsRow("服务地址") {
+                SettingsRow(AISettingsCopy.addressTitle) {
                     if hasPresetBaseURL {
                         CompanionClipboardField(
                             text: $baseURL,
                             kind: .url,
                             writable: false,
                             monospaced: true,
-                            accessibilityLabel: "服务地址"
+                            accessibilityLabel: AISettingsCopy.addressTitle
                         )
                         .frame(maxWidth: 240)
                     } else {
-                        CompanionCopyableText(text: "使用 Codex 登录态，无需服务地址")
+                        CompanionCopyableText(text: AISettingsCopy.codexHint)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
@@ -188,13 +202,13 @@ struct ProviderCard: View {
             } else {
                 DisclosureGroup("高级连接设置", isExpanded: $advancedConnectionExpanded) {
                     SettingsRowDivider()
-                    SettingsRow("服务地址") {
+                    SettingsRow(AISettingsCopy.addressTitle) {
                         VStack(alignment: .leading, spacing: 5) {
                             CompanionClipboardField(
                                 text: $baseURL,
-                                placeholder: "服务地址",
+                                placeholder: AISettingsCopy.addressTitle,
                                 kind: .url,
-                                accessibilityLabel: "服务地址"
+                                accessibilityLabel: AISettingsCopy.addressTitle
                             )
                             .frame(maxWidth: 220)
                             if usesUnencryptedRemoteHTTP {
@@ -213,36 +227,36 @@ struct ProviderCard: View {
             // Access credential — only for providers that require a key
             if isCustomSource || provider?.requiresKey == true {
                 SettingsRowDivider()
-                SettingsRow("访问凭据") {
+                SettingsRow(AISettingsCopy.secretTitle) {
                     HStack(spacing: 8) {
                         CompanionClipboardField(
                             text: $apiKey,
                             kind: .secret,
                             secure: true,
-                            accessibilityLabel: "访问凭据"
+                            accessibilityLabel: AISettingsCopy.secretTitle
                         )
                         .frame(maxWidth: 220)
                         if !isCustomSource, provider?.requiresKey == true, let signup = provider?.signupURL, !signup.isEmpty {
-                            Button("获取 API Key") {
+                            Button(AISettingsCopy.getKey) {
                                 if let u = URL(string: signup) { NSWorkspace.shared.open(u) }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
-                            .accessibilityLabel("打开供应商密钥页面")
+                            .accessibilityLabel(AISettingsCopy.getKey)
                         }
                     }
                 }
             }
 
             if providerID == "openai-codex" {
-                Text("使用这台 Mac 上 Codex 的登录状态。连接测试会向 ChatGPT 发送一条测试请求，不包含聊天记录。")
+                Text(AISettingsCopy.codexHint)
                     .font(.system(size: 12)).foregroundColor(.secondary)
                     .padding(14)
             }
 
             // Model picker with live fetch + search
             SettingsRowDivider()
-            SettingsRow("模型") {
+            SettingsRow(AISettingsCopy.modelTitle) {
                 ModelPicker(
                     model: $model,
                     models: models,
@@ -262,7 +276,7 @@ struct ProviderCard: View {
                             .font(.system(size: 12))
                             .foregroundColor(.primary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("配置仍保留。原文和已整理的事项还能用。请核对服务地址、模型和访问凭据，再重新测试。")
+                        Text(AISettingsCopy.checkAgain)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -461,7 +475,7 @@ struct AISettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(serviceUsabilityTitle)
                     .workspaceTitle()
-                let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? "未选择模型" : configuredSlot.model)"
+                let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? AISettingsCopy.noModel : configuredSlot.model)"
                 Text(summary)
                     .workspaceBody()
                     .foregroundStyle(.primary)
@@ -582,13 +596,13 @@ struct AISettingsView: View {
         SettingsSection {
             SettingsRow(AISettingsCopy.sourceTitle) {
                 Picker(AISettingsCopy.sourceTitle, selection: $serviceSource) {
-                    Text("预设供应商").tag(ServiceSource.preset)
-                    Text("自定义供应商").tag(ServiceSource.custom)
+                    Text(AISettingsCopy.sourcePreset).tag(ServiceSource.preset)
+                    Text(AISettingsCopy.sourceCustom).tag(ServiceSource.custom)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 220)
-                .accessibilityLabel("AI 服务来源")
+                .accessibilityLabel(AISettingsCopy.sourceTitle)
             }
             SettingsRowDivider()
             providerCard
@@ -815,13 +829,13 @@ struct AISettingsView: View {
 
     private func userFacingConfigurationError(_ message: String) -> String {
         if message.localizedCaseInsensitiveContains("api key") || message.localizedCaseInsensitiveContains("token") {
-            return "请补充该服务要求的访问凭据。"
+            return AISettingsCopy.needSecret
         }
         if message.contains("接口地址") || message.contains("http://") || message.contains("https://") {
-            return "请补充有效的服务地址。"
+            return AISettingsCopy.needAddress
         }
         if message.contains("模型") {
-            return "请选择一个模型。"
+            return AISettingsCopy.pickModel
         }
         return message
     }

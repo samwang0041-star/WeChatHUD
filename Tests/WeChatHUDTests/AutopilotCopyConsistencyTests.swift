@@ -300,8 +300,26 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(block.contains("AISettingsCopy.sourceTitle"))
         XCTAssertTrue(block.contains("providerCard"))
         XCTAssertTrue(block.contains("SettingsSection {"))
-        XCTAssertEqual(AISettingsCopy.sourceTitle, "服务来源")
+        XCTAssertEqual(AISettingsCopy.sourceTitle, "用哪家")
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
+    func testServiceFormSpeaksHumanNotAPIConsole() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertFalse(source.text.contains("获取 API Key"))
+        XCTAssertFalse(source.text.contains("SettingsRow(\"访问凭据\")"))
+        XCTAssertFalse(source.text.contains("SettingsRow(\"供应商\")"))
+        XCTAssertFalse(source.text.contains("从接口获取模型列表"))
+        XCTAssertFalse(source.text.contains("未选择模型"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.getKey"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.secretTitle"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.vendorTitle"))
+        XCTAssertEqual(AISettingsCopy.getKey, "去拿密钥")
+        XCTAssertEqual(AISettingsCopy.secretTitle, "密钥")
+        XCTAssertEqual(AISettingsCopy.vendorTitle, "哪一家")
+        XCTAssertEqual(AISettingsCopy.sourcePreset, "常用服务")
+        XCTAssertEqual(AISettingsCopy.sourceCustom, "自己填")
+        XCTAssertEqual(AISettingsCopy.noModel, "还没选模型")
     }
 
     func testOpenEverythingRowSaysItOpensToday() throws {
