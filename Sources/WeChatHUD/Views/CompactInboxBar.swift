@@ -15,7 +15,6 @@ enum CompactInboxMetrics {
     static let wingWidth: CGFloat = 56
     static let markSize: CGFloat = 8
     static let quietMarkSize: CGFloat = 6
-    static let badgeSize: CGFloat = 11
 }
 
 struct CompactInboxBar: View {
@@ -210,9 +209,9 @@ struct CompactInboxBar: View {
             leftMark(snap.mark)
             if let badge = snap.badge {
                 Text(badge)
-                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .semibold))
+                    .islandMeta()
                     .monospacedDigit()
-                    .foregroundColor(IslandInk.primary)
+                    .foregroundStyle(IslandInk.primary)
                     .lineLimit(1)
             }
         }
@@ -224,7 +223,7 @@ struct CompactInboxBar: View {
         case .warning:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: CompactInboxMetrics.markSize, weight: .semibold))
-                .foregroundStyle(Color.yellow)
+                .foregroundStyle(IslandChrome.glowAmber)
         case .dot(let kind):
             Circle()
                 .fill(dotColor(kind))
@@ -238,11 +237,11 @@ struct CompactInboxBar: View {
 
     private func dotColor(_ kind: CompactIslandMark.Kind) -> Color {
         switch kind {
-        case .urgentP0: return Color.red.opacity(0.92)
-        case .urgentP1: return Color.yellow.opacity(0.88)
+        case .urgentP0: return IslandChrome.glowRed
+        case .urgentP1: return IslandChrome.glowAmber
         case .working: return CompanionPalette.islandMint
-        case .waiting: return Color.white.opacity(0.62)
-        case .notices: return Color.blue.opacity(0.72)
+        case .waiting: return IslandInk.secondary
+        case .notices: return IslandInk.meta
         case .quiet: return CompanionPalette.islandMint.opacity(0.4)
         }
     }
