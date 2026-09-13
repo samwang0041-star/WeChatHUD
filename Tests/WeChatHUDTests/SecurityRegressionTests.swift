@@ -68,7 +68,7 @@ final class SecurityRegressionTests: XCTestCase {
 
     func testRemoteCleartextHTTPIsRejectedAndLoopbackIsAllowed() {
         XCTAssertThrowsError(try AIEndpointPolicy.validateNormalizedBaseURL("http://api.openai.com/v1")) { error in
-            guard case AIError.insecureCleartext = error as? AIError else {
+            guard let aiError = error as? AIError, case .insecureCleartext = aiError else {
                 return XCTFail("expected insecureCleartext, got \(error)")
             }
         }
@@ -150,7 +150,7 @@ final class SecurityRegressionTests: XCTestCase {
             _ = try await service.complete(system: "s", user: "u")
             XCTFail("remote http must fail closed")
         } catch {
-            guard case AIError.insecureCleartext = error as? AIError else {
+            guard let aiError = error as? AIError, case .insecureCleartext = aiError else {
                 return XCTFail("expected insecureCleartext, got \(error)")
             }
         }

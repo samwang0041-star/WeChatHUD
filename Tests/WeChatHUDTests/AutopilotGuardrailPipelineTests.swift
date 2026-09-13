@@ -145,7 +145,8 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let queue = await pipeline.pendingSendQueue
         XCTAssertEqual(queue.count, 1)
         XCTAssertEqual(queue.first?.manualOnlyReason, "群聊消息，请人工确认后发送")
-        XCTAssertEqual(await pipeline.sessionSent, 0)
+        let sent = await pipeline.sessionSent
+        XCTAssertEqual(sent, 0)
         try? await pipeline.stop()
     }
 
@@ -198,7 +199,8 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let queue = await pipeline.pendingSendQueue
         XCTAssertEqual(queue.count, 1)
         XCTAssertEqual(queue.first?.manualOnlyReason, "安全检查：命中敏感词「转账」")
-        XCTAssertEqual(await pipeline.sessionSent, 0)
+        let sent = await pipeline.sessionSent
+        XCTAssertEqual(sent, 0)
         try? await pipeline.stop()
     }
 
@@ -221,7 +223,8 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let queue = await service.pendingSendQueue
         XCTAssertEqual(queue.count, 1)
         XCTAssertEqual(queue.first?.manualOnlyReason, "已达到本次会话发送上限，请人工确认")
-        XCTAssertEqual(await service.sessionSent, 50)
+        let sent = await service.sessionSent
+        XCTAssertEqual(sent, 50)
     }
 
     // MARK: - Pipeline helpers

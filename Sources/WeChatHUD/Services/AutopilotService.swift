@@ -833,6 +833,19 @@ actor AutopilotService {
 
         // --- Enqueue for delayed sending (visible to UI) ---
         let sendTime = Date().addingTimeInterval(replyDelay)
+        let holdReason = Self.automaticSendHoldReason(
+            safetyHold: safetyHold,
+            replyText: replyText,
+            sensitiveKeywords: config.sensitiveKeywords,
+            downgradedAction: downgraded.action,
+            isGroup: representative.isGroup
+        )
+        // A hold means the reply is waiting for a human. Logging `.sent`
+        // would claim an outward send that never happened — including the
+        // group-chat product promise that @ replies stay manual.
+        if holdReason != nil, finalAction == .sent {
+            finalAction = .pending
+        }
         let pendingItem = PendingSend(
             chatUsername: representative.chatUsername,
             chatName: representative.chatName,
@@ -848,13 +861,7 @@ actor AutopilotService {
             scheduledSendTime: sendTime,
             peerLastMessage: combinedText,
             topic: memory?.conversationPhase,
-            manualOnlyReason: Self.automaticSendHoldReason(
-                safetyHold: safetyHold,
-                replyText: replyText,
-                sensitiveKeywords: config.sensitiveKeywords,
-                downgradedAction: downgraded.action,
-                isGroup: representative.isGroup
-            )
+            manualOnlyReason: holdReason
         )
         pendingSendQueue.append(pendingItem)
         if let sid = self.sessionId {

@@ -43,7 +43,7 @@ final class AIInboxSummarizerTests: XCTestCase {
 
         XCTAssertEqual(summary, "带老婆小孩在武汉家里")
         let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .summarizer).first)
-        XCTAssertEqual(audit.outputText, "带老婆小孩在武汉家里")
+        XCTAssertEqual(audit.outputText, AIAuditPrivacy.persistableText("带老婆小孩在武汉家里"))
     }
 
     func testUnreadableMessageDoesNotCallModelOrEchoParserFailure() async throws {
@@ -58,7 +58,7 @@ final class AIInboxSummarizerTests: XCTestCase {
         XCTAssertEqual(summary, "暂无可读内容")
         XCTAssertTrue(URLRequestRecorder.capturedRequests.isEmpty)
         let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .summarizer).first)
-        XCTAssertEqual(audit.outputText, "暂无可读内容")
+        XCTAssertEqual(audit.outputText, AIAuditPrivacy.persistableText("暂无可读内容"))
     }
 
     private func makeAIService() -> AIService {

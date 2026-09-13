@@ -124,7 +124,7 @@ final class GroupContextBriefingServiceTests: XCTestCase {
         )
         XCTAssertEqual(recent.count, 1)
         XCTAssertEqual(recent[0].status, .parseError)
-        XCTAssertEqual(recent[0].outputText, "not-json")
+        XCTAssertEqual(recent[0].outputText, AIAuditPrivacy.persistableText("not-json"))
     }
 
     func testBareMentionFallbackUsesFYICopy() async {
