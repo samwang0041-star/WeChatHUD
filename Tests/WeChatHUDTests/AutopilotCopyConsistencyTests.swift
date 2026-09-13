@@ -623,6 +623,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.cancelledSend, "这条不发了。")
     }
 
+    func testMissingPendingSendSpeaksANextState() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertTrue(source.text.contains("ApprovalCopy.pendingGone"))
+        XCTAssertTrue(source.text.contains("ApprovalCopy.sendNow"))
+        XCTAssertTrue(source.text.contains("即将发送"))
+        XCTAssertFalse(source.text.contains("队列项已不存在"))
+        XCTAssertEqual(ApprovalCopy.pendingGone, "这条已经不在队列里。")
+    }
+
     func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
         let source = try ApprovalWorkspaceSource.load()
         XCTAssertFalse(

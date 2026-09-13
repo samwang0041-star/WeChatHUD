@@ -41,6 +41,7 @@ enum ApprovalCopy {
     static let sendNow = "立即发送"
     static let dismissSend = "取消"
     static let cancelledSend = "这条不发了。"
+    static let pendingGone = "这条已经不在队列里。"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -399,7 +400,7 @@ struct ApprovalWorkspaceView: View {
         case .blocked(let reason):
             return reason
         case .notFound:
-            return "队列项已不存在"
+            return ApprovalCopy.pendingGone
         }
     }
 
