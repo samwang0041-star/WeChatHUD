@@ -40,6 +40,7 @@ enum ApprovalCopy {
     static let openChat = "查看聊天记录"
     static let sendNow = "立即发送"
     static let dismissSend = "取消"
+    static let cancelledSend = "这条不发了。"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -405,7 +406,7 @@ struct ApprovalWorkspaceView: View {
     private func cancelPending(_ item: PendingSend) async {
         await monitor.autopilotService?.cancelPendingSend(id: item.id)
         await monitor.syncAutopilotPendingQueue()
-        receipt = "已取消即将发送的回复"
+        receipt = ApprovalCopy.cancelledSend
     }
 }
 
