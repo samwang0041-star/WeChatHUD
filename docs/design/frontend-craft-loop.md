@@ -12,21 +12,17 @@
 
 `/loop` 每一跳用同一句。一夜连续跑时，每刀独立 commit，消息写 why。
 
-## 本机 Cursor 怎么醒
+## 怎么跑：Cursor `/goal`，不要 `/loop`
 
-工艺法在上面。醒不过来通常不是提示词坏了，是一次性 `sleep`：
+这是长期目标，不是分钟唤醒。
 
-- 不要用 `sleep 90; echo …` 再忽略 completion。用户一插话，后台 sleep 会被掐掉，echo 出不来，循环就死。
-- 用常驻循环，**1 分钟一跳**。一刀的测试+release 往往超过一分钟，TICK 来了若上一刀还没收工，等收工再跑，不要并行开第二刀。整段丢给本机 `/loop`：
+- **不要**再开 `while true; sleep 60` 或一次性 `sleep; echo AGENT_LOOP_*`。用户插话会掐掉 sleep，循环就死；1 分钟一跳还会在一刀没跑完时叠通知。
+- 用 Cursor `/goal` 续跑。Goal 自己接着干，直到队列 1–13 `done`，或用户把 Goal 停掉。
+- 每一刀独立 commit，消息写 why。不要 push，除非用户点名。
+- 不要提交 `docs/overnight/`。
+- TICK 叠了几条也只开一刀。上一刀没 commit 就先收尾，不要并行磨两处。
 
-```
-while true; do
-  sleep 60
-  echo 'AGENT_LOOP_TICK_frontend-craft {"prompt":"按 docs/design/frontend-craft-loop.md 跑下一刀。先读 docs/design/frontend-craft-loop-log.md，再读本文件。选队列里下一刀，审计 → 改一处最高杠杆工艺债 → 验证 → 写日志。每一跳用同一句。通宵连跑时，每刀独立 commit，消息写 why。"}'
-done
-```
-
-`notify_on_output` 盯 `^AGENT_LOOP_TICK_frontend-craft`。收到 TICK 就跑同一句。用户说停再杀。不要并行再开一条。
+启动后先读日志，从「下一刀」继续。
 
 ---
 
