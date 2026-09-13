@@ -299,9 +299,35 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         let block = String(source.text[form.lowerBound..<prefs.lowerBound])
         XCTAssertTrue(block.contains("AISettingsCopy.sourceTitle"))
         XCTAssertTrue(block.contains("providerCard"))
+        XCTAssertTrue(block.contains("generationPreferences"))
+        XCTAssertTrue(block.contains("privacySection"))
         XCTAssertTrue(block.contains("SettingsSection {"))
         XCTAssertEqual(AISettingsCopy.sourceTitle, "用哪家")
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
+    func testWritingHabitsAndPrivacyShareTheFormPlate() throws {
+        let source = try AISettingsSource.load()
+        let prefsStart = try XCTUnwrap(source.text.range(of: "private var generationPreferences"))
+        let prefsEnd = try XCTUnwrap(source.text.range(of: "private var providerCard"))
+        let prefs = String(source.text[prefsStart.lowerBound..<prefsEnd.lowerBound])
+        XCTAssertTrue(prefs.contains("AISettingsCopy.writingHabits"))
+        XCTAssertTrue(prefs.contains(".workspaceRowTitle()"))
+        XCTAssertFalse(prefs.contains("SettingsSection"))
+        XCTAssertFalse(prefs.contains("companionSurface"))
+        XCTAssertFalse(prefs.contains("slider.horizontal.3"))
+        XCTAssertFalse(prefs.contains(".font(.caption)"))
+
+        let privacyStart = try XCTUnwrap(source.text.range(of: "private var privacySection"))
+        let privacyEnd = try XCTUnwrap(source.text.range(of: "private var saveStatus"))
+        let privacy = String(source.text[privacyStart.lowerBound..<privacyEnd.lowerBound])
+        XCTAssertTrue(privacy.contains("AISettingsCopy.privacyTitle"))
+        XCTAssertTrue(privacy.contains(".workspaceRowTitle()"))
+        XCTAssertFalse(privacy.contains("companionSurface"))
+        XCTAssertFalse(privacy.contains("lock.shield"))
+        XCTAssertFalse(privacy.contains(".font(.system"))
+        XCTAssertEqual(AISettingsCopy.writingHabits, "写作习惯")
+        XCTAssertEqual(AISettingsCopy.privacyTitle, "数据与隐私")
     }
 
     func testServiceFormSpeaksHumanNotAPIConsole() throws {
