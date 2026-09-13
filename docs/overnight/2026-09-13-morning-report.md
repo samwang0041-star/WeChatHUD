@@ -6,7 +6,7 @@ Local Mac assistant edits only (no Codex, no Cursor Cloud Agent). Autopilot guar
 ## PR
 https://github.com/samwang0041-star/WeChatHUD/pull/5  
 Branch: `cursor/overnight-evolution-266d`  
-HEAD: see latest push on that branch.
+HEAD: `dd27ca9` (HUDStore serial-queue wave complete).
 
 ## Shipped overnight (local slices)
 
@@ -28,3 +28,6 @@ Default off; confidence 0.8; sensitive words; finance pending; **group chats man
 ## Suggested next
 - WeChatReader actor boundary (evolution-plan P1)
 - Optional live AI trend language behind explicit opt-in (not default)
+
+## WeChatReader note
+Already uses `NSRecursiveLock` for wrapper state. Full actor facade deferred to next session (ScanEngine batch APIs + caller migration).
