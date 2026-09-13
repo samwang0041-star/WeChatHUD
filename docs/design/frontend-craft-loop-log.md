@@ -12,7 +12,7 @@
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | in-progress | 7.8 | 连续两刀 <0.3，换表面；即将发送仍并排取消/立即发送 |
-| 6 | 自动回复设置 | in-progress | 7.2 | 把握程度/哪些一定交给你仍裸字号；页头链接仍无按下 |
+| 6 | 自动回复设置 | in-progress | 7.3 | 页头链接仍无按下；确认框仍裸字号 |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
 | 9 | 首次引导 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 23 — 2026-09-13 — 自动回复设置
+
+- Surface: 自动回复设置
+- Files: `Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.2（主动词 8.0 / 空气 7.5 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 7.5 / 回执 7.5）
+- Debt picked: 把握程度、哪些一定交给你用裸 system 字号和更窄的内边距，和其他行不是一套尺子。
+- After: 总分 7.3（主动词 8.0 / 空气 8.0 / 短句 7.0 / 物理 5.5 / 状态戏 7.0 / 稀疏 7.5 / 回执 7.5）
+- Changed: 把握程度和「哪些一定交给你」与开关、连发同一行高、同一套字。百分比不再用青玉抢视线。护栏未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 26 个用例全绿；`swift build -c release`。走查：开页 → 自动发出去 → 拖把握滑杆，数字与其他行同号 → 「哪些一定交给你」与连发同一层；开自动发出去仍弹确认。
+- Next: 自动回复设置第五刀 — 页头「查看待确认回复」仍无按下。总分未过 8.0。
 
 ## Cycle 22 — 2026-09-13 — 自动回复设置
 

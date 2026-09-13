@@ -83,6 +83,20 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(row.contains("SettingsSection("), "a second card inside 自动回复 broke the one-surface rule")
     }
 
+    func testMainSendRowsUseWorkspaceTypeNotNakedSystemFonts() throws {
+        let source = try AutopilotViewSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var confidenceRow"))
+        let end = try XCTUnwrap(source.text.range(of: "// MARK: - Exclusion"))
+        let rows = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(rows.contains("SettingsRow(AutopilotSettingsCopy.confidenceTitle"))
+        XCTAssertTrue(rows.contains("AutopilotSettingsCopy.confidenceHint"))
+        XCTAssertTrue(rows.contains("SettingsRow(AutopilotSettingsCopy.alwaysManualTitle"))
+        XCTAssertTrue(rows.contains("AutopilotSettingsCopy.alwaysManualRule"))
+        XCTAssertFalse(rows.contains(".font(.system"))
+        XCTAssertTrue(rows.contains("WorkspaceType.body"))
+        XCTAssertEqual(AutopilotSettingsCopy.confidenceTitle, "自动发送把握程度")
+    }
+
     func testSendLimitsAndExclusionsSitUnderAdvanced() throws {
         let source = try AutopilotViewSource.load()
         let advanced = try XCTUnwrap(source.text.range(of: "DisclosureGroup(AutopilotSettingsCopy.advancedTitle)"))

@@ -133,24 +133,7 @@ struct AutopilotSettingsView: View {
                     .onChange(of: replyStyle) { save() }
                 }
                 SettingsRowDivider()
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("自动发送把握程度")
-                            .font(.system(size: 13))
-                        Spacer()
-                        Text("\(Int(confidenceThreshold * 100))%")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(CompanionPalette.jade)
-                    }
-                    Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
-                        .tint(CompanionPalette.jade)
-                        .accessibilityLabel("自动发送把握程度")
-                        .onChange(of: confidenceThreshold) { save() }
-                    Text("达到这个门槛才会尝试自动发送，仍受发送限制约束。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
+                confidenceRow
                 SettingsRowDivider()
                 // The batch window lives in the main section: it is part of
                 // "when do replies go out", not an expert tweak, and its old
@@ -158,14 +141,7 @@ struct AutopilotSettingsView: View {
                 // answers.
                 limitsBatchRow
                 SettingsRowDivider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(AutopilotSettingsCopy.alwaysManualTitle)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(AutopilotSettingsCopy.alwaysManualRule)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
+                alwaysManualRow
                 SettingsRowDivider()
                 DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
                     VStack(alignment: .leading, spacing: 12) {
@@ -224,6 +200,23 @@ struct AutopilotSettingsView: View {
         }
     }
 
+    private var confidenceRow: some View {
+        SettingsRow(AutopilotSettingsCopy.confidenceTitle, subtitle: AutopilotSettingsCopy.confidenceHint) {
+            HStack(spacing: 8) {
+                Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
+                    .tint(CompanionPalette.jade)
+                    .accessibilityLabel(AutopilotSettingsCopy.confidenceTitle)
+                    .frame(width: 120)
+                    .onChange(of: confidenceThreshold) { save() }
+                Text("\(Int(confidenceThreshold * 100))%")
+                    .companionFont(size: WorkspaceType.body, weight: .medium)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            }
+        }
+    }
+
     private var limitsBatchRow: some View {
         SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
             Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
@@ -233,6 +226,12 @@ struct AutopilotSettingsView: View {
             .labelsHidden()
             .frame(width: 80)
             .onChange(of: batchWindowSeconds) { save() }
+        }
+    }
+
+    private var alwaysManualRow: some View {
+        SettingsRow(AutopilotSettingsCopy.alwaysManualTitle, subtitle: AutopilotSettingsCopy.alwaysManualRule) {
+            EmptyView()
         }
     }
 
