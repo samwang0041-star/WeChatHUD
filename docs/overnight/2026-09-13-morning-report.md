@@ -36,3 +36,5 @@ Already uses `NSRecursiveLock` for wrapper state. Full actor facade deferred to 
 - Slice 11: ClipboardGuard @MainActor; Autopilot serialSend await restore (1520+70).
 
 - Slice 12: WeChatReader getMessagesBatch + ScanEngine unread/autopilot wiring (1521+70).
+
+- Slice 13: WeChatReaderActor + ScanEngine prep/batch via actor (1522+70).

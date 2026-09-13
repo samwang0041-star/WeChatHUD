@@ -5,6 +5,15 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 13 — WeChatReaderActor facade
+- New WeChatReaderActor: prepareForScan / sessions / refresh / messagesBatch
+- ScanEngine.performScan hops prep + unread/autopilot batch through actor
+- Tests 1522+70 green
+
+
+
+
+
 ### [Overnight] 2026-09-13 Slice 12 — WeChatReader getMessagesBatch
 - Extracted getMessagesLocked; batch API holds one lock across chats
 - ScanEngine unread + autopilot loops use batch (fewer lock hops)
