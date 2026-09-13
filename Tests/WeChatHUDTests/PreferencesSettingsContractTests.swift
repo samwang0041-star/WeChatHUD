@@ -119,6 +119,21 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testMotionRowWaitsBehindADisclosure() throws {
+        let source = try MacExperienceSettingsSource.load()
+        let sectionStart = try XCTUnwrap(source.text.range(of: "SettingsSection(\"macOS 体验与权限\")"))
+        let disclosureStart = try XCTUnwrap(source.text.range(of: "DisclosureGroup(\"还要看动画\")"))
+        let firstScreen = String(source.text[sectionStart.lowerBound..<disclosureStart.lowerBound])
+        XCTAssertTrue(firstScreen.contains("登录时启动"))
+        XCTAssertTrue(firstScreen.contains("系统通知"))
+        XCTAssertFalse(firstScreen.contains("动画与透明度"))
+        XCTAssertTrue(source.text.contains("还要看动画"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
