@@ -269,6 +269,30 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"aiService\")"))
     }
 
+    func testAnalysisPartitionUsesWorkspaceTypeAndSecondaryPress() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertTrue(source.text.contains("Button(\"去 AI 服务配置\") { switchToAIServiceTab() }"))
+        let start = try XCTUnwrap(source.text.range(of: "private var analysisSection"))
+        let form = try XCTUnwrap(source.text.range(of: "private var serviceForm"))
+        let analysis = String(source.text[start.lowerBound..<form.lowerBound])
+        XCTAssertTrue(analysis.contains("CompanionPressStyle()"))
+        XCTAssertTrue(analysis.contains(".workspaceMeta()"))
+        XCTAssertTrue(analysis.contains(".workspaceTitle()"))
+        XCTAssertTrue(analysis.contains(".workspaceBody()"))
+        XCTAssertFalse(analysis.contains(".buttonStyle(.bordered)"))
+        XCTAssertFalse(analysis.contains(".controlSize(.small)"))
+        XCTAssertFalse(analysis.contains("borderedProminent"), "jade stays on 确认能用")
+        XCTAssertFalse(analysis.contains(".font(.system"))
+        XCTAssertTrue(analysis.contains("你始终可以查看原文"))
+        let behaviorStart = try XCTUnwrap(source.text.range(of: "private var behaviorSection"))
+        let save = try XCTUnwrap(source.text.range(of: "private var saveStatus"))
+        let behavior = String(source.text[behaviorStart.lowerBound..<save.lowerBound])
+        XCTAssertTrue(behavior.contains("随 AI 服务"))
+        XCTAssertTrue(behavior.contains(".workspaceMeta()"))
+        XCTAssertFalse(behavior.contains(".font(.system"))
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testServicePageLeadsWithConfirmWorksNotChangeService() throws {
         let source = try AISettingsSource.load()
         let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))

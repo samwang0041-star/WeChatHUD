@@ -526,11 +526,12 @@ struct AISettingsView: View {
                 SettingsSection {
                     SettingsRow("还没有可用的 AI 服务", icon: "exclamationmark.circle", iconColor: .orange) {
                         Button("去 AI 服务配置") { switchToAIServiceTab() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
                     Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
-                        .font(.system(size: 12))
+                        .workspaceMeta()
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -543,30 +544,32 @@ struct AISettingsView: View {
     private var originalExampleCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("你始终可以查看原文")
-                .font(.system(size: 15, weight: .semibold))
+                .workspaceTitle()
             Text("AI 只整理，不代替聊天。关键决定面都留着原文入口。")
-                .font(.system(size: 12))
+                .workspaceBody()
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Text("示例").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("示例")
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 HStack(alignment: .top, spacing: 8) {
                     Text("原文")
-                        .font(.system(size: 11))
+                        .workspaceMeta()
                         .foregroundStyle(.secondary)
                         .frame(width: 52, alignment: .leading)
                     Text("明天中午前发我修改稿吧。")
-                        .font(.system(size: 13))
+                        .workspaceBody()
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 8))
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Text("AI 提炼")
-                        .font(.system(size: 11))
+                        .workspaceMeta()
                         .foregroundStyle(CompanionPalette.jade)
                         .frame(width: 52, alignment: .leading)
                     Text("明天 12:00 前提交修改稿")
-                        .font(.system(size: 13))
+                        .workspaceBody()
                         .foregroundStyle(CompanionPalette.jade)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -736,7 +739,9 @@ struct AISettingsView: View {
                 SettingsToggleRow("回复建议", subtitle: "起草回复，由你发送。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
                 SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
-                    Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("随 AI 服务")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
             }
             originalExampleCard
