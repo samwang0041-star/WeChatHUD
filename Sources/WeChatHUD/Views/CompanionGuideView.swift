@@ -163,7 +163,7 @@ struct CompanionGuideView: View {
                 .frame(width: 22, alignment: .leading)
                 .accessibilityLabel("第 \(number) 步")
             VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.body.weight(.semibold))
+                Text(title).workspaceBody()
                 Text(detail).guideSecondary().textSelection(.enabled)
                 if let buttonTitle, let action {
                     Button(buttonTitle, action: action)
