@@ -45,7 +45,7 @@ struct CompanionGuideView: View {
     private var introCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("怎么用")
-                .font(.system(size: 28, weight: .bold))
+                .workspaceDisplay()
         }
         .padding(.bottom, 8)
     }
@@ -74,9 +74,9 @@ struct CompanionGuideView: View {
             guideTopic("从「今天」开始", "看待回和待办。点开一条消息看原文和摘要。", icon: "bubble.left.and.bubble.right")
             guideTopic("群里有人 @你", "会标出谁提到了你。", icon: "person.2.fill")
             guideTopic("我答应的事", "带着原话和截止时间。做完后点完成。", icon: "checkmark.bubble.fill")
-            guideTopic("草稿", "在对话里写好回复后选「存为草稿」，之后可以在「草稿」里接着改、复制或回到原对话。草稿不会自己发出去。", icon: "square.and.pencil")
-            guideTopic("头顶上的提醒", "可以分别决定：群里 @你、重点联系人、普通更新要不要弹出。鼠标移上去就能继续看。到期提醒走系统通知。", icon: "bell.badge.fill")
-            guideTopic("发送和自动回复", "点「发送」会先让你看清发给谁、发什么。自动回复默认关着；打开后草稿先出现在「待确认回复」。只有再打开「自动发出去」，符合条件的回复才会自己发出。群聊默认只记录。", icon: "paperplane.fill")
+            guideTopic("草稿", "写好后存草稿，确认再发。", icon: "square.and.pencil")
+            guideTopic("头顶上的提醒", "可分别开关群 @、重点联系人和普通更新。移上去就能看。", icon: "bell.badge.fill")
+            guideTopic("发送和自动回复", "发送前会确认。自动回复默认关；打开后先到「待确认回复」。群聊只记草稿。", icon: "paperplane.fill")
         }
     }
 

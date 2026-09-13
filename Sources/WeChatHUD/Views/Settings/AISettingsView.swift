@@ -482,14 +482,14 @@ struct AISettingsView: View {
     private var serviceStatusCard: some View {
         HStack(alignment: .top, spacing: 16) {
             Image(systemName: "sparkles")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: WorkspaceType.title, weight: .semibold))
                 .foregroundStyle(CompanionPalette.accent)
                 .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text("当前 AI 服务")
-                        .font(.system(size: 16, weight: .semibold))
+                        .workspaceTitle()
                     CompanionBadge(
                         title: activeServiceStatus.label,
                         systemImage: activeServiceStatus.icon,

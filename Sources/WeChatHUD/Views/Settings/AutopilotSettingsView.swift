@@ -9,7 +9,7 @@ import SwiftUI
 /// sent unattended.
 enum AutopilotSettingsCopy {
     static let autoSendTitle = "自动发出去"
-    static let autoSendOn = "达到阈值则自动发送。"
+    static let autoSendOn = "够把握就发出去。"
     static let autoSendOff = "只写草稿，确认后发送。"
 
     static let groupAtTitle = "群里 @我 时也准备回复"
@@ -384,13 +384,13 @@ struct AutopilotSettingsView: View {
             Spacer()
             HStack(spacing: 6) {
                 Label("\(session.totalSent)", systemImage: "checkmark.circle")
-                    .font(.system(size: 9)).foregroundColor(.green)
+                    .font(.system(size: 10)).foregroundColor(.green)
                 Label("\(session.totalPending)", systemImage: "clock")
-                    .font(.system(size: 9)).foregroundColor(.orange)
+                    .font(.system(size: 10)).foregroundColor(.orange)
             }
             if session.endedAt == nil {
                 Text("运行中")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.green)
             }
         }

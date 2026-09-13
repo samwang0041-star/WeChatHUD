@@ -53,7 +53,7 @@ struct RetrospectiveTabView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("回顾结果")
-                    .font(.system(size: 20, weight: .semibold))
+                    .workspaceTitle()
                     .foregroundColor(.white.opacity(0.94))
                 Text(statusLine)
                     .font(.system(size: 12))
@@ -100,13 +100,13 @@ struct RetrospectiveTabView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 14) {
             Image(systemName: "chart.line.uptrend.xyaxis")
-                .font(.system(size: 28, weight: .medium))
+                .font(.system(size: WorkspaceType.display, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundColor(.cyan.opacity(0.9))
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("还没有回顾结果")
-                    .font(.system(size: 16, weight: .semibold))
+                    .workspaceTitle()
                     .foregroundColor(.white.opacity(0.9))
                 Text("点“重新生成”后，会从上次回顾到现在、你关注的对话里提取重点、待办和风险。第一次使用默认回顾本周。")
                     .font(.system(size: 12))

@@ -57,6 +57,37 @@ final class RenderProbeTests: XCTestCase {
         XCTAssertGreaterThan(inkRatio(rep!), 0.005, "plain text should leave ink")
     }
 
+    func testIslandFirstLaunchSurfaceRendersInk() {
+        let panel = PanelState()
+        let view = IslandFirstLaunchView()
+            .environmentObject(panel)
+            .frame(width: IslandChrome.expandedWidth, alignment: .topLeading)
+            .background(CompanionPalette.island)
+
+        let rep = render(view, name: "island-first-launch")
+        XCTAssertNotNil(rep, "island first-launch surface produced no image")
+        XCTAssertGreaterThan(inkRatio(rep!), 0.005, "island first-launch surface rendered blank")
+    }
+
+    func testWorkspaceSettingsRowRendersInk() {
+        let view = VStack(alignment: .leading, spacing: 8) {
+            Text(SettingsView.Tab.today.label).workspaceDisplay()
+            Text(SettingsView.Tab.today.subtitle).workspaceBody().foregroundStyle(.secondary)
+            SettingsSection("提醒范围") {
+                SettingsRow("只提醒我关注的人", subtitle: "只有关注的人会进来。", icon: "person.crop.circle") {
+                    EmptyView()
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 560, alignment: .topLeading)
+        .background(CompanionPalette.canvas)
+
+        let rep = render(view, name: "workspace-header")
+        XCTAssertNotNil(rep)
+        XCTAssertGreaterThan(inkRatio(rep!), 0.01, "workspace chrome rendered blank")
+    }
+
     func testSettingsSectionRenders() {
         let store = HUDStore(dbPath: NSTemporaryDirectory() + "probe-\(UUID().uuidString).sqlite3")
         try? store.open()

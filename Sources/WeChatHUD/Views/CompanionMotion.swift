@@ -41,7 +41,7 @@ enum CompanionMotion {
     /// The generic in-place content transition. Still called `ease` because
     /// every caller means "this thing appears / disappears in place", not
     /// "please run an easeInOut".
-    static func ease(_ duration: TimeInterval = 0.18) -> Animation? {
+    static func ease(_ duration: TimeInterval = easeDuration) -> Animation? {
         strongEaseOut(duration)
     }
 
@@ -54,6 +54,22 @@ enum CompanionMotion {
     static func easeOut(_ duration: TimeInterval) -> Animation? {
         reduceMotion ? nil : .easeOut(duration: duration)
     }
+
+    /// In-place appear/disappear default duration.
+    static let easeDuration: TimeInterval = 0.18
+    /// Full page / tab swap. Longer than an in-place disclosure.
+    static let pageChangeDuration: TimeInterval = 0.22
+    /// Row hover wash duration.
+    static let hoverDuration: TimeInterval = 0.10
+    /// Visible press duration (100–140ms band).
+    static let pressDuration: TimeInterval = 0.12
+
+    /// Expand morph: slightly underdamped so the surface pops out.
+    static let morphExpandResponse: TimeInterval = 0.42
+    static let morphExpandDamping: Double = 0.82
+    /// Collapse morph: snappier and more damped than expand.
+    static let morphCollapseResponse: TimeInterval = 0.30
+    static let morphCollapseDamping: Double = 0.88
 
     /// Standard spring used for expand/collapse transitions.
     ///
@@ -72,7 +88,7 @@ enum CompanionMotion {
 
     /// Button-press animation (100–140ms).
     static func press() -> Animation? {
-        reduceMotion ? nil : .easeOut(duration: 0.12)
+        reduceMotion ? nil : .easeOut(duration: pressDuration)
     }
 
     /// How far a pressable surface shrinks under the cursor.
@@ -88,20 +104,20 @@ enum CompanionMotion {
     /// cursor is already there) and only soften the landing. easeInOut spends
     /// half its budget barely leaving the start value, which reads as input
     /// lag next to AppKit hover states (Finder, Mail).
-    static func hover() -> Animation? { easeOut(0.10) }
-    /// Island compact → hover: pop out of the notch.
-    static func islandExpand() -> Animation? { easeOut(IslandMotion.expandDuration) }
-    /// Island leave collapse: retract into the notch.
-    static func islandCollapse() -> Animation? { easeIn(IslandMotion.collapseDuration) }
+    static func hover() -> Animation? { easeOut(hoverDuration) }
+    /// Island compact → hover: same spring family as the frame expand.
+    static func islandExpand() -> Animation? { openMorph }
+    /// Island leave collapse: same spring family as the frame collapse.
+    static func islandCollapse() -> Animation? { closeMorph }
 
     /// Shape growth. Leisurely: the user is reaching toward the island and tracks the morph.
     static var openMorph: Animation? {
-        springResponse(response: 0.42, dampingFraction: 0.82)
+        springResponse(response: morphExpandResponse, dampingFraction: morphExpandDamping)
     }
 
     /// Shape shrink. Snappier than open. Window-frame collapse stays critically damped.
     static var closeMorph: Animation? {
-        springResponse(response: 0.30, dampingFraction: 0.88)
+        springResponse(response: morphCollapseResponse, dampingFraction: morphCollapseDamping)
     }
 
     /// Compact hover stays in .peek this long before opening the inbox.
@@ -127,7 +143,7 @@ enum CompanionMotion {
     /// disclosure: the whole surface changes, so the eye needs a beat to read
     /// it as one replacement rather than a flicker. Same strong ease-out, so
     /// it shares the family with every other content transition.
-    static func pageChange() -> Animation? { ease(0.22) }
+    static func pageChange() -> Animation? { ease(pageChangeDuration) }
 
     /// Bare withAnimation default (Animation.default), gated by reduceMotion.
     static var systemDefault: Animation? {

@@ -65,16 +65,16 @@ struct SettingsView: View {
             case .tasks: return "谁来做"
             case .commitments: return "已答应的事"
             case .insight: return "按天查看"
-            case .dailyReport: return "今天做了什么、还剩什么"
-            case .relationshipRadar: return "跨天态度和沉默"
+            case .dailyReport: return "做过和剩下的"
+            case .relationshipRadar: return "态度和沉默"
             case .contacts: return "关注的对话"
             case .aiButler: return "分析范围"
             case .notifications: return "谁弹出、停多久"
-            case .aiService: return "摘要和草稿用哪家"
-            case .autopilot: return "自动回复"
+            case .aiService: return "摘要用哪家"
+            case .autopilot: return "怎么自动回"
             case .autopilotDashboard: return "确认后发送"
             case .system: return "连接微信"
-            case .preferences: return "启动、权限、动效"
+            case .preferences: return "启动和动效"
             case .localData: return "近两周记录"
             case .guide: return "说明"
             }
@@ -111,7 +111,7 @@ struct SettingsView: View {
                         .frame(width: 34, height: 34)
                         .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(CompanionProductCopy.brandName).companionFont(size: 15, weight: .bold)
+                        Text(CompanionProductCopy.brandName).workspaceTitle()
                         if !CompanionProductCopy.brandPromise.isEmpty {
                             Text(CompanionProductCopy.brandPromise)
                                 .companionFont(size: 11)
@@ -201,9 +201,9 @@ struct SettingsView: View {
 
     private var pageHeader: some View {
         HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text(selectedTab.label).companionFont(size: 30, weight: .bold).minimumScaleFactor(0.7).lineLimit(2)
-                Text(selectedTab.subtitle).companionFont(size: 13).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
+                Text(selectedTab.subtitle).workspaceBody().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 10)
             if selectedTab == .today {
@@ -219,7 +219,7 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: headerWidth, alignment: .leading)
-        .padding(.horizontal, 28).padding(.top, 28).padding(.bottom, 20)
+        .padding(.horizontal, 28).padding(.top, 20).padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: selectedTab == .guide ? .leading : .center)
     }
 
@@ -309,7 +309,8 @@ private struct SettingsSidebarSections: View {
     private func sidebarSection(_ title: String, _ tabs: [SettingsView.Tab]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
-                .companionFont(size: 11, weight: .semibold)
+                .workspaceMeta()
+                .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
@@ -318,51 +319,12 @@ private struct SettingsSidebarSections: View {
     }
 
     private func sidebarRow(_ tab: SettingsView.Tab) -> some View {
-        let selected = selectedTab == tab
-        return Button { selectedTab = tab } label: {
-            HStack(spacing: 8) {
-                Capsule()
-                    .fill(selected ? CompanionPalette.jade : Color.clear)
-                    .frame(width: 3, height: 18)
-                Image(systemName: tab.icon)
-                    .companionFont(size: 14, weight: .medium)
-                    .foregroundStyle(selected ? CompanionPalette.jade : .secondary)
-                    .frame(width: 20)
-                Text(tab.label)
-                    .companionFont(size: 13, weight: selected ? .semibold : .regular)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-                if let count = sidebarCount(tab), count > 0 {
-                    Text(count, format: .number)
-                        .companionFont(size: 11, weight: .semibold)
-                        .monospacedDigit()
-                        .foregroundStyle(CompanionPalette.jade)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(CompanionPalette.sidebarSelectedFill, in: Capsule())
-                }
-            }
-            .padding(.vertical, 7)
-            .padding(.trailing, 8)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? CompanionPalette.sidebarSelectedFill : Color.clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .focusable(!panelState.modalDialogOpen)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(tab.label)
-        .accessibilityHint("回车打开这一页")
-        .accessibilityIdentifier("workspace.\(tab.rawValue)")
-        // Express the current page with the standard selected trait, the way
-        // every other picker in the app does. This row used to announce
-        // selection twice — a custom "已选中" value here plus whatever
-        // selected state the row already carried — so a screen reader read
-        // two different pages as selected.
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        SettingsSidebarRow(
+            tab: tab,
+            selected: selectedTab == tab,
+            count: sidebarCount(tab),
+            action: { selectedTab = tab }
+        )
     }
 
     private func sidebarCount(_ tab: SettingsView.Tab) -> Int? {
@@ -374,6 +336,60 @@ private struct SettingsSidebarSections: View {
             return workspaceBadges.counts.pendingReplies > 0 ? workspaceBadges.counts.pendingReplies : nil
         default: return nil
         }
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let tab: SettingsView.Tab
+    let selected: Bool
+    let count: Int?
+    let action: () -> Void
+    @EnvironmentObject var panelState: PanelState
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(selected ? CompanionPalette.jade : Color.clear)
+                    .frame(width: 3, height: 18)
+                Image(systemName: tab.icon)
+                    .companionFont(size: WorkspaceType.rowTitle, weight: .medium)
+                    .foregroundStyle(selected ? CompanionPalette.jade : .secondary)
+                    .frame(width: 20)
+                Text(tab.label)
+                    .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+                if let count, count > 0 {
+                    Text(count, format: .number)
+                        .workspaceMicro()
+                        .monospacedDigit()
+                        .foregroundStyle(CompanionPalette.jade)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(CompanionPalette.sidebarSelectedFill, in: Capsule())
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.trailing, 8)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? CompanionPalette.sidebarSelectedFill
+                          : (hovered ? Color.primary.opacity(0.04) : Color.clear))
+            )
+        }
+        .buttonStyle(CompanionPressStyle())
+        .onHover { hovered = $0 }
+        .companionAnimation(CompanionMotion.hover(), value: hovered)
+        .focusable(!panelState.modalDialogOpen)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(tab.label)
+        .accessibilityHint("回车打开这一页")
+        .accessibilityIdentifier("workspace.\(tab.rawValue)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

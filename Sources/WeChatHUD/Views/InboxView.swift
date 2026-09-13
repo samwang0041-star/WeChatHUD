@@ -438,7 +438,7 @@ struct InboxView: View {
                        .islandMicro()
                         .foregroundColor(IslandInk.meta)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(IslandInk.quaternary)
                         .rotationEffect(.degrees(showHandled ? 180 : 0))
                         .companionAnimation(CompanionMotion.rowExpand(), value: showHandled)
@@ -500,7 +500,7 @@ struct InboxView: View {
             }
         }()
         return Text(text)
-            .font(.system(size: 9))
+            .islandMicro()
             .foregroundColor(color)
     }
 
@@ -803,7 +803,7 @@ private struct IslandTaskPreview: View {
     }
 }
 
-private struct IslandFirstLaunchView: View {
+struct IslandFirstLaunchView: View {
     @EnvironmentObject var panelState: PanelState
 
     var body: some View {
@@ -817,7 +817,7 @@ private struct IslandFirstLaunchView: View {
                 Spacer()
             }
             Text(FirstLaunchGuide.islandConnectTitle)
-                .companionFont(size: IslandType.display + 2, weight: .semibold)
+                .islandDisplay()
                 .foregroundStyle(IslandInk.primary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(FirstLaunchGuide.islandConnectDetail)
@@ -833,7 +833,7 @@ private struct IslandFirstLaunchView: View {
                     .padding(.vertical, 9)
                     .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityIdentifier("island.firstLaunch.connect")
             Button(FirstLaunchGuide.skipCTA) {
                 panelState.islandSurface = .inbox

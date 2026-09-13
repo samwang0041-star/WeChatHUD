@@ -21,6 +21,7 @@ final class IslandStyleTests: XCTestCase {
         XCTAssertLessThanOrEqual(IslandType.display, 16)
         XCTAssertLessThanOrEqual(IslandType.brand, 14)
         XCTAssertLessThanOrEqual(IslandType.rowTitle, 13.5)
+        XCTAssertLessThanOrEqual(IslandType.sender, 13)
         XCTAssertLessThanOrEqual(IslandType.rowBody, 13)
         XCTAssertLessThanOrEqual(IslandType.button, 13)
         XCTAssertLessThanOrEqual(IslandType.section, 12)
@@ -39,10 +40,28 @@ final class IslandStyleTests: XCTestCase {
     /// No text may go below 10pt, which is the floor `companionFont` already
     /// enforces at the default Dynamic Type size.
     func testTypeRampRespectsReadabilityFloor() {
-        for size in [IslandType.display, IslandType.brand, IslandType.rowTitle, IslandType.rowBody,
-                     IslandType.button, IslandType.section, IslandType.meta, IslandType.micro] {
+        for size in [IslandType.display, IslandType.brand, IslandType.rowTitle, IslandType.sender,
+                     IslandType.rowBody, IslandType.button, IslandType.section, IslandType.meta, IslandType.micro] {
             XCTAssertGreaterThanOrEqual(size, 10)
         }
+    }
+
+    func testWorkspaceTypeStaysInTheNativeSmallBand() {
+        XCTAssertLessThanOrEqual(WorkspaceType.display, 18)
+        XCTAssertLessThanOrEqual(WorkspaceType.title, 16)
+        XCTAssertLessThanOrEqual(WorkspaceType.rowTitle, 13.5)
+        XCTAssertLessThanOrEqual(WorkspaceType.body, 13)
+        XCTAssertLessThanOrEqual(WorkspaceType.meta, 12)
+        XCTAssertLessThanOrEqual(WorkspaceType.micro, 11)
+        for size in [WorkspaceType.display, WorkspaceType.title, WorkspaceType.rowTitle,
+                     WorkspaceType.body, WorkspaceType.meta, WorkspaceType.micro] {
+            XCTAssertGreaterThanOrEqual(size, 10)
+        }
+        XCTAssertGreaterThan(WorkspaceType.display, WorkspaceType.title)
+        XCTAssertGreaterThan(WorkspaceType.title, WorkspaceType.rowTitle)
+        XCTAssertGreaterThan(WorkspaceType.rowTitle, WorkspaceType.body)
+        XCTAssertGreaterThan(WorkspaceType.body, WorkspaceType.meta)
+        XCTAssertGreaterThan(WorkspaceType.meta, WorkspaceType.micro)
     }
 
     // MARK: - Row geometry agrees with the size estimate

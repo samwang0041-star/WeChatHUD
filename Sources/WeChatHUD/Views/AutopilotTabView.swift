@@ -125,7 +125,7 @@ struct AutopilotTabView: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: monitor.autopilotManuallyPaused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                         if isWorkspace {
                             Text(monitor.autopilotManuallyPaused ? "恢复" : "暂停")
                                 .font(.system(size: 11, weight: .medium))
@@ -149,7 +149,7 @@ struct AutopilotTabView: View {
                 // Session duration
                 if let start = sessionStart {
                     Text(sessionDuration(since: start))
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.secondary)
                         .monospacedDigit()
                 }
@@ -178,7 +178,7 @@ struct AutopilotTabView: View {
 
     private func miniStat(systemIcon: String, value: Int, color: Color) -> some View {
         HStack(spacing: 2) {
-            Image(systemName: systemIcon).font(.system(size: 8, weight: .semibold))
+            Image(systemName: systemIcon).font(.system(size: 10, weight: .semibold))
             Text("\(value)")
                 .font(.system(size: 10, weight: .semibold))
                 .monospacedDigit()
@@ -244,12 +244,12 @@ struct AutopilotTabView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "cpu.fill")
-                .font(.system(size: isWorkspace ? 30 : 22, weight: .medium))
+                .font(.system(size: isWorkspace ? WorkspaceType.display : WorkspaceType.title, weight: .medium))
                 .foregroundStyle(CompanionPalette.accent.opacity(0.75))
             Text("还没有待确认的回复")
-                .font(.system(size: isWorkspace ? 16 : 12, weight: .semibold))
+                .font(.system(size: isWorkspace ? WorkspaceType.title : WorkspaceType.body, weight: .semibold))
             Text("点开始后，助理会整理该回的消息。发不发都由你决定。")
-                .font(.system(size: isWorkspace ? 13 : 11))
+                .font(.system(size: isWorkspace ? WorkspaceType.rowTitle : WorkspaceType.meta))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
@@ -413,10 +413,10 @@ struct AutopilotTabView: View {
         let selected = activityFilter == filter
         return Button(action: { activityFilter = filter }) {
             HStack(spacing: 2) {
-                Text(label).font(.system(size: 9, weight: selected ? .semibold : .regular))
+                Text(label).font(.system(size: 10, weight: selected ? .semibold : .regular))
                 if count > 0 && filter != .all {
                     Text("\(count)")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                 }
             }
@@ -436,13 +436,13 @@ struct AutopilotTabView: View {
     private func sectionHeader(_ title: String, icon: String, color: Color, count: Int) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(color)
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(color)
             Text("\(count)")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(color.opacity(0.7))
                 .monospacedDigit()
             Spacer()
@@ -454,7 +454,7 @@ struct AutopilotTabView: View {
     private func sectionHeaderInline(_ title: String, icon: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(.system(size: 10))
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
         }
@@ -485,7 +485,7 @@ private struct PendingReviewRow: View {
                     .lineLimit(1)
                 Spacer()
                 Text(entry.riskLevel.label)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(riskColor(entry.riskLevel))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -493,7 +493,7 @@ private struct PendingReviewRow: View {
                     .cornerRadius(3)
                 // Confidence badge
                 Text("\(Int(entry.confidence * 100))%")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(entry.confidence >= 0.7 ? .orange : .red)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
@@ -505,7 +505,7 @@ private struct PendingReviewRow: View {
             if let reply = entry.generatedReply, !reply.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 8))
+                        .font(.system(size: 10))
                         .foregroundColor(.cyan)
                     if editing {
                         TextField("", text: $editedReply)
@@ -626,7 +626,7 @@ private struct ActivityRow: View {
                         .monospacedDigit()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -691,25 +691,25 @@ private struct ActivityRow: View {
     private var actionIcon: some View {
         switch entry.action {
         case .sent:
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundColor(.green)
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundColor(.green)
         case .stall:
-            Image(systemName: "pause.circle.fill").font(.system(size: 9)).foregroundColor(.yellow)
+            Image(systemName: "pause.circle.fill").font(.system(size: 10)).foregroundColor(.yellow)
         case .queued:
-            Image(systemName: "timer").font(.system(size: 9)).foregroundColor(.cyan)
+            Image(systemName: "timer").font(.system(size: 10)).foregroundColor(.cyan)
         case .vipNotified:
-            Image(systemName: "star.circle.fill").font(.system(size: 9)).foregroundColor(.yellow)
+            Image(systemName: "star.circle.fill").font(.system(size: 10)).foregroundColor(.yellow)
         case .skipped:
-            Image(systemName: "forward.fill").font(.system(size: 8)).foregroundColor(.gray)
+            Image(systemName: "forward.fill").font(.system(size: 10)).foregroundColor(.gray)
         case .readNoReply:
-            Image(systemName: "eye.fill").font(.system(size: 8)).foregroundColor(.blue.opacity(0.6))
+            Image(systemName: "eye.fill").font(.system(size: 10)).foregroundColor(.blue.opacity(0.6))
         case .proactive:
-            Image(systemName: "bubble.right.fill").font(.system(size: 8)).foregroundColor(.cyan)
+            Image(systemName: "bubble.right.fill").font(.system(size: 10)).foregroundColor(.cyan)
         case .groupLogged:
-            Image(systemName: "doc.text").font(.system(size: 8)).foregroundColor(.blue.opacity(0.5))
+            Image(systemName: "doc.text").font(.system(size: 10)).foregroundColor(.blue.opacity(0.5))
         case .failed:
-            Image(systemName: "xmark.circle.fill").font(.system(size: 9)).foregroundColor(.red)
+            Image(systemName: "xmark.circle.fill").font(.system(size: 10)).foregroundColor(.red)
         case .pending:
-            Image(systemName: "clock.fill").font(.system(size: 9)).foregroundColor(.orange)
+            Image(systemName: "clock.fill").font(.system(size: 10)).foregroundColor(.orange)
         }
     }
 
@@ -738,7 +738,7 @@ struct PendingSendRow: View {
                     .foregroundColor(.primary)
                 Spacer()
                 Text(item.risk.label)
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(riskColor(item.risk))
                 // Countdown
                 Text("\(item.remainingSeconds)s")
@@ -747,7 +747,7 @@ struct PendingSendRow: View {
                     .foregroundColor(.cyan)
                 // Style score badge
                 Text("风格 \(item.styleScore)")
-                    .font(.system(size: 8))
+                    .font(.system(size: 10))
                     .foregroundColor(item.styleScore >= 70 ? .green : .orange)
             }
 

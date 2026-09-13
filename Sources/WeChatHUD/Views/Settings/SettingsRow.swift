@@ -16,7 +16,7 @@ struct SettingsSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             if let title {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .workspaceRowTitle()
                     .foregroundStyle(.primary)
                     .padding(.leading, 4)
             }
@@ -59,18 +59,18 @@ struct SettingsRow<Accessory: View>: View {
         HStack(spacing: 12) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 13))
+                    .workspaceRowTitle()
                     .foregroundColor(iconColor)
                     .frame(width: 28, height: 28, alignment: .center)
                     .background(iconColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: WorkspaceType.rowTitle, weight: .medium)
                     .foregroundColor(.primary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 12))
+                        .workspaceBody()
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

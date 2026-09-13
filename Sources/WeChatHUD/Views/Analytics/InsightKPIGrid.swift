@@ -51,7 +51,7 @@ struct InsightKPIGrid: View {
                     .frame(width: 6, height: 6)
             }
             Text(kpi.value)
-                .font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.system(size: WorkspaceType.title, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundColor(.primary)
             Text(kpi.hint)
                 .font(.system(size: 10))

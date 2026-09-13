@@ -69,7 +69,7 @@ struct InsightOverviewDashboard: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text("今天聊了什么")
-                    .font(.system(size: 20, weight: .bold))
+                    .workspaceTitle()
                 Text("\(insightStore.selectedScope.rawValue) · \(insightStore.selectedWindow.rawValue) · \(insightStore.overview?.activeChats ?? 0) 个活跃对话 · \(insightStore.overview?.totalMessages ?? 0) 条消息")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
@@ -319,7 +319,7 @@ struct InsightOverviewDashboard: View {
                     }
                     .frame(width: 56, height: 56)
                     Text("非工时工作 \(o.workAfterHoursCount)")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
             }
@@ -472,7 +472,7 @@ struct InsightOverviewDashboard: View {
 
     private func relRow(label: String, name: String, ratio: Double, good: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 9, weight: .semibold)).foregroundColor(.secondary)
+            Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
             Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
             Text("对等度 \(Int(ratio * 100))%")
                 .font(.system(size: 10))
@@ -492,7 +492,7 @@ struct InsightOverviewDashboard: View {
                         .fill((i == 0 || i == 6) ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6))
                         .frame(width: 26, height: CGFloat(val) / CGFloat(maxVal) * 48)
                     Text(weekdayNames[i])
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
             }
@@ -510,11 +510,11 @@ struct InsightOverviewDashboard: View {
                         .frame(width: 14, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
                     if hour % 3 == 0 {
                         Text("\(hour)")
-                            .font(.system(size: 8))
+                            .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     } else {
                         Text("")
-                            .font(.system(size: 8))
+                            .font(.system(size: 10))
                     }
                 }
             }
@@ -593,7 +593,7 @@ struct InsightOverviewDashboard: View {
             Text("\(count)")
                 .font(.system(size: 12, weight: .bold).monospacedDigit())
                 .foregroundColor(count >= threshold ? .red : .secondary)
-            Text(label).font(.system(size: 9)).foregroundColor(.secondary)
+            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 

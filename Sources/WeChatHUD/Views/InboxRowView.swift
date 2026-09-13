@@ -379,7 +379,7 @@ struct InboxRowView: View {
                         .islandButton()
                         .foregroundColor(showSnoozeMenu ? IslandInk.primary : IslandInk.tertiary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .help("稍后提醒")
                 .accessibilityLabel("稍后提醒")
             }
@@ -389,7 +389,7 @@ struct InboxRowView: View {
                     .islandMicro()
                     .foregroundColor(IslandInk.tertiary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .help(item.actionRequired ? "标为已处理" : "隐藏这条更新")
         }
     }

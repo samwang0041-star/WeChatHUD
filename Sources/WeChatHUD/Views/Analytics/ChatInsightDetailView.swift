@@ -73,7 +73,7 @@ struct ChatInsightDetailView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(chatName)
-                        .font(.system(size: 18, weight: .semibold))
+                        .workspaceTitle()
                     Text(headerSummary)
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
@@ -185,14 +185,14 @@ struct ChatInsightDetailView: View {
                     .foregroundColor(.secondary)
             } else if let error = insightCoordinator.chatInsightErrors[chatUsername] {
                 Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 28))
+                    .font(.system(size: WorkspaceType.title))
                     .foregroundColor(.orange.opacity(0.7))
                 Text(error)
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
             } else {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 28))
+                    .font(.system(size: WorkspaceType.title))
                     .foregroundColor(.orange.opacity(0.4))
                 Text("选一个日期后，这里会整理这段聊天发生了什么。")
                     .font(.system(size: 13))
@@ -233,7 +233,7 @@ struct ChatInsightDetailView: View {
         if let result {
             VStack(alignment: .leading, spacing: 10) {
                 Text(result.headline)
-                    .font(.system(size: 22, weight: .semibold))
+                    .workspaceTitle()
                     .fixedSize(horizontal: false, vertical: true)
                 Label("AI 解读", systemImage: "sparkles")
                     .font(.system(size: 12, weight: .semibold))
@@ -424,11 +424,11 @@ struct ChatInsightDetailView: View {
                         .frame(width: 12, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
                     if hour % 3 == 0 {
                         Text("\(hour)")
-                            .font(.system(size: 8))
+                            .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     } else {
                         Text("")
-                            .font(.system(size: 8))
+                            .font(.system(size: 10))
                     }
                 }
             }
@@ -446,7 +446,7 @@ struct ChatInsightDetailView: View {
                 Text("\(Int(fraction * 100))%")
                     .font(.system(size: 14, weight: .bold))
                 Text("我的消息")
-                    .font(.system(size: 8))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
         }
@@ -513,7 +513,7 @@ struct ChatInsightDetailView: View {
                 .font(.system(size: 14))
                 .foregroundColor(color)
             Text(value)
-                .font(.system(size: 22, weight: .bold).monospacedDigit())
+                .font(.system(size: WorkspaceType.title, weight: .semibold).monospacedDigit())
                 .foregroundColor(.primary)
             Text(label)
                 .font(.system(size: 10))
@@ -587,7 +587,7 @@ struct ChatInsightDetailView: View {
             if let involvement = topic.myInvolvement {
                 HStack(spacing: 4) {
                     Image(systemName: "person.crop.circle")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.blue)
                     Text("你：\(involvement)")
                         .font(.system(size: 10))
@@ -597,7 +597,7 @@ struct ChatInsightDetailView: View {
             if let cross = topic.crossChats, !cross.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "link")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.purple)
                     Text("也在：\(cross.joined(separator: ", "))")
                         .font(.system(size: 10))
@@ -636,7 +636,7 @@ struct ChatInsightDetailView: View {
     private func statusBadge(_ status: String) -> some View {
         let color: Color = status == "已决" ? .green : status == "搁置" ? .gray : .orange
         return Text(status)
-            .font(.system(size: 9, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundColor(color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

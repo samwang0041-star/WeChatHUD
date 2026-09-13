@@ -88,7 +88,7 @@ struct GroupContextBriefingCard: View {
                     HStack(spacing: 3) {
                         Text("查看完整上下文")
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                     }
                 }
                 .buttonStyle(.plain)

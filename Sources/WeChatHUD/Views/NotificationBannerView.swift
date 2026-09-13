@@ -345,7 +345,7 @@ struct NotificationBannerView: View {
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .accessibilityLabel("关闭通知")
         .help("关闭通知，保留待办状态")
     }
@@ -364,7 +364,7 @@ struct NotificationBannerView: View {
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .help("稍后提醒")
         .accessibilityLabel("稍后提醒")
         .accessibilityHint("打开稍后提醒时间")

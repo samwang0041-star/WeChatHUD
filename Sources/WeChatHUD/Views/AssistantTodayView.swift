@@ -88,7 +88,7 @@ struct AssistantTodayView: View {
     private var messageFeed: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center) {
-                Text(showUpdates ? "这些对话有更新" : "先处理这些事").font(.system(size: 16, weight: .semibold))
+                Text(showUpdates ? "这些对话有更新" : "先处理这些事").workspaceTitle()
                 Spacer()
                 Button { showUpdates.toggle() } label: {
                     HStack(spacing: 4) {
@@ -209,7 +209,7 @@ struct AssistantTodayView: View {
             }.companionSurface()
             connectionCard
             VStack(spacing: 0) {
-                quickLink("今日小结", subtitle: "今天做了什么、还剩什么", icon: "doc.text") { navigate(.dailyReport) }
+                quickLink("今日小结", subtitle: SettingsView.Tab.dailyReport.subtitle, icon: "doc.text") { navigate(.dailyReport) }
                 Divider().padding(.horizontal, 16)
                 quickLink("按时间回顾", subtitle: "回到发生过的对话", icon: "calendar") { RetrospectiveWindowManager.shared.showWindow(monitor: monitor) }
             }.companionSurface(padding: 0)

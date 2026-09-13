@@ -107,7 +107,7 @@ struct FirstLaunchContactPicker: View {
                 }
                 Spacer()
                 Image(systemName: following ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 16, weight: .medium))
+                    .companionFont(size: WorkspaceType.title, weight: .medium)
                     .foregroundStyle(following ? CompanionPalette.jade : .secondary)
             }
             .padding(12)

@@ -73,21 +73,11 @@ struct HUDRootView: View {
     }
 
     private var islandNotchWidth: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchWidth
-        }
-        // Must match `CompactInboxBar`'s fallback: the two views draw the same
-        // notch geometry from the same panel, and a 16 vs 200 disagreement
-        // during the no-panel window (preview / early launch) would render the
-        // island body at one width and its glow layer at another.
-        return 200
+        (NSApp.delegate as? AppDelegate)?.attachedPanel?.notch.notchWidth ?? 200
     }
 
     private var islandNotchHeight: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchHeight
-        }
-        return 32
+        (NSApp.delegate as? AppDelegate)?.attachedPanel?.notch.notchHeight ?? 32
     }
 }
 
@@ -203,17 +193,17 @@ private struct HUDToastLayer: View {
                     panelState.islandSnoozeUndo = nil
                     panelState.toastMessage = nil
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .islandSection()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("撤销")
             }
             Button(action: { panelState.toastMessage = nil }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(IslandInk.tertiary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityLabel("关闭提示")
         }
         .accessibilityElement(children: .contain)

@@ -38,6 +38,12 @@ extension AnimationDebugger {
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var panel: FloatingPanel!
     var panelState: PanelState!
+
+    /// Optional view of `panel` that does not trap when the IUO is still nil.
+    var attachedPanel: FloatingPanel? {
+        let panel: FloatingPanel? = self.panel
+        return panel
+    }
     var monitor: ChatMonitor!
     var store: HUDStore!
     var reader: WeChatReader!

@@ -149,5 +149,33 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(CompanionMotion.pressScale, 0.92)
         XCTAssertLessThanOrEqual(CompanionMotion.pressScale, 0.97)
         XCTAssertLessThan(CompanionMotion.pressScale, 1)
+        XCTAssertGreaterThanOrEqual(CompanionMotion.pressDuration, 0.10)
+        XCTAssertLessThanOrEqual(CompanionMotion.pressDuration, 0.14)
+    }
+
+    func testHoverIsAShortEaseOutAttack() {
+        XCTAssertEqual(CompanionMotion.hoverDuration, 0.10, accuracy: 0.001)
+        XCTAssertLessThan(CompanionMotion.hoverDuration, CompanionMotion.easeDuration)
+    }
+
+    func testPageChangeIsLongerThanInPlaceDisclosure() {
+        XCTAssertGreaterThan(CompanionMotion.pageChangeDuration, CompanionMotion.easeDuration)
+        XCTAssertLessThanOrEqual(CompanionMotion.pageChangeDuration, 0.28)
+    }
+
+    func testExpandMorphIsSlowerAndPoppierThanCollapse() {
+        XCTAssertGreaterThan(CompanionMotion.morphExpandResponse, CompanionMotion.morphCollapseResponse)
+        XCTAssertLessThan(CompanionMotion.morphExpandDamping, CompanionMotion.morphCollapseDamping)
+        XCTAssertLessThan(CompanionMotion.morphExpandDamping, 1.0)
+        XCTAssertGreaterThanOrEqual(CompanionMotion.morphCollapseDamping, 0.85)
+        XCTAssertEqual(CompanionMotion.morphExpandResponse, 0.42, accuracy: 0.001)
+        XCTAssertEqual(CompanionMotion.morphCollapseResponse, 0.30, accuracy: 0.001)
+    }
+
+    func testIslandFrameExpandIsUnderdampedAndCollapseIsCritical() {
+        let expand = IslandMotion.spring(expanding: true, distance: 120)
+        let collapse = IslandMotion.spring(expanding: false, distance: 120)
+        XCTAssertGreaterThan(collapse.stiffness, expand.stiffness, "collapse must be snappier")
+        XCTAssertGreaterThan(collapse.damping, expand.damping)
     }
 }

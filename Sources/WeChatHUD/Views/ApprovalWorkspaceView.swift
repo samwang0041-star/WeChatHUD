@@ -248,7 +248,7 @@ struct ApprovalWorkspaceView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(selected.chatName).font(.system(size: 16, weight: .semibold))
+                        Text(selected.chatName).workspaceTitle()
                         Text("收件人 \(selected.senderName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)

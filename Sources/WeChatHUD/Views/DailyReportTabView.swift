@@ -144,7 +144,7 @@ struct DailyReportTabView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("本周推进了 \(done.count) 件事，还有 \(pending.count) 件要跟进。")
-                    .font(.system(size: 22, weight: .semibold))
+                    .workspaceTitle()
                 if pending.isEmpty && done.isEmpty {
                     Text("这一周还没有整理出事项。连上微信并关注对话后会出现在这里。")
                         .foregroundStyle(.secondary)

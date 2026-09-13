@@ -279,7 +279,7 @@ enum ReplyDebtReasonCode: String, Codable, CaseIterable {
         switch self {
         case .atMention: return "@你"
         case .privateChat: return "私聊"
-        case .whitelisted: return "白名单"
+        case .whitelisted: return "已关注"
         case .urgentKeyword: return "紧急"
         case .askSignal: return "待确认"
         case .unread: return "未读"
@@ -555,7 +555,7 @@ enum WhitelistAttentionLevel: String, CaseIterable, Codable {
 
     var label: String {
         switch self {
-        case .watch: return "白名单"
+        case .watch: return "关注"
         case .vip: return "VIP"
         }
     }
@@ -603,9 +603,9 @@ enum AttentionLevel: String, CaseIterable, Codable, Equatable {
     var label: String {
         switch self {
         case .vip:       return "VIP"
-        case .whitelist: return "白名单"
-        case .greylist:  return "灰名单"
-        case .stranger:  return "陌生人"
+        case .whitelist: return "关注"
+        case .greylist:  return "仅资料"
+        case .stranger:  return "未关注"
         }
     }
 }

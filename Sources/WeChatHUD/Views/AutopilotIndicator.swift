@@ -54,19 +54,19 @@ struct AutopilotIndicator: View {
         HStack(spacing: 2) {
             if monitor.autopilotSessionSent > 0 {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.green.opacity(0.85))
                 Text("\(monitor.autopilotSessionSent)")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .monospacedDigit()
                     .foregroundColor(.green.opacity(0.85))
             }
             if monitor.autopilotSessionPending > 0 {
                 Image(systemName: "hourglass")
-                    .font(.system(size: 8, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.orange.opacity(0.85))
                 Text("\(monitor.autopilotSessionPending)")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .monospacedDigit()
                     .foregroundColor(.orange.opacity(0.85))
             }
@@ -212,7 +212,7 @@ struct AutopilotPopoverView: View {
 
             if monitor.autopilotPaused && !monitor.autopilotManuallyPaused {
                 Text("已暂停 — 你正在用微信，离开后自动恢复")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
@@ -259,7 +259,7 @@ struct AutopilotPopoverView: View {
         }) {
             HStack(spacing: 3) {
                 Image(systemName: paused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                 Text(paused ? "恢复" : "暂停")
                     .font(.system(size: 10, weight: .semibold))
             }
@@ -280,7 +280,7 @@ struct AutopilotPopoverView: View {
         }) {
             HStack(spacing: 3) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                 Text("停止")
                     .font(.system(size: 10, weight: .semibold))
             }

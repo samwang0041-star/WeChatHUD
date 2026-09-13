@@ -122,9 +122,15 @@ final class IslandPeekTests: XCTestCase {
         CompanionMotion.reduceMotionProvider = { false }
         XCTAssertNotNil(CompanionMotion.openMorph)
         XCTAssertNotNil(CompanionMotion.closeMorph)
+        XCTAssertNotNil(CompanionMotion.islandExpand())
+        XCTAssertNotNil(CompanionMotion.islandCollapse())
+        XCTAssertGreaterThan(CompanionMotion.morphExpandResponse, CompanionMotion.morphCollapseResponse)
+        XCTAssertLessThan(CompanionMotion.morphExpandDamping, CompanionMotion.morphCollapseDamping)
         CompanionMotion.reduceMotionProvider = { true }
         XCTAssertNil(CompanionMotion.openMorph)
         XCTAssertNil(CompanionMotion.closeMorph)
+        XCTAssertNil(CompanionMotion.islandExpand())
+        XCTAssertNil(CompanionMotion.islandCollapse())
     }
 
     func testMaskUsesContinuousCorners() {
