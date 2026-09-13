@@ -781,6 +781,35 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(sync.text.contains("设置 AI"))
     }
 
+    func testConnectionSaveFailureIsAWorkspaceReceiptNotARedBar() throws {
+        let sync = try SyncSettingsSource.load()
+        let start = try XCTUnwrap(sync.text.range(of: "settingsPane(.connection)"))
+        let prefs = try XCTUnwrap(sync.text.range(of: "settingsPane(.preferences)"))
+        let pane = String(sync.text[start.lowerBound..<prefs.lowerBound])
+        let setup = try XCTUnwrap(pane.range(of: "WeChatConnectionSetupView"))
+        let receipt = try XCTUnwrap(pane.range(of: "connectionSaveReceipt"))
+        let advanced = try XCTUnwrap(pane.range(of: "DisclosureGroup(WeChatConnectionCopy.advanced"))
+        XCTAssertLessThan(setup.lowerBound, receipt.lowerBound)
+        XCTAssertLessThan(receipt.lowerBound, advanced.lowerBound)
+        XCTAssertFalse(pane.contains("重试保存设置"))
+        XCTAssertFalse(pane.contains("foregroundColor(.red)"))
+
+        let receiptStart = try XCTUnwrap(sync.text.range(of: "private var connectionSaveReceipt"))
+        let syncSection = try XCTUnwrap(sync.text.range(of: "private var syncSection"))
+        let receiptBlock = String(sync.text[receiptStart.lowerBound..<syncSection.lowerBound])
+        XCTAssertTrue(receiptBlock.contains("WeChatConnectionCopy.saveFailed"))
+        XCTAssertTrue(receiptBlock.contains("WeChatConnectionCopy.saveRetry"))
+        XCTAssertTrue(receiptBlock.contains("CompanionPressStyle()"))
+        XCTAssertTrue(receiptBlock.contains(".workspaceMeta()"))
+        XCTAssertFalse(receiptBlock.contains("borderedProminent"), "jade stays on 去选对话")
+        XCTAssertTrue(sync.text.contains("WeChatConnectionCopy.saveFailed"))
+        XCTAssertTrue(sync.text.contains("WeChatConnectionCopy.bindFailed"))
+        XCTAssertFalse(sync.text.contains("同步设置保存失败"))
+        XCTAssertEqual(WeChatConnectionCopy.saveFailed, "刚才没存上。")
+        XCTAssertEqual(WeChatConnectionCopy.saveRetry, "再试一次")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
+
     func testConnectionCardDoesNotLectureAboutChangingAccounts() throws {
         let setup = try ConnectionSetupSource.load()
         XCTAssertFalse(setup.text.contains("连接步骤只用于读取聊天"))
