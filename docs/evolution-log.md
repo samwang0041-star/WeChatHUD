@@ -3,6 +3,11 @@
 > 项目自我进化日志，PM 和工程师双方追加
 
 
+
+### [Overnight] 2026-09-13 Slice 5 — more HUDStore readers on query cache
+- ignored/dismissed/asks/cache/memory/timing/pending sends/profiles + open autopilot pending variants
+- Autopilot guardrails unchanged; tests 1518+70 green
+
 ### [Overnight] 2026-09-13 Slice 4 — HUDStore drafts/autopilot/classification + statement-cache reset
 - Readers moved onto `queryOne`/`queryAll` serial path
 - Fixed cached `queryOne` leaving SQLITE_ROW and pinning read txn (due_at migration tests)

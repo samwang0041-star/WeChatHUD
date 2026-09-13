@@ -994,31 +994,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadIgnoredSenders() -> [IgnoredSenderRule] {
-        var result: [IgnoredSenderRule] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryAll("""
             SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at, scope
             FROM ignored_senders
             ORDER BY created_at DESC, chat_name ASC, sender_name ASC
-        """, -1, &stmt, nil) == SQLITE_OK else {
-            return result
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let rule = IgnoredSenderRule(
-                chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
-                chatName: String(cString: sqlite3_column_text(stmt, 1)),
-                senderIdentifier: String(cString: sqlite3_column_text(stmt, 2)),
-                senderUsername: String(cString: sqlite3_column_text(stmt, 3)),
-                senderName: String(cString: sqlite3_column_text(stmt, 4)),
+        """, bind: { _ in }, decode: { stmt in
+            IgnoredSenderRule(
+                chatUsername: Self.textColumn(stmt, 0),
+                chatName: Self.textColumn(stmt, 1),
+                senderIdentifier: Self.textColumn(stmt, 2),
+                senderUsername: Self.textColumn(stmt, 3),
+                senderName: Self.textColumn(stmt, 4),
                 createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 5))),
-                scope: IgnoredSenderScope(
-                    rawValue: sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? ""
-                ) ?? .chat
+                scope: IgnoredSenderScope(rawValue: Self.textColumn(stmt, 6)) ?? .chat
             )
-            result.append(rule)
-        }
-        return result
+        })
     }
 
     /// Sentinel conversation key for a rule that follows the person everywhere.
@@ -1126,18 +1116,16 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         senderUsername: String,
         senderName: String
     ) -> Bool {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        let identifier = HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
+        return queryOne("""
             SELECT 1
             FROM ignored_senders
             WHERE chat_username=? AND sender_identifier=?
             LIMIT 1
-        """, -1, &stmt, nil) == SQLITE_OK else { return false }
-        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        let identifier = HUDStore.senderIdentifier(senderUsername: senderUsername, senderName: senderName)
-        sqlite3_bind_text(stmt, 2, identifier, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        return sqlite3_step(stmt) == SQLITE_ROW
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, identifier, -1, Self.sqliteTransient)
+        }, decode: { _ in true }) ?? false
     }
 
     // MARK: - Message admission
@@ -1153,26 +1141,19 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     // MARK: - Group member rules
 
     func loadGroupMemberRules() -> [GroupMemberRule] {
-        var result: [GroupMemberRule] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryAll("""
             SELECT chat_username, chat_name, sender_username, sender_name, created_at
             FROM group_member_rules
             ORDER BY created_at DESC, chat_name ASC, sender_name ASC
-        """, -1, &stmt, nil) == SQLITE_OK else {
-            return result
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.append(GroupMemberRule(
-                chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
-                chatName: String(cString: sqlite3_column_text(stmt, 1)),
-                senderUsername: String(cString: sqlite3_column_text(stmt, 2)),
-                senderName: String(cString: sqlite3_column_text(stmt, 3)),
+        """, bind: { _ in }, decode: { stmt in
+            GroupMemberRule(
+                chatUsername: Self.textColumn(stmt, 0),
+                chatName: Self.textColumn(stmt, 1),
+                senderUsername: Self.textColumn(stmt, 2),
+                senderName: Self.textColumn(stmt, 3),
                 createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 4)))
-            ))
-        }
-        return result
+            )
+        })
     }
 
     /// group username → members whose messages should surface.
@@ -1230,32 +1211,24 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadDismissedScanResults() -> [ScanDismissedEntry] {
-        var results: [ScanDismissedEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryAll("""
             SELECT username, display_name, dismissed_at
             FROM scan_dismissed ORDER BY dismissed_at DESC
-        """, -1, &stmt, nil) == SQLITE_OK else { return results }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            results.append(ScanDismissedEntry(
-                username: String(cString: sqlite3_column_text(stmt, 0)),
-                displayName: String(cString: sqlite3_column_text(stmt, 1)),
+        """, bind: { _ in }, decode: { stmt in
+            ScanDismissedEntry(
+                username: Self.textColumn(stmt, 0),
+                displayName: Self.textColumn(stmt, 1),
                 dismissedAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 2)))
-            ))
-        }
-        return results
+            )
+        })
     }
 
     func dismissedScanUsernames() -> Set<String> {
-        var result = Set<String>()
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT username FROM scan_dismissed", -1, &stmt, nil) == SQLITE_OK else { return result }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.insert(String(cString: sqlite3_column_text(stmt, 0)))
-        }
-        return result
+        Set(queryAll(
+            "SELECT username FROM scan_dismissed",
+            bind: { _ in },
+            decode: { stmt in Self.textColumn(stmt, 0) }
+        ))
     }
 
     // MARK: - AI: pending_asks
@@ -1393,11 +1366,13 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// Has the classifier already produced a row for this message? Used
     /// by `ChatMonitor` to avoid re-classifying messages on every scan.
     func hasPendingAsk(msgUID: String) -> Bool {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM pending_asks WHERE msg_uid=? LIMIT 1", -1, &stmt, nil) == SQLITE_OK else { return false }
-        sqlite3_bind_text(stmt, 1, msgUID, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        return sqlite3_step(stmt) == SQLITE_ROW
+        queryOne(
+            "SELECT 1 FROM pending_asks WHERE msg_uid=? LIMIT 1",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, msgUID, -1, Self.sqliteTransient)
+            },
+            decode: { _ in true }
+        ) ?? false
     }
 
     func updatePendingAskStatus(msgUID: String, status: AskStatus) throws {
@@ -1513,29 +1488,28 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         inputHash: String,
         now: Date = Date()
     ) -> String? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        let nowTs = Int64(now.timeIntervalSince1970)
+        let cached: (result: String, expiresAt: Int64)? = queryOne("""
             SELECT result, expires_at
             FROM analysis_cache
             WHERE chat_username=? AND analysis_type=? AND input_hash=?
             LIMIT 1
-        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        sqlite3_bind_text(stmt, 2, analysisType, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        sqlite3_bind_text(stmt, 3, inputHash, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-
-        let expiresAt = sqlite3_column_int64(stmt, 1)
-        if expiresAt <= Int64(now.timeIntervalSince1970) {
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, analysisType, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 3, inputHash, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            (Self.textColumn(stmt, 0), sqlite3_column_int64(stmt, 1))
+        })
+        guard let cached else { return nil }
+        if cached.expiresAt <= nowTs {
             try? exec("""
                 DELETE FROM analysis_cache
                 WHERE chat_username=? AND analysis_type=? AND input_hash=?
             """, params: [chatUsername, analysisType, inputHash])
             return nil
         }
-        guard let ptr = sqlite3_column_text(stmt, 0) else { return nil }
-        return String(cString: ptr)
+        return cached.result
     }
 
     func writeAnalysisCache(
@@ -2895,43 +2869,36 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadConversationMemory(chatUsername: String) -> ConversationMemory? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryOne("""
             SELECT chat_username, summary, key_topics, pending_items, shared_context, communication_notes, mood_trend, conversation_phase, stance, message_count_7d, last_updated
             FROM conversation_memory WHERE chat_username=?
-        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-
-        let topicsStr = String(cString: sqlite3_column_text(stmt, 2))
-        let pendingStr = String(cString: sqlite3_column_text(stmt, 3))
-        let sharedStr = String(cString: sqlite3_column_text(stmt, 4))
-        let commStr = String(cString: sqlite3_column_text(stmt, 5))
-        let topics = (try? JSONSerialization.jsonObject(with: Data(topicsStr.utf8)) as? [String]) ?? []
-        let pending = (try? JSONSerialization.jsonObject(with: Data(pendingStr.utf8)) as? [String]) ?? []
-        let shared = (try? JSONSerialization.jsonObject(with: Data(sharedStr.utf8)) as? [String]) ?? []
-        let comm = (try? JSONSerialization.jsonObject(with: Data(commStr.utf8)) as? [String]) ?? []
-
-        // Phase and stance columns (7, 8) — may be NULL for old rows
-        let phase: String
-        if let p = sqlite3_column_text(stmt, 7) { phase = String(cString: p) } else { phase = "" }
-        let stanceVal: String
-        if let s = sqlite3_column_text(stmt, 8) { stanceVal = String(cString: s) } else { stanceVal = "" }
-
-        return ConversationMemory(
-            chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
-            summary: String(cString: sqlite3_column_text(stmt, 1)),
-            keyTopics: topics,
-            pendingItems: pending,
-            sharedContext: shared,
-            communicationNotes: comm,
-            moodTrend: String(cString: sqlite3_column_text(stmt, 6)),
-            conversationPhase: phase,
-            stance: stanceVal,
-            messageCount7d: Int(sqlite3_column_int(stmt, 9)),
-            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10)))
-        )
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            let topicsStr = Self.textColumn(stmt, 2)
+            let pendingStr = Self.textColumn(stmt, 3)
+            let sharedStr = Self.textColumn(stmt, 4)
+            let commStr = Self.textColumn(stmt, 5)
+            let topics = (try? JSONSerialization.jsonObject(with: Data(topicsStr.utf8)) as? [String]) ?? []
+            let pending = (try? JSONSerialization.jsonObject(with: Data(pendingStr.utf8)) as? [String]) ?? []
+            let shared = (try? JSONSerialization.jsonObject(with: Data(sharedStr.utf8)) as? [String]) ?? []
+            let comm = (try? JSONSerialization.jsonObject(with: Data(commStr.utf8)) as? [String]) ?? []
+            let phase = sqlite3_column_type(stmt, 7) != SQLITE_NULL ? Self.textColumn(stmt, 7) : ""
+            let stanceVal = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? Self.textColumn(stmt, 8) : ""
+            return ConversationMemory(
+                chatUsername: Self.textColumn(stmt, 0),
+                summary: Self.textColumn(stmt, 1),
+                keyTopics: topics,
+                pendingItems: pending,
+                sharedContext: shared,
+                communicationNotes: comm,
+                moodTrend: Self.textColumn(stmt, 6),
+                conversationPhase: phase,
+                stance: stanceVal,
+                messageCount7d: Int(sqlite3_column_int(stmt, 9)),
+                lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10)))
+            )
+        })
     }
 
     // MARK: - Reply Timing Profiles
@@ -2965,33 +2932,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadReplyTimingProfile(chatUsername: String) -> ReplyTimingProfile? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryOne("""
             SELECT chat_username, work_hours, evening, weekend, late_night, silent_at_night, sample_count, last_updated
             FROM reply_timing_profiles WHERE chat_username=?
-        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, chatUsername, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-
-        let decode: (Int32) -> ReplyTimingProfile.DelayDistribution = { col in
-            let str = String(cString: sqlite3_column_text(stmt, col))
-            return (try? JSONDecoder().decode(ReplyTimingProfile.DelayDistribution.self, from: Data(str.utf8)))
-                ?? .zero
-        }
-
-        let isSilent = sqlite3_column_int(stmt, 5) != 0
-        return ReplyTimingProfile(
-            chatUsername: String(cString: sqlite3_column_text(stmt, 0)),
-            workHours: decode(1),
-            evening: decode(2),
-            weekend: decode(3),
-            lateNight: decode(4),
-            silentAtNight: isSilent,
-            lateNightReplyRate: isSilent ? 0.0 : 1.0,  // approximate from boolean
-            sampleCount: Int(sqlite3_column_int(stmt, 6)),
-            lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 7)))
-        )
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            let decodeDist: (Int32) -> ReplyTimingProfile.DelayDistribution = { col in
+                let str = Self.textColumn(stmt, col)
+                return (try? JSONDecoder().decode(ReplyTimingProfile.DelayDistribution.self, from: Data(str.utf8)))
+                    ?? .zero
+            }
+            let isSilent = sqlite3_column_int(stmt, 5) != 0
+            return ReplyTimingProfile(
+                chatUsername: Self.textColumn(stmt, 0),
+                workHours: decodeDist(1),
+                evening: decodeDist(2),
+                weekend: decodeDist(3),
+                lateNight: decodeDist(4),
+                silentAtNight: isSilent,
+                lateNightReplyRate: isSilent ? 0.0 : 1.0,
+                sampleCount: Int(sqlite3_column_int(stmt, 6)),
+                lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 7)))
+            )
+        })
     }
 
     // MARK: - Autopilot
@@ -3158,39 +3122,43 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// the display path passes a bound instead. Internal rather than private
     /// so a cross-file test can assert the bounded behavior directly.
     func loadOpenAutopilotPendingItems(relevantSince: Int?, limit pendingLimit: Int?) -> [AutopilotLogEntry] {
-        var results: [AutopilotLogEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        var sql = """
+        // Fixed SQL variants keep the statement cache hot; dynamic string
+        // concat would miss every time. Newest first so a limit drops old
+        // leftovers (created_at ties break by id DESC).
+        let select = """
             SELECT id, session_id, chat_username, chat_name, sender_username, sender_name,
                    trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level,
                    action, ai_reasoning, sent_at, created_at
             FROM autopilot_log WHERE action='pending'
-        """
-        if relevantSince != nil {
-            sql += " AND created_at >= ?"
+            """
+        let order = " ORDER BY created_at DESC, id DESC"
+        switch (relevantSince, pendingLimit) {
+        case (nil, nil):
+            return queryAll(select + order, bind: { _ in }, decode: {
+                decodeAutopilotLogEntry($0, defaultAction: .pending)
+            })
+        case let (since?, nil):
+            return queryAll(
+                select + " AND created_at >= ?" + order,
+                bind: { sqlite3_bind_int64($0, 1, Int64(since)) },
+                decode: { decodeAutopilotLogEntry($0, defaultAction: .pending) }
+            )
+        case let (nil, limit?):
+            return queryAll(
+                select + order + " LIMIT ?",
+                bind: { sqlite3_bind_int($0, 1, Int32(limit)) },
+                decode: { decodeAutopilotLogEntry($0, defaultAction: .pending) }
+            )
+        case let (since?, limit?):
+            return queryAll(
+                select + " AND created_at >= ?" + order + " LIMIT ?",
+                bind: { stmt in
+                    sqlite3_bind_int64(stmt, 1, Int64(since))
+                    sqlite3_bind_int(stmt, 2, Int32(limit))
+                },
+                decode: { decodeAutopilotLogEntry($0, defaultAction: .pending) }
+            )
         }
-        // Newest pending rows first, so a limit drops the oldest leftovers
-        // rather than the ones the user is most likely acting on. created_at
-        // ties break by id DESC (insertion order) so the window is
-        // deterministic instead of arbitrary.
-        sql += " ORDER BY created_at DESC, id DESC"
-        if pendingLimit != nil {
-            sql += " LIMIT ?"
-        }
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        var bindIndex: Int32 = 1
-        if let relevantSince {
-            sqlite3_bind_int64(stmt, bindIndex, Int64(relevantSince))
-            bindIndex += 1
-        }
-        if let pendingLimit {
-            sqlite3_bind_int(stmt, bindIndex, Int32(pendingLimit))
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            results.append(autopilotLogEntry(from: stmt!))
-        }
-        return results
     }
 
     /// Current-session log plus leftover pending rows from ended sessions.
@@ -3216,31 +3184,6 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     func updateAutopilotLogReply(id: Int64, reply: String) throws {
         try exec("UPDATE autopilot_log SET generated_reply=? WHERE id=?", params: [reply, String(id)])
-    }
-
-    private func autopilotLogEntry(from stmt: OpaquePointer) -> AutopilotLogEntry {
-        let genReply = sqlite3_column_type(stmt, 8) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 8)) : nil
-        let reasoning = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? String(cString: sqlite3_column_text(stmt, 12)) : nil
-        let sentAt = sqlite3_column_type(stmt, 13) != SQLITE_NULL
-            ? Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 13)))
-            : nil
-        return AutopilotLogEntry(
-            id: sqlite3_column_int64(stmt, 0),
-            sessionId: sqlite3_column_int64(stmt, 1),
-            chatUsername: String(cString: sqlite3_column_text(stmt, 2)),
-            chatName: String(cString: sqlite3_column_text(stmt, 3)),
-            senderUsername: String(cString: sqlite3_column_text(stmt, 4)),
-            senderName: String(cString: sqlite3_column_text(stmt, 5)),
-            triggerMsgUID: String(cString: sqlite3_column_text(stmt, 6)),
-            triggerText: String(cString: sqlite3_column_text(stmt, 7)),
-            generatedReply: genReply,
-            confidence: sqlite3_column_double(stmt, 9),
-            riskLevel: AutopilotRisk(rawValue: String(cString: sqlite3_column_text(stmt, 10))) ?? .low,
-            action: AutopilotAction(rawValue: String(cString: sqlite3_column_text(stmt, 11))) ?? .skipped,
-            aiReasoning: reasoning,
-            sentAt: sentAt,
-            createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 14)))
-        )
     }
 
     func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {
@@ -3306,34 +3249,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadPendingSends(sessionId: Int64) -> [PendingSend] {
-        var results: [PendingSend] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryAll("""
             SELECT id, chat_username, chat_name, sender_name, reply_text,
                    confidence, risk_level, reasoning, style_score, scheduled_send_at,
                    created_at, peer_last_message, topic, auto_send_attempts, manual_only_reason
             FROM autopilot_pending_sends
             WHERE session_id=?
             ORDER BY scheduled_send_at ASC, created_at ASC
-        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        sqlite3_bind_int64(stmt, 1, sessionId)
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let idString = HUDStore.textColumn(stmt, 0)
-            guard let id = UUID(uuidString: idString) else { continue }
-            let risk = AutopilotRisk(rawValue: HUDStore.textColumn(stmt, 6)) ?? .low
-            let peerLastMessage = sqlite3_column_type(stmt, 11) != SQLITE_NULL ? HUDStore.textColumn(stmt, 11) : nil
-            let topic = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? HUDStore.textColumn(stmt, 12) : nil
-            let manualOnlyReason = sqlite3_column_type(stmt, 14) != SQLITE_NULL ? HUDStore.textColumn(stmt, 14) : nil
-            results.append(PendingSend(
+        """, bind: { stmt in
+            sqlite3_bind_int64(stmt, 1, sessionId)
+        }, decode: { stmt in
+            guard let id = UUID(uuidString: Self.textColumn(stmt, 0)) else { return nil }
+            let risk = AutopilotRisk(rawValue: Self.textColumn(stmt, 6)) ?? .low
+            let peerLastMessage = sqlite3_column_type(stmt, 11) != SQLITE_NULL ? Self.textColumn(stmt, 11) : nil
+            let topic = sqlite3_column_type(stmt, 12) != SQLITE_NULL ? Self.textColumn(stmt, 12) : nil
+            let manualOnlyReason = sqlite3_column_type(stmt, 14) != SQLITE_NULL ? Self.textColumn(stmt, 14) : nil
+            return PendingSend(
                 id: id,
-                chatUsername: HUDStore.textColumn(stmt, 1),
-                chatName: HUDStore.textColumn(stmt, 2),
-                senderName: HUDStore.textColumn(stmt, 3),
-                replyText: HUDStore.textColumn(stmt, 4),
+                chatUsername: Self.textColumn(stmt, 1),
+                chatName: Self.textColumn(stmt, 2),
+                senderName: Self.textColumn(stmt, 3),
+                replyText: Self.textColumn(stmt, 4),
                 confidence: sqlite3_column_double(stmt, 5),
                 risk: risk,
-                reasoning: HUDStore.textColumn(stmt, 7),
+                reasoning: Self.textColumn(stmt, 7),
                 styleScore: Int(sqlite3_column_int(stmt, 8)),
                 scheduledSendTime: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 9))),
                 createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 10))),
@@ -3341,9 +3280,8 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 topic: topic,
                 autoSendAttempts: Int(sqlite3_column_int(stmt, 13)),
                 manualOnlyReason: manualOnlyReason
-            ))
-        }
-        return results
+            )
+        })
     }
 
     func deletePendingSend(id: UUID) throws {
@@ -3485,25 +3423,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func getRelationshipProfile(username: String) -> RelationshipProfile? {
-        let sql = "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles WHERE username = ?"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return parseRelationshipRow(stmt)
+        queryOne(
+            "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles WHERE username = ?",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+            },
+            decode: { stmt in parseRelationshipRow(stmt) }
+        )
     }
 
     func loadAllRelationshipProfiles() -> [RelationshipProfile] {
-        let sql = "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles ORDER BY updated_at DESC"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        defer { sqlite3_finalize(stmt) }
-        var results: [RelationshipProfile] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            results.append(parseRelationshipRow(stmt))
-        }
-        return results
+        queryAll(
+            "SELECT username, display_name, relationship, hierarchy, tone_preference, context, confidence, user_note, user_edited, inferred_at, updated_at FROM relationship_profiles ORDER BY updated_at DESC",
+            bind: { _ in },
+            decode: { stmt in parseRelationshipRow(stmt) }
+        )
     }
 
     func updateRelationshipProfileUserFields(
