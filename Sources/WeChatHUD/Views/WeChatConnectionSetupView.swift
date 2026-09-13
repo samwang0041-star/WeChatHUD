@@ -40,6 +40,8 @@ enum ConnectionSetupFlow {
 /// A picker grants access; only the monitor's successful read completes setup.
 enum WeChatConnectionCopy {
     static let pickConversations = "去选对话"
+    static let readOnly = "只读取聊天，不改微信里的内容。"
+    static let changeAccountScope = "更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。"
 }
 
 struct WeChatConnectionSetupView: View {
@@ -304,28 +306,27 @@ struct WeChatConnectionSetupView: View {
                 Spacer(minLength: 0)
             if applying || syncing || probing { ProgressView().controlSize(.small) }
             }
-            Text("连接步骤只用于读取聊天。AI 分析使用你在设置中选择的服务。")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(WeChatConnectionCopy.readOnly)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
             if PreviewRuntime.isEnabled {
                 Text("演示界面 · 不读取真实微信，也不申请权限。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
             }
             if let changeAccountReceipt {
                 Text(changeAccountReceipt)
-                    .font(.caption)
+                    .workspaceMeta()
                     .foregroundStyle(CompanionPalette.jade)
             }
-            Text("更换账号前先看清范围：新账号只读自己的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .companionAnimation(CompanionMotion.ease(0.18), value: connected)
         .companionDialogBackdrop(showChangeAccountConfirm) {
             if showChangeAccountConfirm {
                 CompanionDialog(title: "更换微信账号？", onClose: { showChangeAccountConfirm = false }) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
-                            .font(.system(size: 13))
+                        Text(WeChatConnectionCopy.changeAccountScope)
+                            .workspaceBody()
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
