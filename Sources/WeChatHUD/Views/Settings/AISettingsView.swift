@@ -85,10 +85,11 @@ struct ModelPicker: View {
                             .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13))
+                            .workspaceBody()
                     }
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(.secondary)
                 .help(AISettingsCopy.refreshModels)
                 .accessibilityLabel(AISettingsCopy.refreshModels)
                 .disabled(isFetching)
@@ -96,9 +97,10 @@ struct ModelPicker: View {
                 if !models.isEmpty {
                     Button { isExpanded.toggle() } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 12))
+                            .workspaceMeta()
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(.secondary)
                     .accessibilityLabel(isExpanded ? "收起模型列表" : "展开模型列表")
                 }
             }
@@ -269,8 +271,9 @@ struct ProviderCard: View {
                             Button(AISettingsCopy.getKey) {
                                 if let u = URL(string: signup) { NSWorkspace.shared.open(u) }
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                             .accessibilityLabel(AISettingsCopy.getKey)
                         }
                     }

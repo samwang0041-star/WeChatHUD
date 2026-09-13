@@ -351,6 +351,27 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.noModel, "还没选模型")
     }
 
+    func testGetKeyAndModelRefreshPressLikeWorkspaceSecondaries() throws {
+        let source = try AISettingsSource.load()
+        let getKey = try XCTUnwrap(source.text.range(of: "Button(AISettingsCopy.getKey)"))
+        let modelRow = try XCTUnwrap(source.text.range(of: "SettingsRow(AISettingsCopy.modelTitle)"))
+        let keyButton = String(source.text[getKey.lowerBound..<modelRow.lowerBound])
+        XCTAssertTrue(keyButton.contains("CompanionPressStyle()"))
+        XCTAssertTrue(keyButton.contains(".workspaceMeta()"))
+        XCTAssertFalse(keyButton.contains(".buttonStyle(.bordered)"))
+        XCTAssertFalse(keyButton.contains(".controlSize(.mini)"))
+        XCTAssertFalse(keyButton.contains("CompanionPalette.jade"), "jade stays on 确认能用")
+        XCTAssertFalse(keyButton.contains("borderedProminent"))
+
+        let pickerStart = try XCTUnwrap(source.text.range(of: "struct ModelPicker"))
+        let provider = try XCTUnwrap(source.text.range(of: "struct ProviderCard"))
+        let picker = String(source.text[pickerStart.lowerBound..<provider.lowerBound])
+        XCTAssertTrue(picker.contains("CompanionPressStyle()"))
+        XCTAssertFalse(picker.contains(".buttonStyle(.borderless)"))
+        XCTAssertEqual(AISettingsCopy.getKey, "去拿密钥")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testConfirmReceiptSitsOnTheStatusCardNotAnOrangeIsland() throws {
         let source = try AISettingsSource.load()
         let start = try XCTUnwrap(source.text.range(of: "private var serviceStatusCard"))
