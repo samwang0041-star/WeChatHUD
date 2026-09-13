@@ -810,6 +810,16 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(TodayFeed.mineTasks(discussions).count, WorkspaceBadgeCounts.taskCount(discussions))
         XCTAssertTrue(TodayFeed.hasOpenWork(mine: [], waiting: TodayFeed.waitingTasks(discussions), upcoming: []))
         XCTAssertFalse(TodayFeed.hasOpenWork(mine: [], waiting: [], upcoming: []))
+
+        XCTAssertEqual(TodayCopy.status(needsReply: 0, showingUpdates: false, updateCount: 3), "现在没有要回的")
+        XCTAssertEqual(TodayCopy.status(needsReply: 1, showingUpdates: false, updateCount: 3), "现在有 1 件需要回复")
+        XCTAssertEqual(TodayCopy.status(needsReply: 3, showingUpdates: false, updateCount: 5), "现在有 3 件需要回复")
+        XCTAssertEqual(TodayCopy.status(needsReply: 3, showingUpdates: true, updateCount: 5), "这些对话有 5 条更新")
+        XCTAssertEqual(TodayCopy.status(needsReply: 0, showingUpdates: true, updateCount: 0), "现在没有对话更新")
+        XCTAssertEqual(TodayCopy.mineWork(2), "我要做 2")
+        XCTAssertEqual(TodayCopy.waitingWork(1), "等对方 1")
+        XCTAssertEqual(TodayCopy.allUpdates(5), "全部 5 条")
+        XCTAssertEqual(TodayCopy.backToReplies, "只看需要回复的")
     }
 
     private func workspaceCommitment(

@@ -47,19 +47,7 @@ struct AssistantTodayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     CompanionSetupCard(navigate: navigate)
-                    HStack(spacing: 8) {
-                        filterPill("需要回复", count: needsReply.count, selected: !showUpdates) {
-                            showUpdates = false
-                        }
-                        jumpPill("我要做", count: mineTasks.count) {
-                            panelState.pendingDiscussionScope = .mine
-                            navigate(.tasks)
-                        }
-                        jumpPill("等对方", count: waitingTasks.count) {
-                            panelState.pendingDiscussionScope = .theirs
-                            navigate(.tasks)
-                        }
-                    }
+                    todayHero
                     if geometry.size.width >= 900 {
                         HStack(alignment: .top, spacing: 24) {
                             messageFeed.frame(maxWidth: .infinity)
@@ -85,21 +73,70 @@ struct AssistantTodayView: View {
         aiReadinessLoaded = true
     }
 
+    private var todayHero: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(TodayCopy.status(
+                needsReply: needsReply.count,
+                showingUpdates: showUpdates,
+                updateCount: TodayFeed.allUpdatesCount(monitor.inboxItems)
+            ))
+            .workspaceTitle()
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("today.status")
+
+            HStack(spacing: 14) {
+                if !mineTasks.isEmpty {
+                    Button {
+                        panelState.pendingDiscussionScope = .mine
+                        navigate(.tasks)
+                    } label: {
+                        Text(TodayCopy.mineWork(mineTasks.count))
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .accessibilityHint("打开待办")
+                }
+                if !waitingTasks.isEmpty {
+                    Button {
+                        panelState.pendingDiscussionScope = .theirs
+                        navigate(.tasks)
+                    } label: {
+                        Text(TodayCopy.waitingWork(waitingTasks.count))
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .accessibilityHint("打开待办")
+                }
+                Spacer(minLength: 8)
+                if showUpdates {
+                    Button {
+                        withMotion(CompanionMotion.ease()) { showUpdates = false }
+                    } label: {
+                        Text(TodayCopy.backToReplies)
+                            .workspaceMeta()
+                            .foregroundStyle(CompanionPalette.jade)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                } else if TodayFeed.hasNonReplyUpdates(monitor.inboxItems) {
+                    Button {
+                        withMotion(CompanionMotion.ease()) { showUpdates = true }
+                    } label: {
+                        Text(TodayCopy.allUpdates(TodayFeed.allUpdatesCount(monitor.inboxItems)))
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                }
+            }
+        }
+        .companionAnimation(CompanionMotion.ease(), value: showUpdates)
+        .companionAnimation(CompanionMotion.ease(), value: needsReply.count)
+    }
+
     private var messageFeed: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center) {
-                Text(showUpdates ? "这些对话有更新" : "先处理这些事").workspaceTitle()
-                Spacer()
-                Button { showUpdates.toggle() } label: {
-                    HStack(spacing: 4) {
-                        Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
-                }
-                .buttonStyle(.plain)
-            }
             HStack(spacing: 9) {
                 Button { searchFocused = true } label: {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -140,6 +177,7 @@ struct AssistantTodayView: View {
                         messageCard(item, expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id))
                     }
                 }
+                .companionAnimation(CompanionMotion.ease(), value: showUpdates)
             }
             if let dismissed {
                 HStack {
@@ -303,38 +341,6 @@ struct AssistantTodayView: View {
         switch monitor.stats.syncStatus { case .ok: return "checkmark.circle"; case .syncing, .idle: return "arrow.triangle.2.circlepath"; default: return "exclamationmark.triangle" }
     }
 
-    private func filterPill(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text("\(title) \(count)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(selected ? Color.white : .primary)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(selected ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
-                .overlay(Capsule().strokeBorder(selected ? Color.clear : CompanionPalette.border))
-        }
-        .buttonStyle(CompanionPressStyle())
-        .accessibilityLabel("\(title)，\(count) 项")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private func jumpPill(_ title: String, count: Int, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Text("\(title) \(count)")
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(CompanionPalette.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(CompanionPalette.border))
-        }
-        .buttonStyle(CompanionPressStyle())
-        .accessibilityLabel("\(title)，\(count) 项")
-        .accessibilityHint("打开待办")
-    }
-
     private func messageCard(_ item: InboxItem, expanded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Button {
@@ -404,13 +410,33 @@ struct AssistantTodayView: View {
                     .help("稍后提醒")
                     .accessibilityLabel("稍后提醒")
                     Spacer()
-                    Button("已处理") { if monitor.dismissInboxItem(item) { dismissed = item } }.buttonStyle(.bordered)
+                    Button("已处理") {
+                        guard monitor.dismissInboxItem(item) else { return }
+                        withMotion(CompanionMotion.complete()) { dismissed = item }
+                    }.buttonStyle(.bordered)
                 }
                 .controlSize(.regular)
             }
         }
         .companionSurface()
     }
+}
+
+/// One status sentence for 今天. The page has one primary list; these strings
+/// are the only chrome that may compete with it.
+enum TodayCopy {
+    static func status(needsReply: Int, showingUpdates: Bool, updateCount: Int) -> String {
+        if showingUpdates {
+            return updateCount == 0 ? "现在没有对话更新" : "这些对话有 \(updateCount) 条更新"
+        }
+        if needsReply == 0 { return "现在没有要回的" }
+        return "现在有 \(needsReply) 件需要回复"
+    }
+
+    static func mineWork(_ count: Int) -> String { "我要做 \(count)" }
+    static func waitingWork(_ count: Int) -> String { "等对方 \(count)" }
+    static func allUpdates(_ count: Int) -> String { "全部 \(count) 条" }
+    static let backToReplies = "只看需要回复的"
 }
 
 /// Testable 今天 feed rules. The page labels must match these arrays, not a
