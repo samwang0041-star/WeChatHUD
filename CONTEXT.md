@@ -17,7 +17,7 @@ AI 自动代管微信聊天回复的系统。核心目标：在用户不方便�
 _Avoid_: 把 attitudes/tone_changes/mood_shift 放进单聊分析。
 
 **关系雷达**:
-基于长期数据（跨天、跨周）做趋势分析。输出：态度变化、语气变化、沉默检测、关系趋势。独立于单聊分析。已落地 model + store + `RelationshipRadarService` + 简报摘要输入 + UI stub；单聊分析仍然不产出 attitudes / tone_changes / mood_shift。
+基于长期数据（跨天、跨周）做趋势分析。输出：态度变化、语气变化、沉默检测、关系趋势。独立于单聊分析。已落地 model + store + `RelationshipRadarService` + 简报摘要输入 + 工作台独立页（「关系雷达」）+ 扫描心跳刷新沉默天数；单聊分析仍然不产出 attitudes / tone_changes / mood_shift。默认低打扰：本机确定性计算，不自动发消息，不调用趋势模型。
 
 **推断型字段**:
 需要历史对比才能判断的字段：attitudes、tone_changes、mood_shift、silentMembers、recalledNotes、ignoredNotes、participants、relationship_signal、symmetry。单聊分析不做这些，留给关系雷达。

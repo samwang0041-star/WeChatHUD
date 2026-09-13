@@ -2,6 +2,16 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-13 — Overnight PR#5：关系雷达独立页 + HUDStore 热路径串行化
+
+### [Engineer] Wave C 收尾 + Wave B 再推一段
+
+- 工作台「回顾」多了一页「关系雷达」：跨天态度 / 语气 / 沉默 / 关系趋势，转淡和沉默排前面。单天分析仍然没有 attitudes / tone_changes / mood_shift。
+- 扫描成功后离主线程重算雷达快照（15 分钟节流）；单聊分析写入日事实后立刻刷新该会话。刷新是确定性计算，不调 AI、不发微信。
+- HUDStore 白名单 / sync_state / contacts / chat_actions 读路径改走 `queryOne`/`queryAll`，进入同一条 Swift 串行队列。草稿、autopilot_log、classification_queue 仍是直接 prepare，下一刀再迁。
+- 空 `overallMood` 时 `1..<moods.count` 会 `Range` 崩溃；扫描刷新会走到这条路径，已改成 `moods.count >= 2` 才算语气变化。
+- 自动驾驶护栏未改。
+
 ## 2026-09-13 — Overnight：Keychain / 串行存储 / 关系雷达
 
 ### [Engineer] 安全 P0 + 存储地基 + 关系雷达初版
