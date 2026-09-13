@@ -46,6 +46,19 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertFalse(filters.contains("当前只显示还没做完的"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testArchivedRevealGivesUnderPress() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        let listStart = try XCTUnwrap(source.text.range(of: "private func listPane"))
+        let detailStart = try XCTUnwrap(source.text.range(of: "private func detailPane"))
+        let list = String(source.text[listStart.lowerBound..<detailStart.lowerBound])
+        XCTAssertTrue(list.contains("点开查看"))
+        XCTAssertTrue(list.contains("收起"))
+        XCTAssertTrue(list.contains("CompanionPressStyle()"))
+        XCTAssertFalse(list.contains("buttonStyle(.plain)"))
+        XCTAssertFalse(list.contains("CompanionPalette.jade"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {

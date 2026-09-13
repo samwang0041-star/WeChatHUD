@@ -259,10 +259,11 @@ struct DiscussionWorkspaceView: View {
                                 expandArchived = true
                             } label: {
                                 Text("\(group.items.count) 件过期未处理，点开查看")
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(CompanionPalette.jade)
+                                    .workspaceBody()
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CompanionPressStyle())
                             .accessibilityLabel("展开较早收起的 \(group.items.count) 件待办")
                         } else {
                             ForEach(group.items) { item in
@@ -280,8 +281,8 @@ struct DiscussionWorkspaceView: View {
                             }
                             if group.title == DiscussionPresentation.archivedGroupTitle {
                                 Button("收起") { expandArchived = false }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 12, weight: .medium))
+                                    .buttonStyle(CompanionPressStyle())
+                                    .workspaceMeta()
                                     .foregroundStyle(.secondary)
                             }
                         }
