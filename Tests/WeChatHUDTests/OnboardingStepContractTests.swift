@@ -150,6 +150,23 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
         XCTAssertEqual(FirstLaunchGuide.backCTA, "上一步")
     }
+
+    func testContactsPageIsHeadingAndPickerNotAFooterLecture() throws {
+        let source = try OnboardingViewSource.load()
+        let start = try XCTUnwrap(source.body.range(of: "private var whitelistGuide"))
+        let heading = try XCTUnwrap(source.body.range(of: "private func heading("))
+        let page = String(source.body[start.lowerBound..<heading.lowerBound])
+        XCTAssertTrue(page.contains("FirstLaunchGuide.contactsTitle"))
+        XCTAssertTrue(page.contains("FirstLaunchContactPicker()"))
+        XCTAssertFalse(page.contains("FirstLaunchGuide.contactsFooter"))
+        XCTAssertFalse(page.contains("info.circle"))
+        XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
+        XCTAssertEqual(
+            FirstLaunchGuide.contactsFooter,
+            "只整理你选中的对话，之后可以随时调整。AI 可选，不影响开始使用。"
+        )
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the

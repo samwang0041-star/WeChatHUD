@@ -181,9 +181,6 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 14) {
             heading(FirstLaunchGuide.contactsTitle, subtitle: FirstLaunchGuide.contactsSubtitle)
             FirstLaunchContactPicker()
-            Label(FirstLaunchGuide.contactsFooter, systemImage: "info.circle")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
