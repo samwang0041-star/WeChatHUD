@@ -37,6 +37,7 @@ enum AISettingsCopy {
     static let fetchFailed = "没拿到模型列表。"
     static let writingHabits = "写作习惯"
     static let privacyTitle = "数据与隐私"
+    static let advancedTitle = "高级设置"
     static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
 
     static func restoredOk(_ date: String) -> String { "\(restoredOkPrefix) \(date)。" }
@@ -382,8 +383,7 @@ struct AISettingsView: View {
     @State private var saveError = ""
     @State private var hasPendingSave = false
     @State private var savedAt: Date?
-    @State private var preferencesExpanded = false
-    @State private var privacyExpanded = false
+    @State private var advancedExpanded = false
     @State private var selectedSection: AISettingsSection?
     private let lockedSection: AISettingsSection?
 
@@ -615,9 +615,7 @@ struct AISettingsView: View {
             SettingsRowDivider()
             providerCard
             SettingsRowDivider()
-            generationPreferences
-            SettingsRowDivider()
-            privacySection
+            advancedPreferences
         }
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
@@ -636,9 +634,16 @@ struct AISettingsView: View {
         }
     }
 
-    private var generationPreferences: some View {
-        DisclosureGroup(isExpanded: $preferencesExpanded) {
+    private var advancedPreferences: some View {
+        DisclosureGroup(isExpanded: $advancedExpanded) {
             VStack(spacing: 0) {
+                Text(AISettingsCopy.writingHabits)
+                    .workspaceRowTitle()
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
                 SettingsToggleRow("慢慢想清楚再答", subtitle: "写摘要和草稿时多想一会儿，可能会更慢。", isOn: $thinkingEnabled)
                 SettingsRowDivider()
                 SettingsRow("回复最长写多少") {
@@ -668,9 +673,25 @@ struct AISettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
+                SettingsRowDivider()
+                Text(AISettingsCopy.privacyTitle)
+                    .workspaceRowTitle()
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AISettingsCopy.privacyBody)
+                    Text(AISettingsCopy.privacyRemote)
+                }
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
         } label: {
-            Text(AISettingsCopy.writingHabits)
+            Text(AISettingsCopy.advancedTitle)
                 .workspaceRowTitle()
         }
         .tint(CompanionPalette.accent)
@@ -732,26 +753,6 @@ struct AISettingsView: View {
         .onChange(of: suggestionsEnabled) { _, _ in debouncedSave() }
         .onChange(of: moodDetectionEnabled) { _, _ in debouncedSave() }
         .onChange(of: dailyReportActionInsightsEnabled) { _, _ in debouncedSave() }
-    }
-
-    private var privacySection: some View {
-        DisclosureGroup(isExpanded: $privacyExpanded) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(AISettingsCopy.privacyBody)
-                Text(AISettingsCopy.privacyRemote)
-            }
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        } label: {
-            Text(AISettingsCopy.privacyTitle)
-                .workspaceRowTitle()
-        }
-        .tint(CompanionPalette.accent)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder
