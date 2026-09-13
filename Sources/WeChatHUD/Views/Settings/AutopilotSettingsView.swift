@@ -25,6 +25,7 @@ enum AutopilotSettingsCopy {
 
     static let alwaysManualTitle = "哪些一定交给你"
     static let alwaysManualRule = "群聊、转账、红包、小程序不会自动发送。其他敏感内容需人工确认。"
+    static let replyStyleTitle = "回复风格"
 
     /// The batch option is a window in seconds, not a message count. The old
     /// "连着几条一起回" title read as "reply after N messages", which is not
@@ -123,16 +124,6 @@ struct AutopilotSettingsView: View {
                     )
                 )
                 SettingsRowDivider()
-                SettingsRow("回复风格", subtitle: replyStyle.hint) {
-                    Picker("回复风格", selection: $replyStyle) {
-                        ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 140)
-                    .onChange(of: replyStyle) { save() }
-                }
-                SettingsRowDivider()
                 confidenceRow
                 SettingsRowDivider()
                 // The batch window lives in the main section: it is part of
@@ -140,8 +131,6 @@ struct AutopilotSettingsView: View {
                 // home behind 高级设置 hid the answer from the question it
                 // answers.
                 limitsBatchRow
-                SettingsRowDivider()
-                alwaysManualRow
                 SettingsRowDivider()
                 DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
                     VStack(alignment: .leading, spacing: 12) {
@@ -232,12 +221,6 @@ struct AutopilotSettingsView: View {
         }
     }
 
-    private var alwaysManualRow: some View {
-        SettingsRow(AutopilotSettingsCopy.alwaysManualTitle, subtitle: AutopilotSettingsCopy.alwaysManualRule) {
-            EmptyView()
-        }
-    }
-
     // MARK: - Exclusion
 
     private var exclusionSection: some View {
@@ -296,6 +279,10 @@ struct AutopilotSettingsView: View {
 
     private var advancedSection: some View {
         SettingsSection("高级") {
+            replyStyleRow
+            SettingsRowDivider()
+            alwaysManualRow
+            SettingsRowDivider()
             Text(AutopilotSettingsCopy.groupRule)
                 .font(.callout).foregroundStyle(.secondary).padding(14)
             SettingsRowDivider()
@@ -328,6 +315,24 @@ struct AutopilotSettingsView: View {
                 .frame(width: 170)
                 .onChange(of: sendKey) { save() }
             }
+        }
+    }
+
+    private var replyStyleRow: some View {
+        SettingsRow(AutopilotSettingsCopy.replyStyleTitle, subtitle: replyStyle.hint) {
+            Picker(AutopilotSettingsCopy.replyStyleTitle, selection: $replyStyle) {
+                ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(width: 140)
+            .onChange(of: replyStyle) { save() }
+        }
+    }
+
+    private var alwaysManualRow: some View {
+        SettingsRow(AutopilotSettingsCopy.alwaysManualTitle, subtitle: AutopilotSettingsCopy.alwaysManualRule) {
+            EmptyView()
         }
     }
 
