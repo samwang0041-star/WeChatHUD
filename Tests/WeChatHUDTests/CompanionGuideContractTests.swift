@@ -142,6 +142,17 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("连接微信"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testReopenGuideSpeaksAReceipt() throws {
+        XCTAssertEqual(GuideCopy.reopenGuide, "引导会再走一遍。")
+        let source = try CompanionGuideSource.load()
+        XCTAssertTrue(source.text.contains("GuideCopy.reopenGuide"))
+        XCTAssertTrue(source.text.contains("重新打开引导"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertTrue(source.text.contains("每天怎么用"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {

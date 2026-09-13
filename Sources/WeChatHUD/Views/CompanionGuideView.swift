@@ -13,6 +13,7 @@ enum GuideCopy {
     static let updateCurrent = "已经是最新。"
     static let updateFailed = "刚才没查上。"
     static let updatePreview = "演示模式不查版本。"
+    static let reopenGuide = "引导会再走一遍。"
     static let step1Detail = "登录这台 Mac 的微信。"
     static let step2Detail = "选一个人或一个群。"
     static let step3Detail = "今天看待回和待办。"
@@ -43,6 +44,7 @@ struct CompanionGuideView: View {
     let showIntroduction: () -> Void
     @ObservedObject private var updates = AppUpdateController.shared
     @State private var askedUpdate = false
+    @State private var reopenNote: String?
 
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -159,7 +161,10 @@ struct CompanionGuideView: View {
                     .textSelection(.enabled)
             }
             HStack {
-                Button("重新打开引导", action: showIntroduction)
+                Button("重新打开引导") {
+                    reopenNote = GuideCopy.reopenGuide
+                    showIntroduction()
+                }
                     .buttonStyle(CompanionPressStyle())
                     .workspaceMeta()
                     .foregroundStyle(.secondary)
@@ -171,6 +176,12 @@ struct CompanionGuideView: View {
                 .workspaceMeta()
                 .foregroundStyle(.secondary)
                 Spacer()
+            }
+            if let reopenNote {
+                Text(reopenNote)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if askedUpdate, let receipt = GuideCopy.updateReceipt(phase: updates.phase, version: updates.offer.map { $0.version.description }) {
                 Text(receipt)
