@@ -88,6 +88,20 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(tab.text.contains("导出"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testSourceUnavailableRetryPressesQuietly() throws {
+        let source = try DailyReportCommandCenterSource.load()
+        let unavailableStart = try XCTUnwrap(source.text.range(of: "private var sourceUnavailableView"))
+        let emptyStart = try XCTUnwrap(source.text.range(of: "private func emptyStateWithRetry"))
+        let unavailable = String(source.text[unavailableStart.lowerBound..<emptyStart.lowerBound])
+        XCTAssertTrue(unavailable.contains("重新生成"))
+        XCTAssertTrue(unavailable.contains("CompanionPressStyle()"))
+        XCTAssertFalse(unavailable.contains("accentColor"))
+        XCTAssertFalse(unavailable.contains("buttonStyle(.plain)"))
+        let tab = try DailyReportTabSource.load()
+        XCTAssertTrue(tab.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportCommandCenterSource {
