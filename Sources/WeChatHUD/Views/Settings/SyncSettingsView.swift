@@ -243,15 +243,25 @@ struct SyncSettingsView: View {
     private var displaySection: some View {
         SettingsSection {
             SettingsRow(PreferencesCopy.displayTitle, subtitle: PreferencesCopy.displaySubtitle, icon: "display", iconColor: .secondary) {
-                Picker("显示位置", selection: $displayScreen) {
-                    ForEach(DisplayScreen.allCases, id: \.self) { s in
-                        Text(s.label).tag(s)
+                HStack(spacing: 6) {
+                    ForEach(DisplayScreen.allCases, id: \.self) { screen in
+                        Button(screen.label) {
+                            displayScreen = screen
+                            save()
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(displayScreen == screen ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            displayScreen == screen ? CompanionPalette.selectedFill : Color.clear,
+                            in: Capsule()
+                        )
+                        .accessibilityLabel(screen.label)
+                        .accessibilityAddTraits(displayScreen == screen ? .isSelected : [])
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 110)
-                .onChange(of: displayScreen) { save() }
             }
         }
     }
