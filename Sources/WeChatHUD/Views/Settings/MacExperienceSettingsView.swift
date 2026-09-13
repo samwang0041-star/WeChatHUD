@@ -48,15 +48,11 @@ struct MacExperienceSettingsView: View {
                     }
                 }
                 if !accessibilityGranted {
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: "exclamationmark.bubble")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.orange)
-                            .frame(width: 28)
-                        Text("已经打开开关？请先重新检查。若仍未生效，退出并重新打开 WeChatHUD 后再试。")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("还没授权跳转微信。点「打开辅助功能设置」。")
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 12)
                         Button("重新检查权限") {
                             refresh()
                             permissionCheckMessage = accessibilityGranted
@@ -68,8 +64,8 @@ struct MacExperienceSettingsView: View {
                         .foregroundStyle(.secondary)
                         .disabled(PreviewRuntime.isEnabled)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
                 if let permissionCheckMessage {
                     HStack(alignment: .top, spacing: 12) {
