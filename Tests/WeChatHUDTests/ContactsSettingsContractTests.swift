@@ -213,6 +213,20 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testInspectorDoesNotRepeatLevelAsASegmentedControl() throws {
+        let source = try ContactsSettingsSource.load()
+        let inspectorStart = try XCTUnwrap(source.text.range(of: "private struct ContactInspectorView"))
+        let block = try XCTUnwrap(source.text.range(of: "// MARK: - Block Rules"))
+        let inspector = String(source.text[inspectorStart.lowerBound..<block.lowerBound])
+        XCTAssertFalse(inspector.contains("Picker(\"关注级别\""))
+        XCTAssertFalse(inspector.contains(".pickerStyle(.segmented)"))
+        XCTAssertTrue(inspector.contains("编辑详情"))
+        XCTAssertTrue(inspector.contains("移除关注"))
+        XCTAssertTrue(source.text.contains("已改成"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {

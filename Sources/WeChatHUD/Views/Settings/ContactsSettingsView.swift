@@ -227,12 +227,6 @@ private struct ContactsListSubView: View {
                     inferenceStatus: monitor.contactInferenceStatus,
                     onEdit: { editingContact = $0 },
                     onInfer: { monitor.startContactInference(contacts: [$0]) },
-                    onChangeLevel: { contact, level in
-                        if saveContact(contact, level: level) {
-                            reload()
-                            listReceipt = "已改成\(attentionLevelTitle(level))。"
-                        }
-                    },
                     onDelete: { contact in
                         pendingDeleteContact = contact
                     }
@@ -578,7 +572,10 @@ private struct ContactsListSubView: View {
                 ForEach([AttentionLevel.vip, .whitelist, .greylist], id: \.self) { level in
                     if level != contact.attentionLevel {
                         Button(attentionLevelTitle(level)) {
-                            if saveContact(contact, level: level) { reload() }
+                            if saveContact(contact, level: level) {
+                                reload()
+                                listReceipt = "已改成\(attentionLevelTitle(level))。"
+                            }
                         }
                     }
                 }
@@ -639,7 +636,6 @@ private struct ContactInspectorView: View {
     let inferenceStatus: ContactInferenceStatus?
     let onEdit: (ContactEntry) -> Void
     let onInfer: (ContactEntry) -> Void
-    let onChangeLevel: (ContactEntry, AttentionLevel) -> Void
     let onDelete: (ContactEntry) -> Void
 
     var body: some View {
@@ -759,30 +755,17 @@ private struct ContactInspectorView: View {
     }
 
     private func operationsSection(_ contact: ContactEntry) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("关注级别", selection: Binding(
-                get: { contact.attentionLevel },
-                set: { onChangeLevel(contact, $0) }
-            )) {
-                Text("重点关注").tag(AttentionLevel.vip)
-                Text("关注").tag(AttentionLevel.whitelist)
-                Text("仅保留资料").tag(AttentionLevel.greylist)
-            }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("关注级别")
-
-            HStack(spacing: 8) {
-                Button("编辑详情") { onEdit(contact) }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 16)
-                Button("移除关注", role: .destructive) { onDelete(contact) }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.red)
-                    .accessibilityLabel("移除关注")
-            }
+        HStack(spacing: 8) {
+            Button("编辑详情") { onEdit(contact) }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
+            Button("移除关注", role: .destructive) { onDelete(contact) }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.red)
+                .accessibilityLabel("移除关注")
         }
     }
 
