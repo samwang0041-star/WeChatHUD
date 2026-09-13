@@ -5,6 +5,11 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 16 — InsightStore bulk load via WeChatReaderActor
+- Actor bulkMessageStats + async InsightDataLoader.load; InsightStore reload/day priming via actor
+- Sync load/statsForDay kept; ChatMonitor still debt; Autopilot unchanged
+- Tests 1522+70 green
+
 ### [Overnight] 2026-09-13 Slice 15 — Insight→WeChatReaderActor / batch
 - ChatInsightService + InsightCoordinator day probe/stats via actor; whitelist today-filter uses messagesBatch
 - InsightStore.bulk load still direct reader (debt); Autopilot unchanged

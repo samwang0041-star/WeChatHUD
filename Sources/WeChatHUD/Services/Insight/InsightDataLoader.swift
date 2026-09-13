@@ -136,6 +136,142 @@ final class InsightDataLoader {
         )
     }
 
+    /// Same bulk insight load as `load(reader:)`, routed through `WeChatReaderActor`
+    /// so InsightStore background reload shares ScanEngine's isolation boundary.
+    func load(
+        store: HUDStore,
+        readerActor: WeChatReaderActor,
+        replyDebtItems: [ReplyDebtItem],
+        window: InsightTimeWindow,
+        scope: InsightScope
+    ) async -> LoadResult? {
+        let whitelist = store.getWhitelist()
+        let whitelistIds = Set(whitelist.map(\.id))
+        let whitelistMap = Self.whitelistLookup(whitelist)
+        let selfNames = await readerActor.mySelfNames()
+        let cutoff = cutoffTimestamp(for: window)
+
+        guard let sessions = try? await readerActor.sessions() else {
+            return nil
+        }
+
+        let filteredSessions = sessions.filter { session in
+            guard !session.username.hasPrefix("gh_"),
+                  !session.username.contains("@app"),
+                  session.username != "filehelper",
+                  session.username != "floatbottle",
+                  !session.username.hasPrefix("fake_"),
+                  !selfNames.contains(session.username) else { return false }
+            if scope == .whitelist && !whitelistIds.contains(session.username) { return false }
+            if cutoff > 0 && session.lastTimestamp < cutoff { return false }
+            return true
+        }
+
+        let myUsername = await readerActor.myUsername()
+        let myDisplayName = await readerActor.displayName(for: myUsername)
+        let bulkStats = await readerActor.bulkMessageStats(
+            chatUsernames: filteredSessions.map(\.username),
+            selfNames: selfNames,
+            sinceTsEpoch: cutoff,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName
+        )
+
+        var stats: [String: ChatStatsData] = [:]
+        var others: [InsightSessionEntry] = []
+        let sessionMap = Self.sessionLookup(filteredSessions)
+
+        for (chatUsername, bulk) in bulkStats {
+            let session = sessionMap[chatUsername]
+            let isGroup = session?.isGroup ?? chatUsername.contains("@chatroom")
+            let isWhitelisted = whitelistIds.contains(chatUsername)
+            let entry = whitelistMap[chatUsername]
+            let name: String
+            if let displayName = entry?.displayName {
+                name = displayName
+            } else {
+                name = await readerActor.displayName(for: chatUsername)
+            }
+            let category = entry?.category ?? .other
+            var topSenders: [(name: String, count: Int)] = []
+            for pair in bulk.senderCounts.sorted(by: { $0.value > $1.value }) {
+                let senderName = await readerActor.displayName(for: pair.key)
+                topSenders.append((name: senderName, count: pair.value))
+            }
+
+            let myCount = bulk.selfCount
+            let othersCount = bulk.totalCount - myCount
+            let symmetryRatio: Double
+            if bulk.totalCount == 0 {
+                symmetryRatio = 1.0
+            } else {
+                let minCount = Double(min(myCount, othersCount))
+                let maxCount = Double(max(myCount, othersCount))
+                symmetryRatio = maxCount > 0 ? minCount / maxCount : 1.0
+            }
+
+            let chatStats = ChatStatsData(
+                chatUsername: chatUsername,
+                chatName: name,
+                isGroup: isGroup,
+                category: category,
+                messageCount: bulk.totalCount,
+                myMessageCount: myCount,
+                participantCount: bulk.senderCounts.count,
+                messagesByHour: bulk.hourlyBuckets,
+                messagesByWeekday: bulk.weekdayBuckets,
+                typeCounts: bulk.typeCounts,
+                avgResponseTimeSeconds: 0,
+                symmetryRatio: symmetryRatio,
+                trend7d: 0,
+                topSenders: topSenders,
+                silentMembers: [],
+                ignoredMessages: [],
+                selfInitiated: bulk.selfInitiated,
+                earliestTs: bulk.earliestTs,
+                latestTs: bulk.latestTs
+            )
+            stats[chatUsername] = chatStats
+
+            if !isWhitelisted {
+                others.append(InsightSessionEntry(
+                    id: chatUsername,
+                    displayName: name,
+                    isGroup: isGroup,
+                    lastTimestamp: session?.lastTimestamp ?? 0,
+                    messageCount: bulk.totalCount
+                ))
+            }
+        }
+
+        let pendingAsks = store.loadPendingAsks(
+            bucket: nil,
+            status: .pending,
+            relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
+        )
+        let recalledMessages = store.loadRecalledMessages(since: cutoff, limit: 1000)
+        let days = window.dayCount
+
+        let overview = ChatStatsEngine.computeGlobalOverview(
+            allStats: stats,
+            contacts: store.loadContacts(),
+            commitments: store.loadCommitments(status: nil),
+            replyDebtItems: replyDebtItems,
+            vipUsernames: Set(store.loadVIPUsernames()),
+            selfUsernames: selfNames,
+            pendingAskCount: pendingAsks.count,
+            urgentAskCount: pendingAsks.filter { $0.urgency == .urgent }.count,
+            recalledMessageCount: recalledMessages.count,
+            windowDays: days
+        )
+
+        return LoadResult(
+            stats: stats,
+            overview: overview,
+            otherActiveSessions: others.sorted { $0.messageCount > $1.messageCount }
+        )
+    }
+
     /// Detail statistics cover the selected calendar day, including all messages.
     /// Overview windows and AI's bounded sample must not change these totals.
     func statsForDay(
