@@ -569,7 +569,8 @@ actor AutopilotService {
         // --- Build context window ---
         let allMessages: [MessageInfo]
         do {
-            allMessages = try reader.getMessages(chatUsername: representative.chatUsername, limit: 15)
+            let readerActor = WeChatReaderActor(reader)
+            allMessages = try await readerActor.getMessages(chatUsername: representative.chatUsername, limit: 15)
         } catch {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .failed,
@@ -931,7 +932,7 @@ actor AutopilotService {
         let savedClipboard = await ClipboardGuard.save()
         let verified: Bool
         do {
-            let verificationBaseline = latestOutgoingMessage(chatUsername: chatUsername)
+            let verificationBaseline = await latestOutgoingMessage(chatUsername: chatUsername)
             let startedAt = Int(Date().timeIntervalSince1970)
 
             // Send with optional typing simulation (blocks until complete — 2s+ per message)
@@ -945,7 +946,7 @@ actor AutopilotService {
             if uiResult.succeeded {
                 // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
                 try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for DB to flush
-                let (ok, outgoingMsgUID) = verifySend(
+                let (ok, outgoingMsgUID) = await verifySend(
                     chatUsername: chatUsername,
                     expectedText: text,
                     startedAt: startedAt,
@@ -1032,11 +1033,12 @@ actor AutopilotService {
         expectedText: String,
         startedAt: Int,
         previousOutgoingMsgUID: String?
-    ) -> (Bool, String?) {
+    ) async -> (Bool, String?) {
         let expected = normalizeMessageText(expectedText)
         guard !expected.isEmpty else { return (false, nil) }
 
-        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 10) else {
+        let readerActor = WeChatReaderActor(reader)
+        guard let msgs = try? await readerActor.getMessages(chatUsername: chatUsername, limit: 10) else {
             return (false, nil) // fail closed — can't verify, treat as failed
         }
 
@@ -1050,8 +1052,9 @@ actor AutopilotService {
         return (false, nil)
     }
 
-    private func latestOutgoingMessage(chatUsername: String) -> MessageInfo? {
-        guard let msgs = try? reader.getMessages(chatUsername: chatUsername, limit: 10) else {
+    private func latestOutgoingMessage(chatUsername: String) async -> MessageInfo? {
+        let readerActor = WeChatReaderActor(reader)
+        guard let msgs = try? await readerActor.getMessages(chatUsername: chatUsername, limit: 10) else {
             return nil
         }
         return msgs.first { isOutgoingMessage($0, chatUsername: chatUsername) }
@@ -1215,7 +1218,7 @@ actor AutopilotService {
             }
             return .blocked("已达到本次会话发送上限")
         }
-        if let staleReason = stalePendingSendReason(item) {
+        if let staleReason = await stalePendingSendReason(item) {
             var retained = item
             retained.manualOnlyReason = staleReason
             pendingSendQueue.append(retained)
@@ -1253,9 +1256,10 @@ actor AutopilotService {
         return .blocked(busy ? failureReason : "\(failureReason)，已转为人工确认")
     }
 
-    private func stalePendingSendReason(_ item: PendingSend) -> String? {
+    private func stalePendingSendReason(_ item: PendingSend) async -> String? {
         let createdAt = Int(item.createdAt.timeIntervalSince1970)
-        guard let messages = try? reader.getMessages(chatUsername: item.chatUsername, limit: 10) else {
+        let readerActor = WeChatReaderActor(reader)
+        guard let messages = try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 10) else {
             return "无法读取最新上下文，请人工确认"
         }
 
@@ -1381,7 +1385,8 @@ actor AutopilotService {
 
             // Fix 5: use actual last message time, not memory lastUpdated
             let lastMsgTime: Date
-            if let msgs = try? reader.getMessages(chatUsername: entry.id, limit: 1), let last = msgs.first {
+            let readerActor = WeChatReaderActor(reader)
+            if let msgs = try? await readerActor.getMessages(chatUsername: entry.id, limit: 1), let last = msgs.first {
                 lastMsgTime = Date(timeIntervalSince1970: Double(last.createTime))
             } else {
                 lastMsgTime = memory.lastUpdated
