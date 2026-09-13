@@ -416,7 +416,7 @@ final class ChatMonitor: ObservableObject {
         self.store = store
         self.aiService = aiService
         self.groupContextBriefingService = GroupContextBriefingService(
-            reader: reader,
+            readerActor: WeChatReaderActor(reader),
             store: store,
             client: aiService
         )
