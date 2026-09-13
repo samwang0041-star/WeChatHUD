@@ -363,10 +363,13 @@ struct DiscussionWorkspaceView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(CompanionPalette.jade)
                     .controlSize(.large)
                 } else {
                     Button("恢复为未完成") { update(id: item.id, to: .pending, previous: item.status, title: item.content) }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
                 HStack(spacing: 18) {
                     Button { correcting = item } label: {
@@ -377,9 +380,9 @@ struct DiscussionWorkspaceView: View {
                         Label("查看原文", systemImage: "doc.text")
                     }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
-                .font(.system(size: 13, weight: .medium))
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
