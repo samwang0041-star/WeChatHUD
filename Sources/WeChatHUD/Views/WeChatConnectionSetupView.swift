@@ -223,8 +223,11 @@ struct WeChatConnectionSetupView: View {
                     .frame(width: 48, height: 48)
                     .background(CompanionPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(title).font(.title3.weight(.semibold))
-                    Text(detail).font(.callout).foregroundStyle(.secondary)
+                    Text(title)
+                        .workspaceTitle()
+                    Text(detail)
+                        .workspaceBody()
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -240,10 +243,11 @@ struct WeChatConnectionSetupView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if PreviewRuntime.isEnabled {
                         Text("演示数据 · 林晓")
-                            .font(.callout.weight(.medium))
+                            .workspaceBody()
                     }
                     Label("上次同步：\(date.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -281,7 +285,8 @@ struct WeChatConnectionSetupView: View {
 
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.circle")
-                    .font(.callout).foregroundStyle(.orange)
+                    .workspaceMeta()
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -364,7 +369,7 @@ struct WeChatConnectionSetupView: View {
 
     private func checkpoint(_ text: String, complete: Bool) -> some View {
         Label(text, systemImage: complete ? "checkmark.circle.fill" : "circle")
-            .font(.callout.weight(.medium))
+            .workspaceBody()
             .foregroundStyle(complete ? CompanionPalette.accent : Color.secondary)
     }
 

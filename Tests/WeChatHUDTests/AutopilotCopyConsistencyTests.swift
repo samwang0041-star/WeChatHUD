@@ -779,6 +779,25 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.changeAccount, "更换微信账号")
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
+
+    func testConnectionCardUsesWorkspaceTypeNotTitle3() throws {
+        let setup = try ConnectionSetupSource.load()
+        let title = try XCTUnwrap(setup.text.range(of: "Text(title)"))
+        let disconnected = try XCTUnwrap(setup.text.range(of: "if !connected"))
+        let header = String(setup.text[title.lowerBound..<disconnected.lowerBound])
+        XCTAssertTrue(header.contains(".workspaceTitle()"))
+        XCTAssertTrue(header.contains(".workspaceBody()"))
+        XCTAssertFalse(header.contains(".font(.title3"))
+        XCTAssertFalse(header.contains(".font(.callout"))
+
+        let checkpointStart = try XCTUnwrap(setup.text.range(of: "private func checkpoint"))
+        let signed = try XCTUnwrap(setup.text.range(of: "private var preparationSigned"))
+        let checkpoint = String(setup.text[checkpointStart.lowerBound..<signed.lowerBound])
+        XCTAssertTrue(checkpoint.contains(".workspaceBody()"))
+        XCTAssertFalse(checkpoint.contains(".font(.callout"))
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        XCTAssertEqual(FirstLaunchGuide.connection(state: .connected, wechatRunning: true, accessReady: true, connected: true).title, "微信已连接")
+    }
 }
 
 // MARK: - Source readers
