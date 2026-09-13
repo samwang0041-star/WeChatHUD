@@ -35,6 +35,7 @@ enum AISettingsCopy {
     static let restoredFailPrefix = "上次没通过"
     static let saveFailed = "刚才没存上。"
     static let saving = "正在保存…"
+    static let confirming = "正在确认…"
     static let saveOk = "已保存。"
     static let privacyBody = "密钥只留在这台电脑里，不会出现在界面或确认结果里。"
     static let privacyRemote = "常用服务和自己填的地址多半是网上的服务，请确认你信任对方怎么处理数据。"
@@ -758,7 +759,11 @@ struct AISettingsView: View {
 
     @ViewBuilder
     private var saveStatus: some View {
-        if !saveError.isEmpty {
+        if isTesting {
+            Text(AISettingsCopy.confirming)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+        } else if !saveError.isEmpty {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(AISettingsCopy.saveFailed)
                     .workspaceMeta()

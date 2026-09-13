@@ -442,6 +442,22 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
     }
 
+    func testConfirmingDoesNotLeaveSaveOkOnTheCard() throws {
+        let source = try AISettingsSource.load()
+        let save = try XCTUnwrap(source.text.range(of: "private var saveStatus"))
+        let actions = try XCTUnwrap(source.text.range(of: "// MARK: - Actions"))
+        let saveBlock = String(source.text[save.lowerBound..<actions.lowerBound])
+        XCTAssertTrue(saveBlock.contains("isTesting"))
+        XCTAssertTrue(saveBlock.contains("AISettingsCopy.confirming"))
+        let confirming = try XCTUnwrap(saveBlock.range(of: "AISettingsCopy.confirming"))
+        let saveOk = try XCTUnwrap(saveBlock.range(of: "AISettingsCopy.saveOk"))
+        XCTAssertLessThan(confirming.lowerBound, saveOk.lowerBound)
+        XCTAssertFalse(saveBlock.contains("borderedProminent"), "jade stays on 确认能用")
+        XCTAssertEqual(AISettingsCopy.confirming, "正在确认…")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+        XCTAssertEqual(AISettingsCopy.saveOk, "已保存。")
+    }
+
     func testConfirmFailureReceiptNeverSpeaksHTTP() throws {
         let source = try AISettingsSource.load()
         let start = try XCTUnwrap(source.text.range(of: "private func userFacingConfigurationError"))
