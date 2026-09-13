@@ -1984,12 +1984,15 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// All WeChat contacts (username → displayName) from the encrypted DB.
-    func wechatContacts() -> [String: String] {
+    /// Routes contact-index refresh through `WeChatReaderActor`.
+    func wechatContacts() async -> [String: String] {
         // The contacts UI may open before or long after the first scan; an
         // empty cache must not be presented as "there are no contacts".
-        _ = try? reader.refreshContactsIfChanged()
-        let contacts = reader.allContacts()
-        print("[WCHUD] wechatContacts dbDir=\(reader.dbDir) count=\(contacts.count)")
+        let readerActor = WeChatReaderActor(reader)
+        _ = try? await readerActor.refreshContactsIfChanged()
+        let contacts = await readerActor.allContacts()
+        let dbDir = await readerActor.dbDir()
+        print("[WCHUD] wechatContacts dbDir=\(dbDir) count=\(contacts.count)")
         return contacts
     }
 
@@ -2004,27 +2007,36 @@ final class ChatMonitor: ObservableObject {
         var id: String { username }
     }
 
-    func activePrivateChatCandidates(limit: Int = 500) -> [ActiveChatCandidate] {
-        guard !PreviewRuntime.isEnabled, !reader.dbDir.isEmpty, !reader.hasAccountSwitched() else { return [] }
-        let sessions = (try? reader.getSessions()) ?? []
+    func activePrivateChatCandidates(limit: Int = 500) async -> [ActiveChatCandidate] {
+        let readerActor = WeChatReaderActor(reader)
+        let dbDir = await readerActor.dbDir()
+        let switched = await readerActor.hasAccountSwitched()
+        guard !PreviewRuntime.isEnabled, !dbDir.isEmpty, !switched else { return [] }
+        let sessions = (try? await readerActor.sessions()) ?? []
         let excluded = Set(store.loadContacts(level: nil).map(\.username))
             .union(store.dismissedScanUsernames())
         let noisePrefixes: Set<String> = ["gh_", "fmessage", "medianote", "newsapp", "notification_", "notifymessage",
                                           "floatbottle", "qqmail", "brandsessionholder", "masssend", "officialaccounts", "tmessage"]
         let noiseExact: Set<String> = ["weixin", "filehelper", "voip", "voipapp", "qqsync", "qqsafe", "facebook", "feedsapp"]
-        return sessions
+        let filtered = sessions
             .filter { !$0.isGroup }
             .filter { !excluded.contains($0.username) }
             .filter { !$0.username.contains("@openim") && !$0.username.contains("@im.chatroom") }
             .filter { !noiseExact.contains($0.username) && !noisePrefixes.contains(where: $0.username.hasPrefix) }
             .sorted { $0.lastTimestamp != $1.lastTimestamp ? $0.lastTimestamp > $1.lastTimestamp : $0.username < $1.username }
-            .prefix(max(0, limit))
-            .map { ActiveChatCandidate(
-                username: $0.username,
-                displayName: reader.displayName(for: $0.username),
-                unreadCount: $0.unreadCount,
-                lastTimestamp: $0.lastTimestamp
-            ) }
+        let limited = Array(filtered.prefix(max(0, limit)))
+        var result: [ActiveChatCandidate] = []
+        result.reserveCapacity(limited.count)
+        for session in limited {
+            let name = await readerActor.displayName(for: session.username)
+            result.append(ActiveChatCandidate(
+                username: session.username,
+                displayName: name,
+                unreadCount: session.unreadCount,
+                lastTimestamp: session.lastTimestamp
+            ))
+        }
+        return result
     }
 
     /// Run AI relationship inference for a contact, using the shared inferrer.
