@@ -38,6 +38,8 @@ enum ApprovalCopy {
     static let emptyHint = "点开始整理，草稿会出现在这里。发不发都由你决定。"
     static let reply = "回复"
     static let openChat = "查看聊天记录"
+    static let sendNow = "立即发送"
+    static let dismissSend = "取消"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -442,17 +444,18 @@ private struct ApprovalPendingSendRow: View {
             }
             HStack(spacing: 8) {
                 Spacer()
-                Button("取消") {
+                Button(ApprovalCopy.dismissSend) {
                     Task {
                         busy = true
                         await onCancel()
                         busy = false
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 .disabled(busy)
-                Button("立即发送") {
+                Button(ApprovalCopy.sendNow) {
                     Task {
                         busy = true
                         error = await onSendNow()
@@ -461,7 +464,6 @@ private struct ApprovalPendingSendRow: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(CompanionPalette.jade)
-                .controlSize(.small)
                 .disabled(busy)
             }
             if let error {
