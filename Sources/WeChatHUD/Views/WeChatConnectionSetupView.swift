@@ -338,9 +338,12 @@ struct WeChatConnectionSetupView: View {
                             .workspaceBody()
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack {
+                        HStack(spacing: 8) {
                             Spacer()
                             Button("先不换") { showChangeAccountConfirm = false }
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                             Button("继续更换") {
                                 showChangeAccountConfirm = false
                                 if PreviewRuntime.isEnabled {
