@@ -38,6 +38,7 @@ struct SyncSettingsView: View {
     @State private var legacyStatus: DeviceSettingsStore.LegacyStoreStatus?
     @State private var showLegacyBindConfirm = false
     @State private var showAdvancedConnection = false
+    @State private var showConnectionMaintenance = false
     @State private var selectedSettingsSection: SettingsPane
     private let lockedPane: SettingsPane?
 
@@ -99,20 +100,24 @@ struct SyncSettingsView: View {
                         }
                     )
                         .companionSurface(padding: 22)
-                    DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
+                    DisclosureGroup(WeChatConnectionCopy.advanced, isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
                             connectionCapabilityList
-                            databaseSection
-                            syncSection
-                            if let device = store.deviceSettings,
-                               (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
-                                legacyRecordsSection(device: device)
+                            DisclosureGroup(WeChatConnectionCopy.syncAndChecks, isExpanded: $showConnectionMaintenance) {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    databaseSection
+                                    syncSection
+                                    if let device = store.deviceSettings,
+                                       (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
+                                        legacyRecordsSection(device: device)
+                                    }
+                                    if needsRestart {
+                                        Text("高级连接设置将在助手重新打开后应用。")
+                                            .font(.callout).foregroundStyle(.secondary)
+                                    }
+                                    SupportDiagnosticsView()
+                                }
                             }
-                            if needsRestart {
-                                Text("高级连接设置将在助手重新打开后应用。")
-                                    .font(.callout).foregroundStyle(.secondary)
-                            }
-                            SupportDiagnosticsView()
                         }.padding(.top, 14)
                     }.font(.callout)
                 }
