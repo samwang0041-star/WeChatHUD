@@ -33,6 +33,8 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(filters.contains("清除搜索"))
         XCTAssertFalse(filters.contains("strokeBorder"))
         XCTAssertFalse(filters.contains("foregroundStyle(CompanionPalette.jade)"))
+        XCTAssertTrue(filters.contains("CompanionPalette.selectedFill"))
+        XCTAssertFalse(filters.contains("CompanionPalette.jade"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
 }
