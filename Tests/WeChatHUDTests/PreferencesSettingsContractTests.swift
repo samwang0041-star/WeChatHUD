@@ -134,6 +134,18 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(prefs.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testPermissionActionsPressQuietly() throws {
+        let source = try MacExperienceSettingsSource.load()
+        XCTAssertTrue(source.text.contains("打开辅助功能设置"))
+        XCTAssertTrue(source.text.contains("重新检查权限"))
+        XCTAssertTrue(source.text.contains("CompanionPressStyle()"))
+        XCTAssertFalse(source.text.contains("buttonStyle(.bordered)"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
