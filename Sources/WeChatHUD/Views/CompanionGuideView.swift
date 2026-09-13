@@ -45,6 +45,7 @@ struct CompanionGuideView: View {
     @ObservedObject private var updates = AppUpdateController.shared
     @State private var askedUpdate = false
     @State private var reopenNote: String?
+    @State private var hoveringConnect = false
 
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -222,6 +223,10 @@ struct CompanionGuideView: View {
                         .buttonStyle(CompanionPressStyle())
                         .workspaceMeta()
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(hoveringConnect ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+                        .onHover { hoveringConnect = $0 }
                         .accessibilityLabel(buttonTitle)
                 }
             }
