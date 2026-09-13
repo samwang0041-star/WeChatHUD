@@ -2,6 +2,17 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-13 — 1.3.6：Keychain 密钥 / 串行存储 / 关系雷达
+
+### [Engineer] 合入 overnight PR #5，发第一版把安全与存储地基收进来
+
+- API Key 离开 SQLite：两阶段写入 Keychain（写后读回才清明文），迁移失败保留原值。`~/.wechat-hud` 目录 0700、文件 0600。远程 `http://` AI 端点 fail closed，loopback HTTP 保留。Codex `auth.json` 拒绝符号链接 / 错误属主 / 宽于 0640。AI 审计默认只留 `sha256:` + 脱敏片段（`WCHUD_AI_AUDIT_RAW=1` 才存原文）。
+- HUDStore 增加串行队列与 `PRAGMA user_version` 迁移（v2 关系雷达表、v3 回顾索引）。白名单 / sync_state / contacts / chat_actions / 草稿 / autopilot_log / classification 等热路径读全部改走 `queryOne`/`queryAll` + 语句缓存，扫描不再 `Task.detached` 抓 store。
+- `WeChatReaderActor` 门面接管扫描准备、会话、批量消息、白名单分页、Insight 读写、群上下文、按需分析、承诺 / 回溯上下文、详情转写与收件箱摘要等读路径；Scanner 一次 pass 内批量读消息，分片 / handle 缓存只热一次。
+- 工作台「回顾」多一页「关系雷达」：跨天态度 / 语气 / 沉默 / 关系趋势，转淡与沉默排前面；扫描成功后离主线程确定性重算快照（15 分钟节流），不调 AI、不发微信。单天分析仍然没有 attitudes / tone_changes / mood_shift。
+- 自动驾驶护栏未改：默认关闭（`autoSendEnabled=false`）、阈值 0.8、敏感词二级拦截、媒体 0.7x 衰减、金融类强制 pending、群聊（含 @）一律人工确认、会话上限 50。补了驱动真实 `handleNewMessages` / `executeSend` 的行为测试。
+- 验证：合并 `main` 后全量 `swift test` + release 构建；已签名并通过 Apple 公证（Notarized Developer ID）。
+
 
 
 
