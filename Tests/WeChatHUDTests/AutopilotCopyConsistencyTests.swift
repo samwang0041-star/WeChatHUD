@@ -90,8 +90,6 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         let rows = String(source.text[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(rows.contains("SettingsRow(AutopilotSettingsCopy.confidenceTitle"))
         XCTAssertTrue(rows.contains("AutopilotSettingsCopy.confidenceHint"))
-        XCTAssertTrue(rows.contains("SettingsRow(AutopilotSettingsCopy.alwaysManualTitle"))
-        XCTAssertTrue(rows.contains("AutopilotSettingsCopy.alwaysManualRule"))
         XCTAssertFalse(rows.contains(".font(.system"))
         XCTAssertTrue(rows.contains("WorkspaceType.body"))
         XCTAssertEqual(AutopilotSettingsCopy.confidenceTitle, "多有把握才发出去")
@@ -111,6 +109,28 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains("exclusionSection"))
         let advancedBlock = String(source.text[advanced.lowerBound...])
         XCTAssertTrue(advancedBlock.contains("exclusionSection"))
+    }
+
+    func testReplyStyleAndAlwaysManualSitUnderAdvanced() throws {
+        let source = try AutopilotViewSource.load()
+        let section = try XCTUnwrap(source.text.range(of: "SettingsSection(\"自动回复\")"))
+        let disclosure = try XCTUnwrap(source.text.range(of: "DisclosureGroup(AutopilotSettingsCopy.advancedTitle)"))
+        let firstScreen = String(source.text[section.lowerBound..<disclosure.lowerBound])
+        XCTAssertTrue(firstScreen.contains("AutopilotSettingsCopy.autoSendTitle"))
+        XCTAssertTrue(firstScreen.contains("confidenceRow"))
+        XCTAssertTrue(firstScreen.contains("limitsBatchRow"))
+        XCTAssertFalse(firstScreen.contains("alwaysManualRow"), "the guardrail list is a reminder, not a daily send decision")
+        XCTAssertFalse(firstScreen.contains("replyStyleRow"))
+        XCTAssertFalse(firstScreen.contains("回复风格"), "voice is taste, not whether a reply goes out")
+        XCTAssertFalse(firstScreen.contains("alwaysManualTitle"))
+
+        let advanced = try XCTUnwrap(source.text.range(of: "private var advancedSection"))
+        let history = try XCTUnwrap(source.text.range(of: "// MARK: - History"))
+        let block = String(source.text[advanced.lowerBound..<history.lowerBound])
+        XCTAssertTrue(block.contains("replyStyleRow"))
+        XCTAssertTrue(block.contains("alwaysManualRow"))
+        XCTAssertEqual(AutopilotSettingsCopy.replyStyleTitle, "回复风格")
+        XCTAssertEqual(AutopilotSettingsCopy.alwaysManualTitle, "哪些一定交给你")
     }
 
     func testPendingLinkIsNotThePrimaryAction() throws {
