@@ -120,6 +120,7 @@ struct NotificationBannerView: View {
     let notification: HUDNotification
     @State private var showSnooze = false
     @State private var hovering = false
+    @State private var pressingCard = false
 
     private var content: NotificationBannerContent {
         NotificationBannerContent(notification: notification)
@@ -187,6 +188,9 @@ struct NotificationBannerView: View {
                 .lineSpacing(3)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
+                .scaleEffect(cardPressScale)
+                .opacity(pressingCard ? 0.82 : 1)
+                .animation(CompanionMotion.press(), value: pressingCard)
                 .allowsHitTesting(false)
                 .accessibilityLabel(content.message)
             if showSnooze {
@@ -203,6 +207,7 @@ struct NotificationBannerView: View {
         .background(alignment: .center) { hoverWash }
         .background { tapSurface }
         .companionAnimation(CompanionMotion.hover(), value: hovering)
+        .companionAnimation(CompanionMotion.press(), value: pressingCard)
         .accessibilityElement(children: .contain)
     }
 
@@ -274,11 +279,16 @@ struct NotificationBannerView: View {
             .accessibilityHidden(true)
     }
 
+    private var cardPressScale: CGFloat {
+        pressingCard && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1
+    }
+
     /// Hover wash: the card lights up as one clickable object. Inset a little
     /// so it reads as a control inside the island rather than a new panel.
+    /// Press uses the same wash, one step denser, so the icons can stay put.
     private var hoverWash: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(hovering ? IslandInk.hover : Color.clear)
+            .fill(pressingCard ? IslandInk.hoverPressed : (hovering ? IslandInk.hover : Color.clear))
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .allowsHitTesting(false)
@@ -301,7 +311,7 @@ struct NotificationBannerView: View {
             Color.clear
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BannerCardPressStyle(pressed: $pressingCard))
         .accessibilityLabel(content.openLabel)
         .help(content.openLabel)
     }
@@ -434,6 +444,20 @@ struct NotificationBannerView: View {
         panelState.islandSurface = .inbox
         panelState.goExtended()
         return true
+    }
+}
+
+/// Reports press from the full-card hit layer without scaling that layer.
+/// Scaling the clear button would shrink the hit target and slide 稍后/关闭
+/// relative to the click tests; the message and wash take the press instead.
+private struct BannerCardPressStyle: ButtonStyle {
+    @Binding var pressed: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .onChange(of: configuration.isPressed) { _, value in
+                pressed = value
+            }
     }
 }
 
