@@ -1,6 +1,6 @@
 # Frontend Craft Loop — 进度
 
-循环规格：`docs/design/frontend-craft-loop.md`。
+循环规格：`docs/design/frontend-craft-loop.md`（长期目标：一刀接一刀，直到队列 1–13 done）。
 一刀一节，新的写在最上面。
 
 ## 状态板
