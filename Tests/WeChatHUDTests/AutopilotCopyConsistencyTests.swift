@@ -1147,6 +1147,20 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.cancelPreparation, "取消")
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
+
+    func testConnectionErrorIsAStateNotAnOrangeDump() throws {
+        let setup = try ConnectionSetupSource.load()
+        let start = try XCTUnwrap(setup.text.range(of: "if let errorMessage"))
+        let buttons = try XCTUnwrap(setup.text.range(of: "HStack(spacing: 12)"))
+        let error = String(setup.text[start.lowerBound..<buttons.lowerBound])
+        XCTAssertFalse(error.contains("exclamationmark.circle"))
+        XCTAssertFalse(error.contains(".foregroundStyle(.orange)"))
+        XCTAssertTrue(error.contains(".workspaceMeta()"))
+        XCTAssertTrue(setup.text.contains("WeChatConnectionCopy.restartFailed"))
+        XCTAssertFalse(setup.text.contains("errorMessage = error.localizedDescription"))
+        XCTAssertEqual(WeChatConnectionCopy.restartFailed, "这次没重新打开助手，请再试一次。")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
 }
 
 // MARK: - Source readers
