@@ -131,7 +131,9 @@ final class CompactIslandPolicyTests: XCTestCase {
     func testSpokenLineNamesTheDominantFact() {
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(sync: .error("x"))).spoken.contains("连不上"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p0)])).spoken.contains("尽快"))
-        XCTAssertTrue(CompactIslandPolicy.snapshot(input(aiActive: true)).spoken.contains("AI"))
+        let analyzing = CompactIslandPolicy.snapshot(input(aiActive: true)).spoken
+        XCTAssertTrue(analyzing.contains("整理"))
+        XCTAssertFalse(analyzing.contains("AI"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p2), item(priority: .p2)])).spoken.contains("2"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input()).spoken.contains("暂无"))
     }

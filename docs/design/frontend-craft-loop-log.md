@@ -10,7 +10,7 @@
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
-| 4 | 岛·紧凑/peek | in-progress | 8.0 | 口述仍说「AI 正在整理」 |
+| 4 | 岛·紧凑/peek | in-progress | 8.1 | 刘海齿轮仍无字；悬停 peek 口述还带着「移入查看」 |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 13 — 2026-09-13 — 岛·紧凑/peek
+
+- Surface: 岛·紧凑/peek
+- Files: `Sources/WeChatHUD/Data/CompactIslandPolicy.swift`、`Tests/WeChatHUDTests/CompactIslandPolicyTests.swift`
+- Before: 总分 8.0（主动词 8.0 / 空气 8.2 / 短句 7.5 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 7.5）
+- Debt picked: 口述仍说「AI 正在整理」，和瞥见「整理中」不是同一句话。
+- After: 总分 8.1（主动词 8.0 / 空气 8.2 / 短句 8.2 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 8.0）
+- Changed: VoiceOver / 帮助改成「正在整理。移入查看。」瞥见仍是「整理中」。弹簧和 peek 宽度未动。
+- Verified: `swift test --filter CompactIslandPolicyTests --filter CompactErrorAffordanceTests --filter AutopilotCopyConsistencyTests --filter IslandPeekTests --filter PixelBuddyTests` 59 个用例全绿；`swift build -c release`。走查：整理中时口述不再提 AI；左翼帮助跟口述走；悬停 peek 只加宽。
+- Next: 岛·紧凑/peek 第三刀 — 刘海齿轮仍无字；不要动弹簧。这一刀只 +0.1，未过连续两刀 <0.3 的换表面线。
 
 ## Cycle 12 — 2026-09-13 — 岛·紧凑/peek
 
