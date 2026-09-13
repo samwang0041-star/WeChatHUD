@@ -81,28 +81,34 @@ struct MacExperienceSettingsView: View {
                     .padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 SettingsRowDivider()
-                SettingsRow("系统通知", subtitle: "承诺到期可以进通知中心。", icon: "bell.badge", iconColor: .orange) {
-                    HStack(spacing: 8) {
-                        if notificationStatus == .authorized {
-                            Label("已允许", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(CompanionPalette.jade)
-                        }
-                        if notificationStatus == .notDetermined {
-                            Button("允许系统通知", action: requestNotifications)
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                                .disabled(requestingNotifications || PreviewRuntime.isEnabled)
-                        } else {
-                            Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                                .disabled(PreviewRuntime.isEnabled)
+                DisclosureGroup("还要管通知") {
+                    SettingsRow("系统通知", subtitle: "承诺到期可以进通知中心。", icon: "bell.badge", iconColor: .orange) {
+                        HStack(spacing: 8) {
+                            if notificationStatus == .authorized {
+                                Label("已允许", systemImage: "checkmark.circle.fill")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(CompanionPalette.jade)
+                            }
+                            if notificationStatus == .notDetermined {
+                                Button("允许系统通知", action: requestNotifications)
+                                    .buttonStyle(CompanionPressStyle())
+                                    .workspaceMeta()
+                                    .foregroundStyle(.secondary)
+                                    .disabled(requestingNotifications || PreviewRuntime.isEnabled)
+                            } else {
+                                Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
+                                    .buttonStyle(CompanionPressStyle())
+                                    .workspaceMeta()
+                                    .foregroundStyle(.secondary)
+                                    .disabled(PreviewRuntime.isEnabled)
+                            }
                         }
                     }
                 }
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
                 SettingsRowDivider()
                 DisclosureGroup("还要看动画") {
                     SettingsRow("动画与透明度", subtitle: "系统开了减少动态或减少透明，这里会跟着走。", icon: "circle.dotted", iconColor: .secondary) {
