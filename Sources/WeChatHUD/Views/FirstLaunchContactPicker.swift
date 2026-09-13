@@ -53,9 +53,6 @@ struct FirstLaunchContactPicker: View {
                     }
                 }
             }
-            Text("已选 \(candidates.filter { tracked.contains($0.username) }.count) 个对话")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
             if let errorMessage {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(errorMessage)
