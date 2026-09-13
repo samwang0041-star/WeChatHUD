@@ -926,56 +926,60 @@ actor AutopilotService {
         lastSendFailureMessage = nil
         defer { isSending = false }
 
-        // Save clipboard
-        let savedClipboard = ClipboardGuard.save()
-        defer { ClipboardGuard.restore(savedClipboard) }
+        // Pasteboard is MainActor-only; await save/restore so we never race
+        // a detached restore Task against the next serialSend.
+        let savedClipboard = await ClipboardGuard.save()
+        let verified: Bool
+        do {
+            let verificationBaseline = latestOutgoingMessage(chatUsername: chatUsername)
+            let startedAt = Int(Date().timeIntervalSince1970)
 
-        let verificationBaseline = latestOutgoingMessage(chatUsername: chatUsername)
-        let startedAt = Int(Date().timeIntervalSince1970)
+            // Send with optional typing simulation (blocks until complete — 2s+ per message)
+            let uiResult = await WeChatLauncher.sendMessageDetailed(
+                chatName: chatName,
+                text: text,
+                typingDelay: typingDelay,
+                sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey,
+                searchNames: searchNames(for: chatUsername, fallback: chatName)
+            )
+            if uiResult.succeeded {
+                // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for DB to flush
+                let (ok, outgoingMsgUID) = verifySend(
+                    chatUsername: chatUsername,
+                    expectedText: text,
+                    startedAt: startedAt,
+                    previousOutgoingMsgUID: verificationBaseline?.id
+                )
+                if !ok {
+                    lastSendFailureMessage = "发送后未在微信数据库中确认"
+                    print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
+                }
+                // I6 fix: track the actual outgoing message UID, not the trigger UID
+                if let uid = outgoingMsgUID {
+                    sentMsgUIDs.insert(uid)
+                    // Prune to prevent unbounded growth in long sessions
+                    if sentMsgUIDs.count > 500 {
+                        sentMsgUIDs = Set(sentMsgUIDs.suffix(250))
+                    }
+                }
 
-        // Send with optional typing simulation (blocks until complete — 2s+ per message)
-        let uiResult = await WeChatLauncher.sendMessageDetailed(
-            chatName: chatName,
-            text: text,
-            typingDelay: typingDelay,
-            sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey,
-            searchNames: searchNames(for: chatUsername, fallback: chatName)
-        )
-        guard uiResult.succeeded else {
-            lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
-            print("[WCHUD] Autopilot: UI send failed — \(lastSendFailureMessage ?? "unknown")")
-            return false
-        }
-
-        // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
-        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for DB to flush
-        let (verified, outgoingMsgUID) = verifySend(
-            chatUsername: chatUsername,
-            expectedText: text,
-            startedAt: startedAt,
-            previousOutgoingMsgUID: verificationBaseline?.id
-        )
-        if !verified {
-            lastSendFailureMessage = "发送后未在微信数据库中确认"
-            print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
-        }
-        // I6 fix: track the actual outgoing message UID, not the trigger UID
-        if let uid = outgoingMsgUID {
-            sentMsgUIDs.insert(uid)
-            // Prune to prevent unbounded growth in long sessions
-            if sentMsgUIDs.count > 500 {
-                sentMsgUIDs = Set(sentMsgUIDs.suffix(250))
+                // Write session ledger entry on verified send. Runs on MainActor
+                // because the ledger lives on ChatMonitor.
+                if ok, let write = ledgerWrite {
+                    await MainActor.run {
+                        write(chatUsername, text, peerLastMessage, topic)
+                    }
+                }
+                verified = ok
+            } else {
+                lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
+                print("[WCHUD] Autopilot: UI send failed — \(lastSendFailureMessage ?? "unknown")")
+                verified = false
             }
         }
-
-        // Write session ledger entry on verified send. Runs on MainActor
-        // because the ledger lives on ChatMonitor.
-        if verified, let write = ledgerWrite {
-            await MainActor.run {
-                write(chatUsername, text, peerLastMessage, topic)
-            }
-        }
-
+        // Always restore on MainActor after send path (no detached Task race).
+        await ClipboardGuard.restore(savedClipboard)
         return verified
     }
 
@@ -1815,54 +1819,3 @@ actor AutopilotService {
     }
 }
 
-// MARK: - Clipboard Guard
-
-/// Saves and restores the system clipboard around autopilot sends.
-enum ClipboardGuard {
-    struct SavedState {
-        let items: [NSPasteboardItem]?
-        let changeCount: Int
-        let hadContent: Bool
-    }
-
-    static func save() -> SavedState {
-        let pb = NSPasteboard.general
-        let changeCount = pb.changeCount
-        let originalItems = pb.pasteboardItems ?? []
-        let hadContent = !originalItems.isEmpty || !(pb.types ?? []).isEmpty
-
-        // Deep-copy pasteboard items so they survive clearContents()
-        var saved: [NSPasteboardItem] = []
-        for item in originalItems {
-            let copy = NSPasteboardItem()
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    copy.setData(data, forType: type)
-                }
-            }
-            if copy.types.isEmpty, let data = pb.data(forType: item.types.first ?? .string) {
-                copy.setData(data, forType: item.types.first ?? .string)
-            }
-            saved.append(copy)
-        }
-        if saved.allSatisfy({ $0.types.isEmpty }) {
-            saved = []
-        }
-
-        return SavedState(items: saved.isEmpty ? nil : saved, changeCount: changeCount, hadContent: hadContent)
-    }
-
-    static func restore(_ state: SavedState) {
-        let pb = NSPasteboard.general
-        // Only restore if the clipboard was changed (by our send)
-        guard pb.changeCount != state.changeCount else { return }
-        if state.hadContent && (state.items == nil || state.items?.isEmpty == true) {
-            // Snapshot failed (promised files / images). Do not wipe irreplaceable data.
-            return
-        }
-        pb.clearContents()
-        if let items = state.items, !items.isEmpty {
-            pb.writeObjects(items)
-        }
-    }
-}

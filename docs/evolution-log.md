@@ -5,6 +5,16 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 11 — ClipboardGuard @MainActor
+- Moved ClipboardGuard into Utilities; pasteboard save/restore MainActor-only
+- Autopilot serialSend awaits save/restore (no detached restore Task race)
+- SavedState @unchecked Sendable; restore only on MainActor
+- Tests 1520+70 green; release pass
+
+
+
+
+
 
 
 
