@@ -75,6 +75,21 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertFalse(source.body.contains("featureOverview"), "no dead finish page may creep back")
         XCTAssertFalse(source.body.contains("aiSetup"), "no dead AI page may creep back")
     }
+
+    func testConnectionPageLeadsWithTheSetupCardNotALecture() throws {
+        let source = try OnboardingViewSource.load()
+        let start = try XCTUnwrap(source.body.range(of: "private var wechatDetection"))
+        let whitelist = try XCTUnwrap(source.body.range(of: "private var whitelistGuide"))
+        let page = String(source.body[start.lowerBound..<whitelist.lowerBound])
+        XCTAssertTrue(page.contains("先连接你的微信"))
+        XCTAssertTrue(page.contains("WeChatConnectionSetupView()"))
+        XCTAssertFalse(page.contains("numberedStep"))
+        XCTAssertFalse(page.contains("在这台 Mac 上登录微信"))
+        XCTAssertFalse(page.contains("等待连接"))
+        XCTAssertFalse(page.contains("laptopcomputer"))
+        XCTAssertTrue(page.contains("AI 和自动回复稍后按需开启。"))
+        XCTAssertEqual(FirstLaunchGuide.nextCTA, "下一步")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
