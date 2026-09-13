@@ -172,43 +172,10 @@ struct OnboardingView: View {
     private var wechatDetection: some View {
         VStack(alignment: .leading, spacing: 18) {
             heading("先连接你的微信", subtitle: "连接后读取你选的对话。")
-            HStack(alignment: .top, spacing: 20) {
-                VStack(alignment: .leading, spacing: 14) {
-                    numberedStep(1, "在这台 Mac 上登录微信", "请先确保已在本地正常登录微信。")
-                    numberedStep(2, "点击连接，按系统提示允许读取", "我们只读取聊天内容，不会修改任何记录。")
-                    numberedStep(3, "看到连接成功后继续", "连接成功后，进入下一步选择你关注的对象。")
-                }
-                VStack(spacing: 8) {
-                    Image(systemName: "laptopcomputer")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(CompanionPalette.jade)
-                    Text((!NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat").isEmpty
-                          || !NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.WeChat").isEmpty)
-                         ? "微信已登录" : "等待连接")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(width: 140)
-                .padding(.top, 8)
-            }
             WeChatConnectionSetupView()
-            Text("只读取聊天，不修改微信记录。AI 和自动回复稍后按需开启。")
-                .font(.callout)
+            Text("AI 和自动回复稍后按需开启。")
+                .workspaceMeta()
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private func numberedStep(_ number: Int, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("\(number)")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 22, height: 22)
-                .background(CompanionPalette.jade, in: Circle())
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 14, weight: .semibold))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
-            }
         }
     }
 
