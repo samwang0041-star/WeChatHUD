@@ -163,6 +163,10 @@ final class ContactsSettingsContractTests: XCTestCase {
         let opsStart = try XCTUnwrap(source.text.range(of: "private func operationsSection"))
         let profile = String(source.text[profileStart.lowerBound..<opsStart.lowerBound])
         XCTAssertTrue(profile.contains("正在看这个人是谁。"))
+        XCTAssertTrue(profile.contains("说话偏"))
+        XCTAssertFalse(profile.contains("infoRow(\"关系\""))
+        XCTAssertFalse(profile.contains("ProgressView(value: profile.confidence)"))
+        XCTAssertTrue(profile.contains("已按你改过的来。"))
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }

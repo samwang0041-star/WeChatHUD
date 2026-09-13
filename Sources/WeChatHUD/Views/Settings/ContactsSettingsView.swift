@@ -725,27 +725,19 @@ private struct ContactInspectorView: View {
                     .workspaceMeta()
                     .foregroundStyle(.secondary)
             } else if let profile {
-                infoRow("关系", value: profile.relationship)
-                infoRow("层级", value: profile.hierarchy.label)
-                infoRow("口吻", value: profile.tonePreference.label)
+                Text("\(profile.relationship)，\(profile.hierarchy.label)。说话偏\(profile.tonePreference.label)。")
+                    .workspaceBody()
+                    .fixedSize(horizontal: false, vertical: true)
                 if let context = profile.context, !context.isEmpty {
                     Text(context)
                         .workspaceMeta()
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: 8) {
-                    ProgressView(value: profile.confidence)
-                        .frame(width: 90)
-                    Text("\(Int(profile.confidence * 100))%")
-                        .workspaceMeta()
-                        .monospacedDigit()
+                if profile.userEdited {
+                    Text("已按你改过的来。")
+                        .workspaceMicro()
                         .foregroundStyle(.secondary)
-                    if profile.userEdited {
-                        Text("已人工校准")
-                            .workspaceMicro()
-                            .foregroundStyle(.secondary)
-                    }
                 }
             } else {
                 Text("还不知道这个人是谁。点「再看看」，不影响你继续用。")
