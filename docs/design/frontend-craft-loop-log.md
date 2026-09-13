@@ -11,7 +11,7 @@
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮已写「设置」；稍后/关闭无字留给巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
-| 5 | 待确认回复 | in-progress | 7.2 | 列表行仍是 .plain；详情还堆着裸字号 |
+| 5 | 待确认回复 | in-progress | 7.5 | 「查看聊天记录」仍无按下；详情还堆着裸字号 |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 17 — 2026-09-13 — 待确认回复
+
+- Surface: 待确认回复
+- Files: `Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.2（主动词 8.0 / 空气 6.8 / 短句 8.0 / 物理 6.0 / 状态戏 7.5 / 稀疏 7.0 / 回执 7.0）
+- Debt picked: 队列行用 .plain，按下没有让步。
+- After: 总分 7.5（主动词 8.0 / 空气 6.8 / 短句 8.0 / 物理 7.5 / 状态戏 7.5 / 稀疏 7.0 / 回执 7.0）
+- Changed: 点左侧一条草稿，行会缩放。选中仍是青玉洗。护栏未改。
+- Verified: `swift test --filter ApprovalWorkspaceTests --filter AutopilotCopyConsistencyTests --filter AutopilotStartReceiptTests` 30 个用例全绿；`swift build -c release`。走查：按下队列行缩放 → 松开右侧出现回复。
+- Next: 待确认回复第四刀 — 「查看聊天记录」补按下，并把详情裸字号收回 token。总分未过 8.0。
 
 ## Cycle 16 — 2026-09-13 — 待确认回复
 
