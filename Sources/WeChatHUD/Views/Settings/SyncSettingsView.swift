@@ -10,6 +10,9 @@ enum PreferencesCopy {
     static func hudLine(_ screen: DisplayScreen) -> String {
         "浮窗在\(screen.label)。"
     }
+
+    static let displayTitle = "显示位置"
+    static let displaySubtitle = "浮窗出现在哪块屏。那块屏不在时用还连着的。"
 }
 
 struct SyncSettingsView: View {
@@ -234,7 +237,7 @@ struct SyncSettingsView: View {
 
     private var displaySection: some View {
         SettingsSection("显示位置") {
-            SettingsRow("显示位置", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: .secondary) {
+            SettingsRow(PreferencesCopy.displayTitle, subtitle: PreferencesCopy.displaySubtitle, icon: "display", iconColor: .secondary) {
                 Picker("显示位置", selection: $displayScreen) {
                     ForEach(DisplayScreen.allCases, id: \.self) { s in
                         Text(s.label).tag(s)

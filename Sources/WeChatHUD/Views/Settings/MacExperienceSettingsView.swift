@@ -28,7 +28,7 @@ struct MacExperienceSettingsView: View {
                         .padding(.horizontal, 56).padding(.vertical, 10)
                 }
                 SettingsRowDivider()
-                SettingsRow("微信操作权限", subtitle: "用于跳转到微信和发送回复；不影响读取聊天。",
+                SettingsRow("微信操作权限", subtitle: "跳转微信和发出回复要用。读聊天不用这个。",
                             icon: "hand.point.up.left", iconColor: .purple) {
                     HStack(spacing: 8) {
                         Label(accessibilityGranted ? "已允许" : "待授权",
@@ -77,7 +77,7 @@ struct MacExperienceSettingsView: View {
                     .padding(.horizontal, 16).padding(.bottom, 10)
                 }
                 SettingsRowDivider()
-                SettingsRow("系统通知", subtitle: "接收待办提醒与重要更新。", icon: "bell.badge", iconColor: .orange) {
+                SettingsRow("系统通知", subtitle: "承诺到期可以进通知中心。", icon: "bell.badge", iconColor: .orange) {
                     HStack(spacing: 8) {
                         if notificationStatus == .authorized {
                             Label("已允许", systemImage: "checkmark.circle.fill")
@@ -94,7 +94,7 @@ struct MacExperienceSettingsView: View {
                     }
                 }
                 SettingsRowDivider()
-                SettingsRow("动画与透明度", subtitle: "减少动态效果时立刻切换状态；减少透明度时用实底，不靠桌面衬出字。", icon: "circle.dotted", iconColor: .secondary) {
+                SettingsRow("动画与透明度", subtitle: "系统开了减少动态或减少透明，这里会跟着走。", icon: "circle.dotted", iconColor: .secondary) {
                     Text(accessibilityStatus)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

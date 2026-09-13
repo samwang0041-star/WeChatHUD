@@ -41,6 +41,19 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(prefs.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testPreferenceCopySpeaksLikeAPerson() throws {
+        XCTAssertEqual(PreferencesCopy.displaySubtitle, "浮窗出现在哪块屏。那块屏不在时用还连着的。")
+        XCTAssertFalse(PreferencesCopy.displaySubtitle.contains("未连接所选屏幕"))
+        let mac = try MacExperienceSettingsSource.load()
+        XCTAssertTrue(mac.text.contains("跳转微信和发出回复要用。读聊天不用这个。"))
+        XCTAssertTrue(mac.text.contains("系统开了减少动态或减少透明，这里会跟着走。"))
+        XCTAssertFalse(mac.text.contains("不影响读取聊天"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
