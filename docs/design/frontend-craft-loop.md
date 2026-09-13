@@ -12,6 +12,22 @@
 
 `/loop` 每一跳用同一句。一夜连续跑时，每刀独立 commit，消息写 why。
 
+## 本机 Cursor 怎么醒
+
+工艺法在上面。醒不过来通常不是提示词坏了，是一次性 `sleep`：
+
+- 不要用 `sleep 90; echo …` 再忽略 completion。用户一插话，后台 sleep 会被掐掉，echo 出不来，循环就死。
+- 用常驻循环，间隔约 4 分钟（给 `swift test` + release 留空）。整段丢给本机 `/loop`：
+
+```
+while true; do
+  sleep 240
+  echo 'AGENT_LOOP_TICK_frontend-craft {"prompt":"按 docs/design/frontend-craft-loop.md 跑下一刀。先读 docs/design/frontend-craft-loop-log.md，再读本文件。选队列里下一刀，审计 → 改一处最高杠杆工艺债 → 验证 → 写日志。每一跳用同一句。通宵连跑时，每刀独立 commit，消息写 why。"}'
+done
+```
+
+`notify_on_output` 盯 `^AGENT_LOOP_TICK_frontend-craft`。收到 TICK 就跑同一句。用户说停再杀。不要并行再开一条。
+
 ---
 
 ## 这是什么产品
