@@ -71,10 +71,18 @@ struct DailyReportTabView: View {
     }
 
     private func exportStatus(_ message: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle")
-            Text(message).lineLimit(1)
-            if let exportedReportURL {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(message)
+                .workspaceMeta()
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            if exportFailed {
+                Button("再试一次") { exportReport() }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("再试一次导出")
+            } else if let exportedReportURL {
                 Button("打开这份小结") {
                     NSWorkspace.shared.activateFileViewerSelecting([exportedReportURL])
                 }
@@ -85,8 +93,6 @@ struct DailyReportTabView: View {
             }
             Spacer(minLength: 0)
         }
-        .font(.system(size: isWorkspace ? 12 : 11))
-        .foregroundColor(exportFailed ? .red : .secondary)
         .padding(.horizontal, isWorkspace ? 20 : 14)
         .padding(.bottom, 6)
     }
@@ -356,7 +362,7 @@ struct DailyReportTabView: View {
         guard let url = monitor.exportDailyReport() else {
             exportedReportURL = nil
             exportFailed = true
-            exportMessage = "小结没有写到文件，请检查桌面写入权限后重试。"
+            exportMessage = "小结没写上。点「再试一次」。"
             return
         }
         exportedReportURL = url
