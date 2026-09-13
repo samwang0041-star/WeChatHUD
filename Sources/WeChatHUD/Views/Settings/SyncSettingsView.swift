@@ -99,9 +99,9 @@ struct SyncSettingsView: View {
                         }
                     )
                         .companionSurface(padding: 22)
-                    connectionCapabilityList
                     DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
+                            connectionCapabilityList
                             databaseSection
                             syncSection
                             if let device = store.deviceSettings,
