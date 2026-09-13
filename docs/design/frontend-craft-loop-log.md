@@ -13,7 +13,7 @@
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | in-progress | 7.8 | 即将发送仍并排取消/立即发送。从未到过 8.0，回扫时留下 |
-| 6 | 自动回复设置 | in-progress | 7.9 | 主动词/空气/短句已满 8；保存回执仍是系统 callout。从未到过 8.0 |
+| 6 | 自动回复设置 | in-progress | 7.9 | 主动词/空气/短句已满 8；高级里排除名单和记录仍是裸系统字。从未到过 8.0 |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
 | 9 | 首次引导 | queued | — | |
@@ -24,6 +24,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 28 — 2026-09-13 — 自动回复设置
+
+- Surface: 自动回复设置
+- Files: `Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.9（主动词 8.0 / 空气 8.0 / 短句 8.0 / 物理 7.2 / 状态戏 8.0 / 稀疏 8.0 / 回执 7.5）
+- Debt picked: 保存成功/失败是系统 callout；清记录失败时「重试保存设置」会去存配置，不是重做刚才那件事。
+- After: 总分 7.9（主动词 8.0 / 空气 8.0 / 短句 8.0 / 物理 7.4 / 状态戏 8.0 / 稀疏 8.0 / 回执 8.2）
+- Changed: 「设置已保存」用工作台元数据和青玉，跟页头同一口气。失败时「再试一次」是安静可按的退路：存配置失败就再存，清记录失败就再清。护栏未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 29 个用例全绿；`swift build -c release`。走查：开页 → 拖「多有把握才发出去」→ 看到「设置已保存」→ 打开高级设置 → 清记录走确认后，失败会留下「记录没清掉」和「再试一次」，按下是再清，不是去存开关。
+- Next: 自动回复设置还要再来：展开高级设置后，排除名单和记录仍是裸系统字。总分未到 8.0，不换表面。
 
 ## Cycle 27 — 2026-09-13 — 自动回复设置
 
