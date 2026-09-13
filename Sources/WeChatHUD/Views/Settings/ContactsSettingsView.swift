@@ -43,9 +43,10 @@ struct ContactsSettingsView: View {
 
     private var organizeBack: some View {
         Button("返回关注列表") { selectedSubTab = .contacts }
-            .buttonStyle(.plain)
-            .foregroundStyle(CompanionPalette.jade)
-            .font(.system(size: 13, weight: .medium))
+            .buttonStyle(CompanionPressStyle())
+            .workspaceMeta()
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("返回关注列表")
     }
 }
 

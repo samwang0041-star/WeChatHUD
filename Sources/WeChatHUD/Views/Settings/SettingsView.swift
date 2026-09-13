@@ -212,10 +212,16 @@ struct SettingsView: View {
             }
             if selectedTab == .contacts {
                 Button { NotificationCenter.default.post(name: .hudAddContact, object: nil) } label: {
-                    Label("添加关注", systemImage: "plus")
+                    Text(CompanionProductCopy.addFollow)
+                        .workspaceBody()
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(CompanionPalette.jade, in: Capsule())
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .buttonStyle(CompanionPressStyle())
+                .accessibilityLabel(CompanionProductCopy.addFollow)
             }
         }
         .frame(maxWidth: headerWidth, alignment: .leading)
