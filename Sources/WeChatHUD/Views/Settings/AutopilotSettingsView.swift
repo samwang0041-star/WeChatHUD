@@ -259,27 +259,30 @@ struct AutopilotSettingsView: View {
         SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
             if excludedContacts.isEmpty {
                 Text(AutopilotSettingsCopy.excludedEmpty)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
             } else {
                 ForEach(Array(excludedContacts.enumerated()), id: \.element) { idx, username in
                     if idx > 0 { SettingsRowDivider() }
-                    HStack {
+                    HStack(spacing: 8) {
                         Text(contactDisplayName(username))
-                            .font(.system(size: 12))
+                            .workspaceBody()
                         Spacer()
                         Button {
                             excludedContacts.removeAll { $0 == username }
                             save()
                         } label: {
                             Image(systemName: "minus.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(.red.opacity(0.6))
+                                .workspaceRowTitle()
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionPressStyle())
+                        .accessibilityLabel("去掉 \(contactDisplayName(username))")
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
             }
 
@@ -296,13 +299,15 @@ struct AutopilotSettingsView: View {
                             }
                         }
                     } label: {
-                        Label(AutopilotSettingsCopy.excludedAddButton, systemImage: "plus.circle")
-                            .font(.system(size: 11))
+                        Text(AutopilotSettingsCopy.excludedAddButton)
+                            .workspaceMeta()
                     }
                     .menuStyle(.borderlessButton)
-                    .frame(width: 70)
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -374,9 +379,10 @@ struct AutopilotSettingsView: View {
         SettingsSection(AutopilotSettingsCopy.historyTitle) {
             if sessions.isEmpty {
                 Text(AutopilotSettingsCopy.historyEmpty)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
             } else {
                 ForEach(Array(sessions.enumerated()), id: \.element.id) { idx, session in
                     if idx > 0 { SettingsRowDivider() }
@@ -386,11 +392,9 @@ struct AutopilotSettingsView: View {
                 HStack {
                     Spacer()
                     Button(AutopilotSettingsCopy.historyClear) { showClearConfirm = true }
-                        // Was 10pt red at 0.7 opacity — below the AA
-                        // contrast floor and a small hit target for a
-                        // destructive action.
-                        .font(.system(size: 12))
-                        .foregroundColor(.red)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.red)
                         .alert(AutopilotSettingsCopy.historyClearConfirmTitle, isPresented: $showClearConfirm) {
                             Button(AutopilotSettingsCopy.historyClearCancel, role: .cancel) {}
                             Button(AutopilotSettingsCopy.historyClearConfirm, role: .destructive) {
@@ -398,7 +402,8 @@ struct AutopilotSettingsView: View {
                             }
                         }
                 }
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -406,25 +411,28 @@ struct AutopilotSettingsView: View {
     private func sessionRow(_ session: AutopilotSession) -> some View {
         HStack(spacing: 8) {
             Text(formatDate(session.startedAt))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(.primary)
+                .workspaceMeta()
+                .monospacedDigit()
             Text(sessionDuration(session))
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
+                .workspaceMicro()
+                .foregroundStyle(.secondary)
             Spacer()
-            HStack(spacing: 6) {
-                Label("\(session.totalSent)", systemImage: "checkmark.circle")
-                    .font(.system(size: 10)).foregroundColor(.green)
-                Label("\(session.totalPending)", systemImage: "clock")
-                    .font(.system(size: 10)).foregroundColor(.orange)
-            }
+            Text("\(session.totalSent)")
+                .workspaceMicro()
+                .foregroundStyle(CompanionPalette.jade)
+                .accessibilityLabel("已发送 \(session.totalSent)")
+            Text("\(session.totalPending)")
+                .workspaceMicro()
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("待确认 \(session.totalPending)")
             if session.endedAt == nil {
                 Text("运行中")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.green)
+                    .workspaceMicro()
+                    .foregroundStyle(CompanionPalette.jade)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 5)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: - Helpers

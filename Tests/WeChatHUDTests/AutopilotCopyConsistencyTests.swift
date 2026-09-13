@@ -200,6 +200,31 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(AutopilotSettingsCopy.saveFailed.contains("上次的规则"))
     }
 
+    func testExclusionAndHistoryUseWorkspaceTypeAndPress() throws {
+        let source = try AutopilotViewSource.load()
+        let exclusion = try XCTUnwrap(source.text.range(of: "// MARK: - Exclusion"))
+        let advanced = try XCTUnwrap(source.text.range(of: "// MARK: - Advanced"))
+        let excluded = String(source.text[exclusion.lowerBound..<advanced.lowerBound])
+        XCTAssertFalse(excluded.contains(".font(.system"), "exclusion used to be 11/12/13pt system faces")
+        XCTAssertFalse(excluded.contains(".buttonStyle(.plain)"))
+        XCTAssertTrue(excluded.contains("CompanionPressStyle()"))
+        XCTAssertTrue(excluded.contains(".workspaceBody()"))
+        XCTAssertTrue(excluded.contains(".workspaceMeta()"))
+        XCTAssertEqual(AutopilotSettingsCopy.excludedAddButton, "添加排除对象")
+
+        let history = try XCTUnwrap(source.text.range(of: "// MARK: - History"))
+        let helpers = try XCTUnwrap(source.text.range(of: "// MARK: - Helpers"))
+        let records = String(source.text[history.lowerBound..<helpers.lowerBound])
+        XCTAssertFalse(records.contains(".font(.system"), "history used to be 10/11/12pt system faces")
+        XCTAssertTrue(records.contains("CompanionPressStyle()"))
+        XCTAssertTrue(records.contains(".workspaceMeta()"))
+        XCTAssertTrue(records.contains(".workspaceMicro()"))
+        XCTAssertFalse(records.contains(".foregroundColor(.green)"))
+        XCTAssertFalse(records.contains(".foregroundColor(.orange)"))
+        XCTAssertEqual(AutopilotSettingsCopy.historyClear, "清除历史")
+        XCTAssertEqual(AutopilotSettingsCopy.historyEmpty, "暂无记录")
+    }
+
     // MARK: - Clear history
 
     func testClearHistoryFailureDoesNotInventAPrecondition() {
