@@ -38,3 +38,5 @@ Already uses `NSRecursiveLock` for wrapper state. Full actor facade deferred to 
 - Slice 12: WeChatReader getMessagesBatch + ScanEngine unread/autopilot wiring (1521+70).
 
 - Slice 13: WeChatReaderActor + ScanEngine prep/batch via actor (1522+70).
+
+- Slice 14: whitelist paging via WeChatReaderActor; ReplyDebt batch (1522+70).

@@ -5,6 +5,15 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 14 — whitelist paging + ReplyDebt via facade/batch
+- WeChatReaderActor.getMessages used for whitelist first page + backfill
+- ReplyDebt seeds use getMessagesBatch (no per-session getMessages in ScanEngine)
+- Tests 1522+70 green
+
+
+
+
+
 ### [Overnight] 2026-09-13 Slice 13 — WeChatReaderActor facade
 - New WeChatReaderActor: prepareForScan / sessions / refresh / messagesBatch
 - ScanEngine.performScan hops prep + unread/autopilot batch through actor
