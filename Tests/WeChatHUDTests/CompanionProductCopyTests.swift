@@ -28,6 +28,7 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(SettingsView.Tab.drafts.label, "草稿")
         XCTAssertEqual(SettingsView.Tab.insight.label, "聊天回顾")
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+        XCTAssertEqual(SettingsView.Tab.relationshipRadar.label, "关系雷达")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
         XCTAssertEqual(SettingsView.Tab.autopilotDashboard.label, "待确认回复")
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")

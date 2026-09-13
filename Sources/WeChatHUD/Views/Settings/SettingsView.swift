@@ -12,7 +12,7 @@ struct SettingsView: View {
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
         case today, tasks, commitments, drafts
-        case insight, dailyReport
+        case insight, dailyReport, relationshipRadar
         case autopilotDashboard
         case contacts, aiButler, notifications, aiService, autopilot, system, preferences, localData, guide
         var id: String { rawValue }
@@ -24,6 +24,7 @@ struct SettingsView: View {
             case .commitments: return "我答应的事"
             case .insight: return "聊天回顾"
             case .dailyReport: return "今日小结"
+            case .relationshipRadar: return "关系雷达"
             case .contacts: return "关注谁"
             case .aiButler: return "AI 分析与建议"
             case .notifications: return "提醒方式"
@@ -44,6 +45,7 @@ struct SettingsView: View {
             case .commitments: return "checkmark.bubble"
             case .insight: return "bubble.left.and.text.bubble.right"
             case .dailyReport: return "doc.text"
+            case .relationshipRadar: return "point.3.connected.trianglepath.dotted"
             case .contacts: return "person.2"
             case .aiButler: return "sparkles"
             case .notifications: return "bell"
@@ -64,6 +66,7 @@ struct SettingsView: View {
             case .commitments: return "已答应的事"
             case .insight: return "按天查看"
             case .dailyReport: return "今天做了什么、还剩什么"
+            case .relationshipRadar: return "跨天态度和沉默"
             case .contacts: return "关注的对话"
             case .aiButler: return "分析范围"
             case .notifications: return "谁弹出、停多久"
@@ -77,7 +80,7 @@ struct SettingsView: View {
             }
         }
         var isDaily: Bool { [.today, .tasks, .commitments, .drafts].contains(self) }
-        var isReview: Bool { [.insight, .dailyReport].contains(self) }
+        var isReview: Bool { [.insight, .dailyReport, .relationshipRadar].contains(self) }
         var isSettings: Bool {
             [.contacts, .aiButler, .notifications, .aiService, .autopilot, .system, .preferences, .localData, .guide].contains(self)
         }
@@ -247,6 +250,8 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity)
         case .insight:
             ChatInsightWorkspacePage()
+        case .relationshipRadar:
+            RelationshipRadarView()
         case .guide:
             CompanionGuideView(navigate: { selectedTab = $0 }, showIntroduction: {
                 NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)

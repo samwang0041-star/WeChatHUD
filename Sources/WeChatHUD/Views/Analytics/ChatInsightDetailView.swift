@@ -35,6 +35,7 @@ struct ChatInsightDetailView: View {
 
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var store: HUDStore
     @State private var surface: ReviewSurface = .overview
 
     private enum ReviewSurface: String, CaseIterable {
@@ -223,6 +224,12 @@ struct ChatInsightDetailView: View {
 
     @ViewBuilder
     private func overviewContent(msgCount: Int) -> some View {
+        if let snap = store.loadRelationshipRadarSnapshot(chatUsername: chatUsername) {
+            RelationshipRadarCard(
+                snapshots: [snap],
+                displayName: { _ in chatName }
+            )
+        }
         if let result {
             VStack(alignment: .leading, spacing: 10) {
                 Text(result.headline)

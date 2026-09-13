@@ -34,7 +34,7 @@ struct InsightOverviewDashboard: View {
                         onOpenChat: onSelectChat,
                         onExpandModule: onExpandModule
                     )
-                    RelationshipRadarView(snapshots: store.loadAllRelationshipRadarSnapshots(limit: 6))
+                    RelationshipRadarCard(snapshots: store.loadAllRelationshipRadarSnapshots(limit: 6))
                     InsightAttentionBar(
                         overview: overview,
                         briefing: insightCoordinator.globalBriefing,

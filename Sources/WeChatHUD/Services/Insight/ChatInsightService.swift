@@ -118,6 +118,9 @@ actor ChatInsightService {
                 myMessageCount: myCount
             )
         )
+        // A new daily fact is the radar's input; rebuild this chat now so
+        // the dedicated pane does not wait for the next scan tick.
+        _ = try? RelationshipRadarService.refresh(store: store, chatUsername: entry.id)
         return finalized
     }
 
