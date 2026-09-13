@@ -107,7 +107,8 @@ struct NotificationSettingsView: View {
                 } else {
                     Text(saved ? NotificationSettingsCopy.saved : NotificationSettingsCopy.unsaved)
                         .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                        .fontWeight(saved ? .semibold : .regular)
+                        .foregroundStyle(saved ? Color.primary : Color.secondary)
                 }
             }
         }
