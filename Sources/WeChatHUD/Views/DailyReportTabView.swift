@@ -75,11 +75,13 @@ struct DailyReportTabView: View {
             Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle")
             Text(message).lineLimit(1)
             if let exportedReportURL {
-                Button("打开结果") {
+                Button("打开这份小结") {
                     NSWorkspace.shared.activateFileViewerSelecting([exportedReportURL])
                 }
-                .buttonStyle(.link)
-                .accessibilityLabel("打开导出的日报")
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("打开这份小结")
             }
             Spacer(minLength: 0)
         }
@@ -132,7 +134,9 @@ struct DailyReportTabView: View {
             if monitor.dailyReportIsLoading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在整理").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(scope == .weekly ? "正在写这周的小结。" : "正在写今天的小结。")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -346,7 +350,7 @@ struct DailyReportTabView: View {
         }
         exportedReportURL = url
         exportFailed = false
-        exportMessage = "小结已导出。可在访达中查看文件。"
+        exportMessage = "小结已放到桌面。"
     }
 
     private func dateText(_ date: Date) -> String {
