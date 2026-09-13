@@ -90,6 +90,21 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertTrue(page.contains("AI 和自动回复稍后按需开启。"))
         XCTAssertEqual(FirstLaunchGuide.nextCTA, "下一步")
     }
+
+    func testChromeUsesWorkspaceTypeNotJadeStepMedals() throws {
+        let source = try OnboardingViewSource.load()
+        XCTAssertTrue(source.body.contains("workspaceTitle()"))
+        XCTAssertFalse(source.body.contains(".font(.headline)"))
+        let start = try XCTUnwrap(source.body.range(of: "private var stepIndicator"))
+        let page = try XCTUnwrap(source.body.range(of: "private var wechatDetection"))
+        let chrome = String(source.body[start.lowerBound..<page.lowerBound])
+        XCTAssertTrue(chrome.contains("FirstLaunchGuide.pageTitles"))
+        XCTAssertTrue(chrome.contains("WorkspaceType.meta"))
+        XCTAssertFalse(chrome.contains("CompanionPalette.jade"))
+        XCTAssertFalse(chrome.contains("Circle()"))
+        XCTAssertFalse(chrome.contains(".font(.system"))
+        XCTAssertEqual(FirstLaunchGuide.pageTitles, ["连接微信", "选择关注"])
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
