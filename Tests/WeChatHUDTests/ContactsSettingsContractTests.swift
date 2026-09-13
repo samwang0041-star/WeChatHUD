@@ -118,6 +118,8 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertFalse(dialog.contains("只开始整理选中的对话"))
         XCTAssertTrue(dialog.contains("CompanionProductCopy.addFollow"))
         XCTAssertTrue(dialog.contains("取消"))
+        XCTAssertTrue(dialog.contains("contactFilterChip"))
+        XCTAssertFalse(dialog.contains("CompanionFilterPill"))
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
 
         let listStart = try XCTUnwrap(source.text.range(of: "private struct ContactsListSubView"))
@@ -198,6 +200,8 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertFalse(dialog.contains("buttonStyle(.plain)"))
         XCTAssertTrue(dialog.contains("取消"))
         XCTAssertTrue(dialog.contains("CompanionProductCopy.addFollow"))
+        XCTAssertTrue(dialog.contains("contactFilterChip"))
+        XCTAssertFalse(dialog.contains("CompanionFilterPill"))
 
         let opsStart = try XCTUnwrap(source.text.range(of: "private func operationsSection"))
         let sectionTitle = try XCTUnwrap(source.text.range(of: "private func sectionTitle"))
