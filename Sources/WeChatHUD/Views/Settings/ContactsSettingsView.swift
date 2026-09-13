@@ -290,19 +290,13 @@ private struct ContactsListSubView: View {
             if status.isRunning {
                 ProgressView()
                     .controlSize(.mini)
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundColor(.green)
             }
             Text(status.label)
+                .workspaceMeta()
                 .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(status.isRunning ? .blue : .secondary)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(5)
+        .accessibilityLabel(status.label)
         .help(status.isRunning ? "正在后台整理这些人是谁，你可以继续做别的" : "上次整理的结果")
     }
 
@@ -603,13 +597,10 @@ private struct ContactInspectorView: View {
         VStack(spacing: 0) {
             if let contact {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 20) {
                         header(contact)
-                        Divider()
                         trackingSection(contact)
-                        Divider()
                         aiProfileSection(contact)
-                        Divider()
                         operationsSection(contact)
                     }
                     .padding(14)
@@ -641,8 +632,8 @@ private struct ContactInspectorView: View {
 
             if !contact.roleNote.isEmpty {
                 Text(contact.roleNote)
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                    .workspaceBody()
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
 
@@ -650,7 +641,7 @@ private struct ContactInspectorView: View {
                 infoRow("微信 ID", value: contact.username)
                 infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
             }
-            .font(.system(size: 12, weight: .medium))
+            .workspaceBody()
         }
     }
 
@@ -658,8 +649,8 @@ private struct ContactInspectorView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("整理范围", systemImage: "scope")
             Text("只整理已关注的对话")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
+                .workspaceBody()
+                .foregroundStyle(.secondary)
             infoRow("关注级别", value: attentionLevelTitle(contact.attentionLevel))
             infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
@@ -695,26 +686,27 @@ private struct ContactInspectorView: View {
                 infoRow("口吻", value: profile.tonePreference.label)
                 if let context = profile.context, !context.isEmpty {
                     Text(context)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 8) {
                     ProgressView(value: profile.confidence)
                         .frame(width: 90)
                     Text("\(Int(profile.confidence * 100))%")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .workspaceMeta()
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                     if profile.userEdited {
                         Text("已人工校准")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.green)
+                            .workspaceMicro()
+                            .foregroundStyle(.secondary)
                     }
                 }
             } else {
                 Text("还不知道这个人是谁。点右上角后会在后台整理，不影响你继续用。")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -749,19 +741,21 @@ private struct ContactInspectorView: View {
 
     private func sectionTitle(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.primary)
+            .workspaceBody()
+            .fontWeight(.semibold)
+            .foregroundStyle(.primary)
     }
 
     private func infoRow(_ label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 .frame(width: 58, alignment: .leading)
             Text(value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.primary)
+                .workspaceBody()
+                .fontWeight(.medium)
+                .foregroundStyle(.primary)
                 .lineLimit(2)
             Spacer(minLength: 0)
         }
