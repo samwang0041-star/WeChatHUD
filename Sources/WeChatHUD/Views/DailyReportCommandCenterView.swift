@@ -48,14 +48,14 @@ struct DailyReportCommandCenterView: View {
                 }
             } else if monitor.dailyReportIsLoading {
                 loadingView
-            } else if let error = monitor.dailyReportError {
-                emptyStateWithRetry("小结没写出来：\(error)")
+            } else if monitor.dailyReportError != nil {
+                emptyStateWithRetry("小结没写出来。点「再写一次」。")
             } else {
-                emptyStateWithRetry("还没有今日小结。连上微信后再整理。")
+                emptyStateWithRetry("还没有今日小结。连上微信后再看。")
             }
         }
         .foregroundStyle(.primary)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(isWorkspace ? CompanionPalette.canvas : Color(nsColor: .windowBackgroundColor))
         .onAppear { reloadCommandStates() }
         .onChange(of: monitor.dailyReport?.date) { _, _ in reloadCommandStates() }
         .onChange(of: monitor.dailyReportGeneratedAt) { _, _ in reloadCommandStates() }
@@ -214,28 +214,23 @@ struct DailyReportCommandCenterView: View {
     }
 
     private func emptyStateWithRetry(_ text: String) -> some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(text)
-                .font(.system(size: 11))
-                .foregroundColor(Color.primary.opacity(0.4))
-            Button(action: {
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("再写一次") {
                 guard !monitor.dailyReportIsLoading else { return }
                 Task { await monitor.loadDailyReport(force: true) }
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("重新生成")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
+            .workspaceMeta()
+            .foregroundStyle(.secondary)
             .disabled(monitor.dailyReportIsLoading)
-            .accessibilityLabel("重新生成日报")
+            .accessibilityLabel("再写一次")
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, isWorkspace ? 20 : 14)
         .padding(.vertical, 14)
     }
 

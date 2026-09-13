@@ -75,6 +75,35 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("打开这份小结"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testDailyEmptyStateDoesNotDumpErrors() throws {
+        let source = try DailyReportCommandCenterSource.load()
+        XCTAssertFalse(source.text.contains("小结没写出来：\\(error)"))
+        XCTAssertTrue(source.text.contains("小结没写出来。点「再写一次」。"))
+        XCTAssertTrue(source.text.contains("还没有今日小结。连上微信后再看。"))
+        XCTAssertTrue(source.text.contains("再写一次"))
+        XCTAssertTrue(source.text.contains("CompanionPressStyle()"))
+        XCTAssertTrue(source.text.contains("CompanionPalette.canvas"))
+        let tab = try DailyReportTabSource.load()
+        XCTAssertTrue(tab.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
+}
+
+private struct DailyReportCommandCenterSource {
+    let text: String
+
+    static func load() throws -> DailyReportCommandCenterSource {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/DailyReportCommandCenterView.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("DailyReportCommandCenterView.swift not found at \(url.path)")
+        }
+        return DailyReportCommandCenterSource(text: text)
+    }
 }
 
 private struct DailyReportTabSource {
