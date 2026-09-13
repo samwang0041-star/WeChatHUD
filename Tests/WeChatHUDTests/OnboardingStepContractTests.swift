@@ -118,6 +118,22 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertFalse(chrome.contains(".font(.system"))
         XCTAssertEqual(FirstLaunchGuide.pageTitles, ["连接微信", "选择关注"])
     }
+
+    func testConnectionStepHidesWizardNextUntilConnected() throws {
+        let source = try OnboardingViewSource.load()
+        XCTAssertTrue(source.body.contains("showsWizardPrimary"))
+        XCTAssertTrue(source.body.contains("hasSuccessfulSync"))
+        XCTAssertFalse(source.body.contains("连上微信后才能继续"))
+        XCTAssertTrue(source.body.contains("FirstLaunchGuide.skipCTA"))
+        XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
+        XCTAssertEqual(FirstLaunchGuide.nextCTA, "下一步")
+        XCTAssertEqual(
+            FirstLaunchGuide.connection(
+                state: .idle, wechatRunning: false, accessReady: false, connected: false
+            ).buttonTitle,
+            "连接微信"
+        )
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
