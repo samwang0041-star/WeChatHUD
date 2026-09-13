@@ -94,7 +94,10 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(rows.contains("AutopilotSettingsCopy.alwaysManualRule"))
         XCTAssertFalse(rows.contains(".font(.system"))
         XCTAssertTrue(rows.contains("WorkspaceType.body"))
-        XCTAssertEqual(AutopilotSettingsCopy.confidenceTitle, "自动发送把握程度")
+        XCTAssertEqual(AutopilotSettingsCopy.confidenceTitle, "多有把握才发出去")
+        XCTAssertTrue(AutopilotSettingsCopy.confidenceHint.contains("只写草稿"))
+        XCTAssertFalse(AutopilotSettingsCopy.confidenceHint.contains("门槛"))
+        XCTAssertFalse(AutopilotSettingsCopy.confidenceHint.contains("发送限制"))
     }
 
     func testSendLimitsAndExclusionsSitUnderAdvanced() throws {

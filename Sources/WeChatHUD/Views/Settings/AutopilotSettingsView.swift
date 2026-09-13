@@ -16,8 +16,8 @@ enum AutopilotSettingsCopy {
     static let groupRule = "群聊默认只记录；打开上面的开关后只写待确认草稿，不会自动发出。"
     static let groupAtOff = "群消息默认只记录，不写回复。"
 
-    static let confidenceTitle = "自动发送把握程度"
-    static let confidenceHint = "达到这个门槛才会尝试自动发送，仍受发送限制约束。"
+    static let confidenceTitle = "多有把握才发出去"
+    static let confidenceHint = "不到这个数只写草稿。群聊、转账、红包仍要你确认。"
     static let perHourTitle = "每小时最多"
     static let perHourHint = "每小时发送上限。"
     static let sessionTitle = "本次整理最多"
