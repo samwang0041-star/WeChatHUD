@@ -576,8 +576,16 @@ struct SyncSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            exportReportSection
+            Text(LocalDataCopy.statusLine(count: recalledMessages.count + commitments.count + pendingAsks.count))
+                .workspaceTitle()
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
             retrospectionSection
+            DisclosureGroup(LocalDataCopy.exportDisclosure) {
+                exportReportSection
+            }
+            .workspaceMeta()
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -950,12 +958,19 @@ struct SyncSettingsView: View {
 
     private func reloadData() {
         let snapshot = LocalDataRetrospection.load(store: store)
-        switch selectedSection {
-        case .recalls:     recalledMessages = snapshot.recalls
-        case .commitments: commitments = snapshot.commitments
-        case .pendingAsks: pendingAsks = snapshot.pendingAsks
-        }
+        recalledMessages = snapshot.recalls
+        commitments = snapshot.commitments
+        pendingAsks = snapshot.pendingAsks
     }
+}
+
+enum LocalDataCopy {
+    static func statusLine(count: Int) -> String {
+        if count == 0 { return "近两周没有整理过的记录。" }
+        return "近两周整理过 \(count) 件事。"
+    }
+
+    static let exportDisclosure = "还要导出"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
