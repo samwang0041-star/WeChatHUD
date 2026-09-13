@@ -70,6 +70,10 @@ actor WeChatReaderActor {
         reader.mySelfNames
     }
 
+    func hasAccountSwitched() -> Bool {
+        reader.hasAccountSwitched()
+    }
+
     func normalizeContactMentions(in text: String) -> String {
         reader.normalizeContactMentions(in: text)
     }

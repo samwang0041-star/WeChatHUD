@@ -14,7 +14,8 @@ extension ChatMonitor {
                 self.classificationProcessing = false
                 self.classificationPendingCount = self.store.classificationQueueCount()
             }
-            guard await self.aiService.isConfigured(), !self.reader.hasAccountSwitched() else { return }
+            let readerActor = WeChatReaderActor(self.reader)
+            guard await self.aiService.isConfigured(), !(await readerActor.hasAccountSwitched()) else { return }
             while !Task.isCancelled {
                 let messages = self.store.pendingClassificationMessages(limit: 10)
                 guard !messages.isEmpty else { break }
@@ -33,7 +34,7 @@ extension ChatMonitor {
                     }
                 }
                 self.classificationPendingCount = self.store.classificationQueueCount()
-                guard await self.aiService.isConfigured(), !self.reader.hasAccountSwitched() else { break }
+                guard await self.aiService.isConfigured(), !(await readerActor.hasAccountSwitched()) else { break }
             }
         }
     }
@@ -42,15 +43,17 @@ extension ChatMonitor {
     /// an AI or persistence failure stays unacknowledged for the queue to retry.
     func classifyPendingMessages(_ items: [(chatUsername: String, msg: MessageInfo)]) async -> Set<String> {
         var completed: Set<String> = []
-        let myUsername = reader.myUsername()
-        let myDisplayName = reader.displayName(for: myUsername)
-        guard !myUsername.isEmpty, !reader.hasAccountSwitched() else { return completed }
+        let readerActor = WeChatReaderActor(reader)
+        let myUsername = await readerActor.myUsername()
+        let myDisplayName = await readerActor.displayName(for: myUsername)
+        let selfNames = await readerActor.mySelfNames()
+        guard !myUsername.isEmpty, !(await readerActor.hasAccountSwitched()) else { return completed }
         // One snapshot for the whole drain: the admission rules are consulted
         // per item, and re-reading them per message would put several queries on
         // a path that runs for every queued message.
         let admissionRules = AdmissionRules.load(store: store)
         for item in items {
-            guard !Task.isCancelled, !reader.hasAccountSwitched() else { break }
+            guard !Task.isCancelled, !(await readerActor.hasAccountSwitched()) else { break }
             let msg = item.msg
             // Recheck scope at consumption time: the user may have removed a chat
             // or ignored a sender while this item was backing off.
@@ -62,12 +65,12 @@ extension ChatMonitor {
                       senderName: msg.senderName
                   ),
                   !MessageHelpers.isFromSelf(msg, chatUsername: msg.chatUsername, myUsername: myUsername,
-                                             myDisplayName: myDisplayName, mySelfNames: reader.mySelfNames) else {
+                                             myDisplayName: myDisplayName, mySelfNames: selfNames) else {
                 completed.insert(msg.id)
                 continue
             }
             let isAt = MessageHelpers.isAtMe(
-                msg.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: reader.mySelfNames
+                msg.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: selfNames
             )
             guard admissionRules.decide(
                 chatUsername: msg.chatUsername,
@@ -84,7 +87,7 @@ extension ChatMonitor {
             // SQL bounds precede LIMIT: an old queued message gets its own prior
             // context, never whatever happens to be latest today. Exclude the whole
             // target second to avoid incorporating later same-second messages.
-            let contextMessages = (try? reader.getMessages(
+            let contextMessages = (try? await readerActor.getMessages(
                 chatUsername: msg.chatUsername, limit: 12, afterCursor: nil,
                 startTime: msg.createTime - 86400, endTime: msg.createTime
             )) ?? []
@@ -95,17 +98,17 @@ extension ChatMonitor {
                 .filter { !$0.isEmpty })
             for preceding in contextMessages where !MessageHelpers.isFromSelf(
                 preceding, chatUsername: msg.chatUsername, myUsername: myUsername,
-                myDisplayName: myDisplayName, mySelfNames: reader.mySelfNames
+                myDisplayName: myDisplayName, mySelfNames: selfNames
             ) {
                 knownOtherNames.formUnion([preceding.senderUsername, preceding.senderName].filter { !$0.isEmpty })
             }
             let recipientContext = AIClassifier.RecipientContext(
                 myUsername: myUsername, myDisplayName: myDisplayName,
-                mySelfNames: reader.mySelfNames, knownOtherNames: knownOtherNames,
+                mySelfNames: selfNames, knownOtherNames: knownOtherNames,
                 precedingMessages: context
             )
             guard let result = await aiClassifier.classify(message: input, recipientContext: recipientContext) else { continue }
-            guard !reader.hasAccountSwitched() else { break }
+            guard !(await readerActor.hasAccountSwitched()) else { break }
             guard result.isAsk, result.confidence >= 0.5 else {
                 completed.insert(msg.id)
                 continue
