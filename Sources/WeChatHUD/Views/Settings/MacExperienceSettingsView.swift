@@ -24,6 +24,9 @@ struct MacExperienceSettingsView: View {
                 }
                 if loginStatus == .requiresApproval {
                     Button("在系统设置中确认登录项") { SMAppService.openSystemSettingsLoginItems() }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 56).padding(.vertical, 10)
                 }
@@ -37,7 +40,11 @@ struct MacExperienceSettingsView: View {
                             .foregroundStyle(accessibilityGranted ? CompanionPalette.jade : .orange)
                         Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
                             openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-                        }.disabled(PreviewRuntime.isEnabled)
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .disabled(PreviewRuntime.isEnabled)
                     }
                 }
                 if !accessibilityGranted {
@@ -56,8 +63,9 @@ struct MacExperienceSettingsView: View {
                                 ? "权限已生效，可以返回聊天继续回复。"
                                 : "当前应用仍未获得授权。请重新打开 WeChatHUD 后再试；回复内容不会自动发送。"
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                         .disabled(PreviewRuntime.isEnabled)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,9 +94,15 @@ struct MacExperienceSettingsView: View {
                         }
                         if notificationStatus == .notDetermined {
                             Button("允许系统通知", action: requestNotifications)
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                                 .disabled(requestingNotifications || PreviewRuntime.isEnabled)
                         } else {
                             Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                                 .disabled(PreviewRuntime.isEnabled)
                         }
                     }
