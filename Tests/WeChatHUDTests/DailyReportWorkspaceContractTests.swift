@@ -13,7 +13,11 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(toolbar.contains("CompanionPalette.selectedFill"))
         XCTAssertFalse(toolbar.contains("CompanionFilterPill"))
         XCTAssertTrue(toolbar.contains("borderedProminent"))
-        XCTAssertTrue(toolbar.contains("tint(CompanionPalette.jade)"))
+        XCTAssertTrue(toolbar.contains("CompanionPressStyle()"))
+        let chevronIsSystemBordered = toolbar.components(separatedBy: "\n").contains { line in
+            line.contains("buttonStyle(.bordered)") && !line.contains("borderedProminent")
+        }
+        XCTAssertFalse(chevronIsSystemBordered)
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
 
