@@ -114,6 +114,19 @@ struct DailyReportCommandCenterView: View {
                 divider
             }
 
+            if !vm.urgentActions.isEmpty || !vm.activeToday.isEmpty || !vm.activeThisWeek.isEmpty || !vm.activeLater.isEmpty {
+                Button("在待办里看") {
+                    panelState.pendingSettingsTab = "tasks"
+                }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, isWorkspace ? 20 : 14)
+                .padding(.vertical, 8)
+                .accessibilityLabel("在待办里看")
+                divider
+            }
+
             if !vm.completedActions.isEmpty {
                 completedSection(vm.completedActions)
                 divider
@@ -365,24 +378,9 @@ struct DailyReportCommandCenterView: View {
                         background: Color.green.opacity(0.12)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .help("标记完成")
                 .accessibilityLabel("将日报事项标记为完成：\(action.content)")
-
-                Button(action: {
-                    panelState.pendingDiscussionChatUsername = action.sourceChatUsername
-                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
-                }) {
-                    actionButtonLabel(
-                        icon: "checklist",
-                        title: "查看待办",
-                        tint: CompanionPalette.jade,
-                        background: CompanionPalette.selectedFill
-                    )
-                }
-                .buttonStyle(.plain)
-                .help("查看待办")
-                .accessibilityLabel("查看待办：\(action.content)")
             }
             .opacity(isHovered ? 1.0 : 0.85)
         }
