@@ -6,6 +6,12 @@ extension Notification.Name {
     static let hudDisplayPreferenceDidChange = Notification.Name("WeChatHUD.DisplayPreferenceDidChange")
 }
 
+enum PreferencesCopy {
+    static func hudLine(_ screen: DisplayScreen) -> String {
+        "浮窗在\(screen.label)。"
+    }
+}
+
 struct SyncSettingsView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
@@ -129,6 +135,10 @@ struct SyncSettingsView: View {
             }
             settingsPane(.preferences) {
                 VStack(alignment: .leading, spacing: 16) {
+                    Text(PreferencesCopy.hudLine(displayScreen))
+                        .workspaceTitle()
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
                     displaySection
                     MacExperienceSettingsView()
                     AppUpdateSettingsView()
@@ -224,7 +234,7 @@ struct SyncSettingsView: View {
 
     private var displaySection: some View {
         SettingsSection("显示位置") {
-            SettingsRow("显示位置", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: CompanionPalette.jade) {
+            SettingsRow("显示位置", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: .secondary) {
                 Picker("显示位置", selection: $displayScreen) {
                     ForEach(DisplayScreen.allCases, id: \.self) { s in
                         Text(s.label).tag(s)
