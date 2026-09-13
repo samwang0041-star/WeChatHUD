@@ -178,7 +178,7 @@ struct WhitelistScanView: View {
                     Text(item.displayName)
                         .font(.system(size: 12, weight: .medium)).lineLimit(1)
                     if item.isGroup {
-                        Text("群").font(.system(size: 9, weight: .semibold))
+                        Text("群").font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.orange)
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Color.orange.opacity(0.12)).cornerRadius(3)

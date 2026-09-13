@@ -168,5 +168,7 @@ struct IslandPillButtonStyle: ButtonStyle {
                 in: Capsule()
             )
             .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1)
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
     }
 }

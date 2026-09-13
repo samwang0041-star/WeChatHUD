@@ -169,7 +169,7 @@ struct CommitmentTabView: View {
             } label: {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: commitment.status == .fulfilled ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 16, weight: .medium))
+                        .companionFont(size: WorkspaceType.title, weight: .medium)
                         .foregroundStyle(commitment.status == .fulfilled ? CompanionPalette.jade : .secondary)
                         .frame(width: 22)
                         .accessibilityLabel(commitment.status == .fulfilled ? "已完成" : "未完成")

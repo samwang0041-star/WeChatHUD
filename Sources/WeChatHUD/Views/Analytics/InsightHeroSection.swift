@@ -20,7 +20,7 @@ struct InsightHeroSection: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11))
                     .foregroundColor(.accentColor)
-                Text("AI 全景总结 · \(briefing.date)")
+                Text("AI 摘要 · \(briefing.date)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.accentColor)
                 Spacer()
@@ -87,12 +87,12 @@ struct InsightHeroSection: View {
     private func ctaHero(overview: ChatInsightEngine.GlobalOverview) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: 20))
+                .font(.system(size: WorkspaceType.title))
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text("生成 AI 全景总结")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("基于 \(overview.totalMessages) 条消息，AI 会提炼需要你行动的事、跨对话话题、暗信号等")
+                Text("生成今日摘要")
+                    .workspaceRowTitle()
+                Text("根据 \(overview.totalMessages) 条消息，列出该做的事和跨对话话题")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(2)

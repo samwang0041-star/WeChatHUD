@@ -180,7 +180,7 @@ struct OnboardingView: View {
                 }
                 VStack(spacing: 8) {
                     Image(systemName: "laptopcomputer")
-                        .font(.system(size: 42, weight: .light))
+                        .font(.system(size: 22, weight: .light))
                         .foregroundStyle(CompanionPalette.jade)
                     Text((!NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat").isEmpty
                           || !NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.WeChat").isEmpty)
@@ -226,8 +226,8 @@ struct OnboardingView: View {
 
     private func heading(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.title2.weight(.semibold))
-            Text(subtitle).font(.callout).foregroundStyle(.secondary)
+            Text(title).workspaceDisplay()
+            Text(subtitle).workspaceBody().foregroundStyle(.secondary)
         }
     }
 

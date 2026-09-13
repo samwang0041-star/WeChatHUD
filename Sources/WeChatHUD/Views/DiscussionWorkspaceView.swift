@@ -332,7 +332,7 @@ struct DiscussionWorkspaceView: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .top) {
                     Text(item.content)
-                        .font(.system(size: 22, weight: .bold))
+                        .workspaceTitle()
                         .textSelection(.enabled)
                     Spacer()
                     Menu {
@@ -487,7 +487,7 @@ private struct DiscussionRow: View, Equatable {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: item.status == .done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .medium))
+                    .companionFont(size: WorkspaceType.title, weight: .medium)
                     .foregroundStyle(item.status == .done ? CompanionPalette.jade : .secondary)
                     .frame(width: 22)
                     .accessibilityLabel(item.status == .done ? "已完成" : "未完成")

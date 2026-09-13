@@ -57,6 +57,26 @@ private struct CompanionSurface: ViewModifier {
     }
 }
 
+/// Type tokens for the workspace window — settings, today, tasks, reports.
+///
+/// Same native-small band as the island: page titles may reach 17pt, row
+/// titles sit at 13, and nothing readable goes below 10. These replace the
+/// 22–30pt headlines that made the workspace read as a phone app.
+enum WorkspaceType {
+    /// Page title ("今天", "待办"). Was 30.
+    static let display: CGFloat = 17
+    /// Section / card titles.
+    static let title: CGFloat = 15
+    /// Row titles, matching the island.
+    static let rowTitle: CGFloat = 13
+    /// Body copy and supporting sentences.
+    static let body: CGFloat = 12
+    /// Timestamps, hints, sidebar section labels.
+    static let meta: CGFloat = 11
+    /// Badges and micro chrome. Floor of companionFont is 10.
+    static let micro: CGFloat = 10.5
+}
+
 /// Scales hardcoded chrome sizes when the system (or preview) asks for larger type.
 enum CompanionTypeScale {
     static func factor(for size: DynamicTypeSize) -> CGFloat {
@@ -97,6 +117,13 @@ extension View {
         modifier(CompanionScaledFont(size: size, weight: weight))
     }
 
+    func workspaceDisplay() -> some View { companionFont(size: WorkspaceType.display, weight: .semibold) }
+    func workspaceTitle() -> some View { companionFont(size: WorkspaceType.title, weight: .semibold) }
+    func workspaceRowTitle() -> some View { companionFont(size: WorkspaceType.rowTitle, weight: .semibold) }
+    func workspaceBody() -> some View { companionFont(size: WorkspaceType.body) }
+    func workspaceMeta() -> some View { companionFont(size: WorkspaceType.meta) }
+    func workspaceMicro() -> some View { companionFont(size: WorkspaceType.micro, weight: .medium) }
+
     /// Hide and disable chrome behind an in-window dialog so Tab cannot leave it.
     func companionDimmedByDialog(_ open: Bool) -> some View {
         disabled(open).accessibilityHidden(open)
@@ -124,7 +151,7 @@ struct CompanionBadge: View {
             if let systemImage { Image(systemName: systemImage) }
             Text(title)
         }
-        .companionFont(size: 11, weight: .medium)
+        .workspaceMicro()
         .foregroundStyle(tint)
         .padding(.horizontal, 8).padding(.vertical, 5)
         .background(tint.opacity(0.09), in: Capsule())
@@ -155,7 +182,7 @@ struct CompanionFilterPill: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .companionFont(size: 13, weight: selected ? .semibold : .regular)
+                .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
                 .foregroundStyle(selected ? Color.white : .primary)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(selected ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
@@ -185,7 +212,7 @@ struct CompanionDialog<Content: View>: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Text(title)
-                        .companionFont(size: 18, weight: .semibold)
+                        .workspaceTitle()
                         .foregroundStyle(dark ? Color.white : .primary)
                     Spacer()
                     Button(action: onClose) { Image(systemName: "xmark") }

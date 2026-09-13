@@ -109,7 +109,7 @@ struct InsightRadarSection: View {
                                 .foregroundColor(color)
                                 .lineLimit(1)
                             Text(radarSeverityLabel(finding.severity))
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 10, weight: .semibold))
                                 .foregroundColor(color)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
@@ -140,7 +140,7 @@ struct InsightRadarSection: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(color)
                         Image(systemName: radarDisclosureIcon(finding.route))
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(color.opacity(0.75))
                             .rotationEffect(.degrees(!finding.route.isChatNavigation && isExpanded ? 180 : 0))
                     }

@@ -10,7 +10,7 @@ struct RetrospectiveWindow: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(CompanionProductCopy.timeReview)
-                    .font(.system(size: 18, weight: .semibold))
+                    .workspaceTitle()
                     .foregroundColor(.white.opacity(0.92))
                 Spacer()
                 Text(CompanionProductCopy.brandName)

@@ -217,7 +217,7 @@ struct InsightSidebarView: View {
 
                 if let s = stats, s.messageCount > 0 {
                     Text("\(s.messageCount)")
-                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -285,7 +285,7 @@ struct InsightSidebarView: View {
                 Spacer()
 
                 Text("\(count)")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)

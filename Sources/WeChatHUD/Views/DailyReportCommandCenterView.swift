@@ -49,9 +49,9 @@ struct DailyReportCommandCenterView: View {
             } else if monitor.dailyReportIsLoading {
                 loadingView
             } else if let error = monitor.dailyReportError {
-                emptyStateWithRetry("日报加载失败: \(error)")
+                emptyStateWithRetry("小结没写出来：\(error)")
             } else {
-                emptyStateWithRetry("暂无日报数据")
+                emptyStateWithRetry("还没有今日小结。连上微信后再整理。")
             }
         }
         .foregroundStyle(.primary)
@@ -329,7 +329,7 @@ struct DailyReportCommandCenterView: View {
                         .foregroundColor(.secondary)
                     if let deadline = action.deadline {
                         Text(deadlineText(deadline))
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundColor(deadlineColor(deadline))
                     }
                     Spacer()
@@ -339,7 +339,7 @@ struct DailyReportCommandCenterView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                                 .foregroundColor(.cyan.opacity(0.85))
                             Text(insight.reason)
                                 .font(.system(size: 11))
@@ -349,7 +349,7 @@ struct DailyReportCommandCenterView: View {
                         }
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "arrow.right")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                                 .foregroundColor(.orange.opacity(0.85))
                             Text(insight.nextStep)
                                 .font(.system(size: 11))
@@ -414,18 +414,18 @@ struct DailyReportCommandCenterView: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(0.2), value: isExpanded)
                     Image(systemName: "star.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.yellow.opacity(0.85))
                     Text(expandedByDefault ? "当日高亮" : "今日高亮")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(highlights.count)")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -450,18 +450,18 @@ struct DailyReportCommandCenterView: View {
             Button(action: { showRisks.toggle() }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showRisks ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(0.2), value: showRisks)
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.orange.opacity(0.85))
                     Text("风险与异常")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(risks.count)")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -486,18 +486,18 @@ struct DailyReportCommandCenterView: View {
             Button(action: { showCompleted.toggle() }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showCompleted ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(0.2), value: showCompleted)
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(.green.opacity(0.8))
                     Text("已完成")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     Text("\(actions.count)")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -532,15 +532,15 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(highlight.category.label)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(categoryColor(highlight.category))
                 Text(resolvedChatName(highlight.sourceChatName, username: highlight.sourceChatUsername))
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Spacer()
                 if highlight.confidence < 0.8 {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: 10))
                         .foregroundColor(.orange.opacity(0.7))
                 }
             }
@@ -706,7 +706,7 @@ struct DailyReportCommandCenterView: View {
     private func urgencyChip(_ urgency: ActionUrgency) -> some View {
         let (text, color) = urgencyStyle(urgency)
         return Text(text)
-            .font(.system(size: 8, weight: .semibold))
+            .font(.system(size: 10, weight: .semibold))
             .foregroundColor(color)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)

@@ -209,7 +209,7 @@ struct RelationshipRadarView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(displayName(snap))
-                            .font(.system(size: 22, weight: .bold))
+                            .workspaceTitle()
                         Text(snap.summary)
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)

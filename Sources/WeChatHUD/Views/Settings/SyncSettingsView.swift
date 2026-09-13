@@ -296,7 +296,7 @@ struct SyncSettingsView: View {
                         HStack(spacing: 3) {
                             Text(actionTitle)
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 10, weight: .semibold))
                         }
                     }
                         .buttonStyle(.plain)

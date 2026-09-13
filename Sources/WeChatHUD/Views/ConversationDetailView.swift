@@ -524,7 +524,7 @@ struct ConversationDetailView: View {
                     Button(action: { Task { await loadSuggestions() } }) {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 9))
+                                .font(.system(size: 10))
                             Text("生成建议")
                                 .font(.system(size: 10))
                         }
@@ -596,7 +596,7 @@ struct ConversationDetailView: View {
     private func sectionLabel(_ label: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(.white.opacity(0.45))
             Spacer()
         }
@@ -627,21 +627,21 @@ private struct SuggestionRowView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 }) {
                     Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundColor(copied ? .green : .white.opacity(0.4))
                 }
                 .buttonStyle(.plain)
             }
             HStack(spacing: 6) {
                 Text(suggestion.tone)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.4))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .background(Color.white.opacity(0.06))
                     .cornerRadius(3)
                 Text(suggestion.rationale)
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.3))
                     .lineLimit(1)
             }

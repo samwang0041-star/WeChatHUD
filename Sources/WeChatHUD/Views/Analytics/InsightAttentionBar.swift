@@ -93,7 +93,7 @@ struct InsightAttentionBar: View {
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary.opacity(0.5))
             }
             .padding(.vertical, 4)

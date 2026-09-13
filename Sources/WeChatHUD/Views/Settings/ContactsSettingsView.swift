@@ -488,7 +488,7 @@ private struct ContactsListSubView: View {
                         .foregroundStyle(CompanionPalette.accent)
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Color(nsColor: .tertiaryLabelColor))
             }
             .padding(.horizontal, 6)
@@ -599,13 +599,13 @@ private struct ContactInspectorView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: contactRoleSymbol(contact.role))
-                    .font(.system(size: 28))
+                    .font(.system(size: WorkspaceType.title))
                     .foregroundStyle(contactLevelColor(contact.attentionLevel))
                     .frame(width: 36, height: 36)
                     .background(contactLevelColor(contact.attentionLevel).opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
                     Text(contact.displayName)
-                        .font(.system(size: 16, weight: .semibold))
+                        .workspaceTitle()
                         .lineLimit(1)
                 }
                 Spacer()
@@ -851,13 +851,13 @@ private struct SilencedChatsSubView: View {
 private func emptyState(icon: String, text: String, hint: String) -> some View {
     VStack(spacing: 6) {
         Image(systemName: icon)
-            .font(.system(size: 24))
+            .font(.system(size: WorkspaceType.title))
             .foregroundColor(.secondary.opacity(0.3))
         Text(text)
-            .font(.system(size: 12))
+            .workspaceBody()
             .foregroundColor(.secondary)
         Text(hint)
-            .font(.system(size: 10))
+            .workspaceMicro()
             .foregroundColor(Color(nsColor: .tertiaryLabelColor))
     }
     .frame(maxWidth: .infinity, minHeight: 120)
@@ -911,7 +911,7 @@ struct ContactEditSheet: View {
             HStack {
                 HStack(spacing: 8) {
                     Image(systemName: contactRoleSymbol(contact.role))
-                        .font(.system(size: 17, weight: .medium))
+                        .font(.system(size: WorkspaceType.title, weight: .medium))
                         .foregroundStyle(contactLevelColor(contact.attentionLevel))
                         .frame(width: 28, height: 28)
                         .background(contactLevelColor(contact.attentionLevel).opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))

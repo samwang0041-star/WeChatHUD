@@ -43,7 +43,7 @@ struct CompactInboxBar: View {
                 leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityLabel(leftWingCopy.accessibilityLabel)
             .accessibilityValue(accessibilityStatus)
             .help(leftWingCopy.help)
@@ -65,7 +65,7 @@ struct CompactInboxBar: View {
                 rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityLabel("打开今天")
             .help("打开今天")
             .padding(.leading, 6)
@@ -152,17 +152,15 @@ struct CompactInboxBar: View {
     /// back to the standard MBP-ish default if the panel isn't
     /// reachable (e.g. SwiftUI preview).
     private var notchWidth: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchWidth
-        }
-        return 200
+        livePanel?.notch.notchWidth ?? 200
     }
 
     private var notchHeight: CGFloat {
-        if let app = NSApp.delegate as? AppDelegate, let panel = app.panel {
-            return panel.notch.notchHeight
-        }
-        return 32
+        livePanel?.notch.notchHeight ?? 32
+    }
+
+    private var livePanel: FloatingPanel? {
+        (NSApp.delegate as? AppDelegate)?.attachedPanel
     }
 
 
@@ -175,10 +173,10 @@ struct CompactInboxBar: View {
             pillsVisible = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                 guard isPeeking else { return }
-                withMotion(CompanionMotion.easeOut(0.18)) { pillsVisible = true }
+                withMotion(CompanionMotion.ease()) { pillsVisible = true }
             }
         } else {
-            withMotion(CompanionMotion.easeOut(0.08)) { pillsVisible = false }
+            withMotion(CompanionMotion.islandCollapse()) { pillsVisible = false }
         }
     }
 
@@ -194,10 +192,10 @@ struct CompactInboxBar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .opacity(pillsVisible ? 1 : 0)
         .offset(x: pillsVisible ? 0 : (alignment == .trailing ? -6 : 6))
-        .transaction { $0.animation = CompanionMotion.easeOut(0.18) }
+        .transaction { $0.animation = CompanionMotion.ease() }
         .accessibilityLabel(leftWingCopy.accessibilityLabel)
         .accessibilityValue(island.glance)
         .help(leftWingCopy.help)

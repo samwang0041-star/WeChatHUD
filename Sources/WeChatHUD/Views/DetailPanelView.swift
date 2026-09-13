@@ -145,7 +145,7 @@ struct DetailNoticeBar: View {
                 onClose()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 18)
                     .contentShape(Rectangle())
@@ -200,7 +200,7 @@ struct MissingChatPane: View {
     var body: some View {
         VStack(spacing: 9) {
             Image(systemName: "questionmark.bubble")
-                .font(.system(size: 20))
+                .font(.system(size: WorkspaceType.title))
                 .foregroundColor(.secondary)
             Text(MissingChatPaneCopy.title)
                 .font(.system(size: 13, weight: .semibold))

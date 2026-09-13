@@ -202,7 +202,7 @@ struct WeChatConnectionSetupView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: connected ? "checkmark.bubble.fill" : "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 25, weight: .medium))
+                    .font(.system(size: WorkspaceType.display, weight: .medium))
                     .foregroundStyle(CompanionPalette.accent)
                     .frame(width: 48, height: 48)
                     .background(CompanionPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
