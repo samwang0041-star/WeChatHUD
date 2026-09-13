@@ -388,6 +388,26 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
     }
 
+    func testServiceSourcePressesInsteadOfSystemBlue() throws {
+        let source = try AISettingsSource.load()
+        let form = try XCTUnwrap(source.text.range(of: "private var serviceForm"))
+        let provider = try XCTUnwrap(source.text.range(of: "private var providerCard"))
+        let block = String(source.text[form.lowerBound..<provider.lowerBound])
+        XCTAssertTrue(block.contains("sourceChip"))
+        XCTAssertTrue(block.contains("CompanionPressStyle()"))
+        XCTAssertTrue(block.contains("CompanionPalette.selectedFill"))
+        XCTAssertFalse(block.contains(".pickerStyle(.segmented)"))
+        let chip = try XCTUnwrap(block.range(of: "private func sourceChip"))
+        XCTAssertFalse(
+            String(block[chip.lowerBound...]).contains("CompanionPalette.jade"),
+            "jade stays on 确认能用"
+        )
+        XCTAssertEqual(AISettingsCopy.sourceTitle, "用哪家")
+        XCTAssertEqual(AISettingsCopy.sourcePreset, "常用服务")
+        XCTAssertEqual(AISettingsCopy.sourceCustom, "自己填")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testWritingHabitsAndPrivacySitUnderAdvanced() throws {
         let source = try AISettingsSource.load()
         let form = try XCTUnwrap(source.text.range(of: "private var serviceForm"))

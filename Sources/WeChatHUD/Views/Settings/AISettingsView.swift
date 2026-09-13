@@ -603,14 +603,10 @@ struct AISettingsView: View {
     private var serviceForm: some View {
         SettingsSection {
             SettingsRow(AISettingsCopy.sourceTitle) {
-                Picker(AISettingsCopy.sourceTitle, selection: $serviceSource) {
-                    Text(AISettingsCopy.sourcePreset).tag(ServiceSource.preset)
-                    Text(AISettingsCopy.sourceCustom).tag(ServiceSource.custom)
+                HStack(spacing: 6) {
+                    sourceChip(AISettingsCopy.sourcePreset, .preset)
+                    sourceChip(AISettingsCopy.sourceCustom, .custom)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
-                .accessibilityLabel(AISettingsCopy.sourceTitle)
             }
             SettingsRowDivider()
             providerCard
@@ -700,6 +696,20 @@ struct AISettingsView: View {
         .onChange(of: thinkingEnabled) { _, _ in debouncedSave() }
         .onChange(of: maxTokens) { _, _ in debouncedSave() }
         .onChange(of: temperature) { _, _ in debouncedSave() }
+    }
+
+    private func sourceChip(_ title: String, _ source: ServiceSource) -> some View {
+        Button(title) {
+            serviceSource = source
+        }
+        .buttonStyle(CompanionPressStyle())
+        .workspaceMeta()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(serviceSource == source ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+        .foregroundStyle(serviceSource == source ? .primary : .secondary)
+        .accessibilityAddTraits(serviceSource == source ? .isSelected : [])
+        .accessibilityLabel(title)
     }
 
     // MARK: - Cards
