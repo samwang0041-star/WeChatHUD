@@ -713,6 +713,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(source.text.contains(".font(.system(size: CompactInboxMetrics.badgeSize"))
     }
 
+    func testCompactBuddyOpeningTodaySpeaksAReceipt() throws {
+        let source = try CompactInboxBarSource.load()
+        XCTAssertTrue(source.text.contains("CompactInboxCopy.openedToday"))
+        XCTAssertTrue(source.text.contains("CompactRightWingRouter.activate"))
+        XCTAssertTrue(source.text.contains("打开今天"))
+        XCTAssertTrue(source.text.contains("整理中") || source.text.contains("glance"))
+        XCTAssertEqual(CompactInboxCopy.openedToday, "已经打开今天。")
+    }
+
     func testIslandSnoozeMenuRowsPress() throws {
         let source = try InboxRowViewSource.load()
         guard let menuStart = source.text.range(of: "struct IslandSnoozeMenu"),

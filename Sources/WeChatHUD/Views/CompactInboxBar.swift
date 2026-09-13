@@ -58,8 +58,7 @@ struct CompactInboxBar: View {
                 .frame(width: notchWidth)
 
             Button {
-                panelState.pendingSettingsTab = "today"
-                panelState.showDetail()
+                CompactRightWingRouter.activate(panelState: panelState)
             } label: {
                 rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -353,5 +352,20 @@ enum CompactWingRouter {
         case .openInbox:
             panelState.goExtended()
         }
+    }
+}
+
+/// 打开今天 is a separate window. The compact island would otherwise
+/// swallow the click with no words, so the receipt is a quiet toast.
+enum CompactInboxCopy {
+    static let openedToday = "已经打开今天。"
+}
+
+@MainActor
+enum CompactRightWingRouter {
+    static func activate(panelState: PanelState) {
+        panelState.pendingSettingsTab = "today"
+        panelState.showDetail()
+        panelState.showToast(CompactInboxCopy.openedToday, success: true)
     }
 }
