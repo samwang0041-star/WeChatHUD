@@ -205,6 +205,15 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.saveRetry, "再试一次")
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
     }
+
+    func testContactPickerDoesNotTallySelectedUnderTheList() throws {
+        let source = try FirstLaunchContactPickerSource.load()
+        XCTAssertFalse(source.body.contains("已选"))
+        XCTAssertFalse(source.body.contains(".font(.system(size: 12)"))
+        XCTAssertTrue(source.body.contains("FirstLaunchContactPicker"))
+        XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
