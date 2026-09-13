@@ -23,9 +23,28 @@ enum AISettingsCopy {
     static let pickModel = "请选一个模型。"
     static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
     static let retryOnce = "再试一次"
+    static let confirmOk = "刚才确认过了。"
+    static let confirmOkUnsaved = "可以用，但这次没记下，请再点「确认能用」。"
+    static let confirmUnsaved = "这次没记下。"
+    static let confirmFailedDemo = "这次没通过。"
+    static let restoredOkPrefix = "上次确认过"
+    static let restoredFailPrefix = "上次没通过"
+    static let saveFailed = "刚才没存上。"
+    static let saving = "正在保存…"
+    static let saveOk = "已保存。"
+    static let saveOkReady = "已保存，可以用。"
+    static let saveOkUnconfirmed = "已保存。还没点「确认能用」。"
+    static let saveIdle = "改完会自动保存。"
+    static let privacyBody = "密钥只留在这台电脑里，不会出现在界面或确认结果里。"
+    static let privacyRemote = "常用服务和自己填的地址多半是网上的服务，请确认你信任对方怎么处理数据。"
+    static let fetchFailed = "没拿到模型列表。"
     static let writingHabits = "写作习惯"
     static let privacyTitle = "数据与隐私"
     static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
+
+    static func restoredOk(_ date: String) -> String { "\(restoredOkPrefix) \(date)。" }
+    static func restoredFail(_ date: String) -> String { "\(restoredFailPrefix) \(date)。" }
+    static func fetchCount(_ n: Int) -> String { "找到 \(n) 个模型。" }
 }
 
 extension Notification.Name {
@@ -591,8 +610,14 @@ struct AISettingsView: View {
         AISettingsValidation.connectionError(configuredSlot, requireModel: true) == nil
     }
 
+    private var isSuccessfulTestResult: Bool {
+        testResult == AISettingsCopy.confirmOk
+            || testResult == AISettingsCopy.confirmOkUnsaved
+            || testResult.hasPrefix(AISettingsCopy.restoredOkPrefix)
+    }
+
     private var isFailedTestResult: Bool {
-        testResult.hasPrefix("失败") || testResult.hasPrefix("连接未完成") || testResult.hasPrefix("获取失败") || testResult.hasPrefix("上次测试失败")
+        !testResult.isEmpty && !isSuccessfulTestResult
     }
 
     private var serviceForm: some View {
@@ -732,8 +757,8 @@ struct AISettingsView: View {
     private var privacySection: some View {
         DisclosureGroup(isExpanded: $privacyExpanded) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("访问凭据仅保存在本机私有设置中，不会显示在界面或测试结果里。")
-                Text("预设与自定义服务多为远程服务，请确认你信任其数据处理方式。")
+                Text(AISettingsCopy.privacyBody)
+                Text(AISettingsCopy.privacyRemote)
             }
             .workspaceMeta()
             .foregroundStyle(.secondary)
@@ -750,47 +775,41 @@ struct AISettingsView: View {
     }
 
     private var saveStatus: some View {
-        HStack(spacing: 12) {
-            Image(systemName: saveError.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
-                .foregroundStyle(saveError.isEmpty ? CompanionPalette.accent : .red)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(serviceSaveStatusText)
-                    .font(.system(size: 12, weight: .medium))
-                if !saveError.isEmpty {
-                    Text(saveError)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.red)
-                }
-            }
-            Spacer()
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(serviceSaveStatusText)
+                .workspaceMeta()
+                .foregroundStyle(saveError.isEmpty ? .secondary : .primary)
+                .fixedSize(horizontal: false, vertical: true)
             if !saveError.isEmpty {
-                Button("重试保存", action: saveAIConfig)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                Spacer(minLength: 8)
+                Button(AISettingsCopy.retryOnce, action: saveAIConfig)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(AISettingsCopy.retryOnce)
             }
         }
-        .companionSurface(padding: 14)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(saveError.isEmpty ? "设置保存状态" : "设置保存失败")
-        .accessibilityValue(!saveError.isEmpty ? saveError : serviceSaveStatusText)
+        .accessibilityLabel(saveError.isEmpty ? "保存状态" : AISettingsCopy.saveFailed)
+        .accessibilityValue(serviceSaveStatusText)
     }
 
     private var serviceSaveStatusText: String {
-        if !saveError.isEmpty { return "更改尚未保存" }
-        if hasPendingSave { return "正在保存更改…" }
+        if !saveError.isEmpty { return AISettingsCopy.saveFailed }
+        if hasPendingSave { return AISettingsCopy.saving }
         let tested = store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true
-        if tested { return savedAt == nil ? "连接已验证" : "更改已保存" }
+        if tested { return savedAt == nil ? AISettingsCopy.saveOkReady : AISettingsCopy.saveOk }
         if savedAt != nil || !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "配置已保存 · 尚未测试"
+            return AISettingsCopy.saveOkUnconfirmed
         }
-        return "配置加载后，修改会自动保存"
+        return AISettingsCopy.saveIdle
     }
 
     // MARK: - Actions
 
     private func applyPreviewTestFailure() {
         PreviewRuntime.pendingAITestFailure = false
-        testResult = "失败：演示用的连接没有通过。"
+        testResult = AISettingsCopy.confirmFailedDemo
         isTesting = false
     }
 
@@ -806,9 +825,9 @@ struct AISettingsView: View {
         modelFetchNote = ""
         if let error = AISettingsValidation.connectionError(slot, requireModel: true) {
             let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
-            let suffix = saved ? "" : "；测试结果未保存，请重试"
+            let suffix = saved ? "" : AISettingsCopy.confirmUnsaved
             let detail = userFacingConfigurationError(error)
-            testResult = "连接未完成：\(detail)\(suffix)"
+            testResult = "\(detail)\(suffix.isEmpty ? "" : " \(suffix)")"
             return
         }
         let service = AIService(config: buildConfig())
@@ -822,8 +841,8 @@ struct AISettingsView: View {
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: true, requestStartedAt: requestStartedAt)
                     let message = saved
-                        ? "连接成功，服务已返回有效响应。"
-                        : "连接成功，但测试结果未保存，请重试。"
+                        ? AISettingsCopy.confirmOk
+                        : AISettingsCopy.confirmOkUnsaved
                     testResult = message
                 }
             } catch {
@@ -832,8 +851,8 @@ struct AISettingsView: View {
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
                     let detail = userFacingConfigurationError(AISettingsValidation.connectionFailure(error))
-                    let suffix = saved ? "" : "；测试结果未保存，请重试"
-                    testResult = "连接未完成：\(detail)\(suffix)"
+                    let suffix = saved ? "" : AISettingsCopy.confirmUnsaved
+                    testResult = "\(detail)\(suffix.isEmpty ? "" : " \(suffix)")"
                 }
             }
         }
@@ -855,7 +874,7 @@ struct AISettingsView: View {
     private func fetchModels() {
         let slot = buildSlot()
         if let error = AISettingsValidation.connectionError(slot, requireModel: false) {
-            modelFetchNote = "获取失败：\(userFacingConfigurationError(error))"
+            modelFetchNote = "\(AISettingsCopy.fetchFailed)\(userFacingConfigurationError(error))"
             return
         }
         isFetching = true
@@ -870,14 +889,14 @@ struct AISettingsView: View {
                     models = list
                     // Keep a model not in the list; say so under the field.
                     if !list.isEmpty, !list.contains(model) {
-                        modelFetchNote = "已获取 \(list.count) 个模型"
+                        modelFetchNote = AISettingsCopy.fetchCount(list.count)
                     }
                 }
             } catch {
                 await MainActor.run {
                     isFetching = false
                     guard slot == buildSlot() else { return }
-                    modelFetchNote = "获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
+                    modelFetchNote = "\(AISettingsCopy.fetchFailed)\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
                 }
             }
         }
@@ -931,7 +950,7 @@ struct AISettingsView: View {
     private func restoredTestResult(for slot: AIProviderSlot) -> String {
         guard let record = store.loadAIConnectionEvidence().record(for: slot) else { return "" }
         let date = record.testedAt.formatted(.dateTime.month().day().hour().minute())
-        return record.succeeded ? "上次测试成功 \(date)，可重新测试" : "上次测试失败 \(date)，请重新测试"
+        return record.succeeded ? AISettingsCopy.restoredOk(date) : AISettingsCopy.restoredFail(date)
     }
 
     private func buildSlot() -> AIProviderSlot {
@@ -986,7 +1005,7 @@ struct AISettingsView: View {
             savedAt = Date()
             NotificationCenter.default.post(name: .hudAIConfigDidChange, object: nil)
         } catch {
-            saveError = "AI 配置保存失败，请重试。"
+            saveError = AISettingsCopy.saveFailed
         }
     }
 

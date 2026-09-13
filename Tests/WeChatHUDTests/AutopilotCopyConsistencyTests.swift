@@ -368,6 +368,34 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
     }
 
+    func testServiceReceiptsSpeakLikeConfirmWorksNotAConsole() throws {
+        let source = try AISettingsSource.load()
+        XCTAssertFalse(source.text.contains("连接成功，服务已返回有效响应"))
+        XCTAssertFalse(source.text.contains("重试保存"))
+        XCTAssertFalse(source.text.contains("连接已验证"))
+        XCTAssertFalse(source.text.contains("配置已保存 · 尚未测试"))
+        XCTAssertFalse(source.text.contains("更改尚未保存"))
+        XCTAssertFalse(source.text.contains("访问凭据仅保存在"))
+        XCTAssertFalse(source.text.contains("上次测试成功"))
+        XCTAssertFalse(source.text.contains("获取失败："))
+        XCTAssertFalse(source.text.contains("已获取 \\("))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.confirmOk"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.saveFailed"))
+        XCTAssertTrue(source.text.contains("AISettingsCopy.privacyBody"))
+        let save = try XCTUnwrap(source.text.range(of: "private var saveStatus"))
+        let actions = try XCTUnwrap(source.text.range(of: "// MARK: - Actions"))
+        let saveBlock = String(source.text[save.lowerBound..<actions.lowerBound])
+        XCTAssertTrue(saveBlock.contains("AISettingsCopy.retryOnce"))
+        XCTAssertTrue(saveBlock.contains("CompanionPressStyle()"))
+        XCTAssertFalse(saveBlock.contains("companionSurface"))
+        XCTAssertFalse(saveBlock.contains("bordered"))
+        XCTAssertEqual(AISettingsCopy.confirmOk, "刚才确认过了。")
+        XCTAssertEqual(AISettingsCopy.saveFailed, "刚才没存上。")
+        XCTAssertEqual(AISettingsCopy.saveOkUnconfirmed, "已保存。还没点「确认能用」。")
+        XCTAssertEqual(AISettingsCopy.privacyBody, "密钥只留在这台电脑里，不会出现在界面或确认结果里。")
+        XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
+    }
+
     func testOpenEverythingRowSaysItOpensToday() throws {
         let source = try InboxViewSource.load()
         XCTAssertTrue(source.text.contains("IslandInboxCopy.moreInWorkspace"))
