@@ -476,6 +476,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
     }
 
+    func testModelSearchEmptyIsANextState() throws {
+        let source = try AISettingsSource.load()
+        let pickerStart = try XCTUnwrap(source.text.range(of: "struct ModelPicker"))
+        let provider = try XCTUnwrap(source.text.range(of: "struct ProviderCard"))
+        let picker = String(source.text[pickerStart.lowerBound..<provider.lowerBound])
+        XCTAssertTrue(picker.contains("AISettingsCopy.noMatchingModel"))
+        XCTAssertTrue(picker.contains("filtered.isEmpty"))
+        XCTAssertTrue(picker.contains(".workspaceMeta()"))
+        XCTAssertEqual(AISettingsCopy.noMatchingModel, "没有这个模型。")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testCustomAddressSitsOnTheFormNotBehindAdvancedConnection() throws {
         let source = try AISettingsSource.load()
         XCTAssertFalse(source.text.contains("高级连接设置"))
