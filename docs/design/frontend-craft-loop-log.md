@@ -24,6 +24,17 @@
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
 
+## Cycle 15 — 2026-09-13 — 待确认回复
+
+- Surface: 待确认回复
+- Files: `Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift`、`Tests/WeChatHUDTests/ApprovalWorkspaceTests.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 5.9（主动词 5.0 / 空气 5.5 / 短句 5.5 / 物理 5.0 / 状态戏 6.5 / 稀疏 5.0 / 回执 7.0）
+- Debt picked: 页头是仪表盘（筛选 + 开始整理 + 自动发送），详情里确认/保存/取消一样重。
+- After: 总分 6.8（主动词 8.0 / 空气 6.2 / 短句 6.2 / 物理 6.0 / 状态戏 7.5 / 稀疏 6.5 / 回执 7.0）
+- Changed: 空着时只看到「开始整理」。有草稿时页头只剩一句现状，确认发送是青玉主按钮，保存和取消安静。护栏未改。
+- Verified: `swift test --filter ApprovalWorkspaceTests --filter AutopilotCopyConsistencyTests --filter AutopilotStartReceiptTests` 28 个用例全绿；`swift build -c release`。走查：空页 → 青玉开始整理；有草稿 → 青玉确认发送 → 对话框再确认 → 回执。
+- Next: 待确认回复第二刀 — 拿掉「拟回复 / AI 草稿」；总分未过 8.0，还要再来。
+
 ## Cycle 14 — 2026-09-13 — 岛·紧凑/peek
 
 - Surface: 岛·紧凑/peek（刘海右翼齿轮在展开收件箱头里）
