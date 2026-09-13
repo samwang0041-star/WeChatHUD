@@ -740,6 +740,20 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(connected.detail, "下一步：选择要整理的对话。")
         XCTAssertEqual(connected.buttonTitle, "检查更新")
     }
+
+    func testCapabilityListSitsBehindAdvancedConnection() throws {
+        let sync = try SyncSettingsSource.load()
+        let start = try XCTUnwrap(sync.text.range(of: "settingsPane(.connection)"))
+        let prefs = try XCTUnwrap(sync.text.range(of: "settingsPane(.preferences)"))
+        let pane = String(sync.text[start.lowerBound..<prefs.lowerBound])
+        let setup = try XCTUnwrap(pane.range(of: "WeChatConnectionSetupView"))
+        let advanced = try XCTUnwrap(pane.range(of: "DisclosureGroup(\"高级连接设置\""))
+        let capabilities = try XCTUnwrap(pane.range(of: "connectionCapabilityList"))
+        XCTAssertLessThan(setup.lowerBound, advanced.lowerBound)
+        XCTAssertLessThan(advanced.lowerBound, capabilities.lowerBound)
+        XCTAssertFalse(pane.contains("connectionCapabilityList\n                    DisclosureGroup"))
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
 }
 
 // MARK: - Source readers
