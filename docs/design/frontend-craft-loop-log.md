@@ -8,7 +8,7 @@
 | 序 | 表面 | 状态 | 最近总分 | 下一刀提示 |
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
-| 2 | 岛·展开收件箱 | in-progress | 8.2 | 底栏只有图标；「查看全部（新窗口）」和解读标题仍偏术语 |
+| 2 | 岛·展开收件箱 | in-progress | 8.4 | 解读仍说「分析」；刘海齿轮仍是无字图标 |
 | 3 | 岛·通知横幅 | queued | — | |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 6 — 2026-09-13 — 岛·展开收件箱
+
+- Surface: 岛·展开收件箱
+- Files: `Sources/WeChatHUD/Views/InboxView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 8.2（主动词 8.2 / 空气 8.3 / 短句 7.5 / 物理 8.3 / 状态戏 7.5 / 稀疏 8.0 / 回执 7.8）
+- Debt picked: 底栏只有图标；溢出行写「查看全部（新窗口）」，用户不知道会去哪。
+- After: 总分 8.4（主动词 8.3 / 空气 8.3 / 短句 8.3 / 物理 8.4 / 状态戏 7.6 / 稀疏 8.0 / 回执 8.0）
+- Changed: 溢出改成「还有 N 条，打开今天查看」，并真的打开今天。底栏写「待办」「今天」，按下有缩放。刘海齿轮这一刀没动，避免撑高切口带。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter IslandStyleTests --filter CompanionProductCopyTests --filter CompanionMotionTests` 38 个用例全绿；`swift build -c release`。走查：溢出行 → 今天；底栏待办 → 岛上待办面；底栏今天 → 工作台今天。
+- Next: 岛·展开收件箱第四刀 — 展开区「分析暂不可用 / AI 正在整理重点」改成人话；齿轮仍留给下一刀，不要动弹簧
 
 ## Cycle 5 — 2026-09-13 — 岛·展开收件箱
 

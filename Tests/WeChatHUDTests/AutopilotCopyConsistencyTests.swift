@@ -101,10 +101,15 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"aiService\")"))
     }
 
-    func testOpenEverythingRowSaysItOpensANewWindow() throws {
+    func testOpenEverythingRowSaysItOpensToday() throws {
         let source = try InboxViewSource.load()
-        XCTAssertTrue(source.text.contains("查看全部（新窗口）"), "the row opens the detail window")
+        XCTAssertTrue(source.text.contains("IslandInboxCopy.moreInWorkspace"))
+        XCTAssertTrue(source.text.contains("pendingSettingsTab = \"today\""))
+        XCTAssertFalse(source.text.contains("查看全部（新窗口）"), "users do not think in windows")
         XCTAssertFalse(source.text.contains("更多 — 查看详情"), "the old label promised in-place expansion")
+        XCTAssertEqual(IslandInboxCopy.moreInWorkspace(4), "还有 4 条，打开今天查看")
+        XCTAssertEqual(IslandInboxCopy.tasks, "待办")
+        XCTAssertEqual(IslandInboxCopy.openToday, "今天")
     }
 
     func testIslandActionPanelHasOneEmphasizedJadePill() throws {
