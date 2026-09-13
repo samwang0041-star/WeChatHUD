@@ -61,18 +61,18 @@ struct OnboardingView: View {
             Divider()
             HStack {
                 if step > 0 {
-                    Button(FirstLaunchGuide.backCTA) { step -= 1; refresh() }
-                        .keyboardShortcut(.cancelAction)
+                    wizardSecondary(FirstLaunchGuide.backCTA) { step -= 1; refresh() }
                 } else {
                     // Opening the workspace without writing the onboarded
                     // marker keeps the introduction available next launch.
-                    Button(FirstLaunchGuide.skipCTA) { finish(openWorkspace: true, markOnboarded: false) }
-                        .keyboardShortcut(.cancelAction)
+                    wizardSecondary(FirstLaunchGuide.skipCTA) {
+                        finish(openWorkspace: true, markOnboarded: false)
+                    }
                 }
                 Spacer()
                 if let footerHint {
                     Text(footerHint)
-                        .font(.system(size: 12))
+                        .workspaceMeta()
                         .foregroundStyle(.secondary)
                 }
                 if showsWizardPrimary {
@@ -81,10 +81,10 @@ struct OnboardingView: View {
                         else { finish(openWorkspace: true) }
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
                     .keyboardShortcut(.defaultAction)
                 }
             }
-            .controlSize(.regular)
             .padding(20)
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -193,6 +193,14 @@ struct OnboardingView: View {
             Text(title).workspaceDisplay()
             Text(subtitle).workspaceBody().foregroundStyle(.secondary)
         }
+    }
+
+    private func wizardSecondary(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .workspaceBody()
+            .foregroundStyle(.secondary)
+            .keyboardShortcut(.cancelAction)
     }
 
 

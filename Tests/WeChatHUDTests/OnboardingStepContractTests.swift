@@ -134,6 +134,22 @@ final class OnboardingStepContractTests: XCTestCase {
             "连接微信"
         )
     }
+
+    func testFooterSkipUsesWorkspaceTypeNotASystemBezel() throws {
+        let source = try OnboardingViewSource.load()
+        let start = try XCTUnwrap(source.body.range(of: "Divider()"))
+        let background = try XCTUnwrap(source.body.range(of: ".background(Color(nsColor: .windowBackgroundColor))"))
+        let footer = String(source.body[start.lowerBound..<background.lowerBound])
+        XCTAssertTrue(footer.contains("wizardSecondary(FirstLaunchGuide.skipCTA)"))
+        XCTAssertTrue(footer.contains("workspaceMeta()"))
+        XCTAssertFalse(footer.contains(".font(.system"))
+        XCTAssertFalse(footer.contains("CompanionPalette.jade"))
+        XCTAssertFalse(footer.contains("CompanionPressStyle"))
+        XCTAssertTrue(source.body.contains(".buttonStyle(.plain)"))
+        XCTAssertTrue(source.body.contains("workspaceBody()"))
+        XCTAssertEqual(FirstLaunchGuide.skipCTA, "稍后设置")
+        XCTAssertEqual(FirstLaunchGuide.backCTA, "上一步")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
