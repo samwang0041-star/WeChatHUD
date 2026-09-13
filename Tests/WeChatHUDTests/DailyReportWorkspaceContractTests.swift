@@ -62,6 +62,19 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("导出"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testExportFailureOffersARetry() throws {
+        let source = try DailyReportTabSource.load()
+        let statusStart = try XCTUnwrap(source.text.range(of: "private func exportStatus"))
+        let toolbarStart = try XCTUnwrap(source.text.range(of: "private var workspaceToolbar"))
+        let status = String(source.text[statusStart.lowerBound..<toolbarStart.lowerBound])
+        XCTAssertTrue(status.contains("再试一次"))
+        XCTAssertTrue(status.contains("exportReport()"))
+        XCTAssertFalse(status.contains("exclamationmark.triangle"))
+        XCTAssertTrue(source.text.contains("小结没写上。点「再试一次」。"))
+        XCTAssertTrue(source.text.contains("打开这份小结"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportTabSource {
