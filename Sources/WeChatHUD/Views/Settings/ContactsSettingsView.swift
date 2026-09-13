@@ -758,7 +758,6 @@ private struct ContactInspectorView: View {
 
     private func operationsSection(_ contact: ContactEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("操作", systemImage: "slider.horizontal.3")
             Picker("关注级别", selection: Binding(
                 get: { contact.attentionLevel },
                 set: { onChangeLevel(contact, $0) }
@@ -768,6 +767,7 @@ private struct ContactInspectorView: View {
                 Text("仅保留资料").tag(AttentionLevel.greylist)
             }
             .pickerStyle(.segmented)
+            .accessibilityLabel("关注级别")
 
             HStack(spacing: 8) {
                 Button("编辑详情") { onEdit(contact) }

@@ -65,7 +65,8 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertFalse(inspector.contains("Divider()"))
         XCTAssertTrue(inspector.contains("整理范围"))
         XCTAssertTrue(inspector.contains("TA 是谁"))
-        XCTAssertTrue(inspector.contains("操作"))
+        XCTAssertFalse(inspector.contains("sectionTitle(\"操作\""))
+        XCTAssertTrue(inspector.contains("编辑详情"))
         XCTAssertTrue(inspector.contains("选择一个人或一个群"))
 
         let listStart = try XCTUnwrap(source.text.range(of: "private struct ContactsListSubView"))
