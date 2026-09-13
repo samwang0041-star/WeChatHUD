@@ -388,22 +388,15 @@ struct ActionPanelView: View {
     private var primaryCTAs: some View {
         HStack(spacing: 8) {
             if showsConversationLink || item.semanticState != .groupMentionFYI {
-            Button(action: {
-                runPrimaryCTA()
-            }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .islandMeta()
-                    Text(item.primaryCTATitle)
-                        .islandButton()
+                Button(action: runPrimaryCTA) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
+                        Text(item.primaryCTATitle)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 7)
-                .background(Color.accentColor)
-                .cornerRadius(6)
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(IslandPillButtonStyle(emphasized: true))
+                .accessibilityLabel(item.primaryCTATitle)
             }
 
             if item.replySuggestionMode != .hidden {
@@ -412,20 +405,14 @@ struct ActionPanelView: View {
                         if case .loading = replyState {
                             ProgressView().scaleEffect(0.55).frame(width: 10, height: 10)
                         } else {
-                            Image(systemName: "lightbulb.fill")
-                                .islandMeta()
+                            Image(systemName: "lightbulb")
                         }
                         Text(item.replySuggestionButtonTitle)
-                            .islandButton()
                     }
-                    .foregroundColor(IslandInk.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(6)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandPillButtonStyle())
                 .disabled(replyIsLoading)
+                .accessibilityLabel(item.replySuggestionButtonTitle)
             }
         }
     }

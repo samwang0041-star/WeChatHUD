@@ -106,6 +106,17 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains("查看全部（新窗口）"), "the row opens the detail window")
         XCTAssertFalse(source.text.contains("更多 — 查看详情"), "the old label promised in-place expansion")
     }
+
+    func testIslandActionPanelHasOneEmphasizedJadePill() throws {
+        let source = try ActionPanelViewSource.load()
+        XCTAssertTrue(source.text.contains("IslandPillButtonStyle(emphasized: true)"))
+        XCTAssertTrue(source.text.contains("IslandPillButtonStyle()"))
+        XCTAssertFalse(
+            source.text.contains(".background(Color.accentColor)"),
+            "The primary action used the system accent, which is not jade on the island."
+        )
+        XCTAssertFalse(source.text.contains(".cornerRadius(6)"))
+    }
 }
 
 // MARK: - Source readers
@@ -134,6 +145,14 @@ private struct InboxViewSource {
     let text: String
     static func load() throws -> InboxViewSource {
         InboxViewSource(text: try read("Sources/WeChatHUD/Views/InboxView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct ActionPanelViewSource {
+    let text: String
+    static func load() throws -> ActionPanelViewSource {
+        ActionPanelViewSource(text: try read("Sources/WeChatHUD/Views/ActionPanelView.swift"))
     }
     init(text: String) { self.text = text }
 }

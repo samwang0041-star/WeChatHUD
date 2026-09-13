@@ -8,7 +8,7 @@
 | 序 | 表面 | 状态 | 最近总分 | 下一刀提示 |
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
-| 2 | 岛·展开收件箱 | queued | — | 下一刀：一行一个主动作；悬停才出次动作；从行移到按钮不误收起 |
+| 2 | 岛·展开收件箱 | in-progress | 7.7 | 展开后的解读卡仍用系统 accent 方块；应收进 IslandInk / 青玉 |
 | 3 | 岛·通知横幅 | queued | — | |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 4 — 2026-09-13 — 岛·展开收件箱
+
+- Surface: 岛·展开收件箱
+- Files: `Sources/WeChatHUD/Views/ActionPanelView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 6.9（主动词 6 / 空气 7 / 短句 7.5 / 物理 7.5 / 状态戏 7 / 稀疏 7 / 回执 7.5）
+- Debt picked: 展开一行后两个按钮一样宽，主按钮还是系统强调色，不是青玉胶囊。
+- After: 总分 7.7（主动词 8.2 / 空气 7.5 / 短句 7.5 / 物理 8.2 / 状态戏 7 / 稀疏 7.5 / 回执 7.5）
+- Changed: 点开一行，先看到一条青玉「打开微信回复」；「回复建议」收成旁边的安静胶囊，按下有缩放。悬停时钟/关闭未动，从行移到展开区仍不收起。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests` 等 60 个用例全绿（含 IslandInteractionTests）；`swift build -c release`。走查：悬停行 → 次动作；按下展开 → 青玉主按钮；再按回复建议。
+- Next: 岛·展开收件箱第二刀 — 解读卡去掉系统 accent 方块，改走 IslandInk / CompanionPalette.jade
 
 ## Cycle 3 — 2026-09-13 — 今天
 
