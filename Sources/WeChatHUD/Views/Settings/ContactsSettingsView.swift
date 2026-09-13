@@ -355,7 +355,7 @@ private struct ContactsListSubView: View {
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: 8) {
                 ForEach(AddKindFilter.allCases, id: \.self) { kind in
-                    CompanionFilterPill(title: kind.rawValue, selected: addKind == kind) { addKind = kind }
+                    contactFilterChip(kind.rawValue, selected: addKind == kind) { addKind = kind }
                 }
             }
             if isLoadingCandidates && available.isEmpty {
