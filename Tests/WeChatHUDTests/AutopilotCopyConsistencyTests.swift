@@ -122,6 +122,8 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         let button = try XCTUnwrap(header.range(of: "Button(AutopilotSettingsCopy.openPending)"))
         let pending = String(header[button.lowerBound...])
         XCTAssertFalse(pending.contains("CompanionPalette.jade"), "jade is reserved for the send switch, not this navigation")
+        XCTAssertTrue(pending.contains("CompanionPressStyle()"))
+        XCTAssertFalse(pending.contains(".buttonStyle(.plain)"))
         XCTAssertEqual(AutopilotSettingsCopy.openPending, "查看待确认回复")
         XCTAssertEqual(AutopilotSettingsCopy.statusIdle, "尚未开始整理")
         XCTAssertEqual(AutopilotSettingsCopy.statusActive, "正在整理回复")
