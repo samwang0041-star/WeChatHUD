@@ -24,6 +24,17 @@
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
 
+## Cycle 3 — 2026-09-13 — 今天
+
+- Surface: 今天
+- Files: `Sources/WeChatHUD/Views/AssistantTodayView.swift`、`Tests/WeChatHUDTests/ProductWorkspaceTests.swift`
+- Before: 总分 8.3（主动词 8.8 / 空气 8.2 / 短句 8.5 / 物理 8.0 / 状态戏 7 / 稀疏 7 / 回执 7.5）
+- Debt picked: 连接正常时右侧仍摊开状态卡和两个按钮，和主列表抢。
+- After: 总分 8.5（主动词 8.8 / 空气 8.4 / 短句 8.5 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.6 / 回执 7.5）
+- Changed: 微信正常时右侧不再出现连接卡。没有答应的事时「接下来」整块消失。异常时只留一个主按钮：过期同步是「查看新消息」，其它是「检查连接」。字号收回 token。
+- Verified: `swift test --filter ProductWorkspaceTests` 等 60 个用例全绿；`swift build -c release`。走查：正常打开今天 → 只有待回列表和小结入口；断开微信 → 右侧出现一句状态和一个检查连接；过期同步 → 查看新消息。
+- Next: 岛·展开收件箱
+
 ## Cycle 2 — 2026-09-13 — 今天
 
 - Surface: 今天
