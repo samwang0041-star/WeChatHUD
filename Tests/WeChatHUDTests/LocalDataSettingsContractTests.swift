@@ -10,7 +10,6 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(pane.contains("LocalDataCopy.statusLine"))
         XCTAssertTrue(pane.contains("workspaceTitle()"))
         XCTAssertTrue(source.text.contains("近两周"))
-        XCTAssertTrue(source.text.contains("记录回溯"))
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(LocalDataCopy.statusLine(count: 0), "近两周没有整理过的记录。")
         XCTAssertEqual(LocalDataCopy.statusLine(count: 3), "近两周整理过 3 件事。")
@@ -31,7 +30,26 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(firstScreen.contains("retrospectionSection"))
         XCTAssertFalse(firstScreen.contains("exportReportSection"))
         XCTAssertTrue(source.text.contains("近两周"))
-        XCTAssertTrue(source.text.contains("记录回溯"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
+
+    func testWindowCaptionSitsOnTheCanvasNotInsideTheCard() throws {
+        let source = try LocalDataSettingsSource.load()
+        let dataStart = try XCTUnwrap(source.text.range(of: "private var dataSection"))
+        let exportStart = try XCTUnwrap(source.text.range(of: "private var exportReportSection"))
+        let retroStart = try XCTUnwrap(source.text.range(of: "private var retrospectionSection"))
+        let listsStart = try XCTUnwrap(source.text.range(of: "// MARK: - Data lists"))
+        let canvas = String(source.text[dataStart.lowerBound..<exportStart.lowerBound])
+        let card = String(source.text[retroStart.lowerBound..<listsStart.lowerBound])
+        XCTAssertTrue(canvas.contains("windowCaption"))
+        XCTAssertTrue(canvas.contains("workspaceMeta()"))
+        XCTAssertFalse(card.contains("windowCaption"))
+        XCTAssertFalse(card.contains("记录回溯"))
+        XCTAssertTrue(card.contains("SettingsSection {"))
+        XCTAssertFalse(card.contains("SettingsSection(\""))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
 }
