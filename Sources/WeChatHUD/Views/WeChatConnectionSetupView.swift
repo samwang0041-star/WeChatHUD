@@ -52,6 +52,7 @@ enum WeChatConnectionCopy {
     static let restartToApply = "下次打开助手后生效。"
     static let pickAccount = "选择要连接的微信账号"
     static let cancelPreparation = "取消"
+    static let restartFailed = "这次没重新打开助手，请再试一次。"
 }
 
 struct WeChatConnectionSetupView: View {
@@ -300,9 +301,9 @@ struct WeChatConnectionSetupView: View {
             }
 
             if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.circle")
+                Text(errorMessage)
                     .workspaceMeta()
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -534,7 +535,7 @@ struct WeChatConnectionSetupView: View {
                 if requiresRestart {
                     applying = true
                     do { try await AppRestartController.restart() }
-                    catch { errorMessage = error.localizedDescription; applying = false }
+                    catch { errorMessage = WeChatConnectionCopy.restartFailed; applying = false }
                 } else {
                     monitor.refreshNow()
                 }
@@ -664,7 +665,7 @@ struct WeChatConnectionSetupView: View {
                 applying = true
                 do { try await AppRestartController.restart() }
                 catch {
-                    errorMessage = error.localizedDescription
+                    errorMessage = WeChatConnectionCopy.restartFailed
                     applying = false
                 }
             } else {
