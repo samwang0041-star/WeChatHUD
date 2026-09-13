@@ -112,6 +112,27 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(IslandInboxCopy.openToday, "今天")
     }
 
+    func testIslandActionPanelSpeaksHumanWhenOrganizingOrStuck() throws {
+        let panel = try ActionPanelViewSource.load()
+        XCTAssertTrue(panel.text.contains("IslandActionCopy.organizing"))
+        XCTAssertTrue(panel.text.contains("IslandActionCopy.unreadTitle"))
+        XCTAssertTrue(panel.text.contains("IslandActionCopy.unreadHint"))
+        XCTAssertTrue(panel.text.contains("IslandActionCopy.retry"))
+        XCTAssertFalse(panel.text.contains("分析暂不可用"))
+        XCTAssertFalse(panel.text.contains("AI 正在整理重点"))
+        XCTAssertFalse(panel.text.contains("分析失败"))
+        XCTAssertFalse(panel.text.contains("语气依据"))
+        XCTAssertEqual(IslandActionCopy.organizing, "正在整理这条消息…")
+        XCTAssertEqual(IslandActionCopy.unreadTitle, "先看原文")
+        XCTAssertEqual(IslandActionCopy.retry, "再试一次")
+
+        let item = try InboxItemSource.load()
+        XCTAssertTrue(item.text.contains("IslandActionCopy.organizingShort"))
+        XCTAssertTrue(item.text.contains("IslandActionCopy.unreadTitle"))
+        XCTAssertFalse(item.text.contains("分析暂不可用"))
+        XCTAssertFalse(item.text.contains("AI 正在整理重点"))
+    }
+
     func testIslandActionPanelHasOneEmphasizedJadePill() throws {
         let source = try ActionPanelViewSource.load()
         XCTAssertTrue(source.text.contains("IslandPillButtonStyle(emphasized: true)"))
@@ -164,6 +185,14 @@ private struct ActionPanelViewSource {
     let text: String
     static func load() throws -> ActionPanelViewSource {
         ActionPanelViewSource(text: try read("Sources/WeChatHUD/Views/ActionPanelView.swift"))
+    }
+    init(text: String) { self.text = text }
+}
+
+private struct InboxItemSource {
+    let text: String
+    static func load() throws -> InboxItemSource {
+        InboxItemSource(text: try read("Sources/WeChatHUD/Data/InboxItem.swift"))
     }
     init(text: String) { self.text = text }
 }

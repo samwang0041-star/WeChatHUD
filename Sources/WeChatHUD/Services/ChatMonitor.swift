@@ -336,7 +336,7 @@ final class ChatMonitor: ObservableObject {
         /// the UI tell "still waiting for prefetch" from "prefetch
         /// finished with no result" (API error / timeout). Without
         /// this flag, a silent API failure leaves the panel spinning
-        /// forever on "AI 正在整理重点…".
+        /// forever on the organizing line.
         let analysisAttempted: Bool
         /// True once the replies task has run to completion.
         let repliesAttempted: Bool

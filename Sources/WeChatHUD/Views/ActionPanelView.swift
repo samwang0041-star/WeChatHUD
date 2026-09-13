@@ -55,15 +55,19 @@ struct ActionPanelView: View {
                 // the user back to the task fast.
                 headlineBlock
 
+                if case .error = analysisState {
+                    errorRowWithRetry(label: "", retry: { runAnalysis() })
+                }
+
                 primaryCTAs
 
                 switch replyState {
                 case .loading:
-                    loadingRow(label: "正在生成回复建议…")
+                    loadingRow(label: IslandActionCopy.replyWriting)
                 case .results(let replies) where !replies.isEmpty:
                     replySuggestionsView(replies)
                 case .error:
-                    errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
+                    errorRowWithRetry(label: IslandActionCopy.replyFailed, retry: { runReplySuggestions() })
                 default:
                     EmptyView()
                 }
@@ -99,7 +103,7 @@ struct ActionPanelView: View {
         case .loading, .idle:
             HStack(spacing: 8) {
                 ProgressView().scaleEffect(0.55).frame(width: 14, height: 14)
-                Text("AI 正在整理重点…")
+                Text(IslandActionCopy.organizing)
                     .islandMeta()
                     .foregroundStyle(IslandInk.meta)
             }
@@ -116,11 +120,11 @@ struct ActionPanelView: View {
                 vibe: privateVibe(result)
             )
 
-        case .error(let message):
+        case .error:
             headlineCard(
-                title: "分析暂不可用",
+                title: IslandActionCopy.unreadTitle,
                 primary: item.aiSummary ?? item.preview,
-                context: message,
+                context: IslandActionCopy.unreadHint,
                 vibe: nil
             )
         }
@@ -326,7 +330,7 @@ struct ActionPanelView: View {
     private func privateContext(_ r: ChatAnalyzer.PrivateAnalysis) -> String? {
         var parts: [String] = []
         if let ctx = r.context, !ctx.isEmpty, !privateIsLowSignalSmalltalk(r) {
-            parts.append("背景:\(ctx)")
+            parts.append(ctx)
         }
         if !r.urgency_reason.isEmpty {
             parts.append(r.urgency_reason)
@@ -334,7 +338,7 @@ struct ActionPanelView: View {
         if !r.mood_evidence.isEmpty,
            let vibe = privateVibe(r),
            !vibe.isEmpty {
-            parts.append("语气依据:\(r.mood_evidence)")
+            parts.append(r.mood_evidence)
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -509,7 +513,7 @@ struct ActionPanelView: View {
             } else if let p = entry.privateAnalysis {
                 analysisState = .privateResult(p)
             } else if entry.analysisAttempted {
-                analysisState = .error(entry.analysisError ?? "分析失败，可能是 AI 服务超时")
+                analysisState = .error(entry.analysisError ?? IslandActionCopy.unreadHint)
             }
         }
 
@@ -568,7 +572,7 @@ struct ActionPanelView: View {
                 if let result = result {
                     analysisState = .groupResult(result)
                 } else {
-                    analysisState = .error(err ?? "分析失败")
+                    analysisState = .error(err ?? IslandActionCopy.unreadHint)
                 }
             } else {
                 let (result, err) = await monitor.analyzePrivateChat(item: item)
@@ -576,7 +580,7 @@ struct ActionPanelView: View {
                 if let result = result {
                     analysisState = .privateResult(result)
                 } else {
-                    analysisState = .error(err ?? "分析失败")
+                    analysisState = .error(err ?? IslandActionCopy.unreadHint)
                 }
             }
         }
@@ -620,14 +624,16 @@ struct ActionPanelView: View {
 
     private func errorRowWithRetry(label: String, retry: @escaping () -> Void) -> some View {
         HStack(spacing: 6) {
-            Text(label)
-                .islandMeta()
-                .foregroundStyle(IslandInk.secondary)
+            if !label.isEmpty {
+                Text(label)
+                    .islandMeta()
+                    .foregroundStyle(IslandInk.secondary)
+            }
             Button(action: retry) {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.clockwise")
                         .islandMicro()
-                    Text("重试")
+                    Text(IslandActionCopy.retry)
                         .islandMicro()
                 }
                 .foregroundStyle(CompanionPalette.islandMint)
