@@ -194,7 +194,7 @@ struct OnboardingView: View {
 
     private func wizardSecondary(_ title: String, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .workspaceBody()
             .foregroundStyle(.secondary)
             .keyboardShortcut(.cancelAction)
