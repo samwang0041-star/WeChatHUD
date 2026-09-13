@@ -16,7 +16,7 @@ AI 服务总分 8.1、已到过 8.0，连续两刀 <0.3 后换到微信连接。
 | 6 | 自动回复设置 | in-progress | 8.1 | 发送键仍是系统蓝；排除和记录仍套卡。连续两刀 <0.3，换表面 |
 | 7 | AI 服务 | in-progress | 8.1 | 分析分区已收进工作台字；滑杆仍是裸 system 字。已到 8.0，连续两刀 <0.3，换表面 |
 | 8 | 微信连接 | in-progress | 8.2 | 选账号已让步；准备时「取消」仍是系统链接。已到 8.0，连续两刀 <0.3，换表面 |
-| 9 | 首次引导 | in-progress | 8.2 | 「已选」已撤；搜索框仍铺在名单上。已到 8.0，未到 8.5 |
+| 9 | 首次引导 | in-progress | 8.3 | 名单先出；人多时「找人」才出搜索。已到 8.0，连续两刀 <0.3，换表面 |
 | 10 | 关注谁 | queued | — | |
 | 11 | 待办 / 我答应的 / 草稿 | queued | — | |
 | 12 | 今日小结 / 聊天回顾 / 关系雷达 | queued | — | |
@@ -24,6 +24,17 @@ AI 服务总分 8.1、已到过 8.0，连续两刀 <0.3 后换到微信连接。
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 69 — 2026-09-14 — 首次引导
+
+- Surface: 首次引导
+- Files: `Sources/WeChatHUD/Views/FirstLaunchContactPicker.swift`、`Sources/WeChatHUD/Data/FirstLaunchGuide.swift`、`Tests/WeChatHUDTests/OnboardingStepContractTests.swift`
+- Before: 总分 8.2（主动词 8.2 / 空气 8.8 / 短句 8.0 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 8.2）
+- Debt picked: 「搜索联系人或群聊」铺在名单上，和「从一个人或一个群开始」抢第一眼。
+- After: 总分 8.3（主动词 8.2 / 空气 8.8 / 短句 8.0 / 物理 8.0 / 状态戏 8.0 / 稀疏 9.5 / 回执 8.2）
+- Changed: 「从一个人或一个群开始」下面就是名单。没有搜索框。人多时才出现次级「找人」。「开始使用」仍在底栏。护栏未改。
+- Verified: `swift test --filter OnboardingStepContractTests` 16 个用例全绿；`swift build -c release`。走查：开首次引导 → 连上后到选择关注 → 看到「从一个人或一个群开始」和名单 → 没有「搜索联系人或群聊」→ 人多时按下「找人」才出搜索 → 看到「开始使用」。
+- Next: 连续两刀升幅都 < 0.3，且本页已到过 8.0。换到关注谁。本页保持 in-progress：人多时「找人」仍是次级；联系人行按下仍是 `.plain`。
 
 ## Cycle 68 — 2026-09-14 — 首次引导
 

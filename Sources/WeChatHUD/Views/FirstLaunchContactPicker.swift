@@ -9,25 +9,30 @@ struct FirstLaunchContactPicker: View {
     @State private var errorMessage: String?
     @State private var refreshID = 0
     @State private var lastToggle: SessionInfo?
+    @State private var searching = false
 
     private var tracked: Set<String> {
         _ = refreshID
         return Set(store.getWhitelist().map(\.id))
     }
 
-    private var candidates: [SessionInfo] {
+    private var sessions: [SessionInfo] {
         _ = refreshID
-        let sessions: [SessionInfo]
         if PreviewRuntime.isEnabled {
-            sessions = [
+            return [
                 SessionInfo(username: "preview-colleague", isGroup: false, unreadCount: 1, lastTimestamp: 3),
                 SessionInfo(username: "preview-xu", isGroup: false, unreadCount: 0, lastTimestamp: 2),
                 SessionInfo(username: "preview-project", isGroup: true, unreadCount: 1, lastTimestamp: 1)
             ]
-        } else {
-            sessions = (try? monitor.reader.getSessions()) ?? []
         }
-        let suggested = FirstLaunchGuide.suggestedConversations(from: sessions, excluding: [])
+        return (try? monitor.reader.getSessions()) ?? []
+    }
+
+    private var suggested: [SessionInfo] {
+        FirstLaunchGuide.suggestedConversations(from: sessions, excluding: [])
+    }
+
+    private var candidates: [SessionInfo] {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return suggested }
         return suggested.filter { session in
@@ -36,11 +41,12 @@ struct FirstLaunchContactPicker: View {
         }
     }
 
+    private var showsSearchField: Bool {
+        searching || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("搜索联系人或群聊", text: $query)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("搜索联系人或群聊")
             if candidates.isEmpty {
                 Text(emptyHint)
                     .workspaceMeta()
@@ -52,6 +58,17 @@ struct FirstLaunchContactPicker: View {
                         candidateRow(session)
                     }
                 }
+            }
+            if showsSearchField {
+                TextField(FirstLaunchGuide.findPeopleField, text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(FirstLaunchGuide.findPeopleField)
+            } else if suggested.count > 8 {
+                Button(FirstLaunchGuide.findPeople) { searching = true }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(FirstLaunchGuide.findPeopleField)
             }
             if let errorMessage {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
