@@ -51,6 +51,8 @@ enum IslandInboxCopy {
 
     static let tasks = "待办"
     static let openToday = "今天"
+    static let openSettings = "设置"
+    static let openSettingsHelp = "打开设置"
 }
 
 /// Unified inbox — shows all messages in a single priority-sorted list
@@ -381,13 +383,16 @@ struct InboxView: View {
                 AutopilotIndicator()
 
                 Button(action: { panelState.showDetail() }) {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(IslandInk.tertiary)
+                    HStack(spacing: 3) {
+                        Image(systemName: "gearshape.fill")
+                        Text(IslandInboxCopy.openSettings)
+                    }
+                    .islandMicro()
+                    .foregroundStyle(IslandInk.tertiary)
                 }
-                .buttonStyle(.plain)
-                .help(CompanionProductCopy.openCompanion)
-                .accessibilityLabel(CompanionProductCopy.openCompanion)
+                .buttonStyle(CompanionPressStyle())
+                .help(IslandInboxCopy.openSettingsHelp)
+                .accessibilityLabel(IslandInboxCopy.openSettingsHelp)
             }
             .padding(.trailing, IslandMetrics.sectionInset)
         }

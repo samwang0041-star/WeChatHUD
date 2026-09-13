@@ -8,9 +8,9 @@
 | 序 | 表面 | 状态 | 最近总分 | 下一刀提示 |
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
-| 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
+| 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮已写「设置」；稍后/关闭无字留给巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
-| 4 | 岛·紧凑/peek | in-progress | 8.1 | 刘海齿轮仍无字；悬停 peek 口述还带着「移入查看」 |
+| 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 14 — 2026-09-13 — 岛·紧凑/peek
+
+- Surface: 岛·紧凑/peek（刘海右翼齿轮在展开收件箱头里）
+- Files: `Sources/WeChatHUD/Views/InboxView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 8.1（主动词 8.0 / 空气 8.2 / 短句 8.2 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.5 / 回执 8.0）
+- Debt picked: 切口带齿轮只靠 tooltip 说「打开 WeChatHUD」，看不见字。
+- After: 总分 8.2（主动词 8.2 / 空气 8.2 / 短句 8.4 / 物理 8.2 / 状态戏 8.0 / 稀疏 8.5 / 回执 8.0）
+- Changed: 齿轮旁边写「设置」，帮助是「打开设置」。按下会缩放。切口高度和弹簧未动。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter InboxViewLogicTests --filter CompanionProductCopyTests --filter IslandPeekTests --filter CompactErrorAffordanceTests` 58 个用例全绿；`swift build -c release`。走查：展开收件箱 → 右翼看到「设置」→ 按下缩放 → 松开打开工作台。
+- Next: 连续两刀同一表面提升都小于 0.3，换到 待确认回复。peek 口述「移入查看」留给巡检。
 
 ## Cycle 13 — 2026-09-13 — 岛·紧凑/peek
 
