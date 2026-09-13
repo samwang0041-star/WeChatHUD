@@ -192,10 +192,12 @@ struct DiscussionWorkspaceView: View {
                         scope = value
                     } label: {
                         Text(value.rawValue)
-                            .font(.system(size: 13, weight: scope == value ? .semibold : .regular))
-                            .foregroundStyle(scope == value ? Color.white : .primary)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(scope == value ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
+                            .workspaceBody()
+                            .fontWeight(scope == value ? .semibold : .regular)
+                            .foregroundStyle(scope == value ? .primary : .secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(scope == value ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
                     }
                     .buttonStyle(CompanionPressStyle())
                     .accessibilityAddTraits(scope == value ? .isSelected : [])
