@@ -67,6 +67,20 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AutopilotConfig().batchWindowSeconds, 10)
     }
 
+    func testBatchWindowPressesInsteadOfASystemMenu() throws {
+        let source = try AutopilotViewSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private var limitsBatchRow"))
+        let end = try XCTUnwrap(source.text.range(of: "// MARK: - Exclusion"))
+        let row = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(row.contains("batchChip"))
+        XCTAssertTrue(row.contains("CompanionPressStyle()"))
+        XCTAssertTrue(row.contains("CompanionPalette.selectedFill"))
+        XCTAssertFalse(row.contains(".pickerStyle(.menu)"))
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.openPending"))
+        XCTAssertEqual(AutopilotSettingsCopy.batchTitle, "连发时等几秒一起回")
+        XCTAssertFalse(AutopilotConfig().autoSendEnabled, "自动发送默认关")
+    }
+
     func testBatchSettingSitsInTheMainSectionNotOnlyUnderAdvanced() throws {
         let source = try AutopilotViewSource.load()
         let mainRange = try XCTUnwrap(source.text.range(of: "limitsBatchRow"))

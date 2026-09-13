@@ -247,14 +247,26 @@ struct AutopilotSettingsView: View {
 
     private var limitsBatchRow: some View {
         SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
-            Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
-                ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
+            HStack(spacing: 6) {
+                ForEach(batchOptions, id: \.self) { seconds in
+                    batchChip(seconds)
+                }
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 80)
-            .onChange(of: batchWindowSeconds) { save() }
         }
+    }
+
+    private func batchChip(_ seconds: Int) -> some View {
+        Button("\(seconds) 秒") {
+            batchWindowSeconds = seconds
+            save()
+        }
+        .buttonStyle(CompanionPressStyle())
+        .workspaceMeta()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(batchWindowSeconds == seconds ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+        .foregroundStyle(batchWindowSeconds == seconds ? .primary : .secondary)
+        .accessibilityAddTraits(batchWindowSeconds == seconds ? .isSelected : [])
     }
 
     // MARK: - Exclusion
