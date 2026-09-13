@@ -648,7 +648,9 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("回复最长写多少")
                         Text(String(Int(maxTokens)))
-                            .font(.system(size: 12, design: .monospaced))
+                            .workspaceMeta()
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
                             .frame(width: 42, alignment: .trailing)
                     }
                 }
@@ -659,7 +661,9 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("写得更随意一些")
                         Text(String(format: "%.1f", temperature))
-                            .font(.system(size: 12, design: .monospaced))
+                            .workspaceMeta()
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
                             .frame(width: 28, alignment: .trailing)
                     }
                 }
