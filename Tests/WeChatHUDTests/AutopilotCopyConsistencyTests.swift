@@ -162,6 +162,16 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(IslandBriefingCopy.title, "为什么找你")
         XCTAssertEqual(IslandBriefingCopy.retry, "再试一次")
     }
+
+    func testIslandBriefingDropsNestedCards() throws {
+        let source = try GroupContextBriefingSource.load()
+        XCTAssertTrue(source.text.contains("quietLine(label:"))
+        XCTAssertFalse(source.text.contains("func card("))
+        XCTAssertFalse(source.text.contains("cornerRadius: 8"))
+        XCTAssertFalse(source.text.contains("IslandInk.hover, in: RoundedRectangle"))
+        XCTAssertEqual(IslandBriefingCopy.situation, "在聊")
+        XCTAssertEqual(IslandBriefingCopy.next, "下一步")
+    }
 }
 
 // MARK: - Source readers

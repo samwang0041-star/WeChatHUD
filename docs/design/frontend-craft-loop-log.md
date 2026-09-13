@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
-| 3 | 岛·通知横幅 | in-progress | 7.8 | 简报里三张套卡仍在；收起横幅按下无缩放 |
+| 3 | 岛·通知横幅 | in-progress | 8.2 | 收起横幅按下无缩放 |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 9 — 2026-09-13 — 岛·通知横幅
+
+- Surface: 岛·通知横幅
+- Files: `Sources/WeChatHUD/Views/GroupContextBriefingButton.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.8（主动词 8.2 / 空气 6.5 / 短句 8.0 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.2 / 回执 8.0）
+- Debt picked: 简报把「在聊 / 为什么找你 / 下一步 / 原文」各自装进圆角方块，卡片套卡片。
+- After: 总分 8.2（主动词 8.2 / 空气 8.3 / 短句 8.1 / 物理 8.0 / 状态戏 8.0 / 稀疏 8.4 / 回执 8.0）
+- Changed: 点开后先看到为什么找你这一句。在聊和下一步是安静行。原文不再套一层底。高度仍走测量（展开从约 473 收到 329），弹簧未动。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter BriefingRetryTests --filter NotificationBanner*` 等 79 个用例全绿；`swift build -c release`。走查：点消息 → 一句原因 + 安静行 + 青玉去微信；无套卡。
+- Next: 岛·通知横幅第三刀 — 收起横幅按下要有缩放，不要动弹簧和测量
 
 ## Cycle 8 — 2026-09-13 — 岛·通知横幅
 
