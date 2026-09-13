@@ -138,7 +138,7 @@ private struct ContactsListSubView: View {
                 Menu("更多") {
                     Button("什么会提醒我") { organizeTab = .rules }
                     Divider()
-                    Button("批量整理关系") { monitor.startContactInference(contacts: contacts) }
+                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
                     Button("推荐关注") { organizeTab = .aiScan }
                     Button("不看谁") { organizeTab = .blockRules }
                     Button("静音") { organizeTab = .silenced }
@@ -505,8 +505,9 @@ private struct ContactsListSubView: View {
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(color.opacity(0.12)).cornerRadius(3)
                 if contact.replyWindowMinutes > 0 {
-                    Text("\(contact.replyWindowMinutes)m")
-                        .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                    Text("\(contact.replyWindowMinutes) 分钟")
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                 }
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
