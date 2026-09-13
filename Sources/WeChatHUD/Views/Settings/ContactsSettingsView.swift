@@ -669,13 +669,13 @@ private struct ContactInspectorView: View {
     private func trackingSection(_ contact: ContactEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("整理范围", systemImage: "scope")
-            Text("只整理已关注的对话")
+            Text(trackingReason(contact))
                 .workspaceBody()
                 .foregroundStyle(.secondary)
-            infoRow("关注级别", value: attentionLevelTitle(contact.attentionLevel))
-            infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
-                infoRow("提醒时机", value: "\(contact.replyWindowMinutes) 分钟后提醒")
+                Text("\(contact.replyWindowMinutes) 分钟后提醒")
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -702,7 +702,11 @@ private struct ContactInspectorView: View {
                 .help("再看看这个人是谁，不影响你继续用")
             }
 
-            if let profile {
+            if inferenceStatus?.isRunning == true {
+                Text("正在看这个人是谁。")
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+            } else if let profile {
                 infoRow("关系", value: profile.relationship)
                 infoRow("层级", value: profile.hierarchy.label)
                 infoRow("口吻", value: profile.tonePreference.label)

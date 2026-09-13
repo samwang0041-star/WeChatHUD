@@ -145,6 +145,26 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testInspectorSpeaksWhatWillHappenNotASpecSheet() throws {
+        let source = try ContactsSettingsSource.load()
+        let trackingStart = try XCTUnwrap(source.text.range(of: "private func trackingSection"))
+        let profileStart = try XCTUnwrap(source.text.range(of: "private func aiProfileSection"))
+        let tracking = String(source.text[trackingStart.lowerBound..<profileStart.lowerBound])
+        XCTAssertTrue(tracking.contains("trackingReason(contact)"))
+        XCTAssertFalse(tracking.contains("只整理已关注的对话"))
+        XCTAssertFalse(tracking.contains("infoRow(\"关注级别\""))
+        XCTAssertFalse(tracking.contains("infoRow(\"提醒时机\""))
+        XCTAssertTrue(source.text.contains("优先提醒该回的消息。"))
+        XCTAssertTrue(source.text.contains("会整理这个人的聊天。"))
+        XCTAssertTrue(source.text.contains("不日常提醒。"))
+
+        let opsStart = try XCTUnwrap(source.text.range(of: "private func operationsSection"))
+        let profile = String(source.text[profileStart.lowerBound..<opsStart.lowerBound])
+        XCTAssertTrue(profile.contains("正在看这个人是谁。"))
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+    }
 }
 
 private struct ContactsSettingsSource {
