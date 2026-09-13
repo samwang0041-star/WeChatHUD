@@ -130,6 +130,9 @@ struct ApprovalWorkspaceView: View {
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.sendConfirmBack) { showSendConfirm = false }
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
                             Button(CompanionProductCopy.sendConfirmAction) {
                                 showSendConfirm = false
                                 Task { await confirmSend() }

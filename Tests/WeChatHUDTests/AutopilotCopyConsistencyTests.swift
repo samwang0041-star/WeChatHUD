@@ -632,6 +632,22 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.pendingGone, "这条已经不在队列里。")
     }
 
+    func testSendConfirmBackPressesQuietly() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        guard let dialog = source.text.range(of: "companionDialogBackdrop(showSendConfirm)"),
+              let toolbar = source.text.range(of: "private var toolbar") else {
+            XCTFail("send confirm dialog should sit above the toolbar")
+            return
+        }
+        let pane = String(source.text[dialog.lowerBound..<toolbar.lowerBound])
+        XCTAssertTrue(pane.contains("CompanionProductCopy.sendConfirmBack"))
+        XCTAssertTrue(pane.contains("CompanionPressStyle()"))
+        XCTAssertTrue(pane.contains("ApprovalCopy.confirmSend") || source.text.contains("ApprovalCopy.confirmSend"))
+        XCTAssertTrue(pane.contains("borderedProminent"))
+        XCTAssertEqual(CompanionProductCopy.sendConfirmBack, "返回修改")
+        XCTAssertEqual(ApprovalCopy.confirmSend, "确认发送")
+    }
+
     func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
         let source = try ApprovalWorkspaceSource.load()
         XCTAssertFalse(
