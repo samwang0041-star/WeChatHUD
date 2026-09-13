@@ -132,6 +132,29 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AutopilotSettingsCopy.statusActive, "正在整理回复")
     }
 
+    func testAutoSendConfirmIsAWorkspaceBeatNotASystemAlert() throws {
+        let source = try AutopilotViewSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "companionDialogBackdrop(pendingEnableAutoSend)"))
+        let end = try XCTUnwrap(source.text.range(of: "private var confidenceRow"))
+        let dialog = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(dialog.contains("CompanionProductCopy.autoSendConfirmTitle"))
+        XCTAssertTrue(dialog.contains("CompanionProductCopy.autoSendConfirmMessage"))
+        XCTAssertTrue(dialog.contains(".workspaceBody()"), "the confirm used to speak in a naked 13pt system face")
+        XCTAssertFalse(dialog.contains(".font(.system"))
+        let keep = try XCTUnwrap(dialog.range(of: "Button(CompanionProductCopy.autoSendKeepManual)"))
+        let allow = try XCTUnwrap(dialog.range(of: "Button(CompanionProductCopy.autoSendAllow)"))
+        let keepBlock = String(dialog[keep.lowerBound..<allow.lowerBound])
+        XCTAssertTrue(keepBlock.contains("CompanionPressStyle()"))
+        XCTAssertFalse(keepBlock.contains("borderedProminent"), "keep-manual is the quiet way out")
+        XCTAssertTrue(keepBlock.contains(".workspaceMeta()"))
+        let allowBlock = String(dialog[allow.lowerBound...])
+        XCTAssertTrue(allowBlock.contains("borderedProminent"))
+        XCTAssertTrue(allowBlock.contains("CompanionPalette.jade"), "jade stays on 允许发送, the only permission in this beat")
+        XCTAssertEqual(CompanionProductCopy.autoSendConfirmTitle, "开启自动发送？")
+        XCTAssertEqual(CompanionProductCopy.autoSendKeepManual, "保持手动")
+        XCTAssertEqual(CompanionProductCopy.autoSendAllow, "允许发送")
+    }
+
     // MARK: - Clear history
 
     func testClearHistoryFailureDoesNotInventAPrecondition() {
