@@ -315,3 +315,9 @@
 - Sync provider kept for briefing service + tests
 - Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
 
+## 2026-09-13 Slice 19 — Briefing service via WeChatReaderActor
+
+- `GroupContextBriefingService` production path uses `WeChatReaderActor`; sync provider kept for tests
+- ChatMonitor wires `readerActor:` init; tests still use `reader:`
+- Tests: 1522 + 70 green; release OK; Autopilot guardrails unchanged
+

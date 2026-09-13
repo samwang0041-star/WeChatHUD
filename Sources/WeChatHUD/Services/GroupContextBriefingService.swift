@@ -34,7 +34,10 @@ struct GroupContextBriefingResult {
 }
 
 actor GroupContextBriefingService {
-    private let reader: any GroupContextMessageProvider
+    /// Sync provider path kept for unit tests that inject a stub.
+    private let reader: (any GroupContextMessageProvider)?
+    /// Production path: message loads hop through `WeChatReaderActor`.
+    private let readerActor: WeChatReaderActor?
     private let store: HUDStore?
     private let client: (any GroupContextLLMClient)?
     private let promptLoader: PromptLoader
@@ -50,6 +53,24 @@ actor GroupContextBriefingService {
         cacheTTLHours: Int = 72
     ) {
         self.reader = reader
+        self.readerActor = nil
+        self.store = store
+        self.client = client
+        self.promptLoader = promptLoader
+        self.promptVersion = promptVersion
+        self.cacheTTLHours = cacheTTLHours
+    }
+
+    init(
+        readerActor: WeChatReaderActor,
+        store: HUDStore?,
+        client: (any GroupContextLLMClient)?,
+        promptLoader: PromptLoader = PromptLoader(),
+        promptVersion: String = "group_context_briefing_v1",
+        cacheTTLHours: Int = 72
+    ) {
+        self.reader = nil
+        self.readerActor = readerActor
         self.store = store
         self.client = client
         self.promptLoader = promptLoader
@@ -67,7 +88,7 @@ actor GroupContextBriefingService {
         let analysisType = "\(promptVersion):context_window_v2"
         let cacheKey = notification.briefingKey
 
-        let contextWindow = loadContextMessages(notification: notification)
+        let contextWindow = await loadContextMessages(notification: notification)
 
         // The briefing cache is only valid while the exact source message is
         // still available. Check source availability before returning a
@@ -218,8 +239,17 @@ actor GroupContextBriefingService {
     /// newest-first only to locate an old source that fell out of page one;
     /// the returned array is always the small source-centered window shared
     /// by phase 1 and phase 2.
-    private func loadContextMessages(notification: HUDNotification) -> [MessageInfo]? {
-        GroupContextSourceLoader.load(notification: notification, reader: reader)
+    private func loadContextMessages(notification: HUDNotification) async -> [MessageInfo]? {
+        if let readerActor {
+            return await GroupContextSourceLoader.load(
+                notification: notification,
+                readerActor: readerActor
+            )
+        }
+        if let reader {
+            return GroupContextSourceLoader.load(notification: notification, reader: reader)
+        }
+        return nil
     }
 
     private func cache(
