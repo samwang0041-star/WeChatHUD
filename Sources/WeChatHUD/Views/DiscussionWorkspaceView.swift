@@ -16,6 +16,7 @@ struct DiscussionWorkspaceView: View {
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
     @State private var expandArchived = false
+    @State private var searching = false
     /// How much of the extracted material counts as work here. Read from the
     /// monitor so the sidebar badge, 今天 and the daily report all agree.
     private var strictness: DiscussionStrictness { monitor.discussionStrictness }
@@ -115,6 +116,10 @@ struct DiscussionWorkspaceView: View {
         Self.receiptLabel(hidden: hidden, mine: mine)
     }
 
+    private var showsSearchField: Bool {
+        searching || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         // Resolve the list and the selection exactly once, then hand the values
         // down. Reading these from deeper views re-runs the whole filter+sort.
@@ -209,17 +214,25 @@ struct DiscussionWorkspaceView: View {
                     .controlSize(.small)
                 .fixedSize()
             }
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("找待办", text: $query)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("找待办")
-                if !query.isEmpty {
-                    Button("清除搜索") { query = "" }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+            if showsSearchField {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("找待办", text: $query)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("找待办")
+                    if !query.isEmpty {
+                        Button("清除搜索") { query = "" }
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                    }
                 }
+            } else if (showHistory ? historyItems.count : monitor.discussionItems.count) > 8 {
+                Button("找待办") { searching = true }
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("找待办")
             }
             Text(showHistory
                  ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
