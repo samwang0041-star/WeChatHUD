@@ -43,6 +43,19 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("选择对话"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testStepCopySpeaksLikeAPerson() throws {
+        XCTAssertEqual(GuideCopy.step1Detail, "登录这台 Mac 的微信。")
+        XCTAssertEqual(GuideCopy.step2Detail, "选一个人或一个群。")
+        XCTAssertEqual(GuideCopy.step3Detail, "今天看待回和待办。")
+        XCTAssertFalse(GuideCopy.step1Detail.contains("已登录"))
+        XCTAssertFalse(GuideCopy.step2Detail.contains("联系人"))
+        let source = try CompanionGuideSource.load()
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("选择对话"))
+        XCTAssertTrue(source.text.contains("打开今天"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {

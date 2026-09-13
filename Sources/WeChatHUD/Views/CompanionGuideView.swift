@@ -3,6 +3,9 @@ import SwiftUI
 enum GuideCopy {
     static let statusLine = "先连接微信，再选人，再看今天。"
     static let moreDisclosure = "还要看其余说明"
+    static let step1Detail = "登录这台 Mac 的微信。"
+    static let step2Detail = "选一个人或一个群。"
+    static let step3Detail = "今天看待回和待办。"
 }
 
 /// In-app help for everyday use. Navigation is owned by SettingsView so the
@@ -60,9 +63,9 @@ struct CompanionGuideView: View {
 
     private var quickStartCard: some View {
         VStack(alignment: .leading, spacing: 18) {
-            guideStep(number: "1", title: "连接微信", detail: "读取这台 Mac 上已登录的微信。", buttonTitle: "连接微信", action: showIntroduction)
-            guideStep(number: "2", title: "选择关注的人", detail: "选一个联系人或群。", buttonTitle: "选择对话", action: { navigate(.contacts) })
-            guideStep(number: "3", title: "看清下一步", detail: "「今天」里看待回和待办。", buttonTitle: "打开今天", action: { navigate(.today) })
+            guideStep(number: "1", title: "连接微信", detail: GuideCopy.step1Detail, buttonTitle: "连接微信", action: showIntroduction)
+            guideStep(number: "2", title: "选择关注的人", detail: GuideCopy.step2Detail, buttonTitle: "选择对话", action: { navigate(.contacts) })
+            guideStep(number: "3", title: "看清下一步", detail: GuideCopy.step3Detail, buttonTitle: "打开今天", action: { navigate(.today) })
         }
     }
 
