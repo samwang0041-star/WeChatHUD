@@ -347,3 +347,8 @@
 - Sync WhitelistScan `recentMessages` kept; Autopilot guardrails unchanged
 - Tests: 1522 + 70 green; release OK
 
+## 2026-09-13 Slice 24 — Autopilot message reads via WeChatReaderActor
+
+- Autopilot `processBatch` / `verifySend` / `latestOutgoingMessage` / `stalePendingSendReason` / proactive last-msg hop through WeChatReaderActor
+- Helpers made async where needed; guardrails + naming helpers unchanged
+- Tests: 1522 + 70 green; release OK
