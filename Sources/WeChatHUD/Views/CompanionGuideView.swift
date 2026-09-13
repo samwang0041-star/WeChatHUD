@@ -136,12 +136,16 @@ struct CompanionGuideView: View {
             }
             HStack {
                 Button("重新打开引导", action: showIntroduction)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(CompanionPressStyle())
+                    .workspaceMeta()
+                    .foregroundStyle(.secondary)
                 Button("检查更新") {
                     navigate(.preferences)
                     Task { await AppUpdateController.shared.check(force: true, installIfEnabled: false) }
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 Spacer()
             }
             Text("资料保存在本机；启用线上 AI 时，相关聊天会交给所选服务处理。")
@@ -217,7 +221,9 @@ struct CompanionGuideView: View {
             Text(title).font(.body.weight(.semibold))
             Text(detail).guideSecondary().textSelection(.enabled)
             Button(buttonTitle) { navigate(tab) }
-                .buttonStyle(.bordered)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
