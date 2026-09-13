@@ -165,7 +165,6 @@ struct OnboardingView: View {
 
     private var wechatDetection: some View {
         VStack(alignment: .leading, spacing: 18) {
-            heading("先连接你的微信", subtitle: "连接后读取你选的对话。")
             WeChatConnectionSetupView()
             Text("AI 和自动回复稍后按需开启。")
                 .workspaceMeta()

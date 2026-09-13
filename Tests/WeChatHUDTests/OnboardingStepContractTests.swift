@@ -81,7 +81,8 @@ final class OnboardingStepContractTests: XCTestCase {
         let start = try XCTUnwrap(source.body.range(of: "private var wechatDetection"))
         let whitelist = try XCTUnwrap(source.body.range(of: "private var whitelistGuide"))
         let page = String(source.body[start.lowerBound..<whitelist.lowerBound])
-        XCTAssertTrue(page.contains("先连接你的微信"))
+        XCTAssertFalse(page.contains("先连接你的微信"))
+        XCTAssertFalse(page.contains("连接后读取你选的对话。"))
         XCTAssertTrue(page.contains("WeChatConnectionSetupView()"))
         XCTAssertFalse(page.contains("numberedStep"))
         XCTAssertFalse(page.contains("在这台 Mac 上登录微信"))
@@ -89,6 +90,18 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertFalse(page.contains("laptopcomputer"))
         XCTAssertTrue(page.contains("AI 和自动回复稍后按需开启。"))
         XCTAssertEqual(FirstLaunchGuide.nextCTA, "下一步")
+        XCTAssertEqual(
+            FirstLaunchGuide.connection(
+                state: .idle, wechatRunning: false, accessReady: false, connected: false
+            ).title,
+            "连接你的微信"
+        )
+        XCTAssertEqual(
+            FirstLaunchGuide.connection(
+                state: .connected, wechatRunning: true, accessReady: true, connected: true
+            ).title,
+            "微信已连接"
+        )
     }
 
     func testChromeUsesWorkspaceTypeNotJadeStepMedals() throws {
