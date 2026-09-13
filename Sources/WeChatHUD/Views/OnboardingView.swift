@@ -22,28 +22,28 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(CompanionProductCopy.brandName).font(.headline)
+                    Text(CompanionProductCopy.brandName).workspaceTitle()
                     if !CompanionProductCopy.brandPromise.isEmpty {
-                        Text(CompanionProductCopy.brandPromise).font(.caption).foregroundStyle(.secondary)
+                        Text(CompanionProductCopy.brandPromise)
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 12)
+                stepIndicator
+                    // One element, one label. Without collapsing the children
+                    // the label applied here was inherited by every title
+                    // inside, so the wizard's step was announced twice.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(FirstLaunchGuide.pageTitle(at: step))，第 \(step + 1) 步，共 \(FirstLaunchGuide.pageTitles.count) 步")
             }
-            .padding(.horizontal, 24).padding(.top, 20)
-            stepIndicator
-                .padding(.horizontal, 40).padding(.top, 18).padding(.bottom, 16)
-                // One element, one label. Without collapsing the children
-                // the label applied here was inherited by every dot and
-                // caption inside, so the wizard's step was announced six
-                // times in a row.
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(FirstLaunchGuide.pageTitle(at: step))，第 \(step + 1) 步，共 \(FirstLaunchGuide.pageTitles.count) 步")
+            .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 12)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -143,28 +143,22 @@ struct OnboardingView: View {
     }
 
     private var stepIndicator: some View {
-        HStack(spacing: 0) {
-            // Only the rendered pages get a dot. The third step title
-            // ("开始使用") is the CTA on the last page, and showing it as a
-            // grey dot promised a page the wizard never opens.
+        // Only the rendered pages get a label. The third step title
+        // ("开始使用") is the CTA on the last page, and showing it as a
+        // grey dot promised a page the wizard never opens.
+        HStack(spacing: 6) {
             ForEach(Array(FirstLaunchGuide.pageTitles.enumerated()), id: \.offset) { index, title in
-                VStack(spacing: 6) {
-                    Text("\(index + 1)")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(index <= step ? Color.white : .secondary)
-                        .frame(width: 26, height: 26)
-                        .background(index <= step ? CompanionPalette.jade : Color.primary.opacity(0.08), in: Circle())
-                    Text(title)
-                        .font(.system(size: 11, weight: index == step ? .semibold : .regular))
-                        .foregroundStyle(index == step ? CompanionPalette.jade : .secondary)
+                if index > 0 {
+                    Text("·")
+                        .workspaceMeta()
+                        .foregroundStyle(.tertiary)
                 }
-                if index < FirstLaunchGuide.pageTitles.count - 1 {
-                    Rectangle()
-                        .fill(index < step ? CompanionPalette.jade : Color.primary.opacity(0.12))
-                        .frame(height: 1)
-                        .padding(.bottom, 18)
-                        .padding(.horizontal, 8)
-                }
+                Text(title)
+                    .companionFont(
+                        size: WorkspaceType.meta,
+                        weight: index == step ? .semibold : .regular
+                    )
+                    .foregroundStyle(index == step ? .primary : .secondary)
             }
         }
     }
