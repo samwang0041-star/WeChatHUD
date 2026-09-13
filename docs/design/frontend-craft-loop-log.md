@@ -11,7 +11,7 @@
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮已写「设置」；稍后/关闭无字留给巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
-| 5 | 待确认回复 | in-progress | 7.7 | 列表、即将发送、回执仍裸字号 |
+| 5 | 待确认回复 | in-progress | 7.8 | 连续两刀 <0.3，换表面；即将发送仍并排取消/立即发送 |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 19 — 2026-09-13 — 待确认回复
+
+- Surface: 待确认回复
+- Files: `Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 7.7（主动词 8.0 / 空气 7.8 / 短句 8.0 / 物理 8.0 / 状态戏 7.5 / 稀疏 7.0 / 回执 7.0）
+- Debt picked: 列表、即将发送、回执、确认框还在用裸 system 字号。
+- After: 总分 7.8（主动词 8.0 / 空气 8.2 / 短句 8.0 / 物理 8.0 / 状态戏 7.5 / 稀疏 7.0 / 回执 7.5）
+- Changed: 这一页字都走 workspace token。倒计时仍是等宽数字。护栏未改。
+- Verified: `swift test --filter ApprovalWorkspaceTests --filter AutopilotCopyConsistencyTests --filter AutopilotStartReceiptTests` 32 个用例全绿；`swift build -c release`。走查：队列行、即将发送、回执、确认框字号与工作台一致。
+- Next: 连续两刀提升都小于 0.3，换到 自动回复设置。待确认回复未到 8.5，巡检时再收「立即发送」并排。
 
 ## Cycle 18 — 2026-09-13 — 待确认回复
 

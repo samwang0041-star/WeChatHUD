@@ -181,6 +181,14 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.openChat, "查看聊天记录")
     }
 
+    func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        XCTAssertFalse(
+            source.text.contains(".font(.system"),
+            "approval chrome should use workspace type tokens, not ad-hoc system sizes"
+        )
+    }
+
     func testIslandGearNamesTheWorkspaceItOpens() throws {
         let source = try InboxViewSource.load()
         guard let wingStart = source.text.range(of: "Right wing —"),
