@@ -335,7 +335,7 @@ struct WeChatConnectionSetupView: View {
             }
         }
         .companionAnimation(CompanionMotion.ease(0.18), value: connected)
-        .companionDialogBackdrop(showChangeAccountConfirm) {
+        .companionDialogBackdrop(showChangeAccountConfirm || showPreparationConsent) {
             if showChangeAccountConfirm {
                 CompanionDialog(title: "更换微信账号？", onClose: { showChangeAccountConfirm = false }) {
                     VStack(alignment: .leading, spacing: 16) {
@@ -362,13 +362,29 @@ struct WeChatConnectionSetupView: View {
                         }
                     }
                 }
+            } else if showPreparationConsent {
+                CompanionDialog(title: connectionCopy.consentTitle, onClose: { showPreparationConsent = false }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(connectionCopy.consentMessage)
+                            .workspaceBody()
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Spacer()
+                            Button("暂不") { showPreparationConsent = false }
+                                .buttonStyle(CompanionPressStyle())
+                                .workspaceMeta()
+                                .foregroundStyle(.secondary)
+                            Button("开始准备") {
+                                showPreparationConsent = false
+                                startPreparationFlow()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(CompanionPalette.jade)
+                        }
+                    }
+                }
             }
-        }
-        .confirmationDialog(connectionCopy.consentTitle, isPresented: $showPreparationConsent, titleVisibility: .visible) {
-            Button("开始准备") { startPreparationFlow() }
-            Button("暂不", role: .cancel) {}
-        } message: {
-            Text(connectionCopy.consentMessage)
         }
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
