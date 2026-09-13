@@ -55,7 +55,7 @@ struct CompanionGuideView: View {
         case let (_, build?) where !build.isEmpty:
             return "构建 \(build)"
         default:
-            return "版本信息未提供"
+            return "还没有版本号。"
         }
     }
 

@@ -122,6 +122,16 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("每天怎么用"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testMissingVersionSpeaksANextState() throws {
+        let source = try CompanionGuideSource.load()
+        XCTAssertTrue(source.text.contains("还没有版本号。"))
+        XCTAssertFalse(source.text.contains("版本信息未提供"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertTrue(source.text.contains("每天怎么用"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
