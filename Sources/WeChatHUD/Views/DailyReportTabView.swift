@@ -201,8 +201,9 @@ struct DailyReportTabView: View {
                             .fontWeight(.semibold)
                             .foregroundStyle(.secondary)
                         ForEach(pending.prefix(8)) { item in
-                            HStack {
+                            HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: "circle")
+                                    .foregroundStyle(.secondary)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.content)
                                         .workspaceBody()
@@ -210,23 +211,16 @@ struct DailyReportTabView: View {
                                         .workspaceMeta()
                                         .foregroundStyle(.secondary)
                                 }
-                                Spacer()
-                                Button("查看待办") {
-                                    panelState.pendingSettingsTab = "tasks"
-                                }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
                             }
                        }
-                        if pending.count > 8 {
-                            Button("还有 \(pending.count - 8) 件在待办里") {
-                                panelState.pendingSettingsTab = "tasks"
-                            }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                        Button(pending.count > 8
+                               ? "还有 \(pending.count - 8) 件，在待办里看"
+                               : "在待办里看") {
+                            panelState.pendingSettingsTab = "tasks"
                         }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                     }
                 }
                 Text("根据已同步的关注对话生成。")
