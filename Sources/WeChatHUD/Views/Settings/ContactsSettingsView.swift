@@ -125,7 +125,7 @@ private struct ContactsListSubView: View {
                 TextField("搜索联系人或群聊", text: $searchText)
                     .accessibilityLabel("搜索联系人")
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
+                    .workspaceBody()
                     .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
 
                 Spacer()
@@ -147,21 +147,31 @@ private struct ContactsListSubView: View {
                 }
                 .controlSize(.small)
                 .accessibilityLabel("整理范围")
-
             }
-            .companionSurface(padding: 10)
 
-                HStack(spacing: 8) {
-                    CompanionFilterPill(title: "全部 \(contacts.count)", selected: selectedFilter == .all) { selectedFilter = .all }
-                    CompanionFilterPill(title: "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)", selected: selectedFilter == .vip) { selectedFilter = .vip }
-                    CompanionFilterPill(title: "群聊 \(contacts.filter { isGroupContact($0) }.count)", selected: selectedFilter == .groups) { selectedFilter = .groups }
+            HStack(spacing: 8) {
+                contactFilterChip("全部 \(contacts.count)", selected: selectedFilter == .all) {
+                    selectedFilter = .all
                 }
-                .onChange(of: selectedFilter) {
-                    if let selectedContactID,
-                       !filtered.contains(where: { $0.username == selectedContactID }) {
-                        self.selectedContactID = filtered.first?.username
-                    }
+                contactFilterChip(
+                    "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)",
+                    selected: selectedFilter == .vip
+                ) {
+                    selectedFilter = .vip
                 }
+                contactFilterChip(
+                    "群聊 \(contacts.filter { isGroupContact($0) }.count)",
+                    selected: selectedFilter == .groups
+                ) {
+                    selectedFilter = .groups
+                }
+            }
+            .onChange(of: selectedFilter) {
+                if let selectedContactID,
+                   !filtered.contains(where: { $0.username == selectedContactID }) {
+                    self.selectedContactID = filtered.first?.username
+                }
+            }
 
 
             HSplitView {
@@ -257,6 +267,21 @@ private struct ContactsListSubView: View {
                 onError: { operationError = $0 }
             )
         }
+    }
+
+    private func contactFilterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .workspaceBody()
+                .fontWeight(selected ? .semibold : .regular)
+                .foregroundStyle(selected ? .primary : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(selected ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+        }
+        .buttonStyle(CompanionPressStyle())
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel(title)
     }
 
     private func aiJobChip(_ status: ContactInferenceStatus) -> some View {
