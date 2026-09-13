@@ -6,7 +6,7 @@ Local Mac assistant edits only (no Codex, no Cursor Cloud Agent). Autopilot guar
 ## PR
 https://github.com/samwang0041-star/WeChatHUD/pull/5  
 Branch: `cursor/overnight-evolution-266d`  
-HEAD: `dd27ca9` (HUDStore serial-queue wave complete).
+HEAD: see latest on PR branch (HUDStore serial-queue wave complete).
 
 ## Shipped overnight (local slices)
 
@@ -15,11 +15,12 @@ HEAD: `dd27ca9` (HUDStore serial-queue wave complete).
 3. **Slice 6** — VIP / recalled / AI audit / feedback / pending asks (fixed SQL literals)
 4. **Slice 7** — DiscussionQueue onto serial `exec` / throwing query helpers
 5. **Slice 8** — Autopilot write prepares onto `withCachedStatement`
+6. **Slice 9** — `OffMainWork` (no Task.detached in recommendation scan) + schema v3 retrospective indexes
 
 Earlier same night (already on PR before this wave): Keychain API keys, relationship radar pane, Autopilot pipeline tests, Mac compile/XCTest fixes.
 
 ## Verification (each slice)
-`swift test` → **1518** XCTest (15 skipped) + **70** swift-testing, **0** failures  
+`swift test` → **1519** XCTest (15 skipped) + **70** swift-testing, **0** failures  
 `swift build -c release` → pass
 
 ## Autopilot guardrails (unchanged)

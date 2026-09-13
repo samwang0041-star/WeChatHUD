@@ -99,6 +99,9 @@ struct ContactRecommendationScanSource: Sendable {
     /// single unreadable chat does not discard the other results; its error is
     /// represented by its candidate in `failures` for the UI to report a
     /// count without exposing database paths or raw reader errors.
+    ///
+    /// Uses `OffMainWork` hops instead of `Task.detached`, so the surrounding
+    /// task can cancel between chats without inheriting a detached task graph.
     func scan(
         limit: Int,
         messageLimit: Int,
@@ -110,62 +113,58 @@ struct ContactRecommendationScanSource: Sendable {
         let requestedLimit = max(0, limit) + excluding.count
         let requestedMessageLimit = max(0, messageLimit)
 
-        let worker = Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            let rawCandidates = try readCandidates(requestedLimit)
-            try Task.checkCancellation()
-            let candidates = rawCandidates
-                .filter { !excluding.contains($0.username) }
-                .prefix(max(0, limit))
-                .map { $0 }
+        try Task.checkCancellation()
+        let rawCandidates = try await OffMainWork.runThrowing {
+            try readCandidates(requestedLimit)
+        }
+        try Task.checkCancellation()
+        let candidates = rawCandidates
+            .filter { !excluding.contains($0.username) }
+            .prefix(max(0, limit))
+            .map { $0 }
 
-            var bundles: [MessageBundle] = []
-            var failures: [MessageReadFailure] = []
-            var emptyMessageCount = 0
-            bundles.reserveCapacity(candidates.count)
-            failures.reserveCapacity(candidates.count)
+        var bundles: [MessageBundle] = []
+        var failures: [MessageReadFailure] = []
+        var emptyMessageCount = 0
+        bundles.reserveCapacity(candidates.count)
+        failures.reserveCapacity(candidates.count)
 
-            for (index, candidate) in candidates.enumerated() {
-                do {
-                    try Task.checkCancellation()
-                    let messages = try readMessages(candidate.username, requestedMessageLimit)
-                    try Task.checkCancellation()
-                    if messages.isEmpty {
-                        emptyMessageCount += 1
-                    } else {
-                        bundles.append(MessageBundle(
-                            candidateIndex: index,
-                            candidate: candidate,
-                            messages: messages
-                        ))
-                    }
-                } catch {
-                    if error is CancellationError { throw error }
-                    failures.append(MessageReadFailure(candidate: candidate))
+        for (index, candidate) in candidates.enumerated() {
+            try Task.checkCancellation()
+            do {
+                let messages = try await OffMainWork.runThrowing {
+                    try readMessages(candidate.username, requestedMessageLimit)
                 }
-
                 try Task.checkCancellation()
-                await progress(Progress(
-                    completed: index + 1,
-                    total: candidates.count,
-                    succeeded: bundles.count,
-                    failed: failures.count,
-                    empty: emptyMessageCount
-                ))
+                if messages.isEmpty {
+                    emptyMessageCount += 1
+                } else {
+                    bundles.append(MessageBundle(
+                        candidateIndex: index,
+                        candidate: candidate,
+                        messages: messages
+                    ))
+                }
+            } catch {
+                if error is CancellationError { throw error }
+                failures.append(MessageReadFailure(candidate: candidate))
             }
 
-            return Result(
-                candidates: candidates,
-                messageBundles: bundles,
-                failures: failures,
-                emptyMessageCount: emptyMessageCount
-            )
+            try Task.checkCancellation()
+            await progress(Progress(
+                completed: index + 1,
+                total: candidates.count,
+                succeeded: bundles.count,
+                failed: failures.count,
+                empty: emptyMessageCount
+            ))
         }
 
-        return try await withTaskCancellationHandler(operation: {
-            try await worker.value
-        }, onCancel: {
-            worker.cancel()
-        })
+        return Result(
+            candidates: candidates,
+            messageBundles: bundles,
+            failures: failures,
+            emptyMessageCount: emptyMessageCount
+        )
     }
 }

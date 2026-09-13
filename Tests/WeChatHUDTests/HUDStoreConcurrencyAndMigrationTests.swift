@@ -173,4 +173,22 @@ final class HUDStoreConcurrencyAndMigrationTests: XCTestCase {
         XCTAssertNotNil(store.getWhitelistCursor(username: "wxid_0"))
         XCTAssertEqual(store.loadDailyInsightChatUsernames().count, workers)
     }
+
+    func testSchemaV3AddsRetrospectiveIndexes() throws {
+        let path = NSTemporaryDirectory() + "hud_schema_v3_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        XCTAssertEqual(store.schemaUserVersion(), SchemaMigrator.currentVersion)
+        let names = store.queryAll(
+            "SELECT name FROM sqlite_master WHERE type='index'",
+            bind: { _ in },
+            decode: { stmt in HUDStore.textColumn(stmt, 0) }
+        )
+        XCTAssertTrue(names.contains("idx_red_banner_dismissals_todo_created"))
+        XCTAssertTrue(names.contains("idx_review_todos_status_created"))
+    }
 }

@@ -7,6 +7,12 @@
 
 
 
+
+### [Overnight] 2026-09-13 Slice 9 — OffMainWork + schema v3 indexes
+- Contact recommendation scan drops Task.detached
+- Retrospective query indexes via SchemaMigrator v3 (post-table)
+- Tests 1519+70 green
+
 ### [Overnight] 2026-09-13 Slice 8 — Autopilot writes via statement cache
 - insertAutopilotLog / upsertPendingSend / enqueueAutopilotInbound
 - HUDStore hot-path direct prepares cleared; tests 1518+70 green
