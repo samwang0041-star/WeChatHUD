@@ -167,7 +167,9 @@ struct CompanionGuideView: View {
                 Text(detail).guideSecondary().textSelection(.enabled)
                 if let buttonTitle, let action {
                     Button(buttonTitle, action: action)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                         .accessibilityLabel(buttonTitle)
                 }
             }

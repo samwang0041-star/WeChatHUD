@@ -71,6 +71,19 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("选择关注的人"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testConnectActionPressesQuietly() throws {
+        let source = try CompanionGuideSource.load()
+        let stepStart = try XCTUnwrap(source.text.range(of: "private func guideStep"))
+        let topicStart = try XCTUnwrap(source.text.range(of: "private func guideTopic"))
+        let step = String(source.text[stepStart.lowerBound..<topicStart.lowerBound])
+        XCTAssertTrue(step.contains("CompanionPressStyle()"))
+        XCTAssertFalse(step.contains(".bordered"))
+        XCTAssertFalse(step.contains("CompanionPalette.jade"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
