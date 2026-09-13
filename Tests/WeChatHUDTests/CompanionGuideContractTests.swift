@@ -39,6 +39,8 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertFalse(step.contains("Color.accentColor"))
         XCTAssertFalse(step.contains(".background("))
         XCTAssertTrue(step.contains("workspaceMeta()"))
+        XCTAssertTrue(step.contains("workspaceBody()"))
+        XCTAssertFalse(step.contains(".font(.body.weight(.semibold))"))
         XCTAssertTrue(source.text.contains("先连接微信"))
         XCTAssertTrue(source.text.contains("选择关注的人"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
