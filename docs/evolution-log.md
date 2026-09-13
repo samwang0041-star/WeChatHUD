@@ -8,6 +8,11 @@
 
 
 
+
+### [Overnight] 2026-09-13 Slice 10 — OffMain account evidence + v2→v3 test
+- Sources path clear of Task.detached capturing app state
+- Tests 1520+70 green
+
 ### [Overnight] 2026-09-13 Slice 9 — OffMainWork + schema v3 indexes
 - Contact recommendation scan drops Task.detached
 - Retrospective query indexes via SchemaMigrator v3 (post-table)
