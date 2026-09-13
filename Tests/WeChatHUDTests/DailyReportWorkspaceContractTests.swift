@@ -46,6 +46,18 @@ final class DailyReportWorkspaceContractTests: XCTestCase {
         XCTAssertFalse(source.text.contains("小结已导出。可在访达中查看文件。"))
         XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
     }
+
+    func testWeeklyDoneRowsAreNotJadeNumberBadges() throws {
+        let source = try DailyReportTabSource.load()
+        let weeklyStart = try XCTUnwrap(source.text.range(of: "private var weeklySummary"))
+        let reloadStart = try XCTUnwrap(source.text.range(of: "private func reloadWeeklyCatalog"))
+        let weekly = String(source.text[weeklyStart.lowerBound..<reloadStart.lowerBound])
+        XCTAssertTrue(weekly.contains("已经推进"))
+        XCTAssertFalse(weekly.contains("background(CompanionPalette.jade, in: Circle())"))
+        XCTAssertTrue(weekly.contains("workspaceMeta()"))
+        XCTAssertTrue(source.text.contains("导出"))
+        XCTAssertEqual(SettingsView.Tab.dailyReport.label, "今日小结")
+    }
 }
 
 private struct DailyReportTabSource {

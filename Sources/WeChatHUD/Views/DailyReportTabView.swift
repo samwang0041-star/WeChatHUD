@@ -168,24 +168,30 @@ struct DailyReportTabView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     if !done.isEmpty {
-                        Text("已经推进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("已经推进")
+                            .workspaceMeta()
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.secondary)
                        ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
                            HStack(alignment: .top, spacing: 10) {
                                Text("\(index + 1)")
-                                   .font(.system(size: 13, weight: .bold))
-                                   .foregroundStyle(.white)
-                                   .frame(width: 24, height: 24)
-                                   .background(CompanionPalette.jade, in: Circle())
+                                   .workspaceMeta()
+                                   .fontWeight(.semibold)
+                                   .foregroundStyle(.secondary)
+                                   .frame(width: 22, alignment: .leading)
                                VStack(alignment: .leading, spacing: 4) {
-                                   Text(item.content).font(.system(size: 15, weight: .semibold))
+                                   Text(item.content)
+                                       .workspaceBody()
+                                       .fontWeight(.semibold)
                                    Text("来自：\(item.chatName)")
-                                       .font(.system(size: 12)).foregroundStyle(.secondary)
+                                       .workspaceMeta()
+                                       .foregroundStyle(.secondary)
                                }
                            }
                        }
                         if done.count > 8 {
                             Text("还有 \(done.count - 8) 件已完成，在待办的「看已处理的」里。")
-                                .font(.system(size: 12))
+                                .workspaceMeta()
                                 .foregroundStyle(.secondary)
                         }
                     }
