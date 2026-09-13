@@ -48,6 +48,7 @@ enum AISettingsCopy {
     static func restoredOk(_ date: String) -> String { "\(restoredOkPrefix) \(date)。" }
     static func restoredFail(_ date: String) -> String { "\(restoredFailPrefix) \(date)。" }
     static func fetchCount(_ n: Int) -> String { "找到 \(n) 个模型。" }
+    static let noMatchingModel = "没有这个模型。"
 }
 
 extension Notification.Name {
@@ -126,6 +127,12 @@ struct ModelPicker: View {
                         accessibilityLabel: "搜索模型"
                     )
 
+                    if filtered.isEmpty {
+                        Text(AISettingsCopy.noMatchingModel)
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    } else {
                     ScrollViewReader { proxy in
                         List(filtered, id: \.self, selection: Binding<String?>(
                             get: { model },
@@ -150,6 +157,7 @@ struct ModelPicker: View {
                         .onChange(of: model) { _, new in
                             withMotion(CompanionMotion.systemDefault) { proxy.scrollTo(new, anchor: .center) }
                         }
+                    }
                     }
                 }
                 .padding(6)
