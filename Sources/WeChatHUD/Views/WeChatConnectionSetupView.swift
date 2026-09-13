@@ -50,6 +50,7 @@ enum WeChatConnectionCopy {
     static let saveRetry = "再试一次"
     static let bindFailed = "旧版资料没绑上。请先备份，再确认目录后重试。"
     static let restartToApply = "下次打开助手后生效。"
+    static let pickAccount = "选择要连接的微信账号"
 }
 
 struct WeChatConnectionSetupView: View {
@@ -274,7 +275,8 @@ struct WeChatConnectionSetupView: View {
 
             if showAccounts {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("选择要连接的微信账号").font(.callout.weight(.medium))
+                    Text(WeChatConnectionCopy.pickAccount)
+                        .workspaceTitle()
                     ForEach(candidates, id: \.self) { root in
                         Button {
                             select(root)
@@ -282,10 +284,14 @@ struct WeChatConnectionSetupView: View {
                             HStack {
                                 Image(systemName: "person.crop.circle")
                                 Text(URL(fileURLWithPath: root).deletingLastPathComponent().lastPathComponent)
+                                    .workspaceBody()
                                 Spacer()
-                                Image(systemName: "chevron.right").font(.caption)
-                            }.padding(10).contentShape(Rectangle())
-                        }.buttonStyle(.bordered)
+                            }
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(.primary)
                     }
                 }
             }
