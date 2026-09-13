@@ -132,6 +132,16 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("每天怎么用"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testExtraTopicsDoNotSitInsideCoverCards() throws {
+        let source = try CompanionGuideSource.load()
+        XCTAssertFalse(source.text.contains("struct GuideCard"))
+        XCTAssertFalse(source.text.contains("strokeBorder"))
+        XCTAssertTrue(source.text.contains("每天怎么用"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
