@@ -214,6 +214,21 @@ final class OnboardingStepContractTests: XCTestCase {
         XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
         XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
     }
+
+    func testContactPickerLeadsWithTheListNotASearchField() throws {
+        let source = try FirstLaunchContactPickerSource.load()
+        let body = try XCTUnwrap(source.body.range(of: "var body: some View"))
+        let rowDetail = try XCTUnwrap(source.body.range(of: "private func rowDetail"))
+        let page = String(source.body[body.lowerBound..<rowDetail.lowerBound])
+        let list = try XCTUnwrap(page.range(of: "candidateRow"))
+        let search = try XCTUnwrap(page.range(of: "FirstLaunchGuide.findPeopleField"))
+        XCTAssertLessThan(list.lowerBound, search.lowerBound)
+        XCTAssertTrue(page.contains("Button(FirstLaunchGuide.findPeople)"))
+        XCTAssertEqual(FirstLaunchGuide.findPeople, "找人")
+        XCTAssertEqual(FirstLaunchGuide.findPeopleField, "搜索联系人或群聊")
+        XCTAssertEqual(FirstLaunchGuide.contactsTitle, "从一个人或一个群开始")
+        XCTAssertEqual(FirstLaunchGuide.finishCTA, "开始使用")
+    }
 }
 
 /// Reads OnboardingView.swift so a rename cannot silently re-introduce the
