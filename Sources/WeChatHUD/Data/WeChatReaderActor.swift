@@ -69,4 +69,8 @@ actor WeChatReaderActor {
     func mySelfNames() -> Set<String> {
         reader.mySelfNames
     }
+
+    func normalizeContactMentions(in text: String) -> String {
+        reader.normalizeContactMentions(in: text)
+    }
 }

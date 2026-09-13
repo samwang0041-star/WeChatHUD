@@ -5,6 +5,11 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 15 — Insight→WeChatReaderActor / batch
+- ChatInsightService + InsightCoordinator day probe/stats via actor; whitelist today-filter uses messagesBatch
+- InsightStore.bulk load still direct reader (debt); Autopilot unchanged
+- Tests 1522+70 green
+
 ### [Overnight] 2026-09-13 Slice 14 — whitelist paging + ReplyDebt via facade/batch
 - WeChatReaderActor.getMessages used for whitelist first page + backfill
 - ReplyDebt seeds use getMessagesBatch (no per-session getMessages in ScanEngine)
