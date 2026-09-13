@@ -85,6 +85,18 @@ final class NotificationSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
         XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
     }
+
+    func testDurationChoicesPressQuietlyInsteadOfAPicker() throws {
+        let source = try NotificationSettingsSource.load()
+        XCTAssertFalse(source.text.contains("Picker("))
+        XCTAssertTrue(source.text.contains("\\(seconds) 秒"))
+        XCTAssertTrue(source.text.contains("CompanionPalette.selectedFill"))
+        XCTAssertFalse(source.text.contains("CompanionFilterPill"))
+        XCTAssertTrue(source.text.contains("现在会弹出"))
+        XCTAssertTrue(source.text.contains("还要改展示多久"))
+        XCTAssertTrue(source.text.contains("群里 @ 我的消息"))
+        XCTAssertEqual(SettingsView.Tab.notifications.label, "提醒方式")
+    }
 }
 
 private struct NotificationSettingsSource {
