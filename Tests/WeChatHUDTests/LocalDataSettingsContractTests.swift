@@ -120,6 +120,20 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testAskRowsDoNotDumpTypePills() throws {
+        let source = try LocalDataSettingsSource.load()
+        let asksStart = try XCTUnwrap(source.text.range(of: "private var pendingAsksList"))
+        let helpersStart = try XCTUnwrap(source.text.range(of: "// MARK: - Helpers"))
+        let asks = String(source.text[asksStart.lowerBound..<helpersStart.lowerBound])
+        XCTAssertFalse(asks.contains("pill("))
+        XCTAssertFalse(asks.contains("%.0f%%"))
+        XCTAssertFalse(asks.contains("askType.label"))
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertTrue(source.text.contains("提问"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {
