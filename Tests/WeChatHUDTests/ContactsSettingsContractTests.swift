@@ -41,6 +41,20 @@ final class ContactsSettingsContractTests: XCTestCase {
         XCTAssertFalse(chrome.contains("CompanionPalette.jade"))
         XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
     }
+
+    func testVisibleCopySpeaksMinutesAndWhoPeopleAre() throws {
+        let source = try ContactsSettingsSource.load()
+        XCTAssertFalse(source.text.contains("批量整理关系"))
+        XCTAssertTrue(source.text.contains("看看这些人是谁"))
+        XCTAssertFalse(source.text.contains("replyWindowMinutes)m"))
+        let rowStart = try XCTUnwrap(source.text.range(of: "private func contactRow"))
+        let saveStart = try XCTUnwrap(source.text.range(of: "private func saveContact"))
+        let row = String(source.text[rowStart.lowerBound..<saveStart.lowerBound])
+        XCTAssertTrue(row.contains("分钟"))
+        XCTAssertTrue(source.text.contains("更多"))
+        XCTAssertEqual(SettingsView.Tab.contacts.label, "关注谁")
+        XCTAssertEqual(CompanionProductCopy.addFollow, "添加关注")
+    }
 }
 
 private struct ContactsSettingsSource {
