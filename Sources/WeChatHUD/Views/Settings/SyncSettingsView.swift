@@ -39,6 +39,7 @@ struct SyncSettingsView: View {
     @State private var showLegacyBindConfirm = false
     @State private var showAdvancedConnection = false
     @State private var showConnectionMaintenance = false
+    @State private var showConnectionDiagnostics = false
     @State private var selectedSettingsSection: SettingsPane
     private let lockedPane: SettingsPane?
 
@@ -106,8 +107,8 @@ struct SyncSettingsView: View {
                             connectionCapabilityList
                             DisclosureGroup(WeChatConnectionCopy.syncAndChecks, isExpanded: $showConnectionMaintenance) {
                                 VStack(alignment: .leading, spacing: 16) {
-                                    databaseSection
                                     syncSection
+                                    databaseSection
                                     if let device = store.deviceSettings,
                                        (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
                                         legacyRecordsSection(device: device)
@@ -116,7 +117,9 @@ struct SyncSettingsView: View {
                                         Text("高级连接设置将在助手重新打开后应用。")
                                             .font(.callout).foregroundStyle(.secondary)
                                     }
-                                    SupportDiagnosticsView()
+                                    DisclosureGroup(WeChatConnectionCopy.diagnostics, isExpanded: $showConnectionDiagnostics) {
+                                        SupportDiagnosticsView()
+                                    }
                                 }
                             }
                         }.padding(.top, 14)
