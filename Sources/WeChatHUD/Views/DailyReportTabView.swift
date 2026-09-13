@@ -111,16 +111,21 @@ struct DailyReportTabView: View {
                 Button(action: previousDay) {
                     Image(systemName: "chevron.left")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 .disabled(monitor.dailyReportIsLoading)
                 .accessibilityLabel(scope == .weekly ? "上一周" : "前一天")
                 Text(scope == .weekly ? weekRangeText(monitor.dailyReportViewedDate) : dateText(monitor.dailyReportViewedDate))
-                    .font(.system(size: 14, weight: .semibold))
+                    .workspaceBody()
+                    .fontWeight(.semibold)
                     .frame(minWidth: 96)
                 Button(action: nextDay) {
                     Image(systemName: "chevron.right")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
                 .disabled(!canGoNext || monitor.dailyReportIsLoading)
                 .accessibilityLabel(scope == .weekly ? "下一周" : "后一天")
                 Button(action: exportReport) {
