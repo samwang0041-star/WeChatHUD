@@ -738,44 +738,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     // MARK: - Whitelist
 
     func hasWhitelistEntries() -> Bool {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM whitelist LIMIT 1", -1, &stmt, nil) == SQLITE_OK else {
-            return false
-        }
-        return sqlite3_step(stmt) == SQLITE_ROW
+        queryOne("SELECT 1 FROM whitelist LIMIT 1", bind: { _ in }, decode: { _ in true }) ?? false
     }
 
     func whitelistCount() -> Int {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM whitelist", -1, &stmt, nil) == SQLITE_OK,
-              sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
-        return Int(sqlite3_column_int(stmt, 0))
+        queryOne("SELECT COUNT(*) FROM whitelist", bind: { _ in }, decode: { stmt in
+            Int(sqlite3_column_int(stmt, 0))
+        }) ?? 0
     }
 
     func getWhitelist() -> [WhitelistEntry] {
-        var results: [WhitelistEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryAll("""
             SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
             FROM whitelist
             ORDER BY CASE attention_level WHEN 'vip' THEN 0 ELSE 1 END, category, display_name
-        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let entry = WhitelistEntry(
-                id: String(cString: sqlite3_column_text(stmt, 0)),
-                displayName: String(cString: sqlite3_column_text(stmt, 1)),
-                isGroup: sqlite3_column_int(stmt, 2) != 0,
-                category: WhitelistCategory(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .other,
-                attentionLevel: WhitelistAttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .vip,
-                addedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5))),
-                autoSuggested: sqlite3_column_int(stmt, 6) != 0
-            )
-            results.append(entry)
-        }
-        return results
+        """, bind: { _ in }, decode: decodeWhitelistEntry)
     }
 
     func addToWhitelist(
@@ -831,30 +808,32 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func isWhitelisted(_ username: String) -> Bool {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM whitelist WHERE username=?", -1, &stmt, nil) == SQLITE_OK else { return false }
-        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        return sqlite3_step(stmt) == SQLITE_ROW
+        queryOne("SELECT 1 FROM whitelist WHERE username=?", bind: { stmt in
+            sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+        }, decode: { _ in true }) ?? false
     }
 
     func getWhitelistEntry(username: String) -> WhitelistEntry? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryOne("""
             SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
             FROM whitelist
             WHERE username=?
             LIMIT 1
-        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+        }, decode: decodeWhitelistEntry)
+    }
+
+    private func decodeWhitelistEntry(_ stmt: OpaquePointer?) -> WhitelistEntry? {
+        guard let stmt else { return nil }
+        let username = Self.textColumn(stmt, 0)
+        guard !username.isEmpty else { return nil }
         return WhitelistEntry(
-            id: String(cString: sqlite3_column_text(stmt, 0)),
-            displayName: String(cString: sqlite3_column_text(stmt, 1)),
+            id: username,
+            displayName: Self.textColumn(stmt, 1),
             isGroup: sqlite3_column_int(stmt, 2) != 0,
-            category: WhitelistCategory(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .other,
-            attentionLevel: WhitelistAttentionLevel(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .vip,
+            category: WhitelistCategory(rawValue: Self.textColumn(stmt, 3)) ?? .other,
+            attentionLevel: WhitelistAttentionLevel(rawValue: Self.textColumn(stmt, 4)) ?? .vip,
             addedAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5))),
             autoSuggested: sqlite3_column_int(stmt, 6) != 0
         )
@@ -863,12 +842,11 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     // MARK: - Sync State
 
     func getSyncState(_ sourceKey: String) -> (lastLocalId: Int, lastCheckAt: Int)? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT last_local_id, last_check_at FROM sync_state WHERE source_key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, sourceKey, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+        queryOne("SELECT last_local_id, last_check_at FROM sync_state WHERE source_key=?", bind: { stmt in
+            sqlite3_bind_text(stmt, 1, sourceKey, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+        })
     }
 
     func updateSyncState(_ sourceKey: String, lastLocalId: Int) throws {
@@ -897,13 +875,17 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     private func getMessageCursor(sourceKey key: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT last_create_time, last_local_id FROM sync_state WHERE source_key=?", -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        let time = Int(sqlite3_column_int64(stmt, 0))
-        let localId = Int(sqlite3_column_int64(stmt, 1))
+        guard let row: (time: Int, localId: Int) = queryOne(
+            "SELECT last_create_time, last_local_id FROM sync_state WHERE source_key=?",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, key, -1, Self.sqliteTransient)
+            },
+            decode: { stmt in
+                (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+            }
+        ) else { return nil }
+        let time = row.time
+        let localId = row.localId
         // DEFAULT 0 from the migration means "never baselined" — treat it
         // exactly the same as a missing row so migration from old state
         // forces a fresh baseline instead of replaying history.
@@ -960,19 +942,22 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadChatActions() -> [String: ChatActionState] {
-        var result: [String: ChatActionState] = [:]
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT chat_username, silenced_at, snoozed_until FROM chat_actions", -1, &stmt, nil) == SQLITE_OK else {
-            return result
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let username = String(cString: sqlite3_column_text(stmt, 0))
-            let silenced = Int(sqlite3_column_int64(stmt, 1))
-            let snoozed = Int(sqlite3_column_int64(stmt, 2))
-            result[username] = ChatActionState(silencedAt: silenced, snoozedUntil: snoozed)
-        }
-        return result
+        let rows: [(String, ChatActionState)] = queryAll(
+            "SELECT chat_username, silenced_at, snoozed_until FROM chat_actions",
+            bind: { _ in },
+            decode: { stmt in
+                let username = Self.textColumn(stmt, 0)
+                guard !username.isEmpty else { return nil }
+                return (
+                    username,
+                    ChatActionState(
+                        silencedAt: Int(sqlite3_column_int64(stmt, 1)),
+                        snoozedUntil: Int(sqlite3_column_int64(stmt, 2))
+                    )
+                )
+            }
+        )
+        return rows.reduce(into: [:]) { $0[$1.0] = $1.1 }
     }
 
     /// Silence a chat up to and including `silencedAt` — any unread item
@@ -1856,24 +1841,20 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func getContact(username: String) -> ContactEntry? {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, """
+        queryOne("""
             SELECT username, display_name, attention_level, role, role_note,
                    reply_window_minutes, level_changed_at, created_at, updated_at
             FROM contacts
             WHERE username=?
             LIMIT 1
-        """, -1, &stmt, nil) == SQLITE_OK else { return nil }
-        sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
-        return readContactRow(stmt)
+        """, bind: { stmt in
+            sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+        }, decode: { stmt in
+            readContactRow(stmt)
+        })
     }
 
     func loadContacts(level: AttentionLevel? = nil) -> [ContactEntry] {
-        var results: [ContactEntry] = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
         var sql = """
             SELECT username, display_name, attention_level, role, role_note,
                    reply_window_minutes, level_changed_at, created_at, updated_at
@@ -1883,14 +1864,13 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             sql += " WHERE attention_level=?"
         }
         sql += " ORDER BY updated_at DESC"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-        if let level = level {
-            sqlite3_bind_text(stmt, 1, level.rawValue, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            results.append(readContactRow(stmt))
-        }
-        return results
+        return queryAll(sql, bind: { stmt in
+            if let level {
+                sqlite3_bind_text(stmt, 1, level.rawValue, -1, Self.sqliteTransient)
+            }
+        }, decode: { stmt in
+            readContactRow(stmt)
+        })
     }
 
     func updateContactLevel(username: String, level: AttentionLevel, role: ContactRole) throws {
@@ -1992,16 +1972,14 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func loadVIPUsernames() -> Set<String> {
-        var result: Set<String> = []
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        guard sqlite3_prepare_v2(db, "SELECT username FROM contacts WHERE attention_level='vip'", -1, &stmt, nil) == SQLITE_OK else {
-            return result
-        }
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            result.insert(String(cString: sqlite3_column_text(stmt, 0)))
-        }
-        return result
+        Set(queryAll(
+            "SELECT username FROM contacts WHERE attention_level='vip'",
+            bind: { _ in },
+            decode: { stmt in
+                let name = Self.textColumn(stmt, 0)
+                return name.isEmpty ? nil : name
+            }
+        ))
     }
 
     private func readContactRow(_ stmt: OpaquePointer?) -> ContactEntry {
