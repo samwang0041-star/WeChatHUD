@@ -21,7 +21,7 @@ struct GroupContextBriefingCard: View {
     var body: some View {
         let state = monitor.groupContextState(for: notification)
 
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             header
 
             if let briefing = state.briefing {
@@ -51,44 +51,61 @@ struct GroupContextBriefingCard: View {
     }
 
     private func briefingBody(_ briefing: GroupContextBriefing) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            card("在聊什么", text: briefing.situation, systemImage: "bubble.left")
-            card("为什么找你", text: briefing.whyMentioned, systemImage: "person")
-            card("下一步", text: briefing.nextStep, systemImage: "checkmark.circle")
+        VStack(alignment: .leading, spacing: 6) {
+            if let hero = briefingHero(briefing) {
+                Text(hero)
+                    .islandRowTitle()
+                    .foregroundStyle(IslandInk.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let situation = trimmed(briefing.situation), situation != briefingHero(briefing) {
+                quietLine(label: IslandBriefingCopy.situation, text: situation)
+            }
+            if let next = trimmed(briefing.nextStep) {
+                quietLine(label: IslandBriefingCopy.next, text: next)
+            }
         }
     }
 
     private var originalSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(IslandBriefingCopy.original)
-                .islandSection()
-                .foregroundColor(IslandInk.tertiary)
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
-                        .islandMeta()
-                        .foregroundColor(IslandInk.secondary)
-                    Text(notification.snippet)
-                        .islandRowBody()
-                        .foregroundColor(IslandInk.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Button {
-                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text(IslandBriefingCopy.openConversation)
-                        Image(systemName: "chevron.right")
-                            .islandMicro()
-                    }
-                }
-                .buttonStyle(CompanionPressStyle())
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
                 .islandMeta()
-                .foregroundStyle(CompanionPalette.islandMint)
+                .foregroundStyle(IslandInk.meta)
+            Text(notification.snippet)
+                .islandRowBody()
+                .foregroundStyle(IslandInk.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+            } label: {
+                Text(IslandBriefingCopy.openConversation)
             }
-            .padding(9)
-            .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .buttonStyle(CompanionPressStyle())
+            .islandMeta()
+            .foregroundStyle(CompanionPalette.islandMint)
+        }
+    }
+
+    private func briefingHero(_ briefing: GroupContextBriefing) -> String? {
+        trimmed(briefing.whyMentioned) ?? trimmed(briefing.situation)
+    }
+
+    private func trimmed(_ text: String) -> String? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private func quietLine(label: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(label)
+                .islandMicro()
+                .foregroundStyle(IslandInk.tertiary)
+                .frame(width: 36, alignment: .leading)
+            Text(text)
+                .islandRowBody()
+                .foregroundStyle(IslandInk.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -180,27 +197,6 @@ struct GroupContextBriefingCard: View {
         }
         }
     }
-
-    private func card(_ title: String, text: String, systemImage: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12))
-                .foregroundStyle(CompanionPalette.islandMint)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(title):")
-                    .islandSection()
-                    .foregroundColor(IslandInk.tertiary)
-                Text(text)
-                    .islandRowBody()
-                    .foregroundColor(IslandInk.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
 }
 
 /// The action behind the briefing card's retry button.
@@ -222,7 +218,8 @@ enum IslandBriefingCopy {
     static let title = "为什么找你"
     static let openWeChat = "去微信回复"
     static let snooze = "稍后提醒"
-    static let original = "原文"
+    static let situation = "在聊"
+    static let next = "下一步"
     static let openConversation = "打开对话"
     static let retry = "再试一次"
     static let retryHint = "再整理一次这段群聊"
