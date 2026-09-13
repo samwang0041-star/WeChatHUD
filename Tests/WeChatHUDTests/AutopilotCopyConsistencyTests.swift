@@ -442,6 +442,25 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
     }
 
+    func testConfirmFailureReceiptNeverSpeaksHTTP() throws {
+        let source = try AISettingsSource.load()
+        let start = try XCTUnwrap(source.text.range(of: "private func userFacingConfigurationError"))
+        let end = try XCTUnwrap(source.text.range(of: "private func fetchModels"))
+        let mapped = String(source.text[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(mapped.contains("return AISettingsCopy.confirmUnreachable"))
+        XCTAssertTrue(mapped.contains("return AISettingsCopy.confirmBusy"))
+        XCTAssertTrue(mapped.contains("return AISettingsCopy.needChatGPTLogin"))
+        XCTAssertTrue(mapped.contains("return AISettingsCopy.checkAgain"))
+        XCTAssertFalse(mapped.contains("return message"))
+        XCTAssertFalse(mapped.contains("HTTP"))
+        XCTAssertEqual(AISettingsCopy.confirmUnreachable, "这次没连上。")
+        XCTAssertEqual(AISettingsCopy.confirmBusy, "这会儿忙，过会儿再试。")
+        XCTAssertEqual(AISettingsCopy.needChatGPTLogin, "请先在这台 Mac 上登录 ChatGPT。")
+        XCTAssertEqual(AISettingsCopy.checkAgain, "请核对地址、模型和密钥，再点「确认能用」。")
+        XCTAssertEqual(AISettingsCopy.retryOnce, "再试一次")
+        XCTAssertEqual(AISettingsCopy.confirmWorks, "确认能用")
+    }
+
     func testOpenEverythingRowSaysItOpensToday() throws {
         let source = try InboxViewSource.load()
         XCTAssertTrue(source.text.contains("IslandInboxCopy.moreInWorkspace"))
