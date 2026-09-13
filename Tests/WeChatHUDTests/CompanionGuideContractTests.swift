@@ -87,6 +87,25 @@ final class CompanionGuideContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("连接微信"))
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
     }
+
+    func testGuideActionsPressQuietly() throws {
+        let source = try CompanionGuideSource.load()
+        let troubleStart = try XCTUnwrap(source.text.range(of: "private func troubleshootingRow"))
+        let shortcutStart = try XCTUnwrap(source.text.range(of: "private func shortcutRow"))
+        let trouble = String(source.text[troubleStart.lowerBound..<shortcutStart.lowerBound])
+        XCTAssertTrue(trouble.contains("检查连接") || source.text.contains("检查连接"))
+        XCTAssertTrue(trouble.contains("CompanionPressStyle()"))
+        XCTAssertFalse(trouble.contains(".bordered"))
+        let aboutStart = try XCTUnwrap(source.text.range(of: "private var aboutCard"))
+        let faqStart = try XCTUnwrap(source.text.range(of: "private func faqRow"))
+        let about = String(source.text[aboutStart.lowerBound..<faqStart.lowerBound])
+        XCTAssertTrue(about.contains("CompanionPressStyle()"))
+        XCTAssertFalse(about.contains(".bordered"))
+        XCTAssertTrue(source.text.contains("先连接微信"))
+        XCTAssertTrue(source.text.contains("连接微信"))
+        XCTAssertTrue(source.text.contains("每天怎么用"))
+        XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
+    }
 }
 
 private struct CompanionGuideSource {
