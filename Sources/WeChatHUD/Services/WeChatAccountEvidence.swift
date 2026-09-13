@@ -81,7 +81,7 @@ enum WeChatAccountEvidence {
     }
 
     static func inspect(processID: Int32, expectedRoot: String) async -> Verdict {
-        let capture = await Task.detached(priority: .userInitiated) { captureOpenFiles(processID: processID) }.value
+        let capture = await OffMainWork.run(qos: .userInitiated) { captureOpenFiles(processID: processID) }
         guard !Task.isCancelled else { return .unverified }
         return evaluate(capture, processID: processID, expectedRoot: expectedRoot)
     }
@@ -90,7 +90,7 @@ enum WeChatAccountEvidence {
     /// contents are opened; callers must validate the process identity again
     /// after this asynchronous probe returns.
     static func inspectRoots(processID: Int32) async -> [String] {
-        let capture = await Task.detached(priority: .userInitiated) { captureOpenFiles(processID: processID) }.value
+        let capture = await OffMainWork.run(qos: .userInitiated) { captureOpenFiles(processID: processID) }
         guard !Task.isCancelled else { return [] }
         return observedRoots(capture, processID: processID) ?? []
     }

@@ -191,4 +191,28 @@ final class HUDStoreConcurrencyAndMigrationTests: XCTestCase {
         XCTAssertTrue(names.contains("idx_red_banner_dismissals_todo_created"))
         XCTAssertTrue(names.contains("idx_review_todos_status_created"))
     }
+
+    func testSchemaUpgradesFromV2ToV3Indexes() throws {
+        let path = NSTemporaryDirectory() + "hud_schema_v2_\(UUID().uuidString).sqlite3"
+        let first = HUDStore(dbPath: path)
+        try first.open()
+        first.setSchemaUserVersion(2)
+        XCTAssertEqual(first.schemaUserVersion(), 2)
+        first.close()
+
+        let second = HUDStore(dbPath: path)
+        try second.open()
+        defer {
+            second.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        XCTAssertEqual(second.schemaUserVersion(), SchemaMigrator.currentVersion)
+        let names = second.queryAll(
+            "SELECT name FROM sqlite_master WHERE type='index'",
+            bind: { _ in },
+            decode: { stmt in HUDStore.textColumn(stmt, 0) }
+        )
+        XCTAssertTrue(names.contains("idx_red_banner_dismissals_todo_created"))
+        XCTAssertTrue(names.contains("idx_review_todos_status_created"))
+    }
 }
