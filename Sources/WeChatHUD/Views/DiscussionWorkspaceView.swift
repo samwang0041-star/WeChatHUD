@@ -415,14 +415,14 @@ struct DiscussionWorkspaceView: View {
             Spacer()
             if let undo {
                 Button("撤销") { update(id: undo.id, to: undo.status, previous: nil, title: nil) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jade)
                     .font(.system(size: 13, weight: .semibold))
             }
             Button { receipt = nil } label: {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityLabel("关闭回执")
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
