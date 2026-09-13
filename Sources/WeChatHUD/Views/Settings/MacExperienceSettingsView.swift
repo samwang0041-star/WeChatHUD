@@ -56,8 +56,8 @@ struct MacExperienceSettingsView: View {
                         Button("重新检查权限") {
                             refresh()
                             permissionCheckMessage = accessibilityGranted
-                                ? "权限已生效，可以返回聊天继续回复。"
-                                : "当前应用仍未获得授权。请重新打开 WeChatHUD 后再试；回复内容不会自动发送。"
+                                ? "可以跳转微信了。"
+                                : "还没授权。关掉助手再打开一次。"
                         }
                         .buttonStyle(CompanionPressStyle())
                         .workspaceMeta()

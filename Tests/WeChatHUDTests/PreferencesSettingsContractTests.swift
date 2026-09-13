@@ -157,6 +157,18 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(prefs.text.contains("显示位置"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testPermissionRecheckSpeaksAReceipt() throws {
+        let source = try MacExperienceSettingsSource.load()
+        XCTAssertTrue(source.text.contains("可以跳转微信了。"))
+        XCTAssertTrue(source.text.contains("还没授权。关掉助手再打开一次。"))
+        XCTAssertFalse(source.text.contains("权限已生效"))
+        XCTAssertFalse(source.text.contains("回复内容不会自动发送"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
 }
 
 private struct MacExperienceSettingsSource {
