@@ -663,7 +663,7 @@ private struct ContactInspectorView: View {
             }
 
             DisclosureGroup("账号信息") {
-                infoRow("微信 ID", value: contact.username)
+                infoRow("账号", value: contact.username)
                 infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
             }
             .workspaceBody()
@@ -695,14 +695,14 @@ private struct ContactInspectorView: View {
                     if inferenceStatus?.isRunning == true {
                         ProgressView().controlSize(.mini)
                     } else {
-                        Label("重新整理", systemImage: "arrow.clockwise")
+                        Label("再看看", systemImage: "arrow.clockwise")
                     }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .accessibilityLabel("重新整理这个人")
+                .accessibilityLabel("再看看这个人是谁")
                 .disabled(inferenceStatus?.isRunning == true)
-                .help("后台重新推断这个联系人")
+                .help("再看看这个人是谁，不影响你继续用")
             }
 
             if let profile {
@@ -729,7 +729,7 @@ private struct ContactInspectorView: View {
                     }
                 }
             } else {
-                Text("还不知道这个人是谁。点右上角后会在后台整理，不影响你继续用。")
+                Text("还不知道这个人是谁。点「再看看」，不影响你继续用。")
                     .workspaceMeta()
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -981,7 +981,7 @@ struct ContactEditSheet: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("账号信息") {
-                        LabeledContent("微信 ID", value: contact.username)
+                        LabeledContent("账号", value: contact.username)
                         LabeledContent("类型", value: contact.username.contains("@chatroom") || store.getWhitelistEntry(username: contact.username)?.isGroup == true ? "群聊" : "联系人")
                     }
                 }
