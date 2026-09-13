@@ -20,10 +20,12 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
     func testFiltersSitOnTheCanvasNotACard() throws {
         let source = try DiscussionWorkspaceSource.load()
         let barStart = try XCTUnwrap(source.text.range(of: "private var strictnessBar"))
-        let bindingStart = try XCTUnwrap(source.text.range(of: "private var strictnessBinding"))
-        let bar = String(source.text[barStart.lowerBound..<bindingStart.lowerBound])
-        XCTAssertTrue(bar.contains("保留"))
+        let receiptStart = try XCTUnwrap(source.text.range(of: "static func receiptLabel"))
+        let bar = String(source.text[barStart.lowerBound..<receiptStart.lowerBound])
+        XCTAssertTrue(bar.contains("receiptLabel"))
         XCTAssertFalse(bar.contains("secondarySurface"))
+        XCTAssertFalse(bar.contains("pickerStyle"))
+        XCTAssertFalse(bar.contains("CompanionPalette.jade"))
 
         let filtersStart = try XCTUnwrap(source.text.range(of: "private var filters"))
         let emptyStart = try XCTUnwrap(source.text.range(of: "private var emptyState"))
@@ -38,6 +40,10 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertFalse(filters.contains("foregroundStyle(CompanionPalette.jade)"))
         XCTAssertTrue(filters.contains("CompanionPalette.selectedFill"))
         XCTAssertFalse(filters.contains("CompanionPalette.jade"))
+        XCTAssertTrue(filters.contains("Menu(\"保留\")"))
+        XCTAssertTrue(filters.contains("看已处理的"))
+        XCTAssertFalse(filters.contains("Toggle("))
+        XCTAssertFalse(filters.contains("当前只显示还没做完的"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
 }
