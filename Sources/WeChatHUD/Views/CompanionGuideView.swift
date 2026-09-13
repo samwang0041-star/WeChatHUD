@@ -110,7 +110,7 @@ struct CompanionGuideView: View {
     }
 
     private var dailyUseCard: some View {
-        GuideCard(icon: "tray.full.fill", tint: .blue, title: "每天怎么用") {
+        VStack(alignment: .leading, spacing: 14) {
             guideTopic("从「今天」开始", "看待回和待办。点开一条消息看原文和摘要。", icon: "bubble.left.and.bubble.right")
             guideTopic("群里有人 @你", "会标出谁提到了你。", icon: "person.2.fill")
             guideTopic("我答应的事", "带着原话和截止时间。做完后点完成。", icon: "checkmark.bubble.fill")
@@ -121,7 +121,7 @@ struct CompanionGuideView: View {
     }
 
     private var privacyCard: some View {
-        GuideCard(icon: "lock.shield.fill", tint: .orange, title: "数据与隐私") {
+        VStack(alignment: .leading, spacing: 14) {
             privacyRow("本机聊天资料", "只读取聊天原文，不改微信记录。事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
             privacyRow("发给 AI 的内容", "打开 AI 后，相关聊天片段会发给你选的服务，用来写摘要和草稿。请只用你信任的服务。", icon: "arrow.up.right")
             privacyRow("发送和自动回复", "默认每次发送都要你确认。自动回复默认关着；若打开「自动发出去」，符合条件的回复会自己发出。钱、红包这类消息仍不会自动回。", icon: "hand.raised")
@@ -129,7 +129,7 @@ struct CompanionGuideView: View {
     }
 
     private var troubleshootingCard: some View {
-        GuideCard(icon: "wrench.and.screwdriver.fill", tint: .purple, title: "遇到问题时") {
+        VStack(alignment: .leading, spacing: 14) {
             troubleshootingRow("看不到新消息", "先确认这台 Mac 上的微信已经登录，再打开「微信连接」。页面会告诉你还差哪一步。连上之后点「查看新消息」。", buttonTitle: "检查连接", tab: .system)
             troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
             troubleshootingRow("跳转或发送没反应", "确认微信已登录，并在「隐私与安全性 → 辅助功能」里允许 WeChatHUD。发送失败时回微信核对，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
@@ -138,7 +138,7 @@ struct CompanionGuideView: View {
     }
 
     private var shortcutsCard: some View {
-        GuideCard(icon: "command", tint: .gray, title: "键盘快捷键") {
+        VStack(alignment: .leading, spacing: 14) {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
             shortcutRow("Esc", "收起浮窗（仅当前窗口时有效）")
@@ -149,7 +149,7 @@ struct CompanionGuideView: View {
     }
 
     private var aboutCard: some View {
-        GuideCard(icon: "info.circle.fill", tint: .secondary, title: "关于") {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text(CompanionProductCopy.brandName)
                     .font(.body.weight(.semibold))
@@ -267,27 +267,6 @@ struct CompanionGuideView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("快捷键 \(key)：\(action)")
-    }
-}
-
-private struct GuideCard<Content: View>: View {
-    let icon: String
-    let tint: Color
-    let title: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: icon)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(tint)
-                .accessibilityAddTraits(.isHeader)
-            content
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor).opacity(0.55)))
     }
 }
 
