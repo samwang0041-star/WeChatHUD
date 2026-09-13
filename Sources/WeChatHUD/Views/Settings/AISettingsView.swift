@@ -32,9 +32,6 @@ enum AISettingsCopy {
     static let saveFailed = "刚才没存上。"
     static let saving = "正在保存…"
     static let saveOk = "已保存。"
-    static let saveOkReady = "已保存，可以用。"
-    static let saveOkUnconfirmed = "已保存。还没点「确认能用」。"
-    static let saveIdle = "改完会自动保存。"
     static let privacyBody = "密钥只留在这台电脑里，不会出现在界面或确认结果里。"
     static let privacyRemote = "常用服务和自己填的地址多半是网上的服务，请确认你信任对方怎么处理数据。"
     static let fetchFailed = "没拿到模型列表。"
@@ -426,7 +423,6 @@ struct AISettingsView: View {
                 case .service:
                     serviceSection
                 }
-                saveStatus
                 Spacer(minLength: 20)
             }
             .frame(maxWidth: 960, alignment: .leading)
@@ -507,23 +503,7 @@ struct AISettingsView: View {
                 .accessibilityLabel(AISettingsCopy.confirmWorks)
             }
 
-            if !testResult.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    CompanionCopyableText(text: testResult, lineLimit: nil)
-                        .workspaceMeta()
-                        .foregroundStyle(isFailedTestResult ? .primary : CompanionPalette.jade)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if isFailedTestResult {
-                        Spacer(minLength: 8)
-                        Button(AISettingsCopy.retryOnce, action: testSlot)
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                            .disabled(isTesting || isFetching)
-                            .accessibilityLabel(AISettingsCopy.retryOnce)
-                    }
-                }
-            }
+            saveStatus
         }
         .companionSurface(padding: 20)
     }
@@ -774,13 +754,14 @@ struct AISettingsView: View {
         .padding(.vertical, 8)
     }
 
+    @ViewBuilder
     private var saveStatus: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(serviceSaveStatusText)
-                .workspaceMeta()
-                .foregroundStyle(saveError.isEmpty ? .secondary : .primary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !saveError.isEmpty {
+        if !saveError.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(AISettingsCopy.saveFailed)
+                    .workspaceMeta()
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Button(AISettingsCopy.retryOnce, action: saveAIConfig)
                     .buttonStyle(CompanionPressStyle())
@@ -788,21 +769,33 @@ struct AISettingsView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel(AISettingsCopy.retryOnce)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(AISettingsCopy.saveFailed)
+        } else if hasPendingSave {
+            Text(AISettingsCopy.saving)
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+        } else if !testResult.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                CompanionCopyableText(text: testResult, lineLimit: nil)
+                    .workspaceMeta()
+                    .foregroundStyle(isFailedTestResult ? .primary : CompanionPalette.jade)
+                    .fixedSize(horizontal: false, vertical: true)
+                if isFailedTestResult {
+                    Spacer(minLength: 8)
+                    Button(AISettingsCopy.retryOnce, action: testSlot)
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
+                        .disabled(isTesting || isFetching)
+                        .accessibilityLabel(AISettingsCopy.retryOnce)
+                }
+            }
+        } else if savedAt != nil {
+            Text(AISettingsCopy.saveOk)
+                .workspaceMeta()
+                .foregroundStyle(CompanionPalette.jade)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(saveError.isEmpty ? "保存状态" : AISettingsCopy.saveFailed)
-        .accessibilityValue(serviceSaveStatusText)
-    }
-
-    private var serviceSaveStatusText: String {
-        if !saveError.isEmpty { return AISettingsCopy.saveFailed }
-        if hasPendingSave { return AISettingsCopy.saving }
-        let tested = store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true
-        if tested { return savedAt == nil ? AISettingsCopy.saveOkReady : AISettingsCopy.saveOk }
-        if savedAt != nil || !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return AISettingsCopy.saveOkUnconfirmed
-        }
-        return AISettingsCopy.saveIdle
     }
 
     // MARK: - Actions
