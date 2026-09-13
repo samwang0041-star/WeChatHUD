@@ -713,14 +713,6 @@ struct SyncSettingsView: View {
                                 .font(.system(size: 13))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
-                            if let reason = msg.aiReason {
-                                HStack(spacing: 4) {
-                                    pill(reason, color: msg.aiIntelligenceValue == "high" ? .red : .gray)
-                                    if let d = msg.aiDetail, !d.isEmpty {
-                                        Text(d).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
-                                    }
-                                }
-                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -808,13 +800,8 @@ struct SyncSettingsView: View {
                                 Text(ask.chatName).font(.system(size: 12)).foregroundColor(.secondary)
                             }
                             Text(ask.summary).font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
-                            HStack(spacing: 4) {
-                                pill(ask.askType.label, color: .blue)
-                                Text(String(format: "%.0f%%", ask.confidence * 100))
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                                Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
-                            }
+                            Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
+                                .font(.system(size: 11)).foregroundColor(.secondary)
                         }
                         Spacer()
                         if ask.status == .pending {
@@ -864,16 +851,6 @@ struct SyncSettingsView: View {
         }
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
-    }
-
-    private func pill(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12))
-            .cornerRadius(3)
     }
 
     private func commitmentStatusLabel(_ status: CommitmentStatus) -> String {
