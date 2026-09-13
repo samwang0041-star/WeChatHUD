@@ -75,13 +75,14 @@ struct OnboardingView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                Button(primaryCTA) {
-                    if step == 0 { step = 1; refresh() }
-                    else { finish(openWorkspace: true) }
+                if showsWizardPrimary {
+                    Button(primaryCTA) {
+                        if step == 0 { step = 1; refresh() }
+                        else { finish(openWorkspace: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled)
             }
             .controlSize(.regular)
             .padding(20)
@@ -132,10 +133,13 @@ struct OnboardingView: View {
         FirstLaunchGuide.primaryCTA(forStep: step)
     }
 
+    /// The connection card is the next step until chat is readable.
+    /// A disabled wizard Next plus a footer lecture competed with 「连接微信」.
+    private var showsWizardPrimary: Bool {
+        step > 0 || readiness.hasSuccessfulSync || PreviewRuntime.isEnabled
+    }
+
     private var footerHint: String? {
-        if step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled {
-            return "连上微信后才能继续"
-        }
         if step == 1 && readiness.trackedConversationCount == 0 {
             return FirstLaunchGuide.contactsSkipHint
         }
