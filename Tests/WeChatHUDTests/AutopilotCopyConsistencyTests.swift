@@ -754,6 +754,18 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertFalse(pane.contains("connectionCapabilityList\n                    DisclosureGroup"))
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
     }
+
+    func testConnectionCardDoesNotLectureAboutChangingAccounts() throws {
+        let setup = try ConnectionSetupSource.load()
+        XCTAssertFalse(setup.text.contains("连接步骤只用于读取聊天"))
+        XCTAssertFalse(setup.text.contains("更换账号前先看清范围"))
+        XCTAssertTrue(setup.text.contains("WeChatConnectionCopy.readOnly"))
+        XCTAssertTrue(setup.text.contains("WeChatConnectionCopy.changeAccountScope"))
+        XCTAssertTrue(setup.text.contains("更换微信账号？"))
+        XCTAssertEqual(WeChatConnectionCopy.readOnly, "只读取聊天，不改微信里的内容。")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+        XCTAssertTrue(WeChatConnectionCopy.changeAccountScope.contains("按账号分开"))
+    }
 }
 
 // MARK: - Source readers
