@@ -650,36 +650,29 @@ struct SyncSettingsView: View {
     }
 
     private var retrospectionSection: some View {
-        SettingsSection {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        ForEach(DataSection.allCases, id: \.self) { section in
-                            CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
-                                selectedSection = section
-                                reloadData()
-                            }
-                        }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                ForEach(DataSection.allCases, id: \.self) { section in
+                    CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
+                        selectedSection = section
+                        reloadData()
                     }
-                    DisclosureGroup(LocalDataCopy.findDisclosure) {
-                        CompanionClipboardField(
-                            text: $dataSearch,
-                            placeholder: LocalDataCopy.searchPlaceholder,
-                            kind: .plain,
-                            accessibilityLabel: LocalDataCopy.searchPlaceholder
-                        )
-                    }
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                SettingsRowDivider()
-                switch selectedSection {
-                case .recalls:     recallsList
-                case .commitments: commitmentsList
-                case .pendingAsks: pendingAsksList
-                }
+            }
+            DisclosureGroup(LocalDataCopy.findDisclosure) {
+                CompanionClipboardField(
+                    text: $dataSearch,
+                    placeholder: LocalDataCopy.searchPlaceholder,
+                    kind: .plain,
+                    accessibilityLabel: LocalDataCopy.searchPlaceholder
+                )
+            }
+            .workspaceMeta()
+            .foregroundStyle(.secondary)
+            switch selectedSection {
+            case .recalls:     recallsList
+            case .commitments: commitmentsList
+            case .pendingAsks: pendingAsksList
             }
         }
     }
