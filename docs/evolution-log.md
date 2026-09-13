@@ -6,6 +6,11 @@
 
 
 
+
+### [Overnight] 2026-09-13 Slice 8 — Autopilot writes via statement cache
+- insertAutopilotLog / upsertPendingSend / enqueueAutopilotInbound
+- HUDStore hot-path direct prepares cleared; tests 1518+70 green
+
 ### [Overnight] 2026-09-13 Slice 7 — DiscussionQueue on serial query helpers
 - Dropped rawDB prepare path; throwing query helpers preserve corrupt-row errors
 - Tests 1518+70 green

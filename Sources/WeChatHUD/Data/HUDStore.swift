@@ -2998,45 +2998,40 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func insertAutopilotLog(_ entry: AutopilotLogEntry) throws {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        try withCachedStatement("""
             INSERT INTO autopilot_log(session_id, chat_username, chat_name, sender_username, sender_name,
                 trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level, action, ai_reasoning, sent_at, created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw HUDStoreError.sqlError("prepare autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
-        }
-        let TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        sqlite3_bind_int64(stmt, 1, entry.sessionId)
-        sqlite3_bind_text(stmt, 2, entry.chatUsername, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 3, entry.chatName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 4, entry.senderUsername, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 5, entry.senderName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 6, entry.triggerMsgUID, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 7, entry.triggerText, -1, TRANSIENT)
-        if let reply = entry.generatedReply {
-            sqlite3_bind_text(stmt, 8, reply, -1, TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 8)
-        }
-        sqlite3_bind_double(stmt, 9, entry.confidence)
-        sqlite3_bind_text(stmt, 10, entry.riskLevel.rawValue, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 11, entry.action.rawValue, -1, TRANSIENT)
-        if let reasoning = entry.aiReasoning {
-            sqlite3_bind_text(stmt, 12, reasoning, -1, TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 12)
-        }
-        if let sentAt = entry.sentAt {
-            sqlite3_bind_int64(stmt, 13, Int64(sentAt.timeIntervalSince1970))
-        } else {
-            sqlite3_bind_null(stmt, 13)
-        }
-        sqlite3_bind_int64(stmt, 14, Int64(entry.createdAt.timeIntervalSince1970))
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
+        """) { stmt in
+            sqlite3_bind_int64(stmt, 1, entry.sessionId)
+            sqlite3_bind_text(stmt, 2, entry.chatUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 3, entry.chatName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 4, entry.senderUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 5, entry.senderName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 6, entry.triggerMsgUID, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 7, entry.triggerText, -1, Self.sqliteTransient)
+            if let reply = entry.generatedReply {
+                sqlite3_bind_text(stmt, 8, reply, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 8)
+            }
+            sqlite3_bind_double(stmt, 9, entry.confidence)
+            sqlite3_bind_text(stmt, 10, entry.riskLevel.rawValue, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 11, entry.action.rawValue, -1, Self.sqliteTransient)
+            if let reasoning = entry.aiReasoning {
+                sqlite3_bind_text(stmt, 12, reasoning, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 12)
+            }
+            if let sentAt = entry.sentAt {
+                sqlite3_bind_int64(stmt, 13, Int64(sentAt.timeIntervalSince1970))
+            } else {
+                sqlite3_bind_null(stmt, 13)
+            }
+            sqlite3_bind_int64(stmt, 14, Int64(entry.createdAt.timeIntervalSince1970))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
+            }
         }
     }
 
@@ -3183,9 +3178,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        try withCachedStatement("""
             INSERT INTO autopilot_pending_sends(
                 id, session_id, chat_username, chat_name, sender_name, reply_text,
                 confidence, risk_level, reasoning, style_score, scheduled_send_at,
@@ -3206,41 +3199,38 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 topic = excluded.topic,
                 auto_send_attempts = excluded.auto_send_attempts,
                 manual_only_reason = excluded.manual_only_reason
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw HUDStoreError.sqlError("prepare autopilot_pending_sends upsert: \(String(cString: sqlite3_errmsg(db)))")
-        }
-        let TRANSIENT = HUDStore.sqliteTransient
-        sqlite3_bind_text(stmt, 1, item.id.uuidString, -1, TRANSIENT)
-        sqlite3_bind_int64(stmt, 2, sessionId)
-        sqlite3_bind_text(stmt, 3, item.chatUsername, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 4, item.chatName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 5, item.senderName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 6, item.replyText, -1, TRANSIENT)
-        sqlite3_bind_double(stmt, 7, item.confidence)
-        sqlite3_bind_text(stmt, 8, item.risk.rawValue, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 9, item.reasoning, -1, TRANSIENT)
-        sqlite3_bind_int(stmt, 10, Int32(item.styleScore))
-        sqlite3_bind_int64(stmt, 11, Int64(item.scheduledSendTime.timeIntervalSince1970))
-        sqlite3_bind_int64(stmt, 12, Int64(item.createdAt.timeIntervalSince1970))
-        if let peerLastMessage = item.peerLastMessage {
-            sqlite3_bind_text(stmt, 13, peerLastMessage, -1, TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 13)
-        }
-        if let topic = item.topic {
-            sqlite3_bind_text(stmt, 14, topic, -1, TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 14)
-        }
-        sqlite3_bind_int(stmt, 15, Int32(item.autoSendAttempts))
-        if let manualOnlyReason = item.manualOnlyReason {
-            sqlite3_bind_text(stmt, 16, manualOnlyReason, -1, TRANSIENT)
-        } else {
-            sqlite3_bind_null(stmt, 16)
-        }
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw HUDStoreError.sqlError("step autopilot_pending_sends upsert: \(String(cString: sqlite3_errmsg(db)))")
+        """) { stmt in
+            sqlite3_bind_text(stmt, 1, item.id.uuidString, -1, Self.sqliteTransient)
+            sqlite3_bind_int64(stmt, 2, sessionId)
+            sqlite3_bind_text(stmt, 3, item.chatUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 4, item.chatName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 5, item.senderName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 6, item.replyText, -1, Self.sqliteTransient)
+            sqlite3_bind_double(stmt, 7, item.confidence)
+            sqlite3_bind_text(stmt, 8, item.risk.rawValue, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 9, item.reasoning, -1, Self.sqliteTransient)
+            sqlite3_bind_int(stmt, 10, Int32(item.styleScore))
+            sqlite3_bind_int64(stmt, 11, Int64(item.scheduledSendTime.timeIntervalSince1970))
+            sqlite3_bind_int64(stmt, 12, Int64(item.createdAt.timeIntervalSince1970))
+            if let peerLastMessage = item.peerLastMessage {
+                sqlite3_bind_text(stmt, 13, peerLastMessage, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 13)
+            }
+            if let topic = item.topic {
+                sqlite3_bind_text(stmt, 14, topic, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 14)
+            }
+            sqlite3_bind_int(stmt, 15, Int32(item.autoSendAttempts))
+            if let manualOnlyReason = item.manualOnlyReason {
+                sqlite3_bind_text(stmt, 16, manualOnlyReason, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 16)
+            }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw HUDStoreError.sqlError("step autopilot_pending_sends upsert: \(String(cString: sqlite3_errmsg(db)))")
+            }
         }
     }
 
@@ -3289,35 +3279,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func enqueueAutopilotInbound(_ msg: AutopilotService.InboundMessage) throws {
-        var stmt: OpaquePointer?
-        defer { sqlite3_finalize(stmt) }
-        let sql = """
+        try withCachedStatement("""
             INSERT OR IGNORE INTO autopilot_inbound_queue(
                 msg_uid, chat_username, chat_name, sender_username, sender_name, text,
                 is_group, is_at_mention, attention_level, contact_role, msg_timestamp,
                 message_type, app_type, created_at
             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw HUDStoreError.sqlError("prepare autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
-        }
-        let TRANSIENT = HUDStore.sqliteTransient
-        sqlite3_bind_text(stmt, 1, msg.msgUID, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 2, msg.chatUsername, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 3, msg.chatName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 4, msg.senderUsername, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 5, msg.senderName, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 6, msg.text, -1, TRANSIENT)
-        sqlite3_bind_int(stmt, 7, msg.isGroup ? 1 : 0)
-        sqlite3_bind_int(stmt, 8, msg.isAtMention ? 1 : 0)
-        sqlite3_bind_text(stmt, 9, msg.attentionLevel.rawValue, -1, TRANSIENT)
-        sqlite3_bind_text(stmt, 10, msg.contactRole.rawValue, -1, TRANSIENT)
-        sqlite3_bind_int64(stmt, 11, Int64(msg.timestamp))
-        sqlite3_bind_int(stmt, 12, Int32(msg.messageType))
-        sqlite3_bind_int(stmt, 13, Int32(msg.appType))
-        sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw HUDStoreError.sqlError("step autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
+        """) { stmt in
+            sqlite3_bind_text(stmt, 1, msg.msgUID, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, msg.chatUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 3, msg.chatName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 4, msg.senderUsername, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 5, msg.senderName, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 6, msg.text, -1, Self.sqliteTransient)
+            sqlite3_bind_int(stmt, 7, msg.isGroup ? 1 : 0)
+            sqlite3_bind_int(stmt, 8, msg.isAtMention ? 1 : 0)
+            sqlite3_bind_text(stmt, 9, msg.attentionLevel.rawValue, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 10, msg.contactRole.rawValue, -1, Self.sqliteTransient)
+            sqlite3_bind_int64(stmt, 11, Int64(msg.timestamp))
+            sqlite3_bind_int(stmt, 12, Int32(msg.messageType))
+            sqlite3_bind_int(stmt, 13, Int32(msg.appType))
+            sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw HUDStoreError.sqlError("step autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
+            }
         }
     }
 
