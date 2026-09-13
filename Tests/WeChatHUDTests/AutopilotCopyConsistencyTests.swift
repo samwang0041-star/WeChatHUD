@@ -596,6 +596,24 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(ApprovalCopy.openChat, "查看聊天记录")
     }
 
+    func testPendingSendKeepsOnePrimary() throws {
+        let source = try ApprovalWorkspaceSource.load()
+        guard let rowStart = source.text.range(of: "private struct ApprovalPendingSendRow") else {
+            XCTFail("即将发送 lives in ApprovalPendingSendRow")
+            return
+        }
+        let row = String(source.text[rowStart.lowerBound...])
+        XCTAssertTrue(row.contains("ApprovalCopy.sendNow"))
+        XCTAssertTrue(row.contains("ApprovalCopy.dismissSend"))
+        XCTAssertTrue(row.contains("即将发送") || source.text.contains("即将发送"))
+        XCTAssertTrue(row.contains("borderedProminent"))
+        XCTAssertTrue(row.contains("CompanionPressStyle()"))
+        XCTAssertFalse(row.contains(".buttonStyle(.bordered)"))
+        XCTAssertFalse(row.contains("controlSize(.small)"))
+        XCTAssertEqual(ApprovalCopy.sendNow, "立即发送")
+        XCTAssertEqual(ApprovalCopy.dismissSend, "取消")
+    }
+
     func testApprovalWorkspaceHasNoNakedSystemFonts() throws {
         let source = try ApprovalWorkspaceSource.load()
         XCTAssertFalse(
