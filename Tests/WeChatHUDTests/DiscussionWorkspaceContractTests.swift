@@ -5,8 +5,8 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
     func testMarkDoneIsTheJadePrimaryAndCorrectionIsQuiet() throws {
         let source = try DiscussionWorkspaceSource.load()
         let detailStart = try XCTUnwrap(source.text.range(of: "private func taskDetail"))
-        let metaStart = try XCTUnwrap(source.text.range(of: "private func metaRow"))
-        let detail = String(source.text[detailStart.lowerBound..<metaStart.lowerBound])
+        let beatStart = try XCTUnwrap(source.text.range(of: "private func detailBeat"))
+        let detail = String(source.text[detailStart.lowerBound..<beatStart.lowerBound])
         XCTAssertTrue(detail.contains("标记完成"))
         XCTAssertTrue(detail.contains("borderedProminent"))
         XCTAssertTrue(detail.contains("CompanionPalette.jade"))
@@ -93,6 +93,20 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertTrue(bar.contains("CompanionPressStyle()"))
         XCTAssertFalse(bar.contains("buttonStyle(.plain)"))
         XCTAssertTrue(source.text.contains("标记完成"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
+
+    func testTaskDetailLeadsWithABeatNotASpecSheet() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        let detailStart = try XCTUnwrap(source.text.range(of: "private func taskDetail"))
+        let receiptStart = try XCTUnwrap(source.text.range(of: "private func receiptBar"))
+        let detail = String(source.text[detailStart.lowerBound..<receiptStart.lowerBound])
+        XCTAssertFalse(detail.contains("metaRow(\"归属\""))
+        XCTAssertFalse(detail.contains("metaRow(\"截止时间\""))
+        XCTAssertFalse(detail.contains("metaRow(\"来源\""))
+        XCTAssertTrue(detail.contains("detailBeat"))
+        XCTAssertTrue(detail.contains("标记完成"))
+        XCTAssertEqual(DiscussionItemOwner.mine.workspaceLabel, "我来做")
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
 }
