@@ -5,6 +5,11 @@
 
 
 
+### [Overnight] 2026-09-13 Slice 17 — ChatMonitor on-demand → WeChatReaderActor
+- OnDemandAnalysis + Classification async reads/identity via actor; hasAccountSwitched wrapper
+- GroupContextSourceLoader still sync provider (debt); Autopilot unchanged
+- Tests 1522+70 green
+
 ### [Overnight] 2026-09-13 Slice 16 — InsightStore bulk load via WeChatReaderActor
 - Actor bulkMessageStats + async InsightDataLoader.load; InsightStore reload/day priming via actor
 - Sync load/statsForDay kept; ChatMonitor still debt; Autopilot unchanged

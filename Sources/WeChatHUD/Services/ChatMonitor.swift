@@ -2481,7 +2481,7 @@ final class ChatMonitor: ObservableObject {
             relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.pendingDays)
         )
             .first { $0.chatUsername == item.chatUsername }
-        let context = buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
+        let context = await buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
 
         let input = AIReplySuggester.Input(
             messageBody: item.preview,

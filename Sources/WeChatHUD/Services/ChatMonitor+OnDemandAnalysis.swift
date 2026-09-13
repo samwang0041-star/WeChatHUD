@@ -20,9 +20,12 @@ extension ChatMonitor {
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
         let analysisType = "action_panel_group_v3"
+        let readerActor = WeChatReaderActor(reader)
         let messages: [MessageInfo]
         let sourceAnchored: Bool
         if let notification = item.contextNotification, notification.kind == .groupAt {
+            // GroupContextSourceLoader still takes GroupContextMessageProvider (sync);
+            // leave that path on the underlying reader for this slice.
             guard let centered = GroupContextSourceLoader.load(notification: notification, reader: reader) else {
                 return (nil, "找不到这条 @ 消息，未使用其他消息替代")
             }
@@ -30,7 +33,7 @@ extension ChatMonitor {
             sourceAnchored = true
         } else {
             do {
-                messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
+                messages = try await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)
             } catch {
                 return (nil, "读取消息失败: \(error.localizedDescription)")
             }
@@ -60,15 +63,17 @@ extension ChatMonitor {
             cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
             return (fallback, nil)
         }
-        let myUname = reader.myUsername()
+        let myUname = await readerActor.myUsername()
+        let myDisplay = await readerActor.displayName(for: myUname)
+        let selfNames = await readerActor.mySelfNames()
         let (result, error) = await chatAnalyzer.analyzeGroup(
             chatUsername: item.chatUsername,
             chatName: item.chatName,
             messages: filtered,
             myUsername: myUname,
             myName: "我",
-            myDisplayName: reader.displayName(for: myUname),
-            mySelfNames: reader.mySelfNames,
+            myDisplayName: myDisplay,
+            mySelfNames: selfNames,
             triggerMessage: item.contextNotification.flatMap { notification in
                 notification.kind == .groupAt
                     ? messages.first(where: { $0.id == notification.messageID && $0.chatUsername == notification.chatUsername })
@@ -86,6 +91,7 @@ extension ChatMonitor {
 
     func analyzePrivateChat(item: InboxItem) async -> (ChatAnalyzer.PrivateAnalysis?, String?) {
         let analysisType = "action_panel_private_v2"
+        let readerActor = WeChatReaderActor(reader)
         if let cached: ChatAnalyzer.PrivateAnalysis = loadActionAnalysisCache(
             item: item,
             analysisType: analysisType,
@@ -96,7 +102,7 @@ extension ChatMonitor {
 
         let messages: [MessageInfo]
         do {
-            messages = try reader.getMessages(chatUsername: item.chatUsername, limit: 50)
+            messages = try await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)
         } catch {
             return (nil, "读取消息失败: \(error.localizedDescription)")
         }
@@ -120,15 +126,17 @@ extension ChatMonitor {
             cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
             return (fallback, nil)
         }
-        let myUname = reader.myUsername()
+        let myUname = await readerActor.myUsername()
+        let myDisplay = await readerActor.displayName(for: myUname)
+        let selfNames = await readerActor.mySelfNames()
         let (result, error) = await chatAnalyzer.analyzePrivate(
             chatUsername: item.chatUsername,
             contactName: item.chatName,
             messages: filtered,
             myUsername: myUname,
             myName: "我",
-            myDisplayName: reader.displayName(for: myUname),
-            mySelfNames: reader.mySelfNames
+            myDisplayName: myDisplay,
+            mySelfNames: selfNames
         )
         if let result {
             writeActionAnalysisCache(result, item: item, analysisType: analysisType)
@@ -203,8 +211,9 @@ extension ChatMonitor {
         let knownConstraints: String?
     }
 
-    func buildReplySuggestionContext(for item: InboxItem) -> ReplySuggestionContext {
-        let messagesNewest = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+    func buildReplySuggestionContext(for item: InboxItem) async -> ReplySuggestionContext {
+        let readerActor = WeChatReaderActor(reader)
+        let messagesNewest = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
         let targetSecond = Int(item.timestamp.timeIntervalSince1970)
         let target = messagesNewest.first {
             Int($0.createTime) == targetSecond
@@ -230,9 +239,9 @@ extension ChatMonitor {
             return serialized.isEmpty ? nil : serialized
         }()
 
-        let myUname = reader.myUsername()
-        let myDisplay = reader.displayName(for: myUname)
-        let mySelfNames = reader.mySelfNames
+        let myUname = await readerActor.myUsername()
+        let myDisplay = await readerActor.displayName(for: myUname)
+        let mySelfNames = await readerActor.mySelfNames()
         let myLastReply = messagesNewest.first {
             MessageHelpers.isFromSelf(
                 $0,
@@ -278,8 +287,9 @@ extension ChatMonitor {
         )
     }
 
-    func buildReplySuggestionContext(for item: ReplyDebtItem, pendingAsk: PendingAsk?) -> ReplySuggestionContext {
-        let messagesNewest = (try? reader.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
+    func buildReplySuggestionContext(for item: ReplyDebtItem, pendingAsk: PendingAsk?) async -> ReplySuggestionContext {
+        let readerActor = WeChatReaderActor(reader)
+        let messagesNewest = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
         let targetSecond = Int(item.timestamp.timeIntervalSince1970)
         let target = messagesNewest.first {
             Int($0.createTime) == targetSecond
@@ -305,9 +315,9 @@ extension ChatMonitor {
             return serialized.isEmpty ? nil : serialized
         }()
 
-        let myUname = reader.myUsername()
-        let myDisplay = reader.displayName(for: myUname)
-        let mySelfNames = reader.mySelfNames
+        let myUname = await readerActor.myUsername()
+        let myDisplay = await readerActor.displayName(for: myUname)
+        let mySelfNames = await readerActor.mySelfNames()
         let myLastReply = messagesNewest.first {
             MessageHelpers.isFromSelf(
                 $0,
@@ -401,7 +411,7 @@ extension ChatMonitor {
             chatUsername: item.chatUsername,
             excludeMsgUIDs: autopilotService?.autopilotSentMsgUIDs() ?? []
         )
-        let replyContext = buildReplySuggestionContext(for: item)
+        let replyContext = await buildReplySuggestionContext(for: item)
 
         let input = AIReplySuggester.Input(
             messageBody: item.preview,
