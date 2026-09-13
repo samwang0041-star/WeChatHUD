@@ -1304,6 +1304,11 @@ final class ChatMonitor: ObservableObject {
         let scanType = changedRelPaths == nil ? "full" : "incremental(\(changedRelPaths!.count) files)"
         print("[WCHUD] scan[\(scanType)]: unread=\(o.stats.unreadCount) @=\(o.stats.atMentionCount) debt=\(o.stats.replyDebtCount) vip=\(o.stats.vipCount), \(ms)ms")
 
+        // Relationship radar is local/deterministic. Refresh before the
+        // published lastSyncAt flip so an open pane reloads already-new
+        // silence/trend numbers. Does not talk to AI or send WeChat.
+        await refreshRelationshipRadarAfterScan()
+
         // One batched apply — all @Published mutations land together so
         // SwiftUI only does a single render pass.
         stats = o.stats

@@ -11,6 +11,7 @@ final class ProductAccessibilityTests: XCTestCase {
             (.drafts, "草稿"),
             (.insight, "聊天回顾"),
             (.dailyReport, "今日小结"),
+            (.relationshipRadar, "关系雷达"),
             (.autopilotDashboard, "待确认回复"),
             (.contacts, "关注谁"),
             (.aiButler, "AI 分析与建议"),
@@ -22,8 +23,8 @@ final class ProductAccessibilityTests: XCTestCase {
             (.localData, "本地资料"),
             (.guide, "怎么用")
         ]
-        XCTAssertEqual(SettingsView.Tab.allCases.count, 16)
-        XCTAssertEqual(expected.count, 16)
+        XCTAssertEqual(SettingsView.Tab.allCases.count, 17)
+        XCTAssertEqual(expected.count, 17)
         for (tab, name) in expected {
             XCTAssertEqual(tab.label, name)
             XCTAssertEqual("workspace.\(tab.rawValue)", "workspace.\(tab.rawValue)")

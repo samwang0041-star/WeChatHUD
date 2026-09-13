@@ -103,6 +103,16 @@ extension HUDStore {
         })
     }
 
+    func loadDailyInsightChatUsernames() -> [String] {
+        queryAll("""
+            SELECT DISTINCT chat_username FROM chat_insight_daily
+            ORDER BY chat_username
+        """, bind: { _ in }, decode: { stmt in
+            let name = HUDStore.textColumn(stmt, 0)
+            return name.isEmpty ? nil : name
+        })
+    }
+
     func loadAllRelationshipRadarSnapshots(limit: Int = 50) -> [RelationshipRadarSnapshot] {
         queryAll("""
             SELECT payload FROM relationship_radar

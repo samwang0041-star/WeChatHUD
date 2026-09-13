@@ -57,12 +57,14 @@ enum RelationshipRadarService {
 
         let moods = sorted.map(\.overallMood).filter { !$0.isEmpty }
         var toneChanges: [RadarToneChange] = []
-        for index in 1..<moods.count where moods[index] != moods[index - 1] {
-            toneChanges.append(RadarToneChange(
-                from: moods[index - 1],
-                to: moods[index],
-                aroundDay: sorted[min(index, sorted.count - 1)].day
-            ))
+        if moods.count >= 2 {
+            for index in 1..<moods.count where moods[index] != moods[index - 1] {
+                toneChanges.append(RadarToneChange(
+                    from: moods[index - 1],
+                    to: moods[index],
+                    aroundDay: sorted[min(index, sorted.count - 1)].day
+                ))
+            }
         }
         let moodShift: String?
         if let first = moods.first, let last = moods.last, first != last {
@@ -157,6 +159,72 @@ enum RelationshipRadarService {
 
     static func briefingSummaries(from snapshots: [RelationshipRadarSnapshot], limit: Int = 8) -> [String] {
         snapshots.prefix(limit).map(\.briefingLine)
+    }
+
+    static let lastRefreshSettingKey = "relationshipRadar.lastRefreshAt"
+    static let defaultRefreshInterval: TimeInterval = 15 * 60
+
+    /// Recompute snapshots for every chat that already has daily facts.
+    /// No AI, no outbound send. `minInterval` skips a scan-tick hop that
+    /// landed too soon after the last refresh; pass `force: true` from the
+    /// dedicated pane's refresh button.
+    @discardableResult
+    static func refreshAll(
+        store: HUDStore,
+        now: Date = Date(),
+        windowDays: Int = defaultWindowDays,
+        minInterval: TimeInterval = defaultRefreshInterval,
+        force: Bool = false
+    ) throws -> Int {
+        if !force,
+           let raw = store.getSetting(lastRefreshSettingKey),
+           let last = TimeInterval(raw),
+           now.timeIntervalSince1970 - last < minInterval {
+            return 0
+        }
+        let usernames = store.loadDailyInsightChatUsernames()
+        var count = 0
+        for username in usernames {
+            _ = try refresh(store: store, chatUsername: username, now: now, windowDays: windowDays)
+            count += 1
+        }
+        try store.setSetting(lastRefreshSettingKey, value: String(Int(now.timeIntervalSince1970)))
+        return count
+    }
+
+    static func ranked(_ snapshots: [RelationshipRadarSnapshot]) -> [RelationshipRadarSnapshot] {
+        snapshots.sorted { lhs, rhs in
+            let left = attentionRank(lhs)
+            let right = attentionRank(rhs)
+            if left != right { return left < right }
+            if lhs.silenceDays != rhs.silenceDays { return lhs.silenceDays > rhs.silenceDays }
+            return lhs.generatedAt > rhs.generatedAt
+        }
+    }
+
+    static func attentionRank(_ snapshot: RelationshipRadarSnapshot) -> Int {
+        if snapshot.relationshipTrend == RelationshipRadarKind.trendDeteriorating
+            || snapshot.attitudeTrend == RelationshipRadarKind.attitudeCooling {
+            return 0
+        }
+        if snapshot.silenceDays >= 7 { return 1 }
+        if snapshot.attitudeTrend == RelationshipRadarKind.attitudeMixed { return 2 }
+        if snapshot.relationshipTrend == RelationshipRadarKind.trendImproving { return 3 }
+        return 4
+    }
+
+    static func trendLabel(_ raw: String) -> String { chineseTrend(raw) }
+    static func attitudeLabel(_ raw: String) -> String { chineseAttitude(raw) }
+
+    static func displayName(for username: String, store: HUDStore) -> String {
+        if let alias = store.chatAlias(for: username), !alias.isEmpty { return alias }
+        if let entry = store.getWhitelistEntry(username: username), !entry.displayName.isEmpty {
+            return entry.displayName
+        }
+        if let contact = store.getContact(username: username), !contact.displayName.isEmpty {
+            return contact.displayName
+        }
+        return username
     }
 
     private static func buildSummary(
