@@ -9,7 +9,7 @@
 |---|---|---|---|---|
 | 1 | 今天 | done | 8.5 | 设置卡未就绪时仍用系统 accent；留给首次引导那一刀 |
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮仍无字；留给紧凑/peek 或巡检 |
-| 3 | 岛·通知横幅 | in-progress | 8.3 | 稍后菜单行仍是 .plain，按下无缩放 |
+| 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | queued | — | |
 | 5 | 待确认回复 | queued | — | |
 | 6 | 自动回复设置 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 11 — 2026-09-13 — 岛·通知横幅
+
+- Surface: 岛·通知横幅
+- Files: `Sources/WeChatHUD/Views/InboxRowView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 8.3（主动词 8.2 / 空气 8.3 / 短句 8.1 / 物理 8.5 / 状态戏 8.0 / 稀疏 8.4 / 回执 8.0）
+- Debt picked: 稍后菜单每一行是 .plain，按下没有让步。
+- After: 总分 8.4（主动词 8.2 / 空气 8.3 / 短句 8.1 / 物理 8.7 / 状态戏 8.0 / 稀疏 8.4 / 回执 8.0）
+- Changed: 点「30 分钟后 / 1 小时后 / 明天上午」时行会缩放。弹簧和测量未改。
+- Verified: `swift test --filter AutopilotCopyConsistencyTests --filter NotificationBannerLayoutTests --filter NotificationBannerClickTests --filter BannerSnoozeFailureTests` 等 64 个用例全绿；`swift build -c release`。走查：稍后 → 按下时间行缩放 → 松开出回执。
+- Next: 连续两刀同一表面提升都小于 0.3，换到 岛·紧凑/peek。横幅稍后/关闭仍无字，留给巡检。
 
 ## Cycle 10 — 2026-09-13 — 岛·通知横幅
 
