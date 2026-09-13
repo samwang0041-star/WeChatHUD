@@ -18,6 +18,10 @@ struct InboxRowView: View {
     @State private var showSnoozeMenu = false
     @State private var snoozeHoverClose: DispatchWorkItem?
     @State private var renamingChat: InboxItem?
+    /// The inbox often opens under the pointer (menu "查看新消息", hover
+    /// expand). Treating that as hover puts clock/✕ on the first row and
+    /// reads as a stuck notification banner. Wait until a later hover event.
+    @State private var hoverEnabled = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -96,6 +100,7 @@ struct InboxRowView: View {
             }
         }
         .onHover { inside in
+            guard hoverEnabled else { return }
             hovered = inside
             snoozeHoverClose?.cancel()
             if inside { return }
@@ -106,6 +111,11 @@ struct InboxRowView: View {
             }
             snoozeHoverClose = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                hoverEnabled = true
+            }
         }
         .onChange(of: showSnoozeMenu) { _, open in
             panelState.setSnoozeMenuExpanded(open)

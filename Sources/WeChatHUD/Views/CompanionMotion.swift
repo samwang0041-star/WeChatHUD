@@ -254,10 +254,27 @@ enum IslandMeasurement {
 
     /// True when `size` is the covering stage, not the inbox content.
     static func isCoveringStage(_ size: CGSize, cover: CGSize, lastContent: CGSize) -> Bool {
-        guard lastContent.height > 1 else { return false }
         let matchesCover = abs(size.height - cover.height) < 2
             && abs(size.width - cover.width) < 2
-        return matchesCover && size.height > lastContent.height + 24
+        guard matchesCover else { return false }
+        // A first layout pass that reports the grow-only window used to pin
+        // lastExtendedSize at the 720 pt ceiling. After that every later
+        // stage-sized report matched lastContent and sailed through, leaving
+        // a short inbox on a tall black plate.
+        if lastContent.height <= 1 {
+            return isCeilingHeight(size.height)
+        }
+        return size.height > lastContent.height + 24
+    }
+
+    static func isCeilingHeight(_ height: CGFloat) -> Bool {
+        height >= maxExtendedHeight - 1
+    }
+
+    /// Cached inbox size we can animate to on the next open. The 720 pt
+    /// ceiling is the grow-only stage, not a remembered list.
+    static func isUsableCachedSize(_ size: CGSize) -> Bool {
+        size.width > 1 && size.height > 1 && !isCeilingHeight(size.height)
     }
 }
 
