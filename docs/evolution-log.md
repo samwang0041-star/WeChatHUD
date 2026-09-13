@@ -2,6 +2,13 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+
+### [Overnight] 2026-09-13 Slice 4 — HUDStore drafts/autopilot/classification + statement-cache reset
+- Readers moved onto `queryOne`/`queryAll` serial path
+- Fixed cached `queryOne` leaving SQLITE_ROW and pinning read txn (due_at migration tests)
+- Autopilot guardrails unchanged
+- `swift test` 1518+70 green; release build pass
+
 ## 2026-09-13 — Overnight PR#5：关系雷达独立页 + HUDStore 热路径串行化
 
 ### [Engineer] Wave C 收尾 + Wave B 再推一段
