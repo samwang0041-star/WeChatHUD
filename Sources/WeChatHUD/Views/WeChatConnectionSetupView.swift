@@ -51,6 +51,7 @@ enum WeChatConnectionCopy {
     static let bindFailed = "旧版资料没绑上。请先备份，再确认目录后重试。"
     static let restartToApply = "下次打开助手后生效。"
     static let pickAccount = "选择要连接的微信账号"
+    static let cancelPreparation = "取消"
 }
 
 struct WeChatConnectionSetupView: View {
@@ -267,8 +268,10 @@ struct WeChatConnectionSetupView: View {
                         }
                     }
                     if case .waitingForWeChatRelogin = keyPreparation.phase {
-                        Button("取消") { cancelPreparation() }
-                            .buttonStyle(.link)
+                        Button(WeChatConnectionCopy.cancelPreparation) { cancelPreparation() }
+                            .buttonStyle(CompanionPressStyle())
+                            .workspaceMeta()
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
