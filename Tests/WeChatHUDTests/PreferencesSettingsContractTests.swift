@@ -26,6 +26,37 @@ final class PreferencesSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("浮窗在"))
         XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
     }
+
+    func testPermissionNotesSitOnTheCanvasNotInsideTheCard() throws {
+        let source = try MacExperienceSettingsSource.load()
+        let sectionStart = try XCTUnwrap(source.text.range(of: "SettingsSection(\"macOS 体验与权限\")"))
+        let noteStart = try XCTUnwrap(source.text.range(of: "关闭这个窗口后"))
+        let section = String(source.text[sectionStart.lowerBound..<noteStart.lowerBound])
+        XCTAssertTrue(section.contains("登录时启动"))
+        XCTAssertFalse(section.contains("关闭这个窗口后"))
+        XCTAssertFalse(source.text.contains("更改已保存"))
+        XCTAssertTrue(source.text.contains("workspaceMeta()"))
+        let prefs = try PreferencesSettingsSource.load()
+        XCTAssertTrue(prefs.text.contains("浮窗在"))
+        XCTAssertTrue(prefs.text.contains("显示位置"))
+        XCTAssertEqual(SettingsView.Tab.preferences.label, "使用偏好")
+    }
+}
+
+private struct MacExperienceSettingsSource {
+    let text: String
+
+    static func load() throws -> MacExperienceSettingsSource {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/Settings/MacExperienceSettingsView.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("MacExperienceSettingsView.swift not found at \(url.path)")
+        }
+        return MacExperienceSettingsSource(text: text)
+    }
 }
 
 private struct PreferencesSettingsSource {
