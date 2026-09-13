@@ -51,6 +51,9 @@ enum AutopilotSettingsCopy {
     static let saveOk = "设置已保存"
     static let saveFailed = "设置没保存成功，现在还是上次的规则。请再试一次。"
     static let saveRetry = "再试一次"
+    static let sendKeyTitle = "微信发送键"
+    static let sendKeyCmd = "Cmd+Enter"
+    static let sendKeyEnter = "Enter"
 }
 
 struct AutopilotSettingsView: View {
@@ -343,18 +346,14 @@ struct AutopilotSettingsView: View {
             }
             SettingsRowDivider()
             SettingsRow(
-                "微信发送键",
+                AutopilotSettingsCopy.sendKeyTitle,
                 subtitle: sendKey == .cmdEnter ? "默认：Enter 换行，Cmd+Enter 发送" : "你已在微信里改成 Enter 直接发送",
-                icon: "paperplane.fill",
-                iconColor: .blue
+                icon: "paperplane.fill"
             ) {
-                Picker("", selection: $sendKey) {
-                    Text("Cmd+Enter").tag(WeChatSendKey.cmdEnter)
-                    Text("Enter").tag(WeChatSendKey.enter)
+                HStack(spacing: 6) {
+                    sendKeyChip(AutopilotSettingsCopy.sendKeyCmd, .cmdEnter)
+                    sendKeyChip(AutopilotSettingsCopy.sendKeyEnter, .enter)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 170)
-                .onChange(of: sendKey) { save() }
             }
         }
     }
@@ -375,6 +374,19 @@ struct AutopilotSettingsView: View {
         SettingsRow(AutopilotSettingsCopy.alwaysManualTitle, subtitle: AutopilotSettingsCopy.alwaysManualRule) {
             EmptyView()
         }
+    }
+
+    private func sendKeyChip(_ title: String, _ key: WeChatSendKey) -> some View {
+        Button(title) {
+            sendKey = key
+            save()
+        }
+        .buttonStyle(CompanionPressStyle())
+        .workspaceMeta()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(sendKey == key ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+        .foregroundStyle(sendKey == key ? .primary : .secondary)
     }
 
     // MARK: - History

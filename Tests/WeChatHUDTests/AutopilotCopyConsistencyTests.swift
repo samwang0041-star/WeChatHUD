@@ -133,6 +133,20 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(AutopilotSettingsCopy.alwaysManualTitle, "哪些一定交给你")
     }
 
+    func testSendKeyPressesInsteadOfSystemBlue() throws {
+        let source = try AutopilotViewSource.load()
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.sendKeyTitle"))
+        XCTAssertTrue(source.text.contains("sendKeyChip"))
+        XCTAssertTrue(source.text.contains("CompanionPressStyle()"))
+        XCTAssertTrue(source.text.contains("AutopilotSettingsCopy.openPending"))
+        XCTAssertFalse(source.text.contains("iconColor: .blue"))
+        XCTAssertFalse(source.text.contains(".pickerStyle(.segmented)"))
+        XCTAssertEqual(AutopilotSettingsCopy.sendKeyTitle, "微信发送键")
+        XCTAssertEqual(AutopilotSettingsCopy.sendKeyCmd, "Cmd+Enter")
+        XCTAssertEqual(AutopilotSettingsCopy.sendKeyEnter, "Enter")
+        XCTAssertFalse(AutopilotConfig().autoSendEnabled, "自动发送默认关")
+    }
+
     func testAdvancedDoesNotNestASecondAdvancedCard() throws {
         let source = try AutopilotViewSource.load()
         XCTAssertFalse(
