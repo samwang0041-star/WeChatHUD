@@ -766,6 +766,19 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
         XCTAssertTrue(WeChatConnectionCopy.changeAccountScope.contains("按账号分开"))
     }
+
+    func testChangeAccountPressesLikeAWorkspaceSecondary() throws {
+        let setup = try ConnectionSetupSource.load()
+        let start = try XCTUnwrap(setup.text.range(of: "Button(WeChatConnectionCopy.changeAccount)"))
+        let readOnly = try XCTUnwrap(setup.text.range(of: "Text(WeChatConnectionCopy.readOnly)"))
+        let row = String(setup.text[start.lowerBound..<readOnly.lowerBound])
+        XCTAssertTrue(row.contains("CompanionPressStyle()"))
+        XCTAssertTrue(row.contains(".workspaceMeta()"))
+        XCTAssertFalse(row.contains(".buttonStyle(.link)"))
+        XCTAssertFalse(row.contains("borderedProminent"), "jade stays on 去选对话")
+        XCTAssertEqual(WeChatConnectionCopy.changeAccount, "更换微信账号")
+        XCTAssertEqual(WeChatConnectionCopy.pickConversations, "去选对话")
+    }
 }
 
 // MARK: - Source readers

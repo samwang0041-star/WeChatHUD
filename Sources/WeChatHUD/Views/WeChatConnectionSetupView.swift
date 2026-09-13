@@ -40,6 +40,7 @@ enum ConnectionSetupFlow {
 /// A picker grants access; only the monitor's successful read completes setup.
 enum WeChatConnectionCopy {
     static let pickConversations = "去选对话"
+    static let changeAccount = "更换微信账号"
     static let readOnly = "只读取聊天，不改微信里的内容。"
     static let changeAccountScope = "更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。"
 }
@@ -298,9 +299,12 @@ struct WeChatConnectionSetupView: View {
                         .accessibilityLabel(buttonTitle)
                 }
                 if PreviewRuntime.isEnabled || (hasConfiguredSelection && !needsAccountSelection) {
-                    Button("更换微信账号") { showChangeAccountConfirm = true }
-                        .buttonStyle(.link)
+                    Button(WeChatConnectionCopy.changeAccount) { showChangeAccountConfirm = true }
+                        .buttonStyle(CompanionPressStyle())
+                        .workspaceMeta()
+                        .foregroundStyle(.secondary)
                         .disabled(applying || syncing || probing)
+                        .accessibilityLabel(WeChatConnectionCopy.changeAccount)
                         .accessibilityIdentifier("connection.change-account")
                 }
                 Spacer(minLength: 0)
