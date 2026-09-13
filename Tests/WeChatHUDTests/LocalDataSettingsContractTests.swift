@@ -52,6 +52,18 @@ final class LocalDataSettingsContractTests: XCTestCase {
         XCTAssertTrue(source.text.contains("承诺"))
         XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
     }
+
+    func testFilterCopySpeaksLikeAPerson() throws {
+        XCTAssertEqual(SyncSettingsView.DataSection.pendingAsks.rawValue, "提问")
+        XCTAssertEqual(LocalDataCopy.searchPlaceholder, "找人或内容")
+        XCTAssertEqual(LocalDataRetrospection.emptyPendingAsks, "近两周没有记下的提问")
+        XCTAssertFalse(LocalDataCopy.searchPlaceholder.contains("联系人"))
+        XCTAssertFalse(LocalDataRetrospection.emptyPendingAsks.contains("未处理"))
+        let source = try LocalDataSettingsSource.load()
+        XCTAssertTrue(source.text.contains("近两周"))
+        XCTAssertTrue(source.text.contains("承诺"))
+        XCTAssertEqual(SettingsView.Tab.localData.label, "本地资料")
+    }
 }
 
 private struct LocalDataSettingsSource {

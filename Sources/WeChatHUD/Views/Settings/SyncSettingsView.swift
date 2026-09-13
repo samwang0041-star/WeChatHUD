@@ -76,7 +76,7 @@ struct SyncSettingsView: View {
 
     enum DataSection: String, CaseIterable {
         case commitments = "承诺"
-        case pendingAsks = "待处理的提问"
+        case pendingAsks = "提问"
         case recalls = "撤回记录"
     }
 
@@ -655,9 +655,9 @@ struct SyncSettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     CompanionClipboardField(
                         text: $dataSearch,
-                        placeholder: "搜索标题、联系人或内容",
+                        placeholder: LocalDataCopy.searchPlaceholder,
                         kind: .plain,
-                        accessibilityLabel: "搜索整理过的记录"
+                        accessibilityLabel: LocalDataCopy.searchPlaceholder
                     )
                     HStack(spacing: 8) {
                         ForEach(DataSection.allCases, id: \.self) { section in
@@ -963,6 +963,7 @@ enum LocalDataCopy {
     }
 
     static let exportDisclosure = "还要导出"
+    static let searchPlaceholder = "找人或内容"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
@@ -973,7 +974,7 @@ enum LocalDataRetrospection {
     static let windowCaption = "只看近 \(windowDays) 天整理过的记录。更早的已收起。"
     static let emptyRecalls = "近两周没有撤回记录"
     static let emptyCommitments = "近两周没有记下的承诺"
-    static let emptyPendingAsks = "近两周没有未处理的提问"
+    static let emptyPendingAsks = "近两周没有记下的提问"
 
     struct Snapshot {
         var recalls: [RecalledMessage]
