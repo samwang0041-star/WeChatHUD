@@ -8,6 +8,7 @@ enum AISettingsCopy {
     static let unverified = "还没确认能不能用"
     static let ready = "可以用"
     static let statusHint = "改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。"
+    static let sourceTitle = "服务来源"
 }
 
 extension Notification.Name {
@@ -118,7 +119,6 @@ struct ModelPicker: View {
 
 struct ProviderCard: View {
     let isCustomSource: Bool
-    let isVerified: Bool
 
     @Binding var providerID: String
     @Binding var baseURL: String
@@ -129,9 +129,7 @@ struct ProviderCard: View {
     @Binding var isTesting: Bool
     @Binding var isFetching: Bool
 
-    let onTest: () -> Void
     let onFetch: () -> Void
-    let onChange: () -> Void
     let onProviderSelected: (String) -> Void
 
     @State private var advancedConnectionExpanded = false
@@ -154,23 +152,8 @@ struct ProviderCard: View {
     }
 
     var body: some View {
-        SettingsSection(isCustomSource ? "自定义供应商" : "预设供应商") {
-            // Status row
-            SettingsRow("状态", icon: isCustomSource ? "slider.horizontal.3" : "shippingbox.fill", iconColor: CompanionPalette.accent) {
-                HStack(spacing: 8) {
-                    CompanionBadge(
-                        title: isVerified ? "已启用 · 已验证" : "已启用 · 未验证",
-                        systemImage: isVerified ? "checkmark.circle.fill" : "exclamationmark.circle",
-                        tint: isVerified ? CompanionPalette.accent : .orange
-                    )
-                    testButton
-                }
-            }
-
+        Group {
             if !isCustomSource {
-                SettingsRowDivider()
-
-                // Provider picker — preset vendors only
                 SettingsRow("供应商") {
                     Picker("供应商", selection: Binding(get: { providerID }, set: { value in
                         providerID = value
@@ -302,32 +285,6 @@ struct ProviderCard: View {
 
     private var hasPresetBaseURL: Bool {
         !(provider?.baseURL.isEmpty ?? true)
-    }
-
-    private var testButton: some View {
-        HStack(spacing: 4) {
-            if !testResult.isEmpty {
-                Circle()
-                    .fill(isSuccessfulTestResult ? Color.green : (isFailedTestResult ? Color.red : Color.secondary))
-                    .frame(width: 6, height: 6)
-                    .help(testResult)
-            }
-            Button(action: onTest) {
-                if isTesting {
-                    ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
-                } else {
-                    Text("测试连接")
-                        .workspaceMeta()
-                }
-            }
-            .buttonStyle(CompanionPressStyle())
-            .foregroundStyle(.secondary)
-            .disabled(isTesting || isFetching)
-        }
-    }
-
-    private var isSuccessfulTestResult: Bool {
-        testResult.hasPrefix("连接成功") || testResult.hasPrefix("上次测试成功")
     }
 
     private var isFailedTestResult: Bool {
@@ -611,8 +568,7 @@ struct AISettingsView: View {
 
     private var serviceSection: some View {
         VStack(alignment: .leading, spacing: 24) {
-            topControls
-            providerCard
+            serviceForm
             generationPreferences
             privacySection
         }
@@ -622,12 +578,10 @@ struct AISettingsView: View {
         AISettingsValidation.connectionError(configuredSlot, requireModel: true) == nil
     }
 
-    // MARK: - Top Controls
-
-    private var topControls: some View {
-        SettingsSection("服务来源") {
-            SettingsRow("服务来源", icon: "bolt.fill", iconColor: .purple) {
-                Picker("服务来源", selection: $serviceSource) {
+    private var serviceForm: some View {
+        SettingsSection {
+            SettingsRow(AISettingsCopy.sourceTitle) {
+                Picker(AISettingsCopy.sourceTitle, selection: $serviceSource) {
                     Text("预设供应商").tag(ServiceSource.preset)
                     Text("自定义供应商").tag(ServiceSource.custom)
                 }
@@ -637,12 +591,7 @@ struct AISettingsView: View {
                 .accessibilityLabel("AI 服务来源")
             }
             SettingsRowDivider()
-            Text("选择预设供应商（DeepSeek、Kimi、智谱等），或填入自定义服务。")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
+            providerCard
         }
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
@@ -711,7 +660,6 @@ struct AISettingsView: View {
     private var providerCard: some View {
         ProviderCard(
             isCustomSource: serviceSource == .custom,
-            isVerified: store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true,
             providerID: $providerID,
             baseURL: $baseURL,
             model: $model,
@@ -720,9 +668,7 @@ struct AISettingsView: View {
             testResult: $testResult,
             isTesting: $isTesting,
             isFetching: $isFetching,
-            onTest: { testSlot() },
             onFetch: { fetchModels() },
-            onChange: { configurationDidChange() },
             onProviderSelected: { value in
                 guard !isHydrating else { return }
                 if value != "custom" { lastPresetProviderID = value }
