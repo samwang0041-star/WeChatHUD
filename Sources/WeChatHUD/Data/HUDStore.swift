@@ -3901,6 +3901,38 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return changes
     }
 
+    /// Throwing sibling of queryAll for callers that must surface corrupt rows
+    /// (discussion queue) instead of silently dropping them.
+    func queryAllThrowing<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer) throws -> T) throws -> [T] {
+        var results: [T] = []
+        try withCachedStatement(sql) { stmt in
+            bind(stmt)
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE { break }
+                guard rc == SQLITE_ROW else {
+                    throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+                }
+                results.append(try decode(stmt))
+            }
+        }
+        return results
+    }
+
+    func queryOneThrowing<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer) throws -> T) throws -> T? {
+        var result: T? = nil
+        try withCachedStatement(sql) { stmt in
+            bind(stmt)
+            let rc = sqlite3_step(stmt)
+            if rc == SQLITE_ROW {
+                result = try decode(stmt)
+            } else if rc != SQLITE_DONE {
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
+            }
+        }
+        return result
+    }
+
     nonisolated func queryOne<T>(_ sql: String, bind: SQLiteBinder, decode: (OpaquePointer?) -> T?) -> T? {
         var result: T? = nil
         try? withCachedStatement(sql) { stmt in
