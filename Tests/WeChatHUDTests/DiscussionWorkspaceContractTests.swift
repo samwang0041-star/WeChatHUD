@@ -59,6 +59,22 @@ final class DiscussionWorkspaceContractTests: XCTestCase {
         XCTAssertFalse(list.contains("CompanionPalette.jade"))
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
     }
+
+    func testEmptyStatesSpeakAndOfferANextStep() throws {
+        let source = try DiscussionWorkspaceSource.load()
+        XCTAssertFalse(source.text.contains("ContentUnavailableView"))
+        let emptyStart = try XCTUnwrap(source.text.range(of: "private var emptyState"))
+        let listStart = try XCTUnwrap(source.text.range(of: "private func listPane"))
+        let empty = String(source.text[emptyStart.lowerBound..<listStart.lowerBound])
+        XCTAssertTrue(empty.contains("还没有待办"))
+        XCTAssertTrue(empty.contains("有 \\(hiddenHere.count) 条被收起") || empty.contains("条被收起"))
+        XCTAssertTrue(empty.contains("全部都记"))
+        XCTAssertTrue(empty.contains("清除搜索"))
+        XCTAssertTrue(empty.contains("CompanionPressStyle()"))
+        XCTAssertFalse(empty.contains("buttonStyle(.bordered)"))
+        XCTAssertTrue(source.text.contains("从左边选一条"))
+        XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
+    }
 }
 
 private struct DiscussionWorkspaceSource {
