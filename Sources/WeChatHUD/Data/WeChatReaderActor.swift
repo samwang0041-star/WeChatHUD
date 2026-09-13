@@ -73,4 +73,20 @@ actor WeChatReaderActor {
     func normalizeContactMentions(in text: String) -> String {
         reader.normalizeContactMentions(in: text)
     }
+
+    func bulkMessageStats(
+        chatUsernames: [String],
+        selfNames: Set<String>,
+        sinceTsEpoch: Int = 0,
+        myUsername: String = "",
+        myDisplayName: String = ""
+    ) -> [String: WeChatReader.BulkChatStats] {
+        reader.bulkMessageStats(
+            chatUsernames: chatUsernames,
+            selfNames: selfNames,
+            sinceTsEpoch: sinceTsEpoch,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName
+        )
+    }
 }

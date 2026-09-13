@@ -67,7 +67,8 @@ struct InsightSidebarView: View {
             return
         }
         let date = selectedDate
-        let stats = await InsightStore.computeDayStats(requests: requests, date: date, reader: reader)
+        let readerActor = WeChatReaderActor(reader)
+        let stats = await InsightStore.computeDayStats(requests: requests, date: date, readerActor: readerActor)
         dayStatsByChat = stats
         // The detail view asks for the selected chat's day stats from its own
         // body; those now come from the cache this primes instead of a read.

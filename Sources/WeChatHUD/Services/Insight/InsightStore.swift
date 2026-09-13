@@ -138,27 +138,23 @@ final class InsightStore: ObservableObject {
     nonisolated static func computeDayStats(
         requests: [(username: String, displayName: String, isGroup: Bool, category: WhitelistCategory)],
         date: Date,
-        reader: WeChatReader
+        readerActor: WeChatReaderActor
     ) async -> [String: ChatStatsData] {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let loader = InsightDataLoader()
-                var out: [String: ChatStatsData] = [:]
-                for request in requests {
-                    if let stats = loader.statsForDay(
-                        chatUsername: request.username,
-                        chatName: request.displayName,
-                        isGroup: request.isGroup,
-                        category: request.category,
-                        date: date,
-                        reader: reader
-                    ) {
-                        out[request.username] = stats
-                    }
-                }
-                continuation.resume(returning: out)
+        let loader = InsightDataLoader()
+        var out: [String: ChatStatsData] = [:]
+        for request in requests {
+            if let stats = await loader.statsForDay(
+                chatUsername: request.username,
+                chatName: request.displayName,
+                isGroup: request.isGroup,
+                category: request.category,
+                date: date,
+                readerActor: readerActor
+            ) {
+                out[request.username] = stats
             }
         }
+        return out
     }
 
     /// Store finished day stats so the single-chat detail view can read them
@@ -170,9 +166,9 @@ final class InsightStore: ObservableObject {
         }
     }
 
-    /// Runs `InsightDataLoader.load` off the main actor. Kept as a single
-    /// `nonisolated` hop so the heavy call cannot accidentally be awaited in a
-    /// main-actor context.
+    /// Runs async `InsightDataLoader.load(readerActor:)` off the main actor.
+    /// Creates a `WeChatReaderActor` hop so bulk sessions/stats share ScanEngine's
+    /// isolation boundary while published writes stay on the main actor.
     nonisolated private static func loadInBackground(
         loader: InsightDataLoader,
         store: HUDStore,
@@ -181,18 +177,14 @@ final class InsightStore: ObservableObject {
         window: InsightTimeWindow,
         scope: InsightScope
     ) async -> InsightDataLoader.LoadResult? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = loader.load(
-                    store: store,
-                    reader: reader,
-                    replyDebtItems: replyDebtItems,
-                    window: window,
-                    scope: scope
-                )
-                continuation.resume(returning: result)
-            }
-        }
+        let readerActor = WeChatReaderActor(reader)
+        return await loader.load(
+            store: store,
+            readerActor: readerActor,
+            replyDebtItems: replyDebtItems,
+            window: window,
+            scope: scope
+        )
     }
 
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {
