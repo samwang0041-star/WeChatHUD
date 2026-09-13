@@ -197,29 +197,21 @@ struct DailyReportCommandCenterView: View {
     private var sourceUnavailableView: some View {
         let isHistorical = monitor.dailyReport.map { !Calendar.current.isDateInToday($0.date) } ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            Label(isHistorical ? "这一天暂无可用记录" : "今日来源未验证", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.orange)
-            Text(isHistorical
-                 ? "没有找到这一天可用于整理的消息或事项。可以查看其他日期，或在连接微信后重新整理。"
-                 : "尚无成功同步记录，当前没有足够的今日微信来源，暂不能判断是否有待处理事项。")
-                .font(.system(size: isWorkspace ? 14 : 11))
-                .foregroundColor(.primary)
+            Text(isHistorical ? "这一天没有可写的小结。" : "今天还没读到聊天。")
+                .workspaceMeta()
+                .foregroundStyle(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !isHistorical {
-                Text("请连接微信并完成一次成功同步后，再刷新日报。")
-                    .font(.system(size: isWorkspace ? 14 : 11))
-                    .foregroundColor(.secondary)
+                Button("重新生成") {
+                    guard !monitor.dailyReportIsLoading else { return }
+                    Task { await monitor.loadDailyReport(force: true) }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .workspaceMeta()
+                .foregroundStyle(.secondary)
+                .disabled(monitor.dailyReportIsLoading)
+                .accessibilityLabel("重新生成")
             }
-            Button("重新生成") {
-                guard !monitor.dailyReportIsLoading else { return }
-                Task { await monitor.loadDailyReport(force: true) }
-            }
-            .buttonStyle(CompanionPressStyle())
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
-            .disabled(monitor.dailyReportIsLoading)
-            .accessibilityLabel("重新生成")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
