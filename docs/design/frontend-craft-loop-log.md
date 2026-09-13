@@ -11,7 +11,7 @@
 | 2 | 岛·展开收件箱 | done | 8.5 | 刘海齿轮已写「设置」；稍后/关闭无字留给巡检 |
 | 3 | 岛·通知横幅 | in-progress | 8.4 | 稍后/关闭仍无字；连续两刀提升过小，换表面 |
 | 4 | 岛·紧凑/peek | in-progress | 8.2 | 连续两刀 <0.3，换表面；peek 口述「移入查看」留给巡检 |
-| 5 | 待确认回复 | in-progress | 6.8 | 拟回复仍挂「AI 草稿」；列表行仍是 .plain |
+| 5 | 待确认回复 | in-progress | 7.2 | 列表行仍是 .plain；详情还堆着裸字号 |
 | 6 | 自动回复设置 | queued | — | |
 | 7 | AI 服务 | queued | — | |
 | 8 | 微信连接 | queued | — | |
@@ -23,6 +23,17 @@
 | 14 | 侧栏与页头 | queued | — | 勿第一刀就合并 18 个 tab |
 | 15 | 对话详情 / 对话框 | queued | — | |
 | 16 | 全站微交互巡检 | queued | — | 放在多数页面主动词成立之后 |
+
+## Cycle 16 — 2026-09-13 — 待确认回复
+
+- Surface: 待确认回复
+- Files: `Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift`、`Tests/WeChatHUDTests/AutopilotCopyConsistencyTests.swift`
+- Before: 总分 6.8（主动词 8.0 / 空气 6.2 / 短句 6.2 / 物理 6.0 / 状态戏 7.5 / 稀疏 6.5 / 回执 7.0）
+- Debt picked: 编辑区标题是「拟回复」，旁边还挂着「AI 草稿」徽章。
+- After: 总分 7.2（主动词 8.0 / 空气 6.8 / 短句 8.0 / 物理 6.0 / 状态戏 7.5 / 稀疏 7.0 / 回执 7.0）
+- Changed: 这一栏只叫「回复」。没有星星，也不再声明这是 AI。护栏未改。
+- Verified: `swift test --filter ApprovalWorkspaceTests --filter AutopilotCopyConsistencyTests --filter AutopilotStartReceiptTests` 29 个用例全绿；`swift build -c release`。走查：点一条草稿 → 看到「回复」和正文 → 青玉确认发送。
+- Next: 待确认回复第三刀 — 列表行补按下；总分未过 8.0。
 
 ## Cycle 15 — 2026-09-13 — 待确认回复
 
