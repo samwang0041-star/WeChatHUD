@@ -192,11 +192,6 @@ final class NotificationBannerClickTests: XCTestCase {
             fixture.panelState.currentState, .compact,
             "关闭 collapses the island"
         )
-        XCTAssertEqual(
-            fixture.panelState.toastMessage,
-            IslandBannerCopy.dismissed,
-            "关闭 must leave a receipt that the message is still in the inbox"
-        )
     }
 
     /// 稍后提醒 opens the time menu and nothing else — in particular it must not

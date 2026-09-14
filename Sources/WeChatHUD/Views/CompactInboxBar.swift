@@ -15,6 +15,7 @@ enum CompactInboxMetrics {
     static let wingWidth: CGFloat = 56
     static let markSize: CGFloat = 8
     static let quietMarkSize: CGFloat = 6
+    static let badgeSize: CGFloat = 11
 }
 
 struct CompactInboxBar: View {
@@ -28,8 +29,6 @@ struct CompactInboxBar: View {
     @State private var heldAIActive = false
     @State private var aiHoldTask: Task<Void, Never>? = nil
     @State private var pillsVisible = false
-    @State private var hoveringLeft = false
-    @State private var hoveringRight = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -43,17 +42,11 @@ struct CompactInboxBar: View {
             Button { CompactWingRouter.activate(leftWingCopy.route, panelState: panelState) } label: {
                 leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
-                    .background {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(hoveringLeft ? IslandInk.hover : Color.clear)
-                    }
             }
             .buttonStyle(CompanionPressStyle())
             .accessibilityLabel(leftWingCopy.accessibilityLabel)
             .accessibilityValue(accessibilityStatus)
             .help(leftWingCopy.help)
-            .onHover { hoveringLeft = $0 }
-            .companionAnimation(CompanionMotion.hover(), value: hoveringLeft)
             .padding(.trailing, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .trailing)
 
@@ -66,20 +59,15 @@ struct CompactInboxBar: View {
                 .frame(width: notchWidth)
 
             Button {
-                CompactRightWingRouter.activate(panelState: panelState)
+                panelState.pendingSettingsTab = "today"
+                panelState.showDetail()
             } label: {
                 rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
-                    .background {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(hoveringRight ? IslandInk.hover : Color.clear)
-                    }
             }
             .buttonStyle(CompanionPressStyle())
             .accessibilityLabel("打开今天")
             .help("打开今天")
-            .onHover { hoveringRight = $0 }
-            .companionAnimation(CompanionMotion.hover(), value: hoveringRight)
             .padding(.leading, 6)
             .frame(width: CompactInboxMetrics.wingWidth, height: notchHeight, alignment: .leading)
 
@@ -222,9 +210,9 @@ struct CompactInboxBar: View {
             leftMark(snap.mark)
             if let badge = snap.badge {
                 Text(badge)
-                    .islandMeta()
+                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundStyle(IslandInk.primary)
+                    .foregroundColor(IslandInk.primary)
                     .lineLimit(1)
             }
         }
@@ -236,7 +224,7 @@ struct CompactInboxBar: View {
         case .warning:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: CompactInboxMetrics.markSize, weight: .semibold))
-                .foregroundStyle(IslandChrome.glowAmber)
+                .foregroundStyle(Color.yellow)
         case .dot(let kind):
             Circle()
                 .fill(dotColor(kind))
@@ -250,11 +238,11 @@ struct CompactInboxBar: View {
 
     private func dotColor(_ kind: CompactIslandMark.Kind) -> Color {
         switch kind {
-        case .urgentP0: return IslandChrome.glowRed
-        case .urgentP1: return IslandChrome.glowAmber
+        case .urgentP0: return Color.red.opacity(0.92)
+        case .urgentP1: return Color.yellow.opacity(0.88)
         case .working: return CompanionPalette.islandMint
-        case .waiting: return IslandInk.secondary
-        case .notices: return IslandInk.meta
+        case .waiting: return Color.white.opacity(0.62)
+        case .notices: return Color.blue.opacity(0.72)
         case .quiet: return CompanionPalette.islandMint.opacity(0.4)
         }
     }
@@ -366,20 +354,5 @@ enum CompactWingRouter {
         case .openInbox:
             panelState.goExtended()
         }
-    }
-}
-
-/// 打开今天 is a separate window. The compact island would otherwise
-/// swallow the click with no words, so the receipt is a quiet toast.
-enum CompactInboxCopy {
-    static let openedToday = "已经打开今天。"
-}
-
-@MainActor
-enum CompactRightWingRouter {
-    static func activate(panelState: PanelState) {
-        panelState.pendingSettingsTab = "today"
-        panelState.showDetail()
-        panelState.showToast(CompactInboxCopy.openedToday, success: true)
     }
 }

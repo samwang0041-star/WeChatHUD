@@ -12,39 +12,6 @@ enum ApprovalWorkspacePolicy {
         }
         return queue
     }
-
-    static func statusSentence(active: Bool, paused: Bool, autoSendOn: Bool) -> String {
-        let run: String
-        if !active {
-            run = "尚未开始整理"
-        } else if paused {
-            run = "已暂停"
-        } else {
-            run = "正在整理"
-        }
-        let send = autoSendOn ? "自动发送开启" : "自动发送关闭"
-        return "\(run) · \(send)"
-    }
-}
-
-enum ApprovalCopy {
-    static let confirmSend = "确认发送"
-    static let saveDraft = "保存修改"
-    static let cancelItem = "取消本条"
-    static let pause = "暂停"
-    static let resume = "恢复"
-    static let emptyPending = "还没有待确认的回复"
-    static let emptyOther = "这一栏还没有记录"
-    static let emptyHint = "点开始整理，草稿会出现在这里。发不发都由你决定。"
-    static let reply = "回复"
-    static let openChat = "查看聊天记录"
-    static let sendNow = "立即发送"
-    static let dismissSend = "取消"
-    static let cancelledSend = "这条不发了。"
-    static let pendingGone = "这条已经不在队列里。"
-    static let savedDraft = "已保存草稿"
-    static let saveDraftFailed = "草稿没有保存，请重试。"
-    static let cancelledItem = "已取消本条，现有草稿仍保留。"
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -67,15 +34,9 @@ struct ApprovalWorkspaceView: View {
     @State private var filter: Filter = .pending
     @State private var selectedID: Int64?
     @State private var editedReply: String = ""
-    @State private var receipt: Receipt = .idle
+    @State private var receipt: String?
     @State private var showSendConfirm = false
     @State private var isSending = false
-
-    private enum Receipt: Equatable {
-        case idle
-        case ok(String)
-        case warn(String)
-    }
 
     private var entries: [AutopilotLogEntry] {
         switch filter {
@@ -117,18 +78,10 @@ struct ApprovalWorkspaceView: View {
                     detailPane.frame(minWidth: 240, idealWidth: 460)
                 }
             }
-            switch receipt {
-            case .idle:
-                EmptyView()
-            case .ok(let text):
-                Label(text, systemImage: "checkmark.circle.fill")
-                    .workspaceRowTitle()
-                    .foregroundStyle(CompanionPalette.jade)
-                    .padding(.top, 10)
-            case .warn(let text):
-                Text(text)
-                    .workspaceRowTitle()
-                    .foregroundStyle(.secondary)
+            if let receipt {
+                Label(receipt, systemImage: receipt.contains("失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jade)
                     .padding(.top, 10)
             }
         }
@@ -141,15 +94,12 @@ struct ApprovalWorkspaceView: View {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showSendConfirm = false }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: selected?.chatName ?? "", text: editedReply))
-                            .workspaceBody()
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.sendConfirmBack) { showSendConfirm = false }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
                             Button(CompanionProductCopy.sendConfirmAction) {
                                 showSendConfirm = false
                                 Task { await confirmSend() }
@@ -165,7 +115,7 @@ struct ApprovalWorkspaceView: View {
     }
 
     private var toolbar: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 ForEach(Filter.allCases) { value in
                     let count = value == .pending ? pendingCount : nil
@@ -175,49 +125,43 @@ struct ApprovalWorkspaceView: View {
                     ) { filter = value }
                 }
                 Spacer()
-            }
-            HStack(spacing: 8) {
-                Text(ApprovalWorkspacePolicy.statusSentence(
-                    active: monitor.autopilotActive,
-                    paused: monitor.autopilotManuallyPaused,
-                    autoSendOn: autoSendOn
-                ))
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                Spacer()
-                if monitor.autopilotActive {
-                    Button(monitor.autopilotManuallyPaused ? ApprovalCopy.resume : ApprovalCopy.pause) {
-                        Task {
-                            if monitor.autopilotManuallyPaused {
-                                await monitor.autopilotService?.manualResume()
-                            } else {
-                                await monitor.autopilotService?.manualPause()
+                HStack(spacing: 8) {
+                    Image(systemName: monitor.autopilotActive ? "arrow.triangle.2.circlepath" : "pause.circle")
+                    Text(monitor.autopilotActive ? "正在整理" : "尚未开始整理")
+                    Text("·")
+                    Text(autoSendOn ? "自动发送开启" : "自动发送关闭")
+                    if monitor.autopilotActive {
+                        Button(monitor.autopilotManuallyPaused ? "恢复" : "暂停") {
+                            Task {
+                                if monitor.autopilotManuallyPaused {
+                                    await monitor.autopilotService?.manualResume()
+                                } else {
+                                    await monitor.autopilotService?.manualPause()
+                                }
                             }
                         }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    } else if showsSessionToggle {
+                        Button("开始整理") { monitor.toggleAutopilot() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                     }
-                    .workspaceMeta()
-                    .buttonStyle(CompanionPressStyle())
                 }
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
             }
         }
         .padding(.bottom, 12)
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(filter == .pending ? ApprovalCopy.emptyPending : ApprovalCopy.emptyOther)
-                .workspaceTitle()
-            Text(ApprovalCopy.emptyHint)
-                .workspaceBody()
-                .foregroundStyle(.secondary)
-            if showsSessionToggle && filter == .pending && !monitor.autopilotActive {
-                Button(AutopilotStartCopy.start) { monitor.toggleAutopilot() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(CompanionPalette.jade)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 24)
+        ContentUnavailableView(
+            filter == .pending ? "还没有待确认的回复" : "这一栏还没有记录",
+            systemImage: "bubble.left.and.bubble.right",
+            description: Text("点开始整理后，助理会写成草稿。发不发都由你决定。暂停不会删除现有草稿。")
+        )
+        .frame(maxWidth: .infinity, minHeight: 280)
     }
 
     private var listPane: some View {
@@ -226,9 +170,9 @@ struct ApprovalWorkspaceView: View {
                 if !humanNeededSends.isEmpty {
                     HStack {
                         Text(autoSendOn ? "需人工确认" : "即将发送")
-                            .workspaceRowTitle()
+                            .font(.system(size: 12, weight: .semibold))
                         Text("\(humanNeededSends.count)")
-                            .workspaceMeta()
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -252,14 +196,14 @@ struct ApprovalWorkspaceView: View {
                             CompanionAvatar(name: entry.senderName, size: 32)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(entry.senderName).workspaceRowTitle()
+                                    Text(entry.senderName).font(.system(size: 13, weight: .semibold))
                                     Spacer()
                                     Text(CommitmentPresentation.timeLabel(entry.createdAt))
-                                        .workspaceMeta().foregroundStyle(.secondary)
+                                        .font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
                                 statusLabel(entry)
                                 Text(entry.triggerText)
-                                    .workspaceBody()
+                                    .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
@@ -268,7 +212,7 @@ struct ApprovalWorkspaceView: View {
                         .padding(10)
                         .background(selected?.id == entry.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .buttonStyle(CompanionPressStyle())
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.trailing, 10)
@@ -280,11 +224,11 @@ struct ApprovalWorkspaceView: View {
     private func statusLabel(_ entry: AutopilotLogEntry) -> some View {
         if entry.riskLevel == .high || (entry.aiReasoning?.contains("转账") == true) {
             Text("涉及转账需人工处理")
-                .workspaceMeta()
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.orange)
         } else {
             Text(entry.action == .pending ? "待确认回复" : actionTitle(entry.action))
-                .workspaceMeta()
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
     }
@@ -306,23 +250,22 @@ struct ApprovalWorkspaceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(selected.chatName).workspaceTitle()
                         Text("收件人 \(selected.senderName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")")
-                            .workspaceBody()
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(ApprovalCopy.openChat) {
+                    Button("查看聊天记录") {
                         panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                     }
-                    .workspaceMeta()
-                    .buttonStyle(CompanionPressStyle())
+                    .buttonStyle(.plain)
                     .foregroundStyle(CompanionPalette.jade)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(selected.triggerText)
-                        .workspaceBody()
+                        .font(.system(size: 14))
                     Text(CommitmentPresentation.timeLabel(selected.createdAt))
-                        .workspaceMeta()
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
                 .padding(12)
@@ -330,59 +273,59 @@ struct ApprovalWorkspaceView: View {
                 .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(ApprovalCopy.reply)
-                        .workspaceRowTitle()
+                    HStack {
+                        Label("拟回复", systemImage: "sparkles")
+                            .font(.system(size: 13, weight: .semibold))
+                        CompanionBadge(title: "AI 草稿", systemImage: "text.badge.star")
+                    }
                     TextEditor(text: $editedReply)
-                        .accessibilityLabel(ApprovalCopy.reply)
-                        .workspaceBody()
+                        .accessibilityLabel("拟回复")
+                        .font(.system(size: 14))
                         .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)
                     HStack {
                         if !autoSendOn {
                             Label("当前未开启自动发送，这条回复尚未发出。", systemImage: "info.circle")
-                                .workspaceBody()
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text("\(editedReply.count) / 500")
-                            .workspaceMeta()
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 if selected.action == .pending {
-                    HStack(spacing: 12) {
-                        Button(ApprovalCopy.confirmSend) { showSendConfirm = true }
+                    HStack(spacing: 8) {
+                        Button("确认发送") { showSendConfirm = true }
                             .buttonStyle(.borderedProminent)
-                            .tint(CompanionPalette.jade)
                             .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
-                        Button(ApprovalCopy.saveDraft) {
+                        Button("保存修改") {
                             do {
                                 try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
-                                receipt = .ok(ApprovalCopy.savedDraft)
+                                receipt = "已保存草稿"
                             } catch {
-                                receipt = .warn(ApprovalCopy.saveDraftFailed)
+                                receipt = "草稿没有保存，请重试。"
                             }
                         }
-                        .buttonStyle(CompanionPressStyle())
-                        .foregroundStyle(.secondary)
-                        Button(ApprovalCopy.cancelItem) {
+                        .buttonStyle(.bordered)
+                        Button("取消本条") {
                             monitor.rejectAutopilotItem(logId: selected.id)
-                            receipt = .ok(ApprovalCopy.cancelledItem)
+                            receipt = "已取消本条，现有草稿仍保留。"
                         }
-                        .buttonStyle(CompanionPressStyle())
-                        .foregroundStyle(.secondary)
+                        .buttonStyle(.bordered)
                     }
                 }
             }
             .padding(.leading, 16)
             .padding(.vertical, 12)
         } else if !humanNeededSends.isEmpty {
-            Text(autoSendOn ? "这些回复需要你确认后再发" : "自动发送已关，在左侧发送或取消。")
-                .workspaceBody()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 16)
+            ContentUnavailableView(
+                autoSendOn ? "这些回复需要你确认后再发" : "自动发送已关，左侧是即将发送的回复",
+                systemImage: "paperplane",
+                description: Text("立即发送或取消都可以在左侧完成。草稿仍在待确认列表里。")
+            )
         }
     }
 
@@ -406,8 +349,8 @@ struct ApprovalWorkspaceView: View {
             chatUsername: selected.chatUsername
         )
         receipt = ok
-            ? .ok(CompanionProductCopy.sendSuccess(name: selected.chatName))
-            : .warn(CompanionProductCopy.sendUncertain)
+            ? CompanionProductCopy.sendSuccess(name: selected.chatName)
+            : CompanionProductCopy.sendUncertain
     }
 
     private func sendPendingNow(_ item: PendingSend) async -> String? {
@@ -415,19 +358,19 @@ struct ApprovalWorkspaceView: View {
         await monitor.syncAutopilotPendingQueue()
         switch outcome {
         case .sent:
-            receipt = .ok(CompanionProductCopy.sendSuccess(name: item.chatName))
+            receipt = CompanionProductCopy.sendSuccess(name: item.chatName)
             return nil
         case .blocked(let reason):
             return reason
         case .notFound:
-            return ApprovalCopy.pendingGone
+            return "队列项已不存在"
         }
     }
 
     private func cancelPending(_ item: PendingSend) async {
         await monitor.autopilotService?.cancelPendingSend(id: item.id)
         await monitor.syncAutopilotPendingQueue()
-        receipt = .ok(ApprovalCopy.cancelledSend)
+        receipt = "已取消即将发送的回复"
     }
 }
 
@@ -444,21 +387,20 @@ private struct ApprovalPendingSendRow: View {
                 CompanionAvatar(name: item.senderName, size: 32)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text(item.chatName).workspaceRowTitle()
+                        Text(item.chatName).font(.system(size: 13, weight: .semibold))
                         Spacer()
                         Text("\(item.remainingSeconds)s")
-                            .workspaceMeta()
-                            .monospacedDigit()
+                            .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
                     Text(item.replyText)
-                        .workspaceBody()
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     if let reason = item.manualOnlyReason {
                         Text(reason)
-                            .workspaceMeta()
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.orange)
                             .lineLimit(2)
                     }
@@ -466,18 +408,17 @@ private struct ApprovalPendingSendRow: View {
             }
             HStack(spacing: 8) {
                 Spacer()
-                Button(ApprovalCopy.dismissSend) {
+                Button("取消") {
                     Task {
                         busy = true
                         await onCancel()
                         busy = false
                     }
                 }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(busy)
-                Button(ApprovalCopy.sendNow) {
+                Button("立即发送") {
                     Task {
                         busy = true
                         error = await onSendNow()
@@ -486,11 +427,12 @@ private struct ApprovalPendingSendRow: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(CompanionPalette.jade)
+                .controlSize(.small)
                 .disabled(busy)
             }
             if let error {
                 Text(error)
-                    .workspaceMeta()
+                    .font(.system(size: 11))
                     .foregroundStyle(.orange)
             }
         }

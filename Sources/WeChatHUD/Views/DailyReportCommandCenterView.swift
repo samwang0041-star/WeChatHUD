@@ -14,7 +14,6 @@ struct DailyReportCommandCenterView: View {
     @State private var hoveredRiskID: String?
     @State private var commandStates: [DailyReportCommandState] = []
     @State private var loadedDateKey: String?
-    @State private var followReceipt: String?
 
     init(isWorkspace: Bool = true) {
         self.isWorkspace = isWorkspace
@@ -49,14 +48,14 @@ struct DailyReportCommandCenterView: View {
                 }
             } else if monitor.dailyReportIsLoading {
                 loadingView
-            } else if monitor.dailyReportError != nil {
-                emptyStateWithRetry("小结没写出来。点「再写一次」。")
+            } else if let error = monitor.dailyReportError {
+                emptyStateWithRetry("小结没写出来：\(error)")
             } else {
-                emptyStateWithRetry("还没有今日小结。连上微信后再看。")
+                emptyStateWithRetry("还没有今日小结。连上微信后再整理。")
             }
         }
         .foregroundStyle(.primary)
-        .background(isWorkspace ? CompanionPalette.canvas : Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { reloadCommandStates() }
         .onChange(of: monitor.dailyReport?.date) { _, _ in reloadCommandStates() }
         .onChange(of: monitor.dailyReportGeneratedAt) { _, _ in reloadCommandStates() }
@@ -73,12 +72,6 @@ struct DailyReportCommandCenterView: View {
         loadedDateKey = key
     }
 
-    private func followDoneReceipt(for action: DailyReportAction) -> String {
-        let title = action.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clipped = title.count > 18 ? String(title.prefix(18)) + "…" : title
-        return "「\(clipped)」已完成。"
-    }
-
     private func content(vm: DailyReportPresentationPolicy.CommandCenterViewModel, report: DailyReport) -> some View {
         let isHistorical = !Calendar.current.isDateInToday(report.date)
         return VStack(alignment: .leading, spacing: 0) {
@@ -86,14 +79,6 @@ struct DailyReportCommandCenterView: View {
                 historicalHeader(report.date)
             } else {
                 progressCard(vm.progress)
-            }
-            if let followReceipt {
-                Text(followReceipt)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, isWorkspace ? 20 : 14)
-                    .padding(.vertical, 8)
-                    .accessibilityLabel(followReceipt)
             }
             divider
 
@@ -129,19 +114,6 @@ struct DailyReportCommandCenterView: View {
                 divider
             }
 
-            if !vm.urgentActions.isEmpty || !vm.activeToday.isEmpty || !vm.activeThisWeek.isEmpty || !vm.activeLater.isEmpty {
-                Button("在待办里看") {
-                    panelState.pendingSettingsTab = "tasks"
-                }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, isWorkspace ? 20 : 14)
-                .padding(.vertical, 8)
-                .accessibilityLabel("在待办里看")
-                divider
-            }
-
             if !vm.completedActions.isEmpty {
                 completedSection(vm.completedActions)
                 divider
@@ -170,7 +142,6 @@ struct DailyReportCommandCenterView: View {
         .onChange(of: report.date) { _, _ in
             historicalHighlightsCollapsed = false
             showHighlights = false
-            followReceipt = nil
         }
     }
 
@@ -213,21 +184,29 @@ struct DailyReportCommandCenterView: View {
     private var sourceUnavailableView: some View {
         let isHistorical = monitor.dailyReport.map { !Calendar.current.isDateInToday($0.date) } ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            Text(isHistorical ? "这一天没有可写的小结。" : "今天还没读到聊天。")
-                .workspaceMeta()
-                .foregroundStyle(.primary)
+            Label(isHistorical ? "这一天暂无可用记录" : "今日来源未验证", systemImage: "exclamationmark.triangle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.orange)
+            Text(isHistorical
+                 ? "没有找到这一天可用于整理的消息或事项。可以查看其他日期，或在连接微信后重新整理。"
+                 : "尚无成功同步记录，当前没有足够的今日微信来源，暂不能判断是否有待处理事项。")
+                .font(.system(size: isWorkspace ? 14 : 11))
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !isHistorical {
-                Button("重新生成") {
-                    guard !monitor.dailyReportIsLoading else { return }
-                    Task { await monitor.loadDailyReport(force: true) }
-                }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .disabled(monitor.dailyReportIsLoading)
-                .accessibilityLabel("重新生成")
+                Text("请连接微信并完成一次成功同步后，再刷新日报。")
+                    .font(.system(size: isWorkspace ? 14 : 11))
+                    .foregroundColor(.secondary)
             }
+            Button(action: {
+                guard !monitor.dailyReportIsLoading else { return }
+                Task { await monitor.loadDailyReport(force: true) }
+            }) {
+                Text("重新生成")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.accentColor)
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -235,23 +214,28 @@ struct DailyReportCommandCenterView: View {
     }
 
     private func emptyStateWithRetry(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 8) {
             Text(text)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("再写一次") {
+                .font(.system(size: 11))
+                .foregroundColor(Color.primary.opacity(0.4))
+            Button(action: {
                 guard !monitor.dailyReportIsLoading else { return }
                 Task { await monitor.loadDailyReport(force: true) }
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("重新生成")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(.accentColor)
             }
-            .buttonStyle(CompanionPressStyle())
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
             .disabled(monitor.dailyReportIsLoading)
-            .accessibilityLabel("再写一次")
+            .accessibilityLabel("重新生成日报")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, isWorkspace ? 20 : 14)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 14)
         .padding(.vertical, 14)
     }
 
@@ -378,10 +362,7 @@ struct DailyReportCommandCenterView: View {
             }
 
             HStack(spacing: 4) {
-                Button(action: {
-                    monitor.markDailyReportActionDone(action)
-                    followReceipt = followDoneReceipt(for: action)
-                }) {
+                Button(action: { monitor.markDailyReportActionDone(action) }) {
                     actionButtonLabel(
                         icon: "checkmark",
                         title: "标记完成",
@@ -389,9 +370,24 @@ struct DailyReportCommandCenterView: View {
                         background: Color.green.opacity(0.12)
                     )
                 }
-                .buttonStyle(CompanionPressStyle())
+                .buttonStyle(.plain)
                 .help("标记完成")
                 .accessibilityLabel("将日报事项标记为完成：\(action.content)")
+
+                Button(action: {
+                    panelState.pendingDiscussionChatUsername = action.sourceChatUsername
+                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
+                }) {
+                    actionButtonLabel(
+                        icon: "checklist",
+                        title: "查看待办",
+                        tint: CompanionPalette.jade,
+                        background: CompanionPalette.selectedFill
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("查看待办")
+                .accessibilityLabel("查看待办：\(action.content)")
             }
             .opacity(isHovered ? 1.0 : 0.85)
         }

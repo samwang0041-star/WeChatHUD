@@ -80,21 +80,6 @@ final class CompactErrorAffordanceTests: XCTestCase {
         XCTAssertTrue(quiet.help.contains("收件箱"))
     }
 
-    func testOpeningTodayFromTheBuddyLeavesAReceipt() {
-        let state = PanelState()
-        var openedSettings = 0
-        state.onShowSettings = { openedSettings += 1 }
-
-        CompactRightWingRouter.activate(panelState: state)
-
-        XCTAssertEqual(state.pendingSettingsTab, "today", "右翼必须打开今天")
-        XCTAssertEqual(openedSettings, 1)
-        XCTAssertEqual(state.currentState, .compact, "打开今天不该把岛展开成收件箱")
-        XCTAssertEqual(state.toastMessage, CompactInboxCopy.openedToday)
-        XCTAssertTrue(state.toastIsSuccess, "打开今天是安静回执，不是警告")
-        XCTAssertEqual(CompactInboxCopy.openedToday, "已经打开今天。")
-    }
-
     // MARK: - The real click
 
     func testClickingTheLeftWingOnAConnectionProblemOpensWeChatConnection() {

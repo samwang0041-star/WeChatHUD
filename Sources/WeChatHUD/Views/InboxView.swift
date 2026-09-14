@@ -44,17 +44,6 @@ func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
     return .idle
 }
 
-enum IslandInboxCopy {
-    static func moreInWorkspace(_ count: Int) -> String {
-        "还有 \(count) 条，打开今天查看"
-    }
-
-    static let tasks = "待办"
-    static let openToday = "今天"
-    static let openSettings = "设置"
-    static let openSettingsHelp = "打开设置"
-}
-
 /// Unified inbox — shows all messages in a single priority-sorted list
 /// with action items on top, an undo bar, and a collapsible handled section.
 struct InboxView: View {
@@ -128,31 +117,30 @@ struct InboxView: View {
                     if hiddenPassiveCount > 0 || showAllPassiveUpdates {
                         Button(action: { showAllPassiveUpdates.toggle() }) {
                             Text(showAllPassiveUpdates ? "收起普通更新" : "还有 \(hiddenPassiveCount) 条普通更新")
-                                .islandMeta()
-                                .foregroundStyle(IslandInk.meta)
+                                .islandMicro()
+                                .foregroundColor(IslandInk.tertiary)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(CompanionPressStyle())
+                        .buttonStyle(.plain)
                     }
 
                     let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
                     if hiddenTotalCount > 0 {
-                        Button {
-                            panelState.pendingSettingsTab = "today"
-                            panelState.showDetail()
-                        } label: {
-                            Text(IslandInboxCopy.moreInWorkspace(hiddenTotalCount))
-                                .islandMeta()
-                                .foregroundStyle(IslandInk.meta)
+                        Button(action: { panelState.showDetail() }) {
+                            // This opens the separate detail window, not an
+                            // in-place expansion, so the label says so.
+                            Text("+\(hiddenTotalCount) 更多 — 查看全部（新窗口）")
+                                .islandMicro()
+                                .foregroundColor(IslandInk.tertiary)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(CompanionPressStyle())
+                        .buttonStyle(.plain)
                     }
 
                     // Undo bar
@@ -275,33 +263,29 @@ struct InboxView: View {
     }
 
     private var workspaceBar: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 14) {
             Button {
                 panelState.islandSurface = .tasks
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "checklist")
-                    Text(IslandInboxCopy.tasks)
-                }
-                .islandMeta()
-                .foregroundStyle(IslandInk.secondary)
+                Image(systemName: "checklist")
+                    .font(.system(size: 11))
+                    .foregroundColor(IslandInk.secondary)
             }
-            .buttonStyle(CompanionPressStyle())
-            .accessibilityLabel(IslandInboxCopy.tasks)
+            .buttonStyle(.plain)
+            .help("查看待办")
+            .accessibilityLabel("查看待办")
 
             Button {
                 panelState.pendingSettingsTab = "today"
                 panelState.showDetail()
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "sun.max")
-                    Text(IslandInboxCopy.openToday)
-                }
-                .islandMeta()
-                .foregroundStyle(IslandInk.secondary)
+                Image(systemName: "macwindow")
+                    .font(.system(size: 11))
+                    .foregroundColor(IslandInk.tertiary)
             }
-            .buttonStyle(CompanionPressStyle())
-            .accessibilityLabel(IslandInboxCopy.openToday)
+            .buttonStyle(.plain)
+            .help(CompanionProductCopy.openCompanion)
+            .accessibilityLabel(CompanionProductCopy.openCompanion)
 
             Spacer(minLength: 12)
             PixelBuddyView(mood: extendedBuddyMood)
@@ -383,16 +367,13 @@ struct InboxView: View {
                 AutopilotIndicator()
 
                 Button(action: { panelState.showDetail() }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "gearshape.fill")
-                        Text(IslandInboxCopy.openSettings)
-                    }
-                    .islandMicro()
-                    .foregroundStyle(IslandInk.tertiary)
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(IslandInk.tertiary)
                 }
-                .buttonStyle(CompanionPressStyle())
-                .help(IslandInboxCopy.openSettingsHelp)
-                .accessibilityLabel(IslandInboxCopy.openSettingsHelp)
+                .buttonStyle(.plain)
+                .help(CompanionProductCopy.openCompanion)
+                .accessibilityLabel(CompanionProductCopy.openCompanion)
             }
             .padding(.trailing, IslandMetrics.sectionInset)
         }

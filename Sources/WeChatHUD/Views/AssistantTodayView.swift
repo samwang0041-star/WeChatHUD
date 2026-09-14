@@ -47,7 +47,19 @@ struct AssistantTodayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     CompanionSetupCard(navigate: navigate)
-                    todayHero
+                    HStack(spacing: 8) {
+                        filterPill("需要回复", count: needsReply.count, selected: !showUpdates) {
+                            showUpdates = false
+                        }
+                        jumpPill("我要做", count: mineTasks.count) {
+                            panelState.pendingDiscussionScope = .mine
+                            navigate(.tasks)
+                        }
+                        jumpPill("等对方", count: waitingTasks.count) {
+                            panelState.pendingDiscussionScope = .theirs
+                            navigate(.tasks)
+                        }
+                    }
                     if geometry.size.width >= 900 {
                         HStack(alignment: .top, spacing: 24) {
                             messageFeed.frame(maxWidth: .infinity)
@@ -73,70 +85,21 @@ struct AssistantTodayView: View {
         aiReadinessLoaded = true
     }
 
-    private var todayHero: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(TodayCopy.status(
-                needsReply: needsReply.count,
-                showingUpdates: showUpdates,
-                updateCount: TodayFeed.allUpdatesCount(monitor.inboxItems)
-            ))
-            .workspaceTitle()
-            .accessibilityAddTraits(.isHeader)
-            .accessibilityIdentifier("today.status")
-
-            HStack(spacing: 14) {
-                if !mineTasks.isEmpty {
-                    Button {
-                        panelState.pendingDiscussionScope = .mine
-                        navigate(.tasks)
-                    } label: {
-                        Text(TodayCopy.mineWork(mineTasks.count))
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                    .accessibilityHint("打开待办")
-                }
-                if !waitingTasks.isEmpty {
-                    Button {
-                        panelState.pendingDiscussionScope = .theirs
-                        navigate(.tasks)
-                    } label: {
-                        Text(TodayCopy.waitingWork(waitingTasks.count))
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                    .accessibilityHint("打开待办")
-                }
-                Spacer(minLength: 8)
-                if showUpdates {
-                    Button {
-                        withMotion(CompanionMotion.ease()) { showUpdates = false }
-                    } label: {
-                        Text(TodayCopy.backToReplies)
-                            .workspaceMeta()
-                            .foregroundStyle(CompanionPalette.jade)
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                } else if TodayFeed.hasNonReplyUpdates(monitor.inboxItems) {
-                    Button {
-                        withMotion(CompanionMotion.ease()) { showUpdates = true }
-                    } label: {
-                        Text(TodayCopy.allUpdates(TodayFeed.allUpdatesCount(monitor.inboxItems)))
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                }
-            }
-        }
-        .companionAnimation(CompanionMotion.ease(), value: showUpdates)
-        .companionAnimation(CompanionMotion.ease(), value: needsReply.count)
-    }
-
     private var messageFeed: some View {
         VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center) {
+                Text(showUpdates ? "这些对话有更新" : "先处理这些事").workspaceTitle()
+                Spacer()
+                Button { showUpdates.toggle() } label: {
+                    HStack(spacing: 4) {
+                        Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
+                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jade)
+                }
+                .buttonStyle(.plain)
+            }
             HStack(spacing: 9) {
                 Button { searchFocused = true } label: {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -174,55 +137,32 @@ struct AssistantTodayView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(visible) { item in
-                        TodayMessageCard(
-                            item: item,
-                            expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id),
-                            originalRevealed: revealedOriginalIDs.contains(item.id),
-                            onToggle: {
-                                withMotion(CompanionMotion.rowExpand()) {
-                                    let pinned = expandedID == item.id
-                                    expandedID = pinned ? "" : item.id
-                                }
-                            },
-                            onRevealOriginal: { isOn in
-                                if isOn { revealedOriginalIDs.insert(item.id) }
-                                else { revealedOriginalIDs.remove(item.id) }
-                            },
-                            onReply: {
-                                panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName)
-                            },
-                            onSnooze: { snooze(item, until: $0) },
-                            onHandled: {
-                                guard monitor.dismissInboxItem(item) else { return }
-                                withMotion(CompanionMotion.complete()) { dismissed = item }
-                            }
-                        )
+                        messageCard(item, expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id))
                     }
                 }
-                .companionAnimation(CompanionMotion.ease(), value: showUpdates)
             }
             if let dismissed {
                 HStack {
                     Label("已处理 · \(dismissed.chatName)", systemImage: "checkmark.circle.fill")
-                        .workspaceBody()
                         .foregroundStyle(CompanionPalette.accent)
                     Spacer()
                     Button("撤销") { if monitor.restoreInboxItem(dismissed) { self.dismissed = nil } }
-                        .buttonStyle(CompanionPressStyle())
-                }.companionSurface(padding: 14)
+                }.font(.callout).companionSurface(padding: 14)
                     .transition(.opacity)
             }
             if let snoozeReceipt {
                 HStack {
                     Label(snoozeReceipt, systemImage: "checkmark.circle.fill")
-                        .workspaceBody()
                         .foregroundStyle(CompanionPalette.jade)
                     Spacer()
                     Button("知道了") { self.snoozeReceipt = nil }
-                        .buttonStyle(CompanionPressStyle())
-                }.companionSurface(padding: 14)
+                }.font(.callout).companionSurface(padding: 14)
             }
         }
+    }
+
+    private func collapsedSummary(_ summary: String) -> String {
+        summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
     }
 
     private func snooze(_ item: InboxItem, until: Date) {
@@ -232,197 +172,116 @@ struct AssistantTodayView: View {
 
     private var companionRail: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if !upcoming.isEmpty {
-                upcomingCard
-            }
-            if TodayRail.showsAlert(
-                status: monitor.stats.syncStatus,
-                classificationPending: monitor.classificationPendingCount,
-                discussionPending: monitor.discussionPendingCount
-            ) {
-                connectionCard
-            }
-            VStack(spacing: 0) {
-                quickLink(
-                    SettingsView.Tab.dailyReport.label,
-                    subtitle: SettingsView.Tab.dailyReport.subtitle,
-                    icon: SettingsView.Tab.dailyReport.icon
-                ) { navigate(.dailyReport) }
-                Divider().padding(.horizontal, 16)
-                quickLink(TodayCopy.reviewTime, subtitle: TodayCopy.reviewTimeDetail, icon: "calendar") {
-                    RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("接下来").font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    if !upcoming.isEmpty { CompanionBadge(title: "\(upcoming.count) 项") }
                 }
+                if upcoming.isEmpty {
+                    Text("现在没有排上日程的事")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("答应过的截止时间会按顺序出现在这里。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(upcoming.prefix(3))) { commitment in
+                        Button { navigate(.commitments) } label: {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(commitment.content).font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading)
+                                Text(commitment.chatName).font(.system(size: 11)).foregroundStyle(.secondary)
+                                if let deadline = commitment.deadlineAt {
+                                    Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(deadline < Date() ? Color.orange : CompanionPalette.accent)
+                                } else if !commitment.deadlineLabel.isEmpty {
+                                    Text(commitment.deadlineLabel).font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(CompanionPressStyle())
+                        if commitment.id != upcoming.prefix(3).last?.id { Divider() }
+                    }
+                }
+                Button { navigate(.commitments) } label: {
+                    HStack { Text("查看我答应的事"); Spacer(); Image(systemName: "chevron.right") }
+                        .font(.system(size: 12, weight: .medium))
+                }.buttonStyle(.borderless)
+            }.companionSurface()
+            connectionCard
+            VStack(spacing: 0) {
+                quickLink("今日小结", subtitle: SettingsView.Tab.dailyReport.subtitle, icon: "doc.text") { navigate(.dailyReport) }
+                Divider().padding(.horizontal, 16)
+                quickLink("按时间回顾", subtitle: "回到发生过的对话", icon: "calendar") { RetrospectiveWindowManager.shared.showWindow(monitor: monitor) }
             }.companionSurface(padding: 0)
         }
-    }
-
-    private var upcomingCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(TodayCopy.nextUp).workspaceTitle()
-                Spacer()
-                CompanionBadge(title: "\(upcoming.count)")
-            }
-            ForEach(Array(upcoming.prefix(3))) { commitment in
-                Button { navigate(.commitments) } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(commitment.content)
-                            .workspaceRowTitle()
-                            .foregroundStyle(.primary)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
-                        Text(commitment.chatName)
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                        if let deadline = commitment.deadlineAt {
-                            Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
-                                .workspaceMeta()
-                                .foregroundStyle(deadline < Date() ? Color.orange : CompanionPalette.accent)
-                        } else if !commitment.deadlineLabel.isEmpty {
-                            Text(commitment.deadlineLabel)
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(CompanionPressStyle())
-                if commitment.id != upcoming.prefix(3).last?.id { Divider() }
-            }
-            Button { navigate(.commitments) } label: {
-                HStack {
-                    Text(TodayCopy.viewCommitments)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                }
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-            }
-            .buttonStyle(CompanionPressStyle())
-        }
-        .companionSurface()
     }
 
     private func quickLink(_ title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .workspaceRowTitle()
-                    .foregroundStyle(CompanionPalette.accent)
-                    .frame(width: 22)
+                Image(systemName: icon).foregroundStyle(CompanionPalette.accent).frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).workspaceRowTitle().foregroundStyle(.primary)
-                    Text(subtitle).workspaceMeta().foregroundStyle(.secondary)
+                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .workspaceMicro()
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(16)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(CompanionPressStyle())
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+            }.padding(16).contentShape(Rectangle())
+        }.buttonStyle(CompanionPressStyle())
     }
 
     private var connectionCard: some View {
-        let kind = TodayRail.alert(
-            status: monitor.stats.syncStatus,
-            classificationPending: monitor.classificationPendingCount,
-            discussionPending: monitor.discussionPendingCount
-        )
-        return VStack(alignment: .leading, spacing: 12) {
-            if kind == .connection {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: syncSymbol)
-                        .workspaceTitle()
-                        .foregroundStyle(Color.orange)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(syncTitle).workspaceRowTitle()
-                        if let date = monitor.stats.lastSyncAt {
-                            Text("最近同步 \(date.formatted(date: .abbreviated, time: .shortened))")
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text(TodayCopy.wechatDisconnected)
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                        }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Image(systemName: syncSymbol).foregroundStyle(syncColor).font(.title2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(syncTitle).font(.headline)
+                    if let date = monitor.stats.lastSyncAt {
+                        Text("最近同步 \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("还没连上微信").font(.caption).foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 0)
                 }
-                Button(connectionPrimaryTitle) { connectionPrimaryAction() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(CompanionPalette.jade)
-                    .controlSize(.regular)
-                    .disabled(isSyncing && connectionPrimaryIsRefresh)
+                Spacer(minLength: 0)
             }
+            HStack {
+                Button("检查连接") { navigate(.system) }
+                Button { monitor.refreshNow() } label: { Label("查看新消息", systemImage: "arrow.clockwise") }
+                    .disabled(isSyncing)
+                Spacer()
+            }.controlSize(.small)
             if monitor.classificationPendingCount > 0 {
-                processingRow(
-                    monitor.classificationProcessing
-                        ? "正在分析 \(monitor.classificationPendingCount) 条消息"
-                        : "\(monitor.classificationPendingCount) 条消息等待分析",
-                    icon: "sparkles",
-                    actionTitle: TodayCopy.retryAnalysis,
-                    disabled: monitor.classificationProcessing || kind == .connection
-                ) {
-                    do { try store.retryClassificationMessages(); monitor.drainClassificationQueue() }
-                    catch { panelState.showToast("暂时无法重试，请检查本地数据连接") }
-                }
+                HStack {
+                    Label(monitor.classificationProcessing ? "正在分析 \(monitor.classificationPendingCount) 条消息" : "\(monitor.classificationPendingCount) 条消息等待分析", systemImage: "sparkles")
+                    Spacer()
+                    Button("重试分析") {
+                        do { try store.retryClassificationMessages(); monitor.drainClassificationQueue() }
+                        catch { panelState.showToast("暂时无法重试，请检查本地数据连接") }
+                    }.disabled(monitor.classificationProcessing)
+                }.font(.callout).foregroundStyle(.secondary)
             }
             if monitor.discussionPendingCount > 0 {
-                processingRow(
-                    monitor.discussionProcessing
-                        ? "正在从 \(monitor.discussionPendingCount) 条消息整理待办"
-                        : "\(monitor.discussionPendingCount) 条消息等待整理待办",
-                    icon: "checklist",
-                    actionTitle: TodayCopy.retryDiscussion,
-                    disabled: monitor.discussionProcessing || kind == .connection
-                ) {
-                    do { try monitor.retryDiscussionExtraction() }
-                    catch { panelState.showToast("暂时无法重试整理，请检查本地数据连接") }
+                HStack {
+                    Label(monitor.discussionProcessing ? "正在从 \(monitor.discussionPendingCount) 条消息整理待办" : "\(monitor.discussionPendingCount) 条消息等待整理待办", systemImage: "checklist")
+                    Spacer()
+                    Button("重试整理") {
+                        do { try monitor.retryDiscussionExtraction() }
+                        catch { panelState.showToast("暂时无法重试整理，请检查本地数据连接") }
+                    }.disabled(monitor.discussionProcessing)
+                }.font(.callout).foregroundStyle(.secondary)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                Label("关注 \(store.whitelistCount()) 个对话", systemImage: "person.2")
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 14) {
+                    Button("关注谁") { navigate(.contacts) }.buttonStyle(.link)
+                    Button("设置 AI") { navigate(.aiButler) }.buttonStyle(.link)
                 }
             }
+            .font(.callout)
         }
         .companionSurface()
-    }
-
-    private func processingRow(
-        _ title: String,
-        icon: String,
-        actionTitle: String,
-        disabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Label(title, systemImage: icon)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-            Spacer()
-            if !disabled {
-                Button(actionTitle, action: action)
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(CompanionPalette.jade)
-            }
-        }
-    }
-
-    private var connectionPrimaryIsRefresh: Bool {
-        if case .stale = monitor.stats.syncStatus { return true }
-        return false
-    }
-
-    private var connectionPrimaryTitle: String {
-        connectionPrimaryIsRefresh ? CompanionProductCopy.checkNewMessages : TodayCopy.checkConnection
-    }
-
-    private func connectionPrimaryAction() {
-        if connectionPrimaryIsRefresh {
-            monitor.refreshNow()
-        } else {
-            navigate(.system)
-        }
     }
 
     private var isSyncing: Bool { if case .syncing = monitor.stats.syncStatus { return true }; return false }
@@ -437,237 +296,120 @@ struct AssistantTodayView: View {
         case .error: return "微信连接需要处理"
         }
     }
+    private var syncColor: Color {
+        switch monitor.stats.syncStatus { case .ok: return .green; case .syncing, .idle: return .blue; default: return .orange }
+    }
     private var syncSymbol: String {
-        switch monitor.stats.syncStatus {
-        case .ok: return "checkmark.circle"
-        case .syncing, .idle: return "arrow.triangle.2.circlepath"
-        default: return "exclamationmark.triangle"
-        }
+        switch monitor.stats.syncStatus { case .ok: return "checkmark.circle"; case .syncing, .idle: return "arrow.triangle.2.circlepath"; default: return "exclamationmark.triangle" }
     }
 
-}
+    private func filterPill(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("\(title) \(count)")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(selected ? Color.white : .primary)
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(selected ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
+                .overlay(Capsule().strokeBorder(selected ? Color.clear : CompanionPalette.border))
+        }
+        .buttonStyle(CompanionPressStyle())
+        .accessibilityLabel("\(title)，\(count) 项")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
 
-private struct TodayMessageCard: View {
-    let item: InboxItem
-    let expanded: Bool
-    let originalRevealed: Bool
-    let onToggle: () -> Void
-    let onRevealOriginal: (Bool) -> Void
-    let onReply: () -> Void
-    let onSnooze: (Date) -> Void
-    let onHandled: () -> Void
+    private func jumpPill(_ title: String, count: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("\(title) \(count)")
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(CompanionPalette.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(CompanionPalette.border))
+        }
+        .buttonStyle(CompanionPressStyle())
+        .accessibilityLabel("\(title)，\(count) 项")
+        .accessibilityHint("打开待办")
+    }
 
-    @State private var hovered = false
-    @State private var hoverEnabled = false
-
-    var body: some View {
+    private func messageCard(_ item: InboxItem, expanded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: onToggle) {
+            Button {
+                withMotion(CompanionMotion.rowExpand()) {
+                    expandedID = expanded && expandedID == item.id ? "" : item.id
+                }
+            } label: {
                 HStack(spacing: 10) {
-                    CompanionAvatar(name: item.chatName)
+                    CompanionAvatar(name: item.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(item.chatName)
-                            .workspaceRowTitle()
-                            .foregroundStyle(.primary)
-                        Text(item.timestamp, format: .dateTime.hour().minute())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                        Text(item.chatName).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
+                        Text(item.timestamp, format: .dateTime.hour().minute()).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     if item.isAtMention { CompanionBadge(title: "@ 我") }
-                    if !expanded {
-                        Image(systemName: "chevron.right")
-                            .workspaceMicro()
-                            .foregroundStyle(.tertiary)
-                    }
+                    if !expanded { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary) }
                 }
             }
-            .buttonStyle(CompanionPressStyle())
-            .accessibilityLabel(item.chatName)
-            .accessibilityHint(expanded ? "收起这条" : "展开后回复")
+            .buttonStyle(.plain)
 
-            previewLine
+            Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : collapsedSummary(item.aiSummary!)) : item.preview)
+                .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
+                .lineSpacing(4).textSelection(.enabled).lineLimit(expanded ? 6 : 1)
 
             if expanded {
-                expandedBody
-                    .transition(.islandDetailReveal)
-            }
-        }
-        .padding(20)
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(CompanionPalette.surface)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(cardWash)
+                if let summary = item.aiSummary, !summary.isEmpty {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jade)
+                            Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
+                        }
+                        Spacer(minLength: 8)
+                        Button(revealedOriginalIDs.contains(item.id) ? "原文已展开" : "查看原文") {
+                            revealedOriginalIDs.insert(item.id)
+                        }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(CompanionPalette.jade)
+                    }
+                    .padding(12)
+                    .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { revealedOriginalIDs.contains(item.id) },
+                        set: { isOn in
+                            if isOn { revealedOriginalIDs.insert(item.id) }
+                            else { revealedOriginalIDs.remove(item.id) }
+                        }
+                    )) {
+                        Text(item.preview).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+                    } label: {
+                        Text("消息原文")
+                    }
                 }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(CompanionPalette.border, lineWidth: 1)
-        }
-        .onHover { inside in
-            guard hoverEnabled else { return }
-            hovered = inside
-        }
-        .companionAnimation(CompanionMotion.hover(), value: hovered)
-        .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                hoverEnabled = true
-            }
-        }
-    }
-
-    private var cardWash: Color {
-        if expanded { return CompanionPalette.selectedFill }
-        if hovered { return Color.primary.opacity(0.04) }
-        return .clear
-    }
-
-    private var previewLine: some View {
-        let text = item.aiSummary?.isEmpty == false
-            ? (expanded ? item.aiSummary! : TodayCopy.collapsedSummary(item.aiSummary!))
-            : item.preview
-        return Text(text)
-            .companionFont(size: expanded ? WorkspaceType.title : WorkspaceType.body, weight: expanded ? .semibold : .regular)
-            .lineSpacing(4)
-            .textSelection(.enabled)
-            .lineLimit(expanded ? 6 : 1)
-    }
-
-    @ViewBuilder
-    private var expandedBody: some View {
-        if let summary = item.aiSummary, !summary.isEmpty {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(TodayCopy.aiReading)
-                        .workspaceMicro()
-                        .foregroundStyle(CompanionPalette.jade)
-                    Text(summary)
-                        .workspaceBody()
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
+                HStack {
+                    Button { panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName) } label: {
+                        Label("理解上下文与回复", systemImage: "text.bubble")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Menu {
+                        ForEach(CompanionProductCopy.snoozeChoices()) { choice in
+                            Button("\(choice.label)  \(choice.whenLabel)") { snooze(item, until: choice.until) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .help("稍后提醒")
+                    .accessibilityLabel("稍后提醒")
+                    Spacer()
+                    Button("已处理") { if monitor.dismissInboxItem(item) { dismissed = item } }.buttonStyle(.bordered)
                 }
-                Spacer(minLength: 8)
-                Button(originalRevealed ? TodayCopy.originalOpen : TodayCopy.viewOriginal) {
-                    onRevealOriginal(true)
-                }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(CompanionPalette.jade)
-            }
-            DisclosureGroup(isExpanded: Binding(
-                get: { originalRevealed },
-                set: onRevealOriginal
-            )) {
-                Text(item.preview)
-                    .workspaceBody()
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
-            } label: {
-                Text(TodayCopy.originalSection)
-                    .workspaceMeta()
+                .controlSize(.regular)
             }
         }
-        HStack {
-            Button(action: onReply) {
-                Label(TodayCopy.reply, systemImage: "text.bubble")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(CompanionPalette.jade)
-            .accessibilityLabel(TodayCopy.reply)
-            Menu {
-                ForEach(CompanionProductCopy.snoozeChoices()) { choice in
-                    Button("\(choice.label)  \(choice.whenLabel)") { onSnooze(choice.until) }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .help("稍后提醒")
-            .accessibilityLabel("稍后提醒")
-            Spacer()
-            Button(TodayCopy.handled, action: onHandled)
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-        }
-        .controlSize(.regular)
-    }
-}
-
-/// One status sentence for 今天. The page has one primary list; these strings
-/// are the only chrome that may compete with it.
-enum TodayCopy {
-    static func status(needsReply: Int, showingUpdates: Bool, updateCount: Int) -> String {
-        if showingUpdates {
-            return updateCount == 0 ? "现在没有对话更新" : "这些对话有 \(updateCount) 条更新"
-        }
-        if needsReply == 0 { return "现在没有要回的" }
-        return "现在有 \(needsReply) 件需要回复"
-    }
-
-    static func mineWork(_ count: Int) -> String { "我要做 \(count)" }
-    static func waitingWork(_ count: Int) -> String { "等对方 \(count)" }
-    static func allUpdates(_ count: Int) -> String { "全部 \(count) 条" }
-    static let backToReplies = "只看需要回复的"
-    static let reply = "理解上下文与回复"
-    static let handled = "已处理"
-    static let viewOriginal = "查看原文"
-    static let originalOpen = "原文已展开"
-    static let aiReading = "AI 解读"
-    static let originalSection = "消息原文"
-    static let nextUp = "接下来"
-    static let viewCommitments = "查看我答应的事"
-    static let checkConnection = "检查连接"
-    static let wechatDisconnected = "还没连上微信"
-    static let retryAnalysis = "重试分析"
-    static let retryDiscussion = "重试整理"
-    static let reviewTime = "按时间回顾"
-    static let reviewTimeDetail = "回到发生过的对话"
-
-    static func collapsedSummary(_ summary: String) -> String {
-        summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
-    }
-}
-
-enum TodayRail {
-    enum Alert: Equatable {
-        case hidden
-        case connection
-        case processing
-    }
-
-    static func alert(
-        status: SyncStatus,
-        classificationPending: Int,
-        discussionPending: Int
-    ) -> Alert {
-        switch status {
-        case .ok, .syncing:
-            return (classificationPending > 0 || discussionPending > 0) ? .processing : .hidden
-        default:
-            return .connection
-        }
-    }
-
-    static func showsAlert(
-        status: SyncStatus,
-        classificationPending: Int,
-        discussionPending: Int
-    ) -> Bool {
-        alert(
-            status: status,
-            classificationPending: classificationPending,
-            discussionPending: discussionPending
-        ) != .hidden
+        .companionSurface()
     }
 }
 

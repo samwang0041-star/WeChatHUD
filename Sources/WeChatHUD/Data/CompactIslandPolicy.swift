@@ -67,8 +67,7 @@ struct CompactIslandSnapshot: Equatable {
     var buddy: BuddyMood
     var glow: CompactIslandGlow
     var spoken: String
-    /// Short outboard peek label. Names the next move when there is one;
-    /// never a hover hint, never a message body.
+    /// Short outboard peek label. No hover hint, no message body.
     var glance: String
 }
 
@@ -202,7 +201,7 @@ enum CompactIslandPolicy {
             let what = priority == .p0 ? "有需要尽快处理的事" : "有待回复的消息"
             return "\(what)，共 \(spokenCount(count)) 项。\(CompanionProductCopy.compactHoverHint)"
         case .working(.analyzing):
-            return "正在整理。\(CompanionProductCopy.compactHoverHint)"
+            return "AI 正在整理。\(CompanionProductCopy.compactHoverHint)"
         case .waiting(let count):
             return "收起 · \(spokenCount(count)) 项待处理。\(CompanionProductCopy.compactHoverHint)"
         case .notices(let count):
@@ -215,7 +214,7 @@ enum CompactIslandPolicy {
     private static func glance(for phase: CompactIslandPhase) -> String {
         switch phase {
         case .connectionProblem:
-            return "去连接"
+            return "连不上"
         case .urgent(let priority, let count):
             return priority == .p0
                 ? "紧急 · \(spokenCount(count))"

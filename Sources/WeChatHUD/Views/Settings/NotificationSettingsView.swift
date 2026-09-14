@@ -1,129 +1,42 @@
 import SwiftUI
 
-enum NotificationSettingsCopy {
-    static let popupNone = "现在浮窗不会自己弹出。"
-    static let popupNoneNext = "打开上面一项，有消息才会弹出。"
-    static let atMentionPart = "群 @"
-    static let importantPart = "重点的人"
-    static let whitelistPart = "关注里的普通消息"
-    static let atMentionTitle = "群里 @ 我的消息"
-    static let atMentionSubtitle = "有人 @ 你时浮窗会展开。"
-    static let importantTitle = "重点关注的人"
-    static let importantSubtitle = "这些人私聊会弹出。"
-    static let whitelistTitle = "关注的人普通说话"
-    static let whitelistSubtitle = "已经进收件箱的私聊也会弹出。群闲聊不会一条条弹。"
-    static let durationTitle = "展示时间"
-    static let durationSubtitle = "鼠标移入后可继续看。"
-    static let durationDisclosure = "还要改展示多久"
-    static let canvasNote = "这里管顶部浮窗。承诺到期走系统通知。"
-    static let saved = "已经记下。"
-    static let unsaved = "改了就生效。"
-    static let saveFailed = "没记住。点「再试一次」。"
-    static let saveRetry = "再试一次"
-
-    static func popupLine(atMention: Bool, important: Bool, allWhitelist: Bool) -> String {
-        var parts: [String] = []
-        if atMention { parts.append(atMentionPart) }
-        if important { parts.append(importantPart) }
-        if allWhitelist { parts.append(whitelistPart) }
-        if parts.isEmpty { return popupNone }
-        return "现在会弹出：\(parts.joined(separator: "、"))。"
-    }
-}
-
 struct NotificationSettingsView: View {
     @EnvironmentObject var store: HUDStore
     @State private var config = NotificationConfig()
     @State private var loaded = false
     @State private var error: String?
     @State private var saved = false
-    @State private var showDuration = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(NotificationSettingsCopy.popupLine(
-                atMention: config.atMention,
-                important: config.important,
-                allWhitelist: config.allWhitelist
-            ))
-            .workspaceTitle()
-            .foregroundStyle(.primary)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(NotificationSettingsCopy.popupLine(
-                atMention: config.atMention,
-                important: config.important,
-                allWhitelist: config.allWhitelist
-            ))
-            if !config.atMention && !config.important && !config.allWhitelist {
-                Text(NotificationSettingsCopy.popupNoneNext)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            SettingsSection("谁来的消息要弹出") {
-                SettingsToggleRow(NotificationSettingsCopy.atMentionTitle, subtitle: NotificationSettingsCopy.atMentionSubtitle, isOn: $config.atMention)
-                SettingsRowDivider()
-                SettingsToggleRow(NotificationSettingsCopy.importantTitle, subtitle: NotificationSettingsCopy.importantSubtitle, isOn: $config.important)
-                SettingsRowDivider()
-                SettingsToggleRow(NotificationSettingsCopy.whitelistTitle, subtitle: NotificationSettingsCopy.whitelistSubtitle, isOn: $config.allWhitelist)
-                SettingsRowDivider()
-                Button(NotificationSettingsCopy.durationDisclosure) {
-                    showDuration.toggle()
-                }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .accessibilityLabel(NotificationSettingsCopy.durationDisclosure)
-                if showDuration {
-                    SettingsRow(NotificationSettingsCopy.durationTitle, subtitle: NotificationSettingsCopy.durationSubtitle) {
-                        HStack(spacing: 6) {
-                            ForEach(durationChoices, id: \.self) { seconds in
-                                Button("\(seconds) 秒") {
-                                    config.durationSeconds = seconds
-                                }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(config.durationSeconds == seconds ? Color.primary : Color.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    config.durationSeconds == seconds ? CompanionPalette.selectedFill : Color.clear,
-                                    in: Capsule()
-                                )
-                                .accessibilityLabel("展示 \(seconds) 秒")
-                                .accessibilityAddTraits(config.durationSeconds == seconds ? .isSelected : [])
-                            }
-                        }
+        SettingsSection("谁来的消息要弹出") {
+            SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗，帮助你理解上下文。", isOn: $config.atMention)
+            SettingsRowDivider()
+            SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
+            SettingsRowDivider()
+            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
+            SettingsRowDivider()
+            SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
+                Picker("展示时间", selection: $config.durationSeconds) {
+                    ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
+                        Text("\(seconds) 秒").tag(seconds)
                     }
-                }
+                }.labelsHidden().frame(width: 100)
             }
-
+            SettingsRowDivider()
             VStack(alignment: .leading, spacing: 8) {
-                Text(NotificationSettingsCopy.canvasNote)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
+                    .font(.caption).foregroundStyle(.secondary)
                 if let error {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(error)
-                            .workspaceMeta()
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button(NotificationSettingsCopy.saveRetry, action: save)
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                    }
+                    HStack {
+                        Text(error).foregroundStyle(.red)
+                        Spacer()
+                        Button("重试保存", action: save)
+                    }.font(.callout)
                 } else {
-                    Text(saved ? NotificationSettingsCopy.saved : NotificationSettingsCopy.unsaved)
-                        .workspaceMeta()
-                        .fontWeight(saved ? .semibold : .regular)
-                        .foregroundStyle(saved ? Color.primary : Color.secondary)
+                    Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-            }
+            }.padding(12)
         }
         .onAppear {
             config = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()
@@ -135,10 +48,6 @@ struct NotificationSettingsView: View {
         .onChange(of: config.durationSeconds) { save() }
     }
 
-    private var durationChoices: [Int] {
-        Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted()
-    }
-
     private func save() {
         guard loaded else { return }
         do {
@@ -146,7 +55,7 @@ struct NotificationSettingsView: View {
             error = nil
             saved = true
         } catch {
-            self.error = NotificationSettingsCopy.saveFailed
+            self.error = "提醒设置未保存，请重试。"
             saved = false
         }
     }

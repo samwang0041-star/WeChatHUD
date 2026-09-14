@@ -43,10 +43,7 @@ final class BriefingRetryTests: XCTestCase {
     /// has to be reachable in that state — and its label is the word the user
     /// reads.
     func testRetryAffordanceIsTheWordTheCardShows() {
-        XCTAssertEqual(BriefingRetryAction.label, "再试一次")
-        XCTAssertEqual(IslandBriefingCopy.title, "为什么找你")
-        XCTAssertEqual(IslandBriefingCopy.openWeChat, "去微信回复")
-        XCTAssertEqual(IslandBriefingCopy.openConversation, "打开对话")
+        XCTAssertEqual(BriefingRetryAction.label, "重试")
     }
 
     func testTheErrorCardStillRendersWithItsRetryAffordance() throws {

@@ -55,19 +55,15 @@ struct ActionPanelView: View {
                 // the user back to the task fast.
                 headlineBlock
 
-                if case .error = analysisState {
-                    errorRowWithRetry(label: "", retry: { runAnalysis() })
-                }
-
                 primaryCTAs
 
                 switch replyState {
                 case .loading:
-                    loadingRow(label: IslandActionCopy.replyWriting)
+                    loadingRow(label: "正在生成回复建议…")
                 case .results(let replies) where !replies.isEmpty:
                     replySuggestionsView(replies)
                 case .error:
-                    errorRowWithRetry(label: IslandActionCopy.replyFailed, retry: { runReplySuggestions() })
+                    errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
                 default:
                     EmptyView()
                 }
@@ -103,9 +99,9 @@ struct ActionPanelView: View {
         case .loading, .idle:
             HStack(spacing: 8) {
                 ProgressView().scaleEffect(0.55).frame(width: 14, height: 14)
-                Text(IslandActionCopy.organizing)
+                Text("AI 正在整理重点…")
                     .islandMeta()
-                    .foregroundStyle(IslandInk.meta)
+                    .foregroundColor(IslandInk.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -120,11 +116,11 @@ struct ActionPanelView: View {
                 vibe: privateVibe(result)
             )
 
-        case .error:
+        case .error(let message):
             headlineCard(
-                title: IslandActionCopy.unreadTitle,
+                title: "分析暂不可用",
                 primary: item.aiSummary ?? item.preview,
-                context: IslandActionCopy.unreadHint,
+                context: message,
                 vibe: nil
             )
         }
@@ -140,34 +136,42 @@ struct ActionPanelView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .islandMeta()
-                    .foregroundStyle(CompanionPalette.islandMint)
+                    .foregroundColor(.accentColor)
                 Text(title)
                     .islandSection()
-                    .foregroundStyle(CompanionPalette.islandMint)
+                    .foregroundColor(.accentColor.opacity(0.85))
                 if let vibe = vibe, !vibe.isEmpty {
                     Text(vibe)
                         .islandMicro()
-                        .foregroundStyle(IslandInk.meta)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(IslandInk.chip, in: Capsule())
+                        .foregroundColor(.orange.opacity(0.9))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(3)
                 }
-                Spacer(minLength: 0)
+                Spacer()
             }
 
             Text(primary)
                 .islandRowTitle()
-                .foregroundStyle(IslandInk.primary)
+                .foregroundColor(IslandInk.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let context = context, !context.isEmpty {
                 Text(context)
                     .islandMeta()
-                    .foregroundStyle(IslandInk.secondary)
+                    .foregroundColor(IslandInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+        )
+        .cornerRadius(8)
     }
 
     private func groupHeadlineCard(_ result: ChatAnalyzer.GroupAnalysis) -> some View {
@@ -175,17 +179,17 @@ struct ActionPanelView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .islandMeta()
-                    .foregroundStyle(CompanionPalette.islandMint)
+                    .foregroundColor(.accentColor)
                 Text(item.actionPanelTitle)
                     .islandSection()
-                    .foregroundStyle(CompanionPalette.islandMint)
+                    .foregroundColor(.accentColor.opacity(0.9))
                 Spacer(minLength: 0)
                 statusPill(for: result.status)
             }
 
             Text(groupPrimary(result))
                 .islandRowTitle()
-                .foregroundStyle(IslandInk.primary)
+                .foregroundColor(IslandInk.primary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -202,32 +206,36 @@ struct ActionPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.accentColor.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+        )
+        .cornerRadius(8)
     }
 
     private func statusPill(for status: String) -> some View {
         let normalized = status.lowercased()
         let text: String
-        let foreground: Color
-        let fill: Color
+        let color: Color
         if normalized == "waiting_for_me" {
             text = "等你"
-            foreground = IslandChrome.glowAmber
-            fill = IslandChrome.glowAmber.opacity(0.16)
+            color = .orange
         } else if normalized == "concluded" {
             text = "已定"
-            foreground = CompanionPalette.islandMint
-            fill = CompanionPalette.selectedFill
+            color = .green
         } else {
             text = "讨论中"
-            foreground = IslandInk.meta
-            fill = IslandInk.chip
+            color = .blue
         }
         return Text(text)
             .islandMicro()
-            .foregroundStyle(foreground)
+            .foregroundColor(color.opacity(0.95))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(fill, in: Capsule())
+            .background(color.opacity(0.16))
+            .cornerRadius(5)
     }
 
     private func compactInfoLine(icon: String, label: String, text: String) -> some View {
@@ -330,7 +338,7 @@ struct ActionPanelView: View {
     private func privateContext(_ r: ChatAnalyzer.PrivateAnalysis) -> String? {
         var parts: [String] = []
         if let ctx = r.context, !ctx.isEmpty, !privateIsLowSignalSmalltalk(r) {
-            parts.append(ctx)
+            parts.append("背景:\(ctx)")
         }
         if !r.urgency_reason.isEmpty {
             parts.append(r.urgency_reason)
@@ -338,7 +346,7 @@ struct ActionPanelView: View {
         if !r.mood_evidence.isEmpty,
            let vibe = privateVibe(r),
            !vibe.isEmpty {
-            parts.append(r.mood_evidence)
+            parts.append("语气依据:\(r.mood_evidence)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -380,15 +388,22 @@ struct ActionPanelView: View {
     private var primaryCTAs: some View {
         HStack(spacing: 8) {
             if showsConversationLink || item.semanticState != .groupMentionFYI {
-                Button(action: runPrimaryCTA) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "bubble.left.and.bubble.right.fill")
-                        Text(item.primaryCTATitle)
-                    }
-                    .frame(maxWidth: .infinity)
+            Button(action: {
+                runPrimaryCTA()
+            }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .islandMeta()
+                    Text(item.primaryCTATitle)
+                        .islandButton()
                 }
-                .buttonStyle(IslandPillButtonStyle(emphasized: true))
-                .accessibilityLabel(item.primaryCTATitle)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(Color.accentColor)
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
             }
 
             if item.replySuggestionMode != .hidden {
@@ -397,14 +412,20 @@ struct ActionPanelView: View {
                         if case .loading = replyState {
                             ProgressView().scaleEffect(0.55).frame(width: 10, height: 10)
                         } else {
-                            Image(systemName: "lightbulb")
+                            Image(systemName: "lightbulb.fill")
+                                .islandMeta()
                         }
                         Text(item.replySuggestionButtonTitle)
+                            .islandButton()
                     }
+                    .foregroundColor(IslandInk.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(Color.white.opacity(0.1))
+                    .cornerRadius(6)
                 }
-                .buttonStyle(IslandPillButtonStyle())
+                .buttonStyle(.plain)
                 .disabled(replyIsLoading)
-                .accessibilityLabel(item.replySuggestionButtonTitle)
             }
         }
     }
@@ -453,9 +474,12 @@ struct ActionPanelView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(suggestion.recommended ? CompanionPalette.selectedFill : IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(suggestion.recommended
+                ? Color.blue.opacity(0.1)
+                : Color.white.opacity(0.04))
+            .cornerRadius(5)
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(.plain)
     }
 
     // MARK: - Actions
@@ -513,7 +537,7 @@ struct ActionPanelView: View {
             } else if let p = entry.privateAnalysis {
                 analysisState = .privateResult(p)
             } else if entry.analysisAttempted {
-                analysisState = .error(entry.analysisError ?? IslandActionCopy.unreadHint)
+                analysisState = .error(entry.analysisError ?? "分析失败，可能是 AI 服务超时")
             }
         }
 
@@ -572,7 +596,7 @@ struct ActionPanelView: View {
                 if let result = result {
                     analysisState = .groupResult(result)
                 } else {
-                    analysisState = .error(err ?? IslandActionCopy.unreadHint)
+                    analysisState = .error(err ?? "分析失败")
                 }
             } else {
                 let (result, err) = await monitor.analyzePrivateChat(item: item)
@@ -580,7 +604,7 @@ struct ActionPanelView: View {
                 if let result = result {
                     analysisState = .privateResult(result)
                 } else {
-                    analysisState = .error(err ?? IslandActionCopy.unreadHint)
+                    analysisState = .error(err ?? "分析失败")
                 }
             }
         }
@@ -624,21 +648,19 @@ struct ActionPanelView: View {
 
     private func errorRowWithRetry(label: String, retry: @escaping () -> Void) -> some View {
         HStack(spacing: 6) {
-            if !label.isEmpty {
-                Text(label)
-                    .islandMeta()
-                    .foregroundStyle(IslandInk.secondary)
-            }
+            Text(label)
+                .islandMeta()
+                .foregroundColor(.red.opacity(0.6))
             Button(action: retry) {
                 HStack(spacing: 2) {
                     Image(systemName: "arrow.clockwise")
                         .islandMicro()
-                    Text(IslandActionCopy.retry)
+                    Text("重试")
                         .islandMicro()
                 }
-                .foregroundStyle(CompanionPalette.islandMint)
+                .foregroundColor(.accentColor)
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 2)
     }
@@ -657,15 +679,19 @@ struct ActionPanelView: View {
         }()
         let color: Color = {
             switch label {
-            case "推荐": return CompanionPalette.islandMint
-            default: return IslandInk.meta
+            case "推荐": return .accentColor
+            case "友好": return .green
+            case "正式": return .blue
+            case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)
+            default: return .gray
             }
         }()
         return Text(label)
             .islandMicro()
-            .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(label == "推荐" ? CompanionPalette.selectedFill : IslandInk.chip, in: Capsule())
+            .foregroundColor(color)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.12))
+            .cornerRadius(3)
     }
 }

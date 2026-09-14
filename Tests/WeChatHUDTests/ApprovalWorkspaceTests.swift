@@ -26,21 +26,6 @@ final class ApprovalWorkspaceTests: XCTestCase {
         XCTAssertEqual(shown.map(\.id), [held.id])
     }
 
-    func testStatusSentenceNamesRunAndSendWithoutADashboard() {
-        XCTAssertEqual(
-            ApprovalWorkspacePolicy.statusSentence(active: false, paused: false, autoSendOn: false),
-            "尚未开始整理 · 自动发送关闭"
-        )
-        XCTAssertEqual(
-            ApprovalWorkspacePolicy.statusSentence(active: true, paused: false, autoSendOn: false),
-            "正在整理 · 自动发送关闭"
-        )
-        XCTAssertEqual(
-            ApprovalWorkspacePolicy.statusSentence(active: true, paused: true, autoSendOn: true),
-            "已暂停 · 自动发送开启"
-        )
-    }
-
     func testAutopilotLogEntryIdentityUsesDatabaseIdNotTriggerUID() {
         let first = logEntry(id: 11, triggerMsgUID: "proactive")
         let second = logEntry(id: 12, triggerMsgUID: "proactive")

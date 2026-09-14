@@ -8,31 +8,25 @@ struct FirstLaunchContactPicker: View {
     @State private var query = ""
     @State private var errorMessage: String?
     @State private var refreshID = 0
-    @State private var lastToggle: SessionInfo?
-    @State private var searching = false
 
     private var tracked: Set<String> {
         _ = refreshID
         return Set(store.getWhitelist().map(\.id))
     }
 
-    private var sessions: [SessionInfo] {
+    private var candidates: [SessionInfo] {
         _ = refreshID
+        let sessions: [SessionInfo]
         if PreviewRuntime.isEnabled {
-            return [
+            sessions = [
                 SessionInfo(username: "preview-colleague", isGroup: false, unreadCount: 1, lastTimestamp: 3),
                 SessionInfo(username: "preview-xu", isGroup: false, unreadCount: 0, lastTimestamp: 2),
                 SessionInfo(username: "preview-project", isGroup: true, unreadCount: 1, lastTimestamp: 1)
             ]
+        } else {
+            sessions = (try? monitor.reader.getSessions()) ?? []
         }
-        return (try? monitor.reader.getSessions()) ?? []
-    }
-
-    private var suggested: [SessionInfo] {
-        FirstLaunchGuide.suggestedConversations(from: sessions, excluding: [])
-    }
-
-    private var candidates: [SessionInfo] {
+        let suggested = FirstLaunchGuide.suggestedConversations(from: sessions, excluding: [])
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return suggested }
         return suggested.filter { session in
@@ -41,15 +35,14 @@ struct FirstLaunchContactPicker: View {
         }
     }
 
-    private var showsSearchField: Bool {
-        searching || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            TextField("搜索联系人或群聊", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索联系人或群聊")
             if candidates.isEmpty {
                 Text(emptyHint)
-                    .workspaceMeta()
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -59,32 +52,11 @@ struct FirstLaunchContactPicker: View {
                     }
                 }
             }
-            if showsSearchField {
-                TextField(FirstLaunchGuide.findPeopleField, text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel(FirstLaunchGuide.findPeopleField)
-            } else if suggested.count > 8 {
-                Button(FirstLaunchGuide.findPeople) { searching = true }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(FirstLaunchGuide.findPeopleField)
-            }
+            Text("已选 \(candidates.filter { tracked.contains($0.username) }.count) 个对话")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
             if let errorMessage {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(errorMessage)
-                        .workspaceMeta()
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button(FirstLaunchGuide.saveRetry) {
-                        if let lastToggle { toggle(lastToggle) }
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(FirstLaunchGuide.saveRetry)
-                }
+                Text(errorMessage).font(.callout).foregroundStyle(.red)
             }
         }
     }
@@ -149,7 +121,7 @@ struct FirstLaunchContactPicker: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(.plain)
         .accessibilityLabel(following ? "取消关注 \(displayName(for: session))" : "关注 \(displayName(for: session))")
     }
 
@@ -166,7 +138,6 @@ struct FirstLaunchContactPicker: View {
     }
 
     private func toggle(_ session: SessionInfo) {
-        lastToggle = session
         do {
             if tracked.contains(session.username) {
                 try store.removeFromWhitelist(username: session.username)
@@ -181,7 +152,7 @@ struct FirstLaunchContactPicker: View {
             errorMessage = nil
             refreshID += 1
         } catch {
-            errorMessage = FirstLaunchGuide.saveFailed
+            errorMessage = "关注范围没有保存成功，请重试。"
         }
     }
 }

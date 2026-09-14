@@ -6,18 +6,6 @@ extension Notification.Name {
     static let hudDisplayPreferenceDidChange = Notification.Name("WeChatHUD.DisplayPreferenceDidChange")
 }
 
-enum PreferencesCopy {
-    static func hudLine(_ screen: DisplayScreen) -> String {
-        "浮窗在\(screen.label)。"
-    }
-
-    static let displayTitle = "显示位置"
-    static let displaySubtitle = "浮窗出现在哪块屏。那块屏不在时用还连着的。"
-    static let updatesDisclosure = "还要看版本"
-    static let saveFailed = "刚才没记上。"
-    static let saveRetry = "再试一次"
-}
-
 struct SyncSettingsView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
@@ -50,8 +38,6 @@ struct SyncSettingsView: View {
     @State private var legacyStatus: DeviceSettingsStore.LegacyStoreStatus?
     @State private var showLegacyBindConfirm = false
     @State private var showAdvancedConnection = false
-    @State private var showConnectionMaintenance = false
-    @State private var showConnectionDiagnostics = false
     @State private var selectedSettingsSection: SettingsPane
     private let lockedPane: SettingsPane?
 
@@ -76,7 +62,7 @@ struct SyncSettingsView: View {
 
     enum DataSection: String, CaseIterable {
         case commitments = "承诺"
-        case pendingAsks = "提问"
+        case pendingAsks = "待处理的提问"
         case recalls = "撤回记录"
     }
 
@@ -97,66 +83,40 @@ struct SyncSettingsView: View {
                 .pickerStyle(.segmented)
                 .accessibilityLabel("设置分区")
             }
+            if !saveError.isEmpty {
+                HStack {
+                    Text(saveError).font(.system(size: 12)).foregroundColor(.red)
+                    Spacer()
+                    if syncSaveFailed { Button("重试保存设置", action: save) }
+                }
+            }
             settingsPane(.connection) {
                 VStack(alignment: .leading, spacing: 16) {
-                    WeChatConnectionSetupView(
-                        connectedContinueTitle: WeChatConnectionCopy.pickConversations,
-                        onConnectedContinue: {
-                            NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
-                        }
-                    )
+                    WeChatConnectionSetupView()
                         .companionSurface(padding: 22)
-                    connectionSaveReceipt
-                    if needsRestart {
-                        Text(WeChatConnectionCopy.restartToApply)
-                            .workspaceMeta()
-                            .foregroundStyle(CompanionPalette.jade)
-                    }
-                    DisclosureGroup(WeChatConnectionCopy.advanced, isExpanded: $showAdvancedConnection) {
+                    connectionCapabilityList
+                    DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
-                            connectionCapabilityList
-                            DisclosureGroup(WeChatConnectionCopy.syncAndChecks, isExpanded: $showConnectionMaintenance) {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    syncSection
-                                    databaseSection
-                                    if let device = store.deviceSettings,
-                                       (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
-                                        legacyRecordsSection(device: device)
-                                    }
-                                    DisclosureGroup(WeChatConnectionCopy.diagnostics, isExpanded: $showConnectionDiagnostics) {
-                                        SupportDiagnosticsView()
-                                    }
-                                }
+                            databaseSection
+                            syncSection
+                            if let device = store.deviceSettings,
+                               (legacyStatus ?? device.legacyStoreStatus) == .needsAccountConfirmation {
+                                legacyRecordsSection(device: device)
                             }
+                            if needsRestart {
+                                Text("高级连接设置将在助手重新打开后应用。")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            SupportDiagnosticsView()
                         }.padding(.top, 14)
                     }.font(.callout)
                 }
             }
             settingsPane(.preferences) {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text(PreferencesCopy.hudLine(displayScreen))
-                        .workspaceTitle()
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if syncSaveFailed {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(PreferencesCopy.saveFailed)
-                                .workspaceMeta()
-                                .foregroundStyle(.primary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button(PreferencesCopy.saveRetry, action: save)
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                     displaySection
                     MacExperienceSettingsView()
-                    DisclosureGroup(PreferencesCopy.updatesDisclosure) {
-                        AppUpdateSettingsView()
-                    }
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                    AppUpdateSettingsView()
                 }
             }
             settingsPane(.data) {
@@ -190,26 +150,6 @@ struct SyncSettingsView: View {
             .clipped()
             .allowsHitTesting(active)
             .accessibilityHidden(!active)
-    }
-
-    @ViewBuilder
-    private var connectionSaveReceipt: some View {
-        if syncSaveFailed || saveError == WeChatConnectionCopy.bindFailed {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(syncSaveFailed ? WeChatConnectionCopy.saveFailed : WeChatConnectionCopy.bindFailed)
-                    .workspaceMeta()
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                if syncSaveFailed {
-                    Button(WeChatConnectionCopy.saveRetry, action: save)
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel(WeChatConnectionCopy.saveRetry)
-                }
-            }
-        }
     }
 
     // MARK: - Sync
@@ -248,27 +188,17 @@ struct SyncSettingsView: View {
     }
 
     private var displaySection: some View {
-        SettingsSection {
-            SettingsRow(PreferencesCopy.displayTitle, subtitle: PreferencesCopy.displaySubtitle, icon: "display", iconColor: .secondary) {
-                HStack(spacing: 6) {
-                    ForEach(DisplayScreen.allCases, id: \.self) { screen in
-                        Button(screen.label) {
-                            displayScreen = screen
-                            save()
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(displayScreen == screen ? Color.primary : Color.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            displayScreen == screen ? CompanionPalette.selectedFill : Color.clear,
-                            in: Capsule()
-                        )
-                        .accessibilityLabel(screen.label)
-                        .accessibilityAddTraits(displayScreen == screen ? .isSelected : [])
+        SettingsSection("显示位置") {
+            SettingsRow("显示位置", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: CompanionPalette.jade) {
+                Picker("显示位置", selection: $displayScreen) {
+                    ForEach(DisplayScreen.allCases, id: \.self) { s in
+                        Text(s.label).tag(s)
                     }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 110)
+                .onChange(of: displayScreen) { save() }
             }
         }
     }
@@ -362,10 +292,16 @@ struct SyncSettingsView: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ready ? CompanionPalette.jade : .secondary)
                 if let actionTitle, let action {
-                    Button(actionTitle, action: action)
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                    Button(action: action) {
+                        HStack(spacing: 3) {
+                            Text(actionTitle)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(CompanionPalette.jade)
+                        .font(.system(size: 12, weight: .medium))
                 }
             }
         }
@@ -414,7 +350,7 @@ struct SyncSettingsView: View {
             saveError = ""
             needsRestart = true
         } catch {
-            saveError = WeChatConnectionCopy.bindFailed
+            saveError = "旧版资料绑定失败。请先备份数据，再确认当前目录后重试。"
         }
     }
 
@@ -569,26 +505,8 @@ struct SyncSettingsView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            Text(LocalDataCopy.statusLine(count: recalledMessages.count + commitments.count + pendingAsks.count))
-                .workspaceTitle()
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(LocalDataRetrospection.windowCaption)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !saveError.isEmpty {
-                Text(LocalDataCopy.saveFailed)
-                    .workspaceMeta()
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            exportReportSection
             retrospectionSection
-            DisclosureGroup(LocalDataCopy.exportDisclosure) {
-                exportReportSection
-            }
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
         }
     }
 
@@ -603,21 +521,21 @@ struct SyncSettingsView: View {
                     Spacer(minLength: 8)
                     if let url = exportedURL {
                         Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .controlSize(.small)
                     }
-                    Button("导出到桌面") {
+                    Button {
                         if let url = monitor.exportReport() {
                             exportedURL = url
                             exportMessage = "已导出 \(url.lastPathComponent)"
                         } else {
                             exportMessage = "导出失败，请检查桌面写入权限"
                         }
+                    } label: {
+                        Label("导出到桌面", systemImage: "square.and.arrow.down")
                     }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.borderedProminent)
+                    .tint(CompanionPalette.jade)
+                    .controlSize(.small)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
@@ -630,15 +548,14 @@ struct SyncSettingsView: View {
                 if let msg = exportMessage {
                     HStack(spacing: 8) {
                         Image(systemName: msg.hasPrefix("导出失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : Color.secondary)
+                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : CompanionPalette.jade)
                         Text(msg)
                             .font(.system(size: 12))
                             .foregroundColor(msg.hasPrefix("导出失败") ? .red : .secondary)
                         if let url = exportedURL, !msg.hasPrefix("导出失败") {
                             Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(CompanionPalette.jade)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -650,29 +567,44 @@ struct SyncSettingsView: View {
     }
 
     private var retrospectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(DataSection.allCases, id: \.self) { section in
-                    CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
-                        selectedSection = section
-                        reloadData()
+        SettingsSection {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        sectionHeaderIcon("clock.arrow.circlepath", color: CompanionPalette.jade)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("记录回溯")
+                                .font(.system(size: 13, weight: .medium))
+                            Text(LocalDataRetrospection.windowCaption)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        CompanionClipboardField(
+                            text: $dataSearch,
+                            placeholder: "搜索标题、联系人或内容",
+                            kind: .plain,
+                            accessibilityLabel: "搜索整理过的记录"
+                        )
+                        .frame(maxWidth: 240)
+                    }
+                    HStack(spacing: 8) {
+                        ForEach(DataSection.allCases, id: \.self) { section in
+                            CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
+                                selectedSection = section
+                                reloadData()
+                            }
+                        }
                     }
                 }
-            }
-            DisclosureGroup(LocalDataCopy.findDisclosure) {
-                CompanionClipboardField(
-                    text: $dataSearch,
-                    placeholder: LocalDataCopy.searchPlaceholder,
-                    kind: .plain,
-                    accessibilityLabel: LocalDataCopy.searchPlaceholder
-                )
-            }
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
-            switch selectedSection {
-            case .recalls:     recallsList
-            case .commitments: commitmentsList
-            case .pendingAsks: pendingAsksList
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                SettingsRowDivider()
+                switch selectedSection {
+                case .recalls:     recallsList
+                case .commitments: commitmentsList
+                case .pendingAsks: pendingAsksList
+                }
             }
         }
     }
@@ -714,6 +646,14 @@ struct SyncSettingsView: View {
                                 .font(.system(size: 13))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
+                            if let reason = msg.aiReason {
+                                HStack(spacing: 4) {
+                                    pill(reason, color: msg.aiIntelligenceValue == "high" ? .red : .gray)
+                                    if let d = msg.aiDetail, !d.isEmpty {
+                                        Text(d).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                                    }
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -726,9 +666,7 @@ struct SyncSettingsView: View {
     private var commitmentsList: some View {
         Group {
             if commitments.isEmpty {
-                emptyRow(LocalDataRetrospection.emptyCommitments, nextTitle: LocalDataCopy.openTasks) {
-                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
-                }
+                emptyRow(LocalDataRetrospection.emptyCommitments)
             } else {
                 ForEach(commitments.filter { matchesDataSearch($0.content, $0.commitTo) }) { item in
                     SettingsRowDivider()
@@ -759,15 +697,12 @@ struct SyncSettingsView: View {
                             Button("完成") {
                                 mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .fulfilled) }
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .controlSize(.mini)
                             Button("取消") {
                                 mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .controlSize(.mini)
+                            .foregroundColor(.secondary)
                         } else {
                             Text(commitmentStatusLabel(item.status))
                                 .font(.system(size: 12))
@@ -784,9 +719,7 @@ struct SyncSettingsView: View {
     private var pendingAsksList: some View {
         Group {
             if pendingAsks.isEmpty {
-                emptyRow(LocalDataRetrospection.emptyPendingAsks, nextTitle: LocalDataCopy.openTasks) {
-                    NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
-                }
+                emptyRow(LocalDataRetrospection.emptyPendingAsks)
             } else {
                 ForEach(pendingAsks.filter { matchesDataSearch($0.senderName, $0.chatName, $0.summary) }) { ask in
                     SettingsRowDivider()
@@ -801,23 +734,25 @@ struct SyncSettingsView: View {
                                 Text(ask.chatName).font(.system(size: 12)).foregroundColor(.secondary)
                             }
                             Text(ask.summary).font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
-                            Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
-                                .font(.system(size: 11)).foregroundColor(.secondary)
+                            HStack(spacing: 4) {
+                                pill(ask.askType.label, color: .blue)
+                                Text(String(format: "%.0f%%", ask.confidence * 100))
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                                Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
+                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                            }
                         }
                         Spacer()
                         if ask.status == .pending {
                             Button("已处理") {
                                 mutateData { try store.updatePendingAskStatus(msgUID: ask.msgUID, status: .done) }
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .controlSize(.mini)
                             Button("忽略") {
                                 mutateData { try store.dismissPendingAsk(msgUID: ask.msgUID) }
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .controlSize(.mini)
+                            .foregroundColor(.secondary)
                         } else {
                             Text(ask.status.rawValue).font(.system(size: 12)).foregroundColor(.secondary)
                         }
@@ -837,21 +772,22 @@ struct SyncSettingsView: View {
         return fields.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
-    private func emptyRow(_ text: String, nextTitle: String? = nil, next: (() -> Void)? = nil) -> some View {
-        VStack(spacing: 8) {
-            Text(text)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-            if let nextTitle, let next {
-                Button(nextTitle, action: next)
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity)
+    private func emptyRow(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13))
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .cornerRadius(3)
     }
 
     private func commitmentStatusLabel(_ status: CommitmentStatus) -> String {
@@ -925,7 +861,7 @@ struct SyncSettingsView: View {
                 NotificationCenter.default.post(name: .hudDisplayPreferenceDidChange, object: nil)
             }
         } catch {
-            saveError = WeChatConnectionCopy.saveFailed
+            saveError = "同步设置保存失败，请重试。"
             syncSaveFailed = true
         }
     }
@@ -937,29 +873,18 @@ struct SyncSettingsView: View {
             reloadData()
             monitor.refreshNow()
         } catch {
-            saveError = LocalDataCopy.saveFailed
+            saveError = "操作未保存，请重试。原记录仍保留。"
         }
     }
 
     private func reloadData() {
         let snapshot = LocalDataRetrospection.load(store: store)
-        recalledMessages = snapshot.recalls
-        commitments = snapshot.commitments
-        pendingAsks = snapshot.pendingAsks
+        switch selectedSection {
+        case .recalls:     recalledMessages = snapshot.recalls
+        case .commitments: commitments = snapshot.commitments
+        case .pendingAsks: pendingAsks = snapshot.pendingAsks
+        }
     }
-}
-
-enum LocalDataCopy {
-    static func statusLine(count: Int) -> String {
-        if count == 0 { return "近两周没有整理过的记录。" }
-        return "近两周整理过 \(count) 件事。"
-    }
-
-    static let exportDisclosure = "还要导出"
-    static let searchPlaceholder = "找人或内容"
-    static let findDisclosure = "还要找"
-    static let saveFailed = "刚才没记上。"
-    static let openTasks = "去待办里看"
 }
 
 /// 本地资料 is "近两周整理过的事情". Load windows and empty copy must
@@ -970,7 +895,7 @@ enum LocalDataRetrospection {
     static let windowCaption = "只看近 \(windowDays) 天整理过的记录。更早的已收起。"
     static let emptyRecalls = "近两周没有撤回记录"
     static let emptyCommitments = "近两周没有记下的承诺"
-    static let emptyPendingAsks = "近两周没有记下的提问"
+    static let emptyPendingAsks = "近两周没有未处理的提问"
 
     struct Snapshot {
         var recalls: [RecalledMessage]

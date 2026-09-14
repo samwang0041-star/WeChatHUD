@@ -15,129 +15,112 @@ struct MacExperienceSettingsView: View {
     @State private var permissionCheckMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SettingsSection("macOS 体验与权限") {
-                SettingsRow("登录时启动", subtitle: loginExplanation, icon: "power", iconColor: .blue) {
-                    Toggle("登录时启动", isOn: Binding(get: { loginStatus == .enabled || loginStatus == .requiresApproval }, set: updateLogin))
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                        .disabled(changingLogin || PreviewRuntime.isEnabled)
-                }
-                if loginStatus == .requiresApproval {
-                    Button("在系统设置中确认登录项") { SMAppService.openSystemSettingsLoginItems() }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 56).padding(.vertical, 10)
-                }
-                SettingsRowDivider()
-                SettingsRow("微信操作权限", subtitle: "跳转微信和发出回复要用。读聊天不用这个。",
-                            icon: "hand.point.up.left", iconColor: .purple) {
-                    HStack(spacing: 8) {
-                        Label(accessibilityGranted ? "已允许" : "待授权",
-                              systemImage: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(accessibilityGranted ? CompanionPalette.jade : .orange)
-                        Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
-                            openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .disabled(PreviewRuntime.isEnabled)
-                    }
-                }
-                if !accessibilityGranted {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("还没授权跳转微信。点「打开辅助功能设置」。")
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("重新检查权限") {
-                            refresh()
-                            permissionCheckMessage = accessibilityGranted
-                                ? "可以跳转微信了。"
-                                : "还没授权。关掉助手再打开一次。"
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .disabled(PreviewRuntime.isEnabled)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                }
-                if let permissionCheckMessage {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                        Text(permissionCheckMessage)
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.bottom, 10)
-                }
-                SettingsRowDivider()
-                DisclosureGroup("还要管通知") {
-                    SettingsRow("系统通知", subtitle: "承诺到期可以进通知中心。", icon: "bell.badge", iconColor: .orange) {
-                        HStack(spacing: 8) {
-                            if notificationStatus == .authorized {
-                                Label("已允许", systemImage: "checkmark.circle.fill")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(CompanionPalette.jade)
-                            }
-                            if notificationStatus == .notDetermined {
-                                Button("允许系统通知", action: requestNotifications)
-                                    .buttonStyle(CompanionPressStyle())
-                                    .workspaceMeta()
-                                    .foregroundStyle(.secondary)
-                                    .disabled(requestingNotifications || PreviewRuntime.isEnabled)
-                            } else {
-                                Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
-                                    .buttonStyle(CompanionPressStyle())
-                                    .workspaceMeta()
-                                    .foregroundStyle(.secondary)
-                                    .disabled(PreviewRuntime.isEnabled)
-                            }
-                        }
-                    }
-                }
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                SettingsRowDivider()
-                DisclosureGroup("还要看动画") {
-                    SettingsRow("动画与透明度", subtitle: "系统开了减少动态或减少透明，这里会跟着走。", icon: "circle.dotted", iconColor: .secondary) {
-                        Text(accessibilityStatus)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+        SettingsSection("macOS 体验与权限") {
+            SettingsRow("登录时启动", subtitle: loginExplanation, icon: "power", iconColor: .blue) {
+                Toggle("登录时启动", isOn: Binding(get: { loginStatus == .enabled || loginStatus == .requiresApproval }, set: updateLogin))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                    .disabled(changingLogin || PreviewRuntime.isEnabled)
             }
-
+            if loginStatus == .requiresApproval {
+                Button("在系统设置中确认登录项") { SMAppService.openSystemSettingsLoginItems() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 56).padding(.vertical, 10)
+            }
+            SettingsRowDivider()
+            SettingsRow("微信操作权限", subtitle: "用于跳转到微信和发送回复；不影响读取聊天。",
+                        icon: "hand.point.up.left", iconColor: .purple) {
+                HStack(spacing: 8) {
+                    Label(accessibilityGranted ? "已允许" : "待授权",
+                          systemImage: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(accessibilityGranted ? CompanionPalette.jade : .orange)
+                    Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
+                        openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                    }.disabled(PreviewRuntime.isEnabled)
+                }
+            }
+            if !accessibilityGranted {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "exclamationmark.bubble")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                        .frame(width: 28)
+                    Text("已经打开开关？请先重新检查。若仍未生效，退出并重新打开 WeChatHUD 后再试。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 12)
+                    Button("重新检查权限") {
+                        refresh()
+                        permissionCheckMessage = accessibilityGranted
+                            ? "权限已生效，可以返回聊天继续回复。"
+                            : "当前应用仍未获得授权。请重新打开 WeChatHUD 后再试；回复内容不会自动发送。"
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(PreviewRuntime.isEnabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+            }
+            if let permissionCheckMessage {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "checkmark.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28)
+                    Text(permissionCheckMessage)
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.bottom, 10)
+            }
+            SettingsRowDivider()
+            SettingsRow("系统通知", subtitle: "接收待办提醒与重要更新。", icon: "bell.badge", iconColor: .orange) {
+                HStack(spacing: 8) {
+                    if notificationStatus == .authorized {
+                        Label("已允许", systemImage: "checkmark.circle.fill")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(CompanionPalette.jade)
+                    }
+                    if notificationStatus == .notDetermined {
+                        Button("允许系统通知", action: requestNotifications)
+                            .disabled(requestingNotifications || PreviewRuntime.isEnabled)
+                    } else {
+                        Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
+                            .disabled(PreviewRuntime.isEnabled)
+                    }
+                }
+            }
+            SettingsRowDivider()
             Text("关闭这个窗口后，助手仍留在顶部和菜单栏。")
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 12)
+            SettingsRowDivider()
+            SettingsRow("动画与透明度", subtitle: "减少动态效果时立刻切换状态；减少透明度时用实底，不靠桌面衬出字。", icon: "circle.dotted", iconColor: CompanionPalette.jade) {
+                Text(accessibilityStatus)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+            }
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jade)
+                Text("更改已保存").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16).padding(.bottom, 12)
             if PreviewRuntime.isEnabled {
                 Text("演示模式不修改登录项或申请系统权限。")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
             }
             if let errorMessage {
-                Text(errorMessage)
-                    .workspaceMeta()
-                    .foregroundStyle(.primary)
+                Text(errorMessage).font(.system(size: 12)).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
             }
         }
         .onAppear(perform: refresh)
