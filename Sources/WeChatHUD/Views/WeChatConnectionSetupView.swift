@@ -38,31 +38,9 @@ enum ConnectionSetupFlow {
 
 /// The same connection task is used in first launch and ongoing settings.
 /// A picker grants access; only the monitor's successful read completes setup.
-enum WeChatConnectionCopy {
-    static let pickConversations = "去选对话"
-    static let changeAccount = "更换微信账号"
-    static let readOnly = "只读取聊天，不改微信里的内容。"
-    static let changeAccountScope = "更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。"
-    static let advanced = "高级连接设置"
-    static let syncAndChecks = "库路径与同步"
-    static let diagnostics = "诊断概况"
-    static let saveFailed = "刚才没存上。"
-    static let saveRetry = "再试一次"
-    static let bindFailed = "旧版资料没绑上。请先备份，再确认目录后重试。"
-    static let restartToApply = "下次打开助手后生效。"
-    static let pickAccount = "选择要连接的微信账号"
-    static let cancelPreparation = "取消"
-    static let restartFailed = "这次没重新打开助手，请再试一次。"
-}
-
 struct WeChatConnectionSetupView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
-
-    /// Settings overrides the connected primary so it matches「下一步：选择要整理的对话」。
-    /// First launch leaves this nil and keeps「检查更新」as the connection recheck.
-    var connectedContinueTitle: String? = nil
-    var onConnectedContinue: (() -> Void)? = nil
 
     @State private var candidates: [String] = []
     @State private var configuration = SyncConfig()
@@ -219,10 +197,6 @@ struct WeChatConnectionSetupView: View {
     private var title: String { connectionCopy.title }
     private var detail: String { connectionCopy.detail }
     private var buttonTitle: String { connectionCopy.buttonTitle }
-    private var primaryButtonTitle: String {
-        if connected, let connectedContinueTitle { return connectedContinueTitle }
-        return buttonTitle
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -233,11 +207,8 @@ struct WeChatConnectionSetupView: View {
                     .frame(width: 48, height: 48)
                     .background(CompanionPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(title)
-                        .workspaceTitle()
-                    Text(detail)
-                        .workspaceBody()
-                        .foregroundStyle(.secondary)
+                    Text(title).font(.title3.weight(.semibold))
+                    Text(detail).font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -253,11 +224,10 @@ struct WeChatConnectionSetupView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if PreviewRuntime.isEnabled {
                         Text("演示数据 · 林晓")
-                            .workspaceBody()
+                            .font(.callout.weight(.medium))
                     }
                     Label("上次同步：\(date.formatted(date: .abbreviated, time: .shortened))", systemImage: "clock")
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(.secondary)
                 }
             }
 
@@ -269,18 +239,15 @@ struct WeChatConnectionSetupView: View {
                         }
                     }
                     if case .waitingForWeChatRelogin = keyPreparation.phase {
-                        Button(WeChatConnectionCopy.cancelPreparation) { cancelPreparation() }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                        Button("取消") { cancelPreparation() }
+                            .buttonStyle(.link)
                     }
                 }
             }
 
             if showAccounts {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(WeChatConnectionCopy.pickAccount)
-                        .workspaceTitle()
+                    Text("选择要连接的微信账号").font(.callout.weight(.medium))
                     ForEach(candidates, id: \.self) { root in
                         Button {
                             select(root)
@@ -288,79 +255,61 @@ struct WeChatConnectionSetupView: View {
                             HStack {
                                 Image(systemName: "person.crop.circle")
                                 Text(URL(fileURLWithPath: root).deletingLastPathComponent().lastPathComponent)
-                                    .workspaceBody()
                                 Spacer()
-                            }
-                            .padding(.vertical, 6)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .foregroundStyle(.primary)
+                                Image(systemName: "chevron.right").font(.caption)
+                            }.padding(10).contentShape(Rectangle())
+                        }.buttonStyle(.bordered)
                     }
                 }
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                Label(errorMessage, systemImage: "exclamationmark.circle")
+                    .font(.callout).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 12) {
-                Button(primaryButtonTitle) { performPrimaryAction() }
-                    .buttonStyle(.borderedProminent).tint(CompanionPalette.jade)
+                Button(buttonTitle) { performPrimaryAction() }
+                    .buttonStyle(.borderedProminent).tint(CompanionPalette.accent)
                     .controlSize(.large).disabled(applying || syncing || probing || preparationFlowBusy)
                     .accessibilityIdentifier("connection.setup.primary")
-                if connected, onConnectedContinue != nil {
-                    Button(buttonTitle, action: recheckConnection)
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .disabled(applying || syncing || probing)
-                        .accessibilityLabel(buttonTitle)
-                }
                 if PreviewRuntime.isEnabled || (hasConfiguredSelection && !needsAccountSelection) {
-                    Button(WeChatConnectionCopy.changeAccount) { showChangeAccountConfirm = true }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                    Button("更换微信账号") { showChangeAccountConfirm = true }
+                        .buttonStyle(.link)
                         .disabled(applying || syncing || probing)
-                        .accessibilityLabel(WeChatConnectionCopy.changeAccount)
                         .accessibilityIdentifier("connection.change-account")
                 }
                 Spacer(minLength: 0)
             if applying || syncing || probing { ProgressView().controlSize(.small) }
             }
-            Text(WeChatConnectionCopy.readOnly)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+            Text("连接步骤只用于读取聊天。AI 分析使用你在设置中选择的服务。")
+                .font(.caption).foregroundStyle(.secondary)
             if PreviewRuntime.isEnabled {
                 Text("演示界面 · 不读取真实微信，也不申请权限。")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let changeAccountReceipt {
                 Text(changeAccountReceipt)
-                    .workspaceMeta()
+                    .font(.caption)
                     .foregroundStyle(CompanionPalette.jade)
             }
+            Text("更换账号前先看清范围：新账号只读自己的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .companionAnimation(CompanionMotion.ease(0.18), value: connected)
-        .companionDialogBackdrop(showChangeAccountConfirm || showPreparationConsent) {
+        .companionDialogBackdrop(showChangeAccountConfirm) {
             if showChangeAccountConfirm {
                 CompanionDialog(title: "更换微信账号？", onClose: { showChangeAccountConfirm = false }) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text(WeChatConnectionCopy.changeAccountScope)
-                            .workspaceBody()
+                        Text("更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 8) {
+                        HStack {
                             Spacer()
                             Button("先不换") { showChangeAccountConfirm = false }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
                             Button("继续更换") {
                                 showChangeAccountConfirm = false
                                 if PreviewRuntime.isEnabled {
@@ -374,29 +323,13 @@ struct WeChatConnectionSetupView: View {
                         }
                     }
                 }
-            } else if showPreparationConsent {
-                CompanionDialog(title: connectionCopy.consentTitle, onClose: { showPreparationConsent = false }) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(connectionCopy.consentMessage)
-                            .workspaceBody()
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 8) {
-                            Spacer()
-                            Button("暂不") { showPreparationConsent = false }
-                                .buttonStyle(CompanionPressStyle())
-                                .workspaceMeta()
-                                .foregroundStyle(.secondary)
-                            Button("开始准备") {
-                                showPreparationConsent = false
-                                startPreparationFlow()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(CompanionPalette.jade)
-                        }
-                    }
-                }
             }
+        }
+        .confirmationDialog(connectionCopy.consentTitle, isPresented: $showPreparationConsent, titleVisibility: .visible) {
+            Button("开始准备") { startPreparationFlow() }
+            Button("暂不", role: .cancel) {}
+        } message: {
+            Text(connectionCopy.consentMessage)
         }
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
@@ -405,7 +338,7 @@ struct WeChatConnectionSetupView: View {
 
     private func checkpoint(_ text: String, complete: Bool) -> some View {
         Label(text, systemImage: complete ? "checkmark.circle.fill" : "circle")
-            .workspaceBody()
+            .font(.callout.weight(.medium))
             .foregroundStyle(complete ? CompanionPalette.accent : Color.secondary)
     }
 
@@ -472,18 +405,8 @@ struct WeChatConnectionSetupView: View {
     }
 
     private func performPrimaryAction() {
-        if connected, let onConnectedContinue {
-            onConnectedContinue()
-            return
-        }
-        recheckConnection()
-    }
-
-    private func recheckConnection() {
         guard !PreviewRuntime.isEnabled else {
-            if onConnectedContinue == nil {
-                NotificationCenter.default.post(name: .hudOnboardingAdvance, object: nil)
-            }
+            NotificationCenter.default.post(name: .hudOnboardingAdvance, object: nil)
             errorMessage = "演示里不会读取真实微信。正式使用时，这里会打开系统授权。"
             return
         }
@@ -535,7 +458,7 @@ struct WeChatConnectionSetupView: View {
                 if requiresRestart {
                     applying = true
                     do { try await AppRestartController.restart() }
-                    catch { errorMessage = WeChatConnectionCopy.restartFailed; applying = false }
+                    catch { errorMessage = error.localizedDescription; applying = false }
                 } else {
                     monitor.refreshNow()
                 }
@@ -665,14 +588,14 @@ struct WeChatConnectionSetupView: View {
                 applying = true
                 do { try await AppRestartController.restart() }
                 catch {
-                    errorMessage = WeChatConnectionCopy.restartFailed
+                    errorMessage = error.localizedDescription
                     applying = false
                 }
             } else {
                 monitor.refreshNow()
             }
         } catch {
-            keyPreparation.setPhase(.failed(reason: FirstLaunchGuide.userFacingPreparationError(error.localizedDescription)))
+            keyPreparation.setPhase(.failed(reason: error.localizedDescription))
         }
     }
 
@@ -692,7 +615,7 @@ struct WeChatConnectionSetupView: View {
                 do {
                     return try keyPreparation.verifyAndStore(rawKeys: rawKeys, dbRoot: dbRoot)
                 } catch {
-                    keyPreparation.setPhase(.failed(reason: FirstLaunchGuide.userFacingPreparationError(error.localizedDescription)))
+                    keyPreparation.setPhase(.failed(reason: error.localizedDescription))
                     return nil
                 }
             case .needsResignAgain:

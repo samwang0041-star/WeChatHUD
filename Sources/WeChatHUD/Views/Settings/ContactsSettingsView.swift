@@ -43,10 +43,9 @@ struct ContactsSettingsView: View {
 
     private var organizeBack: some View {
         Button("返回关注列表") { selectedSubTab = .contacts }
-            .buttonStyle(CompanionPressStyle())
-            .workspaceMeta()
-            .foregroundStyle(.secondary)
-            .accessibilityLabel("返回关注列表")
+            .buttonStyle(.plain)
+            .foregroundStyle(CompanionPalette.jade)
+            .font(.system(size: 13, weight: .medium))
     }
 }
 
@@ -93,8 +92,6 @@ private struct ContactsListSubView: View {
     @State private var isLoadingCandidates = false
     @State private var candidateLoadError: String?
     @State private var didLoad = false
-    @State private var searching = false
-    @State private var listReceipt: String?
 
     private var filtered: [ContactEntry] {
         contacts.filter { contact in
@@ -121,28 +118,15 @@ private struct ContactsListSubView: View {
         return filtered.first
     }
 
-    private var showsSearchField: Bool {
-        searching || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // Toolbar
             HStack(spacing: 8) {
-                contactFilterChip("全部 \(contacts.count)", selected: selectedFilter == .all) {
-                    selectedFilter = .all
-                }
-                contactFilterChip(
-                    "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)",
-                    selected: selectedFilter == .vip
-                ) {
-                    selectedFilter = .vip
-                }
-                contactFilterChip(
-                    "群聊 \(contacts.filter { isGroupContact($0) }.count)",
-                    selected: selectedFilter == .groups
-                ) {
-                    selectedFilter = .groups
-                }
+                TextField("搜索联系人或群聊", text: $searchText)
+                    .accessibilityLabel("搜索联系人")
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
 
                 Spacer()
 
@@ -150,58 +134,40 @@ private struct ContactsListSubView: View {
                     aiJobChip(status)
                 }
 
-                if showsSearchField {
-                    TextField(FirstLaunchGuide.findPeopleField, text: $searchText)
-                        .accessibilityLabel(FirstLaunchGuide.findPeopleField)
-                        .textFieldStyle(.roundedBorder)
-                        .workspaceBody()
-                        .frame(minWidth: 140, idealWidth: 180, maxWidth: 220)
-                } else if contacts.count > 8 {
-                    Button(FirstLaunchGuide.findPeople) { searching = true }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel(FirstLaunchGuide.findPeopleField)
-                }
-
                 Menu("更多") {
                     Button("什么会提醒我") { organizeTab = .rules }
+                    Divider()
+                    Button("批量整理关系") { monitor.startContactInference(contacts: contacts) }
                     Button("推荐关注") { organizeTab = .aiScan }
-                    Button("看看这些人是谁") { monitor.startContactInference(contacts: contacts) }
+                    Button("不看谁") { organizeTab = .blockRules }
+                    Button("静音") { organizeTab = .silenced }
                     if monitor.contactInferenceStatus?.isRunning == true {
                         Button("停止整理") { monitor.cancelContactInference() }
-                    }
-                    Divider()
-                    Menu("不看和静音") {
-                        Button("不看谁") { organizeTab = .blockRules }
-                        Button("静音") { organizeTab = .silenced }
                     }
                 }
                 .controlSize(.small)
                 .accessibilityLabel("整理范围")
-            }
-            .onChange(of: selectedFilter) {
-                if let selectedContactID,
-                   !filtered.contains(where: { $0.username == selectedContactID }) {
-                    self.selectedContactID = filtered.first?.username
-                }
-            }
 
-            if let listReceipt {
-                Text(listReceipt)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(listReceipt)
             }
+            .companionSurface(padding: 10)
+
+                HStack(spacing: 8) {
+                    CompanionFilterPill(title: "全部 \(contacts.count)", selected: selectedFilter == .all) { selectedFilter = .all }
+                    CompanionFilterPill(title: "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)", selected: selectedFilter == .vip) { selectedFilter = .vip }
+                    CompanionFilterPill(title: "群聊 \(contacts.filter { isGroupContact($0) }.count)", selected: selectedFilter == .groups) { selectedFilter = .groups }
+                }
+                .onChange(of: selectedFilter) {
+                    if let selectedContactID,
+                       !filtered.contains(where: { $0.username == selectedContactID }) {
+                        self.selectedContactID = filtered.first?.username
+                    }
+                }
+
 
             HSplitView {
                 List {
                     if filtered.isEmpty {
-                        emptyState(
-                            icon: "person.crop.circle.badge.questionmark",
-                            text: emptyListTitle,
-                            hint: emptyListHint
-                        )
+                        emptyState(icon: "person.crop.circle.badge.questionmark", text: "没有匹配联系人", hint: "换个关键词或级别筛选")
                             .listRowSeparator(.hidden)
                     } else {
                         contactGroup(level: .vip, title: "重点关注", color: .orange)
@@ -227,6 +193,9 @@ private struct ContactsListSubView: View {
                     inferenceStatus: monitor.contactInferenceStatus,
                     onEdit: { editingContact = $0 },
                     onInfer: { monitor.startContactInference(contacts: [$0]) },
+                    onChangeLevel: { contact, level in
+                        if saveContact(contact, level: level) { reload() }
+                    },
                     onDelete: { contact in
                         pendingDeleteContact = contact
                     }
@@ -263,18 +232,17 @@ private struct ContactsListSubView: View {
         } message: {
             Text(operationError ?? "请重试")
         }
-        .alert(unfollowConfirmTitle, isPresented: Binding(
+        .alert("确认删除联系人？", isPresented: Binding(
             get: { pendingDeleteContact != nil },
             set: { if !$0 { pendingDeleteContact = nil } }
         )) {
             Button("取消", role: .cancel) { pendingDeleteContact = nil }
-            Button("移除关注", role: .destructive) {
+            Button("删除联系人", role: .destructive) {
                 guard let contact = pendingDeleteContact else { return }
                 pendingDeleteContact = nil
                 if deleteContact(contact) {
                     if selectedContactID == contact.username { selectedContactID = nil }
                     reload()
-                    listReceipt = "已不再关注「\(contact.displayName)」。"
                 }
             }
         } message: {
@@ -291,52 +259,24 @@ private struct ContactsListSubView: View {
         }
     }
 
-    private var emptyListTitle: String {
-        contacts.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFilter == .all
-            ? "还没有关注的人"
-            : "没有匹配联系人"
-    }
-
-    private var emptyListHint: String {
-        contacts.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && selectedFilter == .all
-            ? "点「\(CompanionProductCopy.addFollow)」选对话。"
-            : "换个关键词或级别筛选"
-    }
-
-    private var unfollowConfirmTitle: String {
-        if let name = pendingDeleteContact?.displayName {
-            return "不再关注「\(name)」？"
-        }
-        return "不再关注？"
-    }
-
-    private func contactFilterChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .workspaceBody()
-                .fontWeight(selected ? .semibold : .regular)
-                .foregroundStyle(selected ? .primary : .secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(selected ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
-        }
-        .buttonStyle(CompanionPressStyle())
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityLabel(title)
-    }
-
     private func aiJobChip(_ status: ContactInferenceStatus) -> some View {
         HStack(spacing: 4) {
             if status.isRunning {
                 ProgressView()
                     .controlSize(.mini)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
             }
             Text(status.label)
-                .workspaceMeta()
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
         }
-        .accessibilityLabel(status.label)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(status.isRunning ? .blue : .secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(5)
         .help(status.isRunning ? "正在后台整理这些人是谁，你可以继续做别的" : "上次整理的结果")
     }
 
@@ -345,11 +285,14 @@ private struct ContactsListSubView: View {
     private var addContactDialog: some View {
         let available = addCandidates()
         return VStack(alignment: .leading, spacing: 12) {
+            Text("只开始整理选中的对话")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
             TextField("搜索联系人或群聊", text: $addSearchText)
                 .textFieldStyle(.roundedBorder)
             HStack(spacing: 8) {
                 ForEach(AddKindFilter.allCases, id: \.self) { kind in
-                    contactFilterChip(kind.rawValue, selected: addKind == kind) { addKind = kind }
+                    CompanionFilterPill(title: kind.rawValue, selected: addKind == kind) { addKind = kind }
                 }
             }
             if isLoadingCandidates && available.isEmpty {
@@ -361,28 +304,18 @@ private struct ContactsListSubView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else if available.isEmpty {
-                if candidateLoadError != nil, addSearchText.isEmpty {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("刚才没读到人。")
-                            .workspaceMeta()
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        Button(FirstLaunchGuide.saveRetry) {
-                            candidateReloadToken += 1
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel(FirstLaunchGuide.saveRetry)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
-                } else {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
-                        .workspaceMeta()
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                    if let candidateLoadError, addSearchText.isEmpty {
+                        Text(candidateLoadError)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else {
                 VStack(spacing: 0) {
                     ForEach(available.prefix(8), id: \.username) { contact in
@@ -408,17 +341,17 @@ private struct ContactsListSubView: View {
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(CompanionPressStyle())
+                        .buttonStyle(.plain)
                         .accessibilityLabel(selectedAddUsernames.contains(contact.username) ? "取消选择 \(contact.displayName)" : "选择 \(contact.displayName)")
                     }
                 }
             }
             HStack {
+                Text("已选 \(selectedAddUsernames.count) 个")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("取消") { showAddPopover = false }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
                 Button(CompanionProductCopy.addFollow) { addSelectedContacts() }
                     .buttonStyle(.borderedProminent)
                     .tint(CompanionPalette.jade)
@@ -478,12 +411,6 @@ private struct ContactsListSubView: View {
                 )
             }
             reload()
-            selectedContactID = chosen.first?.username
-            if let name = chosen.first?.displayName, chosen.count == 1 {
-                listReceipt = "已关注「\(name)」。"
-            } else if chosen.count > 1 {
-                listReceipt = "已关注 \(chosen.count) 个人。"
-            }
             showAddPopover = false
             selectedAddUsernames = []
         } catch {
@@ -552,9 +479,8 @@ private struct ContactsListSubView: View {
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(color.opacity(0.12)).cornerRadius(3)
                 if contact.replyWindowMinutes > 0 {
-                    Text("\(contact.replyWindowMinutes) 分钟")
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                    Text("\(contact.replyWindowMinutes)m")
+                        .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
                 }
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
@@ -571,7 +497,7 @@ private struct ContactsListSubView: View {
             .cornerRadius(6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(.plain)
         .accessibilityLabel(contact.displayName)
         .contextMenu {
             Button("编辑") {
@@ -582,10 +508,7 @@ private struct ContactsListSubView: View {
                 ForEach([AttentionLevel.vip, .whitelist, .greylist], id: \.self) { level in
                     if level != contact.attentionLevel {
                         Button(attentionLevelTitle(level)) {
-                            if saveContact(contact, level: level) {
-                                reload()
-                                listReceipt = "已改成\(attentionLevelTitle(level))。"
-                            }
+                            if saveContact(contact, level: level) { reload() }
                         }
                     }
                 }
@@ -646,16 +569,20 @@ private struct ContactInspectorView: View {
     let inferenceStatus: ContactInferenceStatus?
     let onEdit: (ContactEntry) -> Void
     let onInfer: (ContactEntry) -> Void
+    let onChangeLevel: (ContactEntry, AttentionLevel) -> Void
     let onDelete: (ContactEntry) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             if let contact {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 14) {
                         header(contact)
+                        Divider()
                         trackingSection(contact)
+                        Divider()
                         aiProfileSection(contact)
+                        Divider()
                         operationsSection(contact)
                     }
                     .padding(14)
@@ -687,29 +614,29 @@ private struct ContactInspectorView: View {
 
             if !contact.roleNote.isEmpty {
                 Text(contact.roleNote)
-                    .workspaceBody()
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
                     .lineLimit(2)
             }
 
             DisclosureGroup("账号信息") {
-                infoRow("账号", value: contact.username)
+                infoRow("微信 ID", value: contact.username)
                 infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
             }
-            .workspaceBody()
+            .font(.system(size: 12, weight: .medium))
         }
     }
 
     private func trackingSection(_ contact: ContactEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("整理范围", systemImage: "scope")
-            Text(trackingReason(contact))
-                .workspaceBody()
-                .foregroundStyle(.secondary)
+            Text("只整理已关注的对话")
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+            infoRow("关注级别", value: attentionLevelTitle(contact.attentionLevel))
+            infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
-                Text("\(contact.replyWindowMinutes) 分钟后提醒")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                infoRow("提醒时机", value: "\(contact.replyWindowMinutes) 分钟后提醒")
             }
         }
     }
@@ -725,77 +652,89 @@ private struct ContactInspectorView: View {
                     if inferenceStatus?.isRunning == true {
                         ProgressView().controlSize(.mini)
                     } else {
-                        Label("再看看", systemImage: "arrow.clockwise")
+                        Label("重新整理", systemImage: "arrow.clockwise")
                     }
                 }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("再看看这个人是谁")
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("重新整理这个人")
                 .disabled(inferenceStatus?.isRunning == true)
-                .help("再看看这个人是谁，不影响你继续用")
+                .help("后台重新推断这个联系人")
             }
 
-            if inferenceStatus?.isRunning == true {
-                Text("正在看这个人是谁。")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-            } else if let profile {
-                Text("\(profile.relationship)，\(profile.hierarchy.label)。说话偏\(profile.tonePreference.label)。")
-                    .workspaceBody()
-                    .fixedSize(horizontal: false, vertical: true)
+            if let profile {
+                infoRow("关系", value: profile.relationship)
+                infoRow("层级", value: profile.hierarchy.label)
+                infoRow("口吻", value: profile.tonePreference.label)
                 if let context = profile.context, !context.isEmpty {
                     Text(context)
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if profile.userEdited {
-                    Text("已按你改过的来。")
-                        .workspaceMicro()
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ProgressView(value: profile.confidence)
+                        .frame(width: 90)
+                    Text("\(Int(profile.confidence * 100))%")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    if profile.userEdited {
+                        Text("已人工校准")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.green)
+                    }
                 }
             } else {
-                Text("还不知道这个人是谁。点「再看看」，不影响你继续用。")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                Text("还不知道这个人是谁。点右上角后会在后台整理，不影响你继续用。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private func operationsSection(_ contact: ContactEntry) -> some View {
-        HStack(spacing: 8) {
-            Button("编辑详情") { onEdit(contact) }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 16)
-            Button("移除关注", role: .destructive) { onDelete(contact) }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.red)
-                .accessibilityLabel("移除关注")
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("操作", systemImage: "slider.horizontal.3")
+            Picker("关注级别", selection: Binding(
+                get: { contact.attentionLevel },
+                set: { onChangeLevel(contact, $0) }
+            )) {
+                Text("重点关注").tag(AttentionLevel.vip)
+                Text("关注").tag(AttentionLevel.whitelist)
+                Text("仅保留资料").tag(AttentionLevel.greylist)
+            }
+            .pickerStyle(.segmented)
+
+            HStack(spacing: 8) {
+                Button("编辑详情") { onEdit(contact) }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                Spacer(minLength: 16)
+                Button("移除关注", role: .destructive) { onDelete(contact) }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("移除关注")
+            }
         }
     }
 
     private func sectionTitle(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .workspaceBody()
-            .fontWeight(.semibold)
-            .foregroundStyle(.primary)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
     }
 
     private func infoRow(_ label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
                 .frame(width: 58, alignment: .leading)
             Text(value)
-                .workspaceBody()
-                .fontWeight(.medium)
-                .foregroundStyle(.primary)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.primary)
                 .lineLimit(2)
             Spacer(minLength: 0)
         }
@@ -996,7 +935,7 @@ struct ContactEditSheet: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("账号信息") {
-                        LabeledContent("账号", value: contact.username)
+                        LabeledContent("微信 ID", value: contact.username)
                         LabeledContent("类型", value: contact.username.contains("@chatroom") || store.getWhitelistEntry(username: contact.username)?.isGroup == true ? "群聊" : "联系人")
                     }
                 }

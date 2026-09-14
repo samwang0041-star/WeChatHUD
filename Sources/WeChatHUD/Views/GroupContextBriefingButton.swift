@@ -21,7 +21,7 @@ struct GroupContextBriefingCard: View {
     var body: some View {
         let state = monitor.groupContextState(for: notification)
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             header
 
             if let briefing = state.briefing {
@@ -33,7 +33,7 @@ struct GroupContextBriefingCard: View {
             } else if state.isLoading {
                 loadingBody
             } else {
-                errorBody(state.errorMessage ?? IslandBriefingCopy.missing)
+                errorBody(state.errorMessage ?? "还没有拿到这段群聊上下文")
             }
 
             footer
@@ -45,67 +45,58 @@ struct GroupContextBriefingCard: View {
     }
 
     private var header: some View {
-        Text(IslandBriefingCopy.title)
-            .islandDisplay()
-            .foregroundStyle(IslandInk.primary)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(notification.chatName)
+                .islandMeta()
+                .foregroundColor(IslandInk.tertiary)
+            Text("为什么 @ 你？")
+                .islandDisplay()
+                .foregroundColor(IslandInk.primary)
+            Text("AI 解读 · 根据最近消息")
+                .islandMeta()
+                .foregroundColor(IslandInk.quaternary)
+        }
     }
 
     private func briefingBody(_ briefing: GroupContextBriefing) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let hero = briefingHero(briefing) {
-                Text(hero)
-                    .islandRowTitle()
-                    .foregroundStyle(IslandInk.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let situation = trimmed(briefing.situation), situation != briefingHero(briefing) {
-                quietLine(label: IslandBriefingCopy.situation, text: situation)
-            }
-            if let next = trimmed(briefing.nextStep) {
-                quietLine(label: IslandBriefingCopy.next, text: next)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            card("在聊什么", text: briefing.situation, systemImage: "bubble.left")
+            card("为什么找你", text: briefing.whyMentioned, systemImage: "person")
+            card("下一步", text: briefing.nextStep, systemImage: "checkmark.circle")
         }
     }
 
     private var originalSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
+        VStack(alignment: .leading, spacing: 6) {
+            Text("原文")
+                .islandSection()
+                .foregroundColor(IslandInk.tertiary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(notification.senderName) · \(CompanionProductCopy.clockLabel(notification.timestamp))")
+                        .islandMeta()
+                        .foregroundColor(IslandInk.secondary)
+                    Text(notification.snippet)
+                        .islandRowBody()
+                        .foregroundColor(IslandInk.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Button {
+                    panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("查看完整上下文")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .buttonStyle(.plain)
                 .islandMeta()
-                .foregroundStyle(IslandInk.meta)
-            Text(notification.snippet)
-                .islandRowBody()
-                .foregroundStyle(IslandInk.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                panelState.showChatDetail(chatUsername: notification.chatUsername, chatName: notification.chatName)
-            } label: {
-                Text(IslandBriefingCopy.openConversation)
+                .foregroundStyle(CompanionPalette.islandMint)
             }
-            .buttonStyle(CompanionPressStyle())
-            .islandMeta()
-            .foregroundStyle(CompanionPalette.islandMint)
-        }
-    }
-
-    private func briefingHero(_ briefing: GroupContextBriefing) -> String? {
-        trimmed(briefing.whyMentioned) ?? trimmed(briefing.situation)
-    }
-
-    private func trimmed(_ text: String) -> String? {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
-
-    private func quietLine(label: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text(label)
-                .islandMicro()
-                .foregroundStyle(IslandInk.tertiary)
-                .frame(width: 36, alignment: .leading)
-            Text(text)
-                .islandRowBody()
-                .foregroundStyle(IslandInk.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(9)
+            .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -113,7 +104,7 @@ struct GroupContextBriefingCard: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text(IslandBriefingCopy.loading)
+            Text("正在整理群聊上下文…")
                 .islandRowBody()
                 .foregroundColor(IslandInk.secondary)
         }
@@ -123,8 +114,8 @@ struct GroupContextBriefingCard: View {
     private func errorBody(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .islandMicro()
-                .foregroundStyle(IslandChrome.glowAmber)
+                .font(.system(size: 11))
+                .foregroundColor(.orange)
             Text(message)
                 .islandRowBody()
                 .foregroundColor(IslandInk.secondary)
@@ -135,10 +126,10 @@ struct GroupContextBriefingCard: View {
             Button(BriefingRetryAction.label) {
                 BriefingRetryAction.perform(monitor, notification: notification)
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(.plain)
             .islandButton()
             .foregroundStyle(CompanionPalette.islandMint)
-            .accessibilityHint(IslandBriefingCopy.retryHint)
+            .accessibilityHint("重新向 AI 要一次这段群聊上下文")
         }
         .padding(.vertical, 4)
     }
@@ -149,27 +140,28 @@ struct GroupContextBriefingCard: View {
             Button {
                 monitor.openWeChatChat(notification.chatUsername)
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                    Text(IslandBriefingCopy.openWeChat)
-                }
-                .frame(maxWidth: .infinity)
+                Label("去微信回复", systemImage: "bubble.left.and.bubble.right.fill")
+                    .islandButton()
+                    .foregroundStyle(IslandInk.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(CompanionPalette.jade, in: Capsule())
             }
-            .buttonStyle(IslandPillButtonStyle(emphasized: true))
-            .accessibilityLabel(IslandBriefingCopy.openWeChat)
+            .buttonStyle(.plain)
 
             Button {
                 // onChange below is the single place that syncs panelState —
                 // calling setSnoozeMenuExpanded here too would double-fire it.
                 showSnooze.toggle()
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "clock")
-                    Text(IslandBriefingCopy.snooze)
-                }
+                Label("稍后提醒", systemImage: "clock")
+                    .islandButton()
+                    .foregroundStyle(IslandInk.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(showSnooze ? CompanionPalette.jade : IslandInk.chip, in: Capsule())
             }
-            .buttonStyle(IslandPillButtonStyle())
-            .accessibilityLabel(IslandBriefingCopy.snooze)
+            .buttonStyle(.plain)
             .accessibilityHint("打开稍后提醒时间")
             .onChange(of: showSnooze) { _, isOpen in
                 panelState.setSnoozeMenuExpanded(isOpen)
@@ -197,9 +189,30 @@ struct GroupContextBriefingCard: View {
         }
         }
     }
+
+    private func card(_ title: String, text: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12))
+                .foregroundStyle(CompanionPalette.islandMint)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(title):")
+                    .islandSection()
+                    .foregroundColor(IslandInk.tertiary)
+                Text(text)
+                    .islandRowBody()
+                    .foregroundColor(IslandInk.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
 }
 
-/// The action behind the briefing card's retry button.
+/// The action behind the briefing card's 「重试」 button.
 ///
 /// Kept out of the view body so the wiring is assertable without hosting
 /// SwiftUI: the forced refresh is the point — a plain
@@ -207,22 +220,9 @@ struct GroupContextBriefingCard: View {
 /// is exactly the stale-briefing-plus-error state the button renders in.
 @MainActor
 enum BriefingRetryAction {
-    static var label: String { IslandBriefingCopy.retry }
+    static let label = "重试"
 
     static func perform(_ monitor: ChatMonitor, notification: HUDNotification) {
         monitor.loadGroupContextBriefing(for: notification, forceRefresh: true)
     }
-}
-
-enum IslandBriefingCopy {
-    static let title = "为什么找你"
-    static let openWeChat = "去微信回复"
-    static let snooze = "稍后提醒"
-    static let situation = "在聊"
-    static let next = "下一步"
-    static let openConversation = "打开对话"
-    static let retry = "再试一次"
-    static let retryHint = "再整理一次这段群聊"
-    static let loading = "正在看群里刚说了什么…"
-    static let missing = "暂时看不到这段前后文"
 }

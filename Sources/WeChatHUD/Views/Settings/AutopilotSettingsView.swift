@@ -16,8 +16,8 @@ enum AutopilotSettingsCopy {
     static let groupRule = "群聊默认只记录；打开上面的开关后只写待确认草稿，不会自动发出。"
     static let groupAtOff = "群消息默认只记录，不写回复。"
 
-    static let confidenceTitle = "多有把握才发出去"
-    static let confidenceHint = "不到这个数只写草稿。群聊、转账、红包仍要你确认。"
+    static let confidenceTitle = "自动发送把握程度"
+    static let confidenceHint = "达到这个门槛才会尝试自动发送，仍受发送限制约束。"
     static let perHourTitle = "每小时最多"
     static let perHourHint = "每小时发送上限。"
     static let sessionTitle = "本次整理最多"
@@ -25,7 +25,6 @@ enum AutopilotSettingsCopy {
 
     static let alwaysManualTitle = "哪些一定交给你"
     static let alwaysManualRule = "群聊、转账、红包、小程序不会自动发送。其他敏感内容需人工确认。"
-    static let replyStyleTitle = "回复风格"
 
     /// The batch option is a window in seconds, not a message count. The old
     /// "连着几条一起回" title read as "reply after N messages", which is not
@@ -34,8 +33,7 @@ enum AutopilotSettingsCopy {
     static let batchHint = "连续几条消息会先等这个时长，再合成一次回复。单位是秒，不是条数。"
 
     static func excludedTitle(count: Int) -> String { "不会自动回复的人 (\(count))" }
-    static let excludedEmpty = "还没有排除的人。"
-    static let excludedGoContacts = "去关注谁"
+    static let excludedEmpty = "还没有添加。这里的人不会被自动回复；要不要真的发出去，仍由上面的开关决定。"
     static let excludedAddButton = "添加排除对象"
     static let advancedTitle = "高级设置"
     static let historyTitle = "自动回复记录"
@@ -45,17 +43,6 @@ enum AutopilotSettingsCopy {
     static let historyClearConfirm = "清除"
     static let historyClearCancel = "取消"
     static let historyClearFailed = "记录没清掉，请稍后重试（已发出的消息不受影响）"
-    static let historyCleared = "记录已清除。"
-
-    static let statusActive = "正在整理回复"
-    static let statusIdle = "尚未开始整理"
-    static let openPending = "查看待确认回复"
-    static let saveOk = "设置已保存"
-    static let saveFailed = "设置没保存成功，现在还是上次的规则。请再试一次。"
-    static let saveRetry = "再试一次"
-    static let sendKeyTitle = "微信发送键"
-    static let sendKeyCmd = "Cmd+Enter"
-    static let sendKeyEnter = "Enter"
 }
 
 struct AutopilotSettingsView: View {
@@ -73,24 +60,17 @@ struct AutopilotSettingsView: View {
     @State private var sendKey: WeChatSendKey = .cmdEnter
 
     @State private var isHydrating = true
+    @State private var saveError: String?
     @State private var didLoad = false
     @State private var showClearConfirm = false
     @State private var sessions: [AutopilotSession] = []
     @State private var allContacts: [ContactEntry] = []
     @State private var safetyConfig = AutopilotConfig()
+    @State private var saved = false
     @State private var pendingEnableAutoSend = false
-    @State private var receipt: Receipt = .idle
 
     let replyLimits = [5, 10, 20, 50]
     let batchOptions = [5, 10, 15, 30]
-
-    private enum Receipt {
-        case idle
-        case saved
-        case saveFailed
-        case historyFailed
-        case historyCleared
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -98,17 +78,14 @@ struct AutopilotSettingsView: View {
                 Circle()
                     .fill(monitor.autopilotActive ? CompanionPalette.jade : Color.secondary.opacity(0.45))
                     .frame(width: 7, height: 7)
-                    .accessibilityHidden(true)
-                Text(monitor.autopilotActive ? AutopilotSettingsCopy.statusActive : AutopilotSettingsCopy.statusIdle)
-                    .workspaceMeta()
+                Text(monitor.autopilotActive ? "正在整理回复" : "尚未开始整理")
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(AutopilotSettingsCopy.openPending) {
-                    panelState.pendingSettingsTab = "autopilotDashboard"
-                }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                Button("查看待确认回复") { panelState.pendingSettingsTab = "autopilotDashboard" }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CompanionPalette.jade)
+                    .font(.system(size: 13, weight: .medium))
             }
 
             SettingsSection("自动回复") {
@@ -139,7 +116,49 @@ struct AutopilotSettingsView: View {
                     )
                 )
                 SettingsRowDivider()
-                confidenceRow
+                SettingsRow("回复风格", subtitle: replyStyle.hint) {
+                    Picker("回复风格", selection: $replyStyle) {
+                        ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 140)
+                    .onChange(of: replyStyle) { save() }
+                }
+                SettingsRowDivider()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("自动发送把握程度")
+                            .font(.system(size: 13))
+                        Spacer()
+                        Text("\(Int(confidenceThreshold * 100))%")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(CompanionPalette.jade)
+                    }
+                    Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
+                        .tint(CompanionPalette.jade)
+                        .accessibilityLabel("自动发送把握程度")
+                        .onChange(of: confidenceThreshold) { save() }
+                    Text("达到这个门槛才会尝试自动发送，仍受发送限制约束。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                SettingsRowDivider()
+                SettingsRow("每小时最多", subtitle: "每小时发送上限。") {
+                    Picker("每小时最多", selection: $maxRepliesPerHour) {
+                        ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 80)
+                    .onChange(of: maxRepliesPerHour) { save() }
+                }
+                SettingsRowDivider()
+                SettingsRow("本次整理最多", subtitle: "本次整理期间最多自动发送的条数。") {
+                    Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
+                        .foregroundStyle(.secondary)
+                }
                 SettingsRowDivider()
                 // The batch window lives in the main section: it is part of
                 // "when do replies go out", not an expert tweak, and its old
@@ -147,17 +166,37 @@ struct AutopilotSettingsView: View {
                 // answers.
                 limitsBatchRow
                 SettingsRowDivider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(AutopilotSettingsCopy.alwaysManualTitle)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(AutopilotSettingsCopy.alwaysManualRule)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                SettingsRowDivider()
+                DisclosureGroup("不自动回复的人") {
+                    exclusionSection
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                SettingsRowDivider()
                 DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
                     VStack(alignment: .leading, spacing: 12) {
                         advancedSection
-                        exclusionSection
                         historySection
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
 
-            receiptBar
+            if let saveError {
+                Label(saveError, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.red)
+                Button("重试保存设置") { save() }
+            } else if saved {
+                Label("设置已保存", systemImage: "checkmark.circle.fill")
+                    .font(.callout).foregroundStyle(CompanionPalette.jade)
+            }
         }
         .onAppear {
             if !didLoad {
@@ -174,18 +213,15 @@ struct AutopilotSettingsView: View {
                 }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.autoSendConfirmMessage)
-                            .workspaceBody()
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        HStack(spacing: 8) {
+                        HStack {
                             Spacer()
                             Button(CompanionProductCopy.autoSendKeepManual) {
                                 pendingEnableAutoSend = false
                                 autoSendEnabled = false
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
                             Button(CompanionProductCopy.autoSendAllow) {
                                 pendingEnableAutoSend = false
                                 autoSendEnabled = true
@@ -200,227 +236,96 @@ struct AutopilotSettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var receiptBar: some View {
-        switch receipt {
-        case .idle:
-            EmptyView()
-        case .saved:
-            Text(AutopilotSettingsCopy.saveOk)
-                .workspaceMeta()
-                .foregroundStyle(CompanionPalette.jade)
-        case .saveFailed:
-            saveFailureRow(AutopilotSettingsCopy.saveFailed, retry: save)
-        case .historyFailed:
-            saveFailureRow(AutopilotSettingsCopy.historyClearFailed, retry: retryClearHistory)
-        case .historyCleared:
-            Text(AutopilotSettingsCopy.historyCleared)
-                .workspaceMeta()
-                .foregroundStyle(CompanionPalette.jade)
-        }
-    }
-
-    private func saveFailureRow(_ message: String, retry: @escaping () -> Void) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(message)
-                .workspaceMeta()
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
-            Button(AutopilotSettingsCopy.saveRetry, action: retry)
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var confidenceRow: some View {
-        SettingsRow(AutopilotSettingsCopy.confidenceTitle, subtitle: AutopilotSettingsCopy.confidenceHint) {
-            HStack(spacing: 8) {
-                Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
-                    .tint(CompanionPalette.jade)
-                    .accessibilityLabel(AutopilotSettingsCopy.confidenceTitle)
-                    .frame(width: 120)
-                    .onChange(of: confidenceThreshold) { save() }
-                Text("\(Int(confidenceThreshold * 100))%")
-                    .companionFont(size: WorkspaceType.body, weight: .medium)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 40, alignment: .trailing)
-            }
-        }
-    }
-
     private var limitsBatchRow: some View {
-        SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
-            HStack(spacing: 6) {
-                ForEach(batchOptions, id: \.self) { seconds in
-                    batchChip(seconds)
+        SettingsSection(AutopilotSettingsCopy.batchTitle) {
+            SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
+                Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
+                    ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }
                 }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 80)
+                .onChange(of: batchWindowSeconds) { save() }
             }
         }
-    }
-
-    private func batchChip(_ seconds: Int) -> some View {
-        Button("\(seconds) 秒") {
-            batchWindowSeconds = seconds
-            save()
-        }
-        .buttonStyle(CompanionPressStyle())
-        .workspaceMeta()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(batchWindowSeconds == seconds ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
-        .foregroundStyle(batchWindowSeconds == seconds ? .primary : .secondary)
-        .accessibilityAddTraits(batchWindowSeconds == seconds ? .isSelected : [])
     }
 
     // MARK: - Exclusion
 
     private var exclusionSection: some View {
-        let available = allContacts.filter { !excludedContacts.contains($0.username) }
-        return SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
+        SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
             if excludedContacts.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(AutopilotSettingsCopy.excludedEmpty)
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                    if available.isEmpty {
-                        Button(AutopilotSettingsCopy.excludedGoContacts) {
-                            panelState.pendingSettingsTab = "contacts"
-                        }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                    } else {
-                        addExclusionMenu(available: available)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                Text(AutopilotSettingsCopy.excludedEmpty)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
             } else {
                 ForEach(Array(excludedContacts.enumerated()), id: \.element) { idx, username in
                     if idx > 0 { SettingsRowDivider() }
-                    HStack(spacing: 8) {
+                    HStack {
                         Text(contactDisplayName(username))
-                            .workspaceBody()
+                            .font(.system(size: 12))
                         Spacer()
                         Button {
                             excludedContacts.removeAll { $0 == username }
                             save()
                         } label: {
                             Image(systemName: "minus.circle.fill")
-                                .workspaceRowTitle()
-                                .foregroundStyle(.secondary)
+                                .font(.system(size: 13))
+                                .foregroundColor(.red.opacity(0.6))
                         }
-                        .buttonStyle(CompanionPressStyle())
-                        .accessibilityLabel("去掉 \(contactDisplayName(username))")
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                }
-                if !available.isEmpty {
-                    SettingsRowDivider()
-                    HStack {
-                        Spacer()
-                        addExclusionMenu(available: available)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
                 }
             }
-        }
-    }
 
-    private func addExclusionMenu(available: [ContactEntry]) -> some View {
-        Menu {
-            ForEach(available, id: \.username) { contact in
-                Button("\(contact.role.icon) \(contact.displayName)") {
-                    excludedContacts.append(contact.username)
-                    save()
+            let available = allContacts.filter { !excludedContacts.contains($0.username) }
+            if !available.isEmpty {
+                SettingsRowDivider()
+                HStack {
+                    Spacer()
+                    Menu {
+                        ForEach(available, id: \.username) { contact in
+                            Button("\(contact.role.icon) \(contact.displayName)") {
+                                excludedContacts.append(contact.username)
+                                save()
+                            }
+                        }
+                    } label: {
+                        Label(AutopilotSettingsCopy.excludedAddButton, systemImage: "plus.circle")
+                            .font(.system(size: 11))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 70)
                 }
+                .padding(.horizontal, 12).padding(.vertical, 6)
             }
-        } label: {
-            Text(AutopilotSettingsCopy.excludedAddButton)
-                .workspaceMeta()
         }
-        .menuStyle(.borderlessButton)
-        .buttonStyle(CompanionPressStyle())
-        .foregroundStyle(.secondary)
     }
 
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        VStack(spacing: 0) {
-            replyStyleRow
-            SettingsRowDivider()
-            alwaysManualRow
-            SettingsRowDivider()
+        SettingsSection("高级") {
             Text(AutopilotSettingsCopy.groupRule)
-                .workspaceBody()
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
-            SettingsRowDivider()
-            SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
-                Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
-                    ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(width: 80)
-                .onChange(of: maxRepliesPerHour) { save() }
-            }
-            SettingsRowDivider()
-            SettingsRow(AutopilotSettingsCopy.sessionTitle, subtitle: AutopilotSettingsCopy.sessionHint) {
-                Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
-                    .foregroundStyle(.secondary)
-            }
+                .font(.callout).foregroundStyle(.secondary).padding(14)
             SettingsRowDivider()
             SettingsRow(
-                AutopilotSettingsCopy.sendKeyTitle,
+                "微信发送键",
                 subtitle: sendKey == .cmdEnter ? "默认：Enter 换行，Cmd+Enter 发送" : "你已在微信里改成 Enter 直接发送",
-                icon: "paperplane.fill"
+                icon: "paperplane.fill",
+                iconColor: .blue
             ) {
-                HStack(spacing: 6) {
-                    sendKeyChip(AutopilotSettingsCopy.sendKeyCmd, .cmdEnter)
-                    sendKeyChip(AutopilotSettingsCopy.sendKeyEnter, .enter)
+                Picker("", selection: $sendKey) {
+                    Text("Cmd+Enter").tag(WeChatSendKey.cmdEnter)
+                    Text("Enter").tag(WeChatSendKey.enter)
                 }
+                .pickerStyle(.segmented)
+                .frame(width: 170)
+                .onChange(of: sendKey) { save() }
             }
         }
-    }
-
-    private var replyStyleRow: some View {
-        SettingsRow(AutopilotSettingsCopy.replyStyleTitle, subtitle: replyStyle.hint) {
-            Picker(AutopilotSettingsCopy.replyStyleTitle, selection: $replyStyle) {
-                ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .frame(width: 140)
-            .onChange(of: replyStyle) { save() }
-        }
-    }
-
-    private var alwaysManualRow: some View {
-        SettingsRow(AutopilotSettingsCopy.alwaysManualTitle, subtitle: AutopilotSettingsCopy.alwaysManualRule) {
-            EmptyView()
-        }
-    }
-
-    private func sendKeyChip(_ title: String, _ key: WeChatSendKey) -> some View {
-        Button(title) {
-            sendKey = key
-            save()
-        }
-        .buttonStyle(CompanionPressStyle())
-        .workspaceMeta()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(sendKey == key ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
-        .foregroundStyle(sendKey == key ? .primary : .secondary)
     }
 
     // MARK: - History
@@ -429,10 +334,9 @@ struct AutopilotSettingsView: View {
         SettingsSection(AutopilotSettingsCopy.historyTitle) {
             if sessions.isEmpty {
                 Text(AutopilotSettingsCopy.historyEmpty)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 10)
             } else {
                 ForEach(Array(sessions.enumerated()), id: \.element.id) { idx, session in
                     if idx > 0 { SettingsRowDivider() }
@@ -442,18 +346,29 @@ struct AutopilotSettingsView: View {
                 HStack {
                     Spacer()
                     Button(AutopilotSettingsCopy.historyClear) { showClearConfirm = true }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.red)
+                        // Was 10pt red at 0.7 opacity — below the AA
+                        // contrast floor and a small hit target for a
+                        // destructive action.
+                        .font(.system(size: 12))
+                        .foregroundColor(.red)
                         .alert(AutopilotSettingsCopy.historyClearConfirmTitle, isPresented: $showClearConfirm) {
                             Button(AutopilotSettingsCopy.historyClearCancel, role: .cancel) {}
                             Button(AutopilotSettingsCopy.historyClearConfirm, role: .destructive) {
-                                retryClearHistory()
+                                do {
+                                    try store.clearAutopilotHistory()
+                                    sessions = store.loadAutopilotSessions(limit: 10)
+                                    saveError = nil
+                                } catch {
+                                    // Clearing history has no dependency on
+                                    // autopilot being stopped; the old copy
+                                    // invented a precondition the user could
+                                    // not act on.
+                                    saveError = AutopilotSettingsCopy.historyClearFailed
+                                }
                             }
                         }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 12).padding(.vertical, 6)
             }
         }
     }
@@ -461,28 +376,25 @@ struct AutopilotSettingsView: View {
     private func sessionRow(_ session: AutopilotSession) -> some View {
         HStack(spacing: 8) {
             Text(formatDate(session.startedAt))
-                .workspaceMeta()
-                .monospacedDigit()
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.primary)
             Text(sessionDuration(session))
-                .workspaceMicro()
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
             Spacer()
-            Text("\(session.totalSent)")
-                .workspaceMicro()
-                .foregroundStyle(CompanionPalette.jade)
-                .accessibilityLabel("已发送 \(session.totalSent)")
-            Text("\(session.totalPending)")
-                .workspaceMicro()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("待确认 \(session.totalPending)")
+            HStack(spacing: 6) {
+                Label("\(session.totalSent)", systemImage: "checkmark.circle")
+                    .font(.system(size: 10)).foregroundColor(.green)
+                Label("\(session.totalPending)", systemImage: "clock")
+                    .font(.system(size: 10)).foregroundColor(.orange)
+            }
             if session.endedAt == nil {
                 Text("运行中")
-                    .workspaceMicro()
-                    .foregroundStyle(CompanionPalette.jade)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.green)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12).padding(.vertical, 5)
     }
 
     // MARK: - Helpers
@@ -537,20 +449,11 @@ struct AutopilotSettingsView: View {
         cfg.sendKey = sendKey
         do {
             try store.setSettingJSON("autopilot", value: cfg)
+            saveError = nil
             safetyConfig = cfg
-            receipt = .saved
+            saved = true
         } catch {
-            receipt = .saveFailed
-        }
-    }
-
-    private func retryClearHistory() {
-        do {
-            try store.clearAutopilotHistory()
-            sessions = store.loadAutopilotSessions(limit: 10)
-            receipt = .historyCleared
-        } catch {
-            receipt = .historyFailed
+            saveError = "设置没保存成功，现在还是上次的规则。请再试一次。"
         }
     }
 

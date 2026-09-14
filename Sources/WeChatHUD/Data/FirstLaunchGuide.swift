@@ -241,11 +241,6 @@ enum FirstLaunchGuide {
     static let contactsSubtitle = "选择要整理的对话。"
     static let contactsSkipHint = "可以先跳过，稍后在「今天」里添加。"
     static let contactsFooter = "只整理你选中的对话，之后可以随时调整。AI 可选，不影响开始使用。"
-    static let findPeople = "找人"
-    static let findPeopleField = "搜索联系人或群聊"
-    static let saveFailed = "刚才没存上。"
-    static let saveRetry = "再试一次"
-    static let openTodayFailed = "暂时打不开「今天」。"
     static let islandConnectTitle = "先连接微信"
     static let islandConnectDetail = "登录这台 Mac 的微信。"
     static let islandConnectPrivacy = ["只整理你关注的对话。", "自动回复默认关闭。"]

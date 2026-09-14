@@ -310,7 +310,7 @@ struct InboxRowView: View {
                     Image(systemName: "sparkles")
                         .islandMicro()
                         .foregroundColor(.orange.opacity(0.7))
-                    Text(IslandActionCopy.briefing)
+                    Text("分析中…")
                         .islandMeta()
                         .foregroundColor(IslandInk.tertiary)
                 }
@@ -469,7 +469,7 @@ struct IslandSnoozeMenu: View {
                     .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(CompanionPressStyle())
+                .buttonStyle(.plain)
                 .accessibilityLabel(choice.label)
                 .accessibilityHint(choice.whenLabel)
                 .accessibilityIdentifier("companion.snooze.\(choice.label)")

@@ -31,7 +31,7 @@ struct DailyReportTabView: View {
             }
         }
         .foregroundStyle(.primary)
-        .background(isWorkspace ? CompanionPalette.canvas : Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: monitor.dailyReportViewedDate) { _, _ in
             if scope == .weekly { reloadWeeklyCatalog() }
         }
@@ -49,6 +49,7 @@ struct DailyReportTabView: View {
             if let exportMessage {
                 exportStatus(exportMessage)
             }
+            Divider().background(Color.secondary.opacity(0.2))
             if scope == .weekly {
                 weeklySummary
                     .onAppear { reloadWeeklyCatalog() }
@@ -56,7 +57,6 @@ struct DailyReportTabView: View {
                 DailyReportCommandCenterView(isWorkspace: true)
             }
         }
-        .background(CompanionPalette.canvas)
     }
 
     private var compactBody: some View {
@@ -71,28 +71,20 @@ struct DailyReportTabView: View {
     }
 
     private func exportStatus(_ message: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(message)
-                .workspaceMeta()
-                .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            if exportFailed {
-                Button("再试一次") { exportReport() }
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel("再试一次导出")
-            } else if let exportedReportURL {
-                Button("打开这份小结") {
+        HStack(spacing: 6) {
+            Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle")
+            Text(message).lineLimit(1)
+            if let exportedReportURL {
+                Button("打开结果") {
                     NSWorkspace.shared.activateFileViewerSelecting([exportedReportURL])
                 }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("打开这份小结")
+                .buttonStyle(.link)
+                .accessibilityLabel("打开导出的日报")
             }
             Spacer(minLength: 0)
         }
+        .font(.system(size: isWorkspace ? 12 : 11))
+        .foregroundColor(exportFailed ? .red : .secondary)
         .padding(.horizontal, isWorkspace ? 20 : 14)
         .padding(.bottom, 6)
     }
@@ -101,53 +93,37 @@ struct DailyReportTabView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 ForEach(ReportScope.allCases, id: \.self) { value in
-                    Button { scope = value } label: {
-                        Text(value.rawValue)
-                            .workspaceBody()
-                            .fontWeight(scope == value ? .semibold : .regular)
-                            .foregroundStyle(scope == value ? .primary : .secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(scope == value ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
+                    CompanionFilterPill(title: value.rawValue, selected: scope == value) {
+                        scope = value
                     }
-                    .buttonStyle(CompanionPressStyle())
-                    .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
                 Spacer()
                 Button(action: previousDay) {
                     Image(systemName: "chevron.left")
                 }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                .buttonStyle(.bordered)
                 .disabled(monitor.dailyReportIsLoading)
                 .accessibilityLabel(scope == .weekly ? "上一周" : "前一天")
                 Text(scope == .weekly ? weekRangeText(monitor.dailyReportViewedDate) : dateText(monitor.dailyReportViewedDate))
-                    .workspaceBody()
-                    .fontWeight(.semibold)
+                    .font(.system(size: 14, weight: .semibold))
                     .frame(minWidth: 96)
                 Button(action: nextDay) {
                     Image(systemName: "chevron.right")
                 }
-                .buttonStyle(CompanionPressStyle())
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
+                .buttonStyle(.bordered)
                 .disabled(!canGoNext || monitor.dailyReportIsLoading)
                 .accessibilityLabel(scope == .weekly ? "下一周" : "后一天")
                 Button(action: exportReport) {
                     Label("导出", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(CompanionPalette.jade)
                 .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
                 .accessibilityLabel("导出今日小结")
             }
             if monitor.dailyReportIsLoading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(scope == .weekly ? "正在写这周的小结。" : "正在写今天的小结。")
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                    Text("正在整理").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -174,59 +150,53 @@ struct DailyReportTabView: View {
                         .foregroundStyle(.secondary)
                 } else {
                     if !done.isEmpty {
-                        Text("已经推进")
-                            .workspaceMeta()
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
+                        Text("已经推进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                        ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
                            HStack(alignment: .top, spacing: 10) {
                                Text("\(index + 1)")
-                                   .workspaceMeta()
-                                   .fontWeight(.semibold)
-                                   .foregroundStyle(.secondary)
-                                   .frame(width: 22, alignment: .leading)
+                                   .font(.system(size: 13, weight: .bold))
+                                   .foregroundStyle(.white)
+                                   .frame(width: 24, height: 24)
+                                   .background(CompanionPalette.jade, in: Circle())
                                VStack(alignment: .leading, spacing: 4) {
-                                   Text(item.content)
-                                       .workspaceBody()
-                                       .fontWeight(.semibold)
+                                   Text(item.content).font(.system(size: 15, weight: .semibold))
                                    Text("来自：\(item.chatName)")
-                                       .workspaceMeta()
-                                       .foregroundStyle(.secondary)
+                                       .font(.system(size: 12)).foregroundStyle(.secondary)
                                }
                            }
                        }
                         if done.count > 8 {
                             Text("还有 \(done.count - 8) 件已完成，在待办的「看已处理的」里。")
-                                .workspaceMeta()
+                                .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
                     }
                     if !pending.isEmpty {
-                        Text("还需要跟进")
-                            .workspaceMeta()
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
+                        Text("还需要跟进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                         ForEach(pending.prefix(8)) { item in
-                            HStack(alignment: .top, spacing: 10) {
+                            HStack {
                                 Image(systemName: "circle")
-                                    .foregroundStyle(.secondary)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.content)
-                                        .workspaceBody()
-                                    Text(DiscussionPresentation.dueLabel(item.dueAt))
-                                        .workspaceMeta()
-                                        .foregroundStyle(.secondary)
+                                    Text(DiscussionPresentation.dueLabel(item.dueAt)).font(.system(size: 12)).foregroundStyle(.secondary)
                                 }
+                                Spacer()
+                                Button("查看待办") {
+                                    panelState.pendingSettingsTab = "tasks"
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(CompanionPalette.jade)
                             }
+                           .font(.system(size: 14))
                        }
-                        Button(pending.count > 8
-                               ? "还有 \(pending.count - 8) 件，在待办里看"
-                               : "在待办里看") {
-                            panelState.pendingSettingsTab = "tasks"
+                        if pending.count > 8 {
+                            Button("还有 \(pending.count - 8) 件在待办里") {
+                                panelState.pendingSettingsTab = "tasks"
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(CompanionPalette.jade)
+                            .font(.system(size: 13, weight: .medium))
                         }
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
                     }
                 }
                 Text("根据已同步的关注对话生成。")
@@ -362,12 +332,12 @@ struct DailyReportTabView: View {
         guard let url = monitor.exportDailyReport() else {
             exportedReportURL = nil
             exportFailed = true
-            exportMessage = "小结没写上。点「再试一次」。"
+            exportMessage = "小结没有写到文件，请检查桌面写入权限后重试。"
             return
         }
         exportedReportURL = url
         exportFailed = false
-        exportMessage = "小结已放到桌面。"
+        exportMessage = "小结已导出。可在访达中查看文件。"
     }
 
     private func dateText(_ date: Date) -> String {

@@ -1,57 +1,5 @@
 import SwiftUI
 
-/// Promises for the AI service page. The first thing on this screen is
-/// whether the service can be used, not a vendor picker.
-enum AISettingsCopy {
-    static let confirmWorks = "确认能用"
-    static let notReady = "还不能用"
-    static let unverified = "还没确认能不能用"
-    static let ready = "可以用"
-    static let statusHint = "改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。"
-    static let sourceTitle = "用哪家"
-    static let sourcePreset = "常用服务"
-    static let sourceCustom = "自己填"
-    static let vendorTitle = "哪一家"
-    static let addressTitle = "接到哪"
-    static let insecureHTTP = "此连接未加密，请确认网络可信或改用安全连接"
-    static let secretTitle = "密钥"
-    static let getKey = "去拿密钥"
-    static let modelTitle = "用哪个模型"
-    static let noModel = "还没选模型"
-    static let refreshModels = "重新获取可用模型"
-    static let needSecret = "请补上这台服务的密钥。"
-    static let needAddress = "请填一个能用的地址。"
-    static let pickModel = "请选一个模型。"
-    static let checkAgain = "请核对地址、模型和密钥，再点「确认能用」。"
-    static let confirmUnreachable = "这次没连上。"
-    static let confirmBusy = "这会儿忙，过会儿再试。"
-    static let needChatGPTLogin = "请先在这台 Mac 上登录 ChatGPT。"
-    static let retryOnce = "再试一次"
-    static let confirmOk = "刚才确认过了。"
-    static let sourceChanged = "换了来源，还要再确认。"
-    static let confirmOkUnsaved = "可以用，但这次没记下，请再点「确认能用」。"
-    static let confirmUnsaved = "这次没记下。"
-    static let confirmFailedDemo = "这次没通过。"
-    static let restoredOkPrefix = "上次确认过"
-    static let restoredFailPrefix = "上次没通过"
-    static let saveFailed = "刚才没存上。"
-    static let saving = "正在保存…"
-    static let confirming = "正在确认…"
-    static let saveOk = "已保存。"
-    static let privacyBody = "密钥只留在这台电脑里，不会出现在界面或确认结果里。"
-    static let privacyRemote = "常用服务和自己填的地址多半是网上的服务，请确认你信任对方怎么处理数据。"
-    static let fetchFailed = "没拿到模型列表。"
-    static let writingHabits = "写作习惯"
-    static let privacyTitle = "数据与隐私"
-    static let advancedTitle = "高级设置"
-    static let codexHint = "用这台 Mac 上已登录的 ChatGPT，不必再填密钥。"
-
-    static func restoredOk(_ date: String) -> String { "\(restoredOkPrefix) \(date)。" }
-    static func restoredFail(_ date: String) -> String { "\(restoredFailPrefix) \(date)。" }
-    static func fetchCount(_ n: Int) -> String { "找到 \(n) 个模型。" }
-    static let noMatchingModel = "没有这个模型。"
-}
-
 extension Notification.Name {
     static let hudAIConfigDidChange = Notification.Name("WeChatHUD.AIConfigDidChange")
     static let hudSwitchTab = Notification.Name("WeChatHUD.SwitchTab")
@@ -63,7 +11,6 @@ struct ModelPicker: View {
     @Binding var model: String
     let models: [String]
     let isFetching: Bool
-    var fetchNote: String = ""
     let onRefresh: () -> Void
 
     @State private var searchText = ""
@@ -79,10 +26,10 @@ struct ModelPicker: View {
             HStack(spacing: 6) {
                 CompanionClipboardField(
                     text: $model,
-                    placeholder: AISettingsCopy.modelTitle,
+                    placeholder: "模型",
                     kind: .model,
                     monospaced: true,
-                    accessibilityLabel: AISettingsCopy.modelTitle
+                    accessibilityLabel: "模型"
                 )
 
                 Button(action: onRefresh) {
@@ -92,31 +39,22 @@ struct ModelPicker: View {
                             .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .workspaceBody()
+                            .font(.system(size: 13))
                     }
                 }
-                .buttonStyle(CompanionPressStyle())
-                .foregroundStyle(.secondary)
-                .help(AISettingsCopy.refreshModels)
-                .accessibilityLabel(AISettingsCopy.refreshModels)
+                .buttonStyle(.borderless)
+                .help("从接口获取模型列表")
+                .accessibilityLabel("获取模型列表")
                 .disabled(isFetching)
 
                 if !models.isEmpty {
                     Button { isExpanded.toggle() } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .workspaceMeta()
+                            .font(.system(size: 12))
                     }
-                    .buttonStyle(CompanionPressStyle())
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.borderless)
                     .accessibilityLabel(isExpanded ? "收起模型列表" : "展开模型列表")
                 }
-            }
-
-            if !fetchNote.isEmpty {
-                Text(fetchNote)
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if isExpanded, !models.isEmpty {
@@ -128,12 +66,6 @@ struct ModelPicker: View {
                         accessibilityLabel: "搜索模型"
                     )
 
-                    if filtered.isEmpty {
-                        Text(AISettingsCopy.noMatchingModel)
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
-                    } else {
                     ScrollViewReader { proxy in
                         List(filtered, id: \.self, selection: Binding<String?>(
                             get: { model },
@@ -159,7 +91,6 @@ struct ModelPicker: View {
                             withMotion(CompanionMotion.systemDefault) { proxy.scrollTo(new, anchor: .center) }
                         }
                     }
-                    }
                 }
                 .padding(6)
                 .background(Color(NSColor.controlBackgroundColor))
@@ -177,6 +108,7 @@ struct ModelPicker: View {
 
 struct ProviderCard: View {
     let isCustomSource: Bool
+    let isVerified: Bool
 
     @Binding var providerID: String
     @Binding var baseURL: String
@@ -184,13 +116,15 @@ struct ProviderCard: View {
     @Binding var apiKey: String
     @Binding var models: [String]
     @Binding var testResult: String
-    @Binding var modelFetchNote: String
     @Binding var isTesting: Bool
     @Binding var isFetching: Bool
 
+    let onTest: () -> Void
     let onFetch: () -> Void
+    let onChange: () -> Void
     let onProviderSelected: (String) -> Void
 
+    @State private var advancedConnectionExpanded = false
     /// The preset id `syncProviderPreset` last aligned to. Switching to a
     /// *different* preset must drop the key even when the URL matches (two
     /// presets can share an address with different keys); re-syncing the same
@@ -210,10 +144,25 @@ struct ProviderCard: View {
     }
 
     var body: some View {
-        Group {
+        SettingsSection(isCustomSource ? "自定义供应商" : "预设供应商") {
+            // Status row
+            SettingsRow("状态", icon: isCustomSource ? "slider.horizontal.3" : "shippingbox.fill", iconColor: CompanionPalette.accent) {
+                HStack(spacing: 8) {
+                    CompanionBadge(
+                        title: isVerified ? "已启用 · 已验证" : "已启用 · 未验证",
+                        systemImage: isVerified ? "checkmark.circle.fill" : "exclamationmark.circle",
+                        tint: isVerified ? CompanionPalette.accent : .orange
+                    )
+                    testButton
+                }
+            }
+
             if !isCustomSource {
-                SettingsRow(AISettingsCopy.vendorTitle) {
-                    Picker(AISettingsCopy.vendorTitle, selection: Binding(get: { providerID }, set: { value in
+                SettingsRowDivider()
+
+                // Provider picker — preset vendors only
+                SettingsRow("供应商") {
+                    Picker("供应商", selection: Binding(get: { providerID }, set: { value in
                         providerID = value
                         syncProviderPreset()
                         onProviderSelected(value)
@@ -227,79 +176,115 @@ struct ProviderCard: View {
 
                 SettingsRowDivider()
                 // Preset vendors own their service address; show it read-only.
-                SettingsRow(AISettingsCopy.addressTitle) {
+                SettingsRow("服务地址") {
                     if hasPresetBaseURL {
                         CompanionClipboardField(
                             text: $baseURL,
                             kind: .url,
                             writable: false,
                             monospaced: true,
-                            accessibilityLabel: AISettingsCopy.addressTitle
+                            accessibilityLabel: "服务地址"
                         )
                         .frame(maxWidth: 240)
                     } else {
-                        CompanionCopyableText(text: AISettingsCopy.codexHint)
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        CompanionCopyableText(text: "使用 Codex 登录态，无需服务地址")
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
             } else {
-                SettingsRow(AISettingsCopy.addressTitle) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        CompanionClipboardField(
-                            text: $baseURL,
-                            placeholder: AISettingsCopy.addressTitle,
-                            kind: .url,
-                            accessibilityLabel: AISettingsCopy.addressTitle
-                        )
-                        .frame(maxWidth: 220)
-                        if usesUnencryptedRemoteHTTP {
-                            Text(AISettingsCopy.insecureHTTP)
-                                .workspaceMeta()
-                                .foregroundStyle(.orange)
-                                .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup("高级连接设置", isExpanded: $advancedConnectionExpanded) {
+                    SettingsRowDivider()
+                    SettingsRow("服务地址") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            CompanionClipboardField(
+                                text: $baseURL,
+                                placeholder: "服务地址",
+                                kind: .url,
+                                accessibilityLabel: "服务地址"
+                            )
+                            .frame(maxWidth: 220)
+                            if usesUnencryptedRemoteHTTP {
+                                Text("此连接未加密，请确认网络可信或改用安全连接")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.orange)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                 }
+                .font(.system(size: 12, weight: .medium))
+                .tint(CompanionPalette.accent)
             }
 
             // Access credential — only for providers that require a key
             if isCustomSource || provider?.requiresKey == true {
                 SettingsRowDivider()
-                SettingsRow(AISettingsCopy.secretTitle) {
+                SettingsRow("访问凭据") {
                     HStack(spacing: 8) {
                         CompanionClipboardField(
                             text: $apiKey,
                             kind: .secret,
                             secure: true,
-                            accessibilityLabel: AISettingsCopy.secretTitle
+                            accessibilityLabel: "访问凭据"
                         )
                         .frame(maxWidth: 220)
                         if !isCustomSource, provider?.requiresKey == true, let signup = provider?.signupURL, !signup.isEmpty {
-                            Button(AISettingsCopy.getKey) {
+                            Button("获取 API Key") {
                                 if let u = URL(string: signup) { NSWorkspace.shared.open(u) }
                             }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel(AISettingsCopy.getKey)
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .accessibilityLabel("打开供应商密钥页面")
                         }
                     }
                 }
             }
 
+            if providerID == "openai-codex" {
+                Text("使用这台 Mac 上 Codex 的登录状态。连接测试会向 ChatGPT 发送一条测试请求，不包含聊天记录。")
+                    .font(.system(size: 12)).foregroundColor(.secondary)
+                    .padding(14)
+            }
+
             // Model picker with live fetch + search
             SettingsRowDivider()
-            SettingsRow(AISettingsCopy.modelTitle) {
+            SettingsRow("模型") {
                 ModelPicker(
                     model: $model,
                     models: models,
                     isFetching: isFetching || isTesting,
-                    fetchNote: modelFetchNote,
                     onRefresh: onFetch
                 )
                 .frame(maxWidth: 280)
+            }
+            if !testResult.isEmpty {
+                SettingsRowDivider()
+                if isFailedTestResult {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("连接没有通过", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        CompanionCopyableText(text: testResult, lineLimit: nil)
+                            .font(.system(size: 12))
+                            .foregroundColor(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("配置仍保留。原文和已整理的事项还能用。请核对服务地址、模型和访问凭据，再重新测试。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(14)
+                } else {
+                    CompanionCopyableText(text: testResult, lineLimit: nil)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                }
             }
         }
 
@@ -309,9 +294,36 @@ struct ProviderCard: View {
         !(provider?.baseURL.isEmpty ?? true)
     }
 
+    private var testButton: some View {
+        HStack(spacing: 4) {
+            if !testResult.isEmpty {
+                Circle()
+                    .fill(isSuccessfulTestResult ? Color.green : (isFailedTestResult ? Color.red : Color.secondary))
+                    .frame(width: 6, height: 6)
+                    .help(testResult)
+            }
+            Button(action: onTest) {
+                if isTesting {
+                    ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                } else {
+                    Text("测试连接").font(.system(size: 12))
+                }
+            }
+            .buttonStyle(.bordered).controlSize(.mini)
+            .disabled(isTesting || isFetching)
+        }
+    }
+
+    private var isSuccessfulTestResult: Bool {
+        testResult.hasPrefix("连接成功") || testResult.hasPrefix("上次测试成功")
+    }
+
+    private var isFailedTestResult: Bool {
+        testResult.hasPrefix("失败") || testResult.hasPrefix("连接未完成") || testResult.hasPrefix("获取失败") || testResult.hasPrefix("上次测试失败")
+    }
+
     private func syncProviderPreset() {
         testResult = ""
-        modelFetchNote = ""
         guard let preset = provider, !isCustomSource else { return }
         defer { lastSyncedPresetID = preset.id }
         guard let previous = lastSyncedPresetID else {
@@ -373,7 +385,6 @@ struct AISettingsView: View {
     @State private var apiKey = ""
     @State private var models: [String] = []
     @State private var testResult = ""
-    @State private var modelFetchNote = ""
     @State private var isTesting = false
     @State private var isFetching = false
     @State private var testRequestID = UUID()
@@ -389,7 +400,8 @@ struct AISettingsView: View {
     @State private var saveError = ""
     @State private var hasPendingSave = false
     @State private var savedAt: Date?
-    @State private var advancedExpanded = false
+    @State private var preferencesExpanded = false
+    @State private var privacyExpanded = false
     @State private var selectedSection: AISettingsSection?
     private let lockedSection: AISettingsSection?
 
@@ -429,6 +441,7 @@ struct AISettingsView: View {
                 case .service:
                     serviceSection
                 }
+                saveStatus
                 Spacer(minLength: 20)
             }
             .frame(maxWidth: 960, alignment: .leading)
@@ -466,47 +479,45 @@ struct AISettingsView: View {
         return ("未验证", .orange, "exclamationmark.circle")
     }
 
-    private var serviceUsabilityTitle: String {
-        switch activeServiceStatus.label {
-        case "未配置": return AISettingsCopy.notReady
-        case "已验证": return AISettingsCopy.ready
-        default: return AISettingsCopy.unverified
-        }
-    }
-
     private var serviceStatusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(serviceUsabilityTitle)
-                        .workspaceTitle()
-                    let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? AISettingsCopy.noModel : configuredSlot.model)"
-                    Text(summary)
-                        .workspaceBody()
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .contextMenu {
-                            Button("复制") { CompanionClipboard.write(summary) }
-                        }
-                }
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: "sparkles")
+                .font(.system(size: WorkspaceType.title, weight: .semibold))
+                .foregroundStyle(CompanionPalette.accent)
+                .frame(width: 30, height: 30)
 
-                Spacer(minLength: 12)
-                Button(action: testSlot) {
-                    if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 18, height: 18)
-                    } else {
-                        Text(AISettingsCopy.confirmWorks)
-                    }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("当前 AI 服务")
+                        .workspaceTitle()
+                    CompanionBadge(
+                        title: activeServiceStatus.label,
+                        systemImage: activeServiceStatus.icon,
+                        tint: activeServiceStatus.color
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(CompanionPalette.jade)
-                .disabled(isTesting || isFetching)
-                .accessibilityLabel(AISettingsCopy.confirmWorks)
+                let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? "未选择模型" : configuredSlot.model)"
+                Text(summary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button("复制") { CompanionClipboard.write(summary) }
+                    }
+                Text("改完会自动保存。打开后，相关聊天会发给这个服务来写摘要和草稿。请先点测试，确认能用。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
 
-            saveStatus
+            Spacer(minLength: 12)
+            // On the locked "AI 分析与建议" page, writing `selectedSection`
+            // was a no-op — the body renders `lockedSection ?? selectedSection`
+            // and the picker is hidden — so this button did nothing. It now
+            // goes through the same tab switch the "去 AI 服务配置" row uses.
+            Button("更换服务") { switchToAIServiceTab() }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("更换 AI 服务")
         }
         .companionSurface(padding: 20)
     }
@@ -532,12 +543,11 @@ struct AISettingsView: View {
                 SettingsSection {
                     SettingsRow("还没有可用的 AI 服务", icon: "exclamationmark.circle", iconColor: .orange) {
                         Button("去 AI 服务配置") { switchToAIServiceTab() }
-                            .buttonStyle(CompanionPressStyle())
-                            .workspaceMeta()
-                            .foregroundStyle(.secondary)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                     }
                     Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
-                        .workspaceMeta()
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -550,32 +560,30 @@ struct AISettingsView: View {
     private var originalExampleCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("你始终可以查看原文")
-                .workspaceTitle()
+                .font(.system(size: 15, weight: .semibold))
             Text("AI 只整理，不代替聊天。关键决定面都留着原文入口。")
-                .workspaceBody()
+                .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Text("示例")
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
+                Text("示例").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                 HStack(alignment: .top, spacing: 8) {
                     Text("原文")
-                        .workspaceMeta()
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(width: 52, alignment: .leading)
                     Text("明天中午前发我修改稿吧。")
-                        .workspaceBody()
+                        .font(.system(size: 13))
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 8))
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Text("AI 提炼")
-                        .workspaceMeta()
+                        .font(.system(size: 11))
                         .foregroundStyle(CompanionPalette.jade)
                         .frame(width: 52, alignment: .leading)
                     Text("明天 12:00 前提交修改稿")
-                        .workspaceBody()
+                        .font(.system(size: 13))
                         .foregroundStyle(CompanionPalette.jade)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -589,41 +597,44 @@ struct AISettingsView: View {
     }
 
     private var serviceSection: some View {
-        serviceForm
+        VStack(alignment: .leading, spacing: 24) {
+            topControls
+            providerCard
+            generationPreferences
+            privacySection
+        }
     }
 
     private var hasUsableConfiguredService: Bool {
         AISettingsValidation.connectionError(configuredSlot, requireModel: true) == nil
     }
 
-    private var isSuccessfulTestResult: Bool {
-        testResult == AISettingsCopy.confirmOk
-            || testResult == AISettingsCopy.confirmOkUnsaved
-            || testResult.hasPrefix(AISettingsCopy.restoredOkPrefix)
-    }
+    // MARK: - Top Controls
 
-    private var isFailedTestResult: Bool {
-        !testResult.isEmpty && !isSuccessfulTestResult && testResult != AISettingsCopy.sourceChanged
-    }
-
-    private var serviceForm: some View {
-        SettingsSection {
-            SettingsRow(AISettingsCopy.sourceTitle) {
-                HStack(spacing: 6) {
-                    sourceChip(AISettingsCopy.sourcePreset, .preset)
-                    sourceChip(AISettingsCopy.sourceCustom, .custom)
+    private var topControls: some View {
+        SettingsSection("服务来源") {
+            SettingsRow("服务来源", icon: "bolt.fill", iconColor: .purple) {
+                Picker("服务来源", selection: $serviceSource) {
+                    Text("预设供应商").tag(ServiceSource.preset)
+                    Text("自定义供应商").tag(ServiceSource.custom)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+                .accessibilityLabel("AI 服务来源")
             }
             SettingsRowDivider()
-            providerCard
-            SettingsRowDivider()
-            advancedPreferences
+            Text("选择预设供应商（DeepSeek、Kimi、智谱等），或填入自定义服务。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
         }
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
             testRequestID = UUID()
-            testResult = AISettingsCopy.sourceChanged
-            modelFetchNote = ""
+            testResult = ""
             switch source {
             case .preset:
                 if providerID == "custom" || AIProvider.find(providerID) == nil {
@@ -636,16 +647,9 @@ struct AISettingsView: View {
         }
     }
 
-    private var advancedPreferences: some View {
-        DisclosureGroup(isExpanded: $advancedExpanded) {
-            VStack(spacing: 0) {
-                Text(AISettingsCopy.writingHabits)
-                    .workspaceRowTitle()
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 4)
+    private var generationPreferences: some View {
+        DisclosureGroup(isExpanded: $preferencesExpanded) {
+            SettingsSection {
                 SettingsToggleRow("慢慢想清楚再答", subtitle: "写摘要和草稿时多想一会儿，可能会更慢。", isOn: $thinkingEnabled)
                 SettingsRowDivider()
                 SettingsRow("回复最长写多少") {
@@ -654,9 +658,7 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("回复最长写多少")
                         Text(String(Int(maxTokens)))
-                            .workspaceMeta()
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12, design: .monospaced))
                             .frame(width: 42, alignment: .trailing)
                     }
                 }
@@ -667,59 +669,26 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("写得更随意一些")
                         Text(String(format: "%.1f", temperature))
-                            .workspaceMeta()
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12, design: .monospaced))
                             .frame(width: 28, alignment: .trailing)
                     }
                 }
                 Text("这是平时写摘要和草稿的习惯。有的整理任务会单独处理；用 ChatGPT 登录时，上面两项长度和随意度不会生效。")
-                    .workspaceMeta()
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                SettingsRowDivider()
-                Text(AISettingsCopy.privacyTitle)
-                    .workspaceRowTitle()
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(AISettingsCopy.privacyBody)
-                    Text(AISettingsCopy.privacyRemote)
-                }
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
+                    .padding(12)
             }
         } label: {
-            Text(AISettingsCopy.advancedTitle)
-                .workspaceRowTitle()
+            Label("写作习惯", systemImage: "slider.horizontal.3")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
         }
         .tint(CompanionPalette.accent)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .companionSurface(padding: 16)
         .onChange(of: thinkingEnabled) { _, _ in debouncedSave() }
         .onChange(of: maxTokens) { _, _ in debouncedSave() }
         .onChange(of: temperature) { _, _ in debouncedSave() }
-    }
-
-    private func sourceChip(_ title: String, _ source: ServiceSource) -> some View {
-        Button(title) {
-            serviceSource = source
-        }
-        .buttonStyle(CompanionPressStyle())
-        .workspaceMeta()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(serviceSource == source ? CompanionPalette.selectedFill : Color.clear, in: Capsule())
-        .foregroundStyle(serviceSource == source ? .primary : .secondary)
-        .accessibilityAddTraits(serviceSource == source ? .isSelected : [])
-        .accessibilityLabel(title)
     }
 
     // MARK: - Cards
@@ -729,16 +698,18 @@ struct AISettingsView: View {
     private var providerCard: some View {
         ProviderCard(
             isCustomSource: serviceSource == .custom,
+            isVerified: store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true,
             providerID: $providerID,
             baseURL: $baseURL,
             model: $model,
             apiKey: $apiKey,
             models: $models,
             testResult: $testResult,
-            modelFetchNote: $modelFetchNote,
             isTesting: $isTesting,
             isFetching: $isFetching,
+            onTest: { testSlot() },
             onFetch: { fetchModels() },
+            onChange: { configurationDidChange() },
             onProviderSelected: { value in
                 guard !isHydrating else { return }
                 if value != "custom" { lastPresetProviderID = value }
@@ -759,9 +730,7 @@ struct AISettingsView: View {
                 SettingsToggleRow("回复建议", subtitle: "起草回复，由你发送。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
                 SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
-                    Text("随 AI 服务")
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
+                    Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             originalExampleCard
@@ -777,59 +746,67 @@ struct AISettingsView: View {
         .onChange(of: dailyReportActionInsightsEnabled) { _, _ in debouncedSave() }
     }
 
-    @ViewBuilder
-    private var saveStatus: some View {
-        if isTesting {
-            Text(AISettingsCopy.confirming)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-        } else if !saveError.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(AISettingsCopy.saveFailed)
-                    .workspaceMeta()
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 8)
-                Button(AISettingsCopy.retryOnce, action: saveAIConfig)
-                    .buttonStyle(CompanionPressStyle())
-                    .workspaceMeta()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(AISettingsCopy.retryOnce)
+    private var privacySection: some View {
+        DisclosureGroup(isExpanded: $privacyExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("访问凭据仅保存在本机私有设置中，不会显示在界面或测试结果里。")
+                Text("预设与自定义服务多为远程服务，请确认你信任其数据处理方式。")
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(AISettingsCopy.saveFailed)
-        } else if hasPendingSave {
-            Text(AISettingsCopy.saving)
-                .workspaceMeta()
-                .foregroundStyle(.secondary)
-        } else if !testResult.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                CompanionCopyableText(text: testResult, lineLimit: nil)
-                    .workspaceMeta()
-                    .foregroundStyle(isFailedTestResult ? .primary : (isSuccessfulTestResult ? CompanionPalette.jade : .secondary))
-                    .fixedSize(horizontal: false, vertical: true)
-                if isFailedTestResult {
-                    Spacer(minLength: 8)
-                    Button(AISettingsCopy.retryOnce, action: testSlot)
-                        .buttonStyle(CompanionPressStyle())
-                        .workspaceMeta()
-                        .foregroundStyle(.secondary)
-                        .disabled(isTesting || isFetching)
-                        .accessibilityLabel(AISettingsCopy.retryOnce)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 10)
+        } label: {
+            Label("数据与隐私", systemImage: "lock.shield")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+        }
+        .tint(CompanionPalette.accent)
+        .companionSurface(padding: 16)
+    }
+
+    private var saveStatus: some View {
+        HStack(spacing: 12) {
+            Image(systemName: saveError.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                .foregroundStyle(saveError.isEmpty ? CompanionPalette.accent : .red)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(serviceSaveStatusText)
+                    .font(.system(size: 12, weight: .medium))
+                if !saveError.isEmpty {
+                    Text(saveError)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
                 }
             }
-        } else if savedAt != nil {
-            Text(AISettingsCopy.saveOk)
-                .workspaceMeta()
-                .foregroundStyle(CompanionPalette.jade)
+            Spacer()
+            if !saveError.isEmpty {
+                Button("重试保存", action: saveAIConfig)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
+        .companionSurface(padding: 14)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(saveError.isEmpty ? "设置保存状态" : "设置保存失败")
+        .accessibilityValue(!saveError.isEmpty ? saveError : serviceSaveStatusText)
+    }
+
+    private var serviceSaveStatusText: String {
+        if !saveError.isEmpty { return "更改尚未保存" }
+        if hasPendingSave { return "正在保存更改…" }
+        let tested = store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true
+        if tested { return savedAt == nil ? "连接已验证" : "更改已保存" }
+        if savedAt != nil || !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "配置已保存 · 尚未测试"
+        }
+        return "配置加载后，修改会自动保存"
     }
 
     // MARK: - Actions
 
     private func applyPreviewTestFailure() {
         PreviewRuntime.pendingAITestFailure = false
-        testResult = AISettingsCopy.confirmFailedDemo
+        testResult = "失败：演示用的连接没有通过。"
         isTesting = false
     }
 
@@ -842,12 +819,11 @@ struct AISettingsView: View {
         let requestID = UUID()
         let requestStartedAt = Date()
         testRequestID = requestID
-        modelFetchNote = ""
         if let error = AISettingsValidation.connectionError(slot, requireModel: true) {
             let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
-            let suffix = saved ? "" : AISettingsCopy.confirmUnsaved
+            let suffix = saved ? "" : "；测试结果未保存，请重试"
             let detail = userFacingConfigurationError(error)
-            testResult = "\(detail)\(suffix.isEmpty ? "" : " \(suffix)")"
+            testResult = "连接未完成：\(detail)\(suffix)"
             return
         }
         let service = AIService(config: buildConfig())
@@ -861,8 +837,8 @@ struct AISettingsView: View {
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: true, requestStartedAt: requestStartedAt)
                     let message = saved
-                        ? AISettingsCopy.confirmOk
-                        : AISettingsCopy.confirmOkUnsaved
+                        ? "连接成功，服务已返回有效响应。"
+                        : "连接成功，但测试结果未保存，请重试。"
                     testResult = message
                 }
             } catch {
@@ -871,43 +847,33 @@ struct AISettingsView: View {
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
                     let detail = userFacingConfigurationError(AISettingsValidation.connectionFailure(error))
-                    let suffix = saved ? "" : AISettingsCopy.confirmUnsaved
-                    testResult = "\(detail)\(suffix.isEmpty ? "" : " \(suffix)")"
+                    let suffix = saved ? "" : "；测试结果未保存，请重试"
+                    testResult = "连接未完成：\(detail)\(suffix)"
                 }
             }
         }
     }
 
     private func userFacingConfigurationError(_ message: String) -> String {
-        if message.contains("超时") || message.contains("无法连接") || message.contains("网络请求失败") {
-            return AISettingsCopy.confirmUnreachable
-        }
-        if message.contains("额度") || message.contains("过多") {
-            return AISettingsCopy.confirmBusy
-        }
-        if message.contains("登录") {
-            return AISettingsCopy.needChatGPTLogin
-        }
         if message.localizedCaseInsensitiveContains("api key") || message.localizedCaseInsensitiveContains("token") {
-            return AISettingsCopy.needSecret
+            return "请补充该服务要求的访问凭据。"
         }
         if message.contains("接口地址") || message.contains("http://") || message.contains("https://") {
-            return AISettingsCopy.needAddress
+            return "请补充有效的服务地址。"
         }
-        if message.contains("请填写模型名称") || message.contains("请选择一个模型") {
-            return AISettingsCopy.pickModel
+        if message.contains("模型") {
+            return "请选择一个模型。"
         }
-        return AISettingsCopy.checkAgain
+        return message
     }
 
     private func fetchModels() {
         let slot = buildSlot()
         if let error = AISettingsValidation.connectionError(slot, requireModel: false) {
-            modelFetchNote = "\(AISettingsCopy.fetchFailed)\(userFacingConfigurationError(error))"
+            testResult = "获取失败：\(userFacingConfigurationError(error))"
             return
         }
         isFetching = true
-        modelFetchNote = ""
         let service = AIService(config: buildConfig())
         Task {
             do {
@@ -916,16 +882,16 @@ struct AISettingsView: View {
                     isFetching = false
                     guard slot == buildSlot() else { return }
                     models = list
-                    // Keep a model not in the list; say so under the field.
+                    // If current model not in list, keep it but notify via test result
                     if !list.isEmpty, !list.contains(model) {
-                        modelFetchNote = AISettingsCopy.fetchCount(list.count)
+                        testResult = "已获取 \(list.count) 个模型"
                     }
                 }
             } catch {
                 await MainActor.run {
                     isFetching = false
                     guard slot == buildSlot() else { return }
-                    modelFetchNote = "\(AISettingsCopy.fetchFailed)\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
+                    testResult = "获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
                 }
             }
         }
@@ -937,7 +903,6 @@ struct AISettingsView: View {
         guard !isHydrating else { return }
         testRequestID = UUID()
         testResult = ""
-        modelFetchNote = ""
         debouncedSave()
     }
 
@@ -979,7 +944,7 @@ struct AISettingsView: View {
     private func restoredTestResult(for slot: AIProviderSlot) -> String {
         guard let record = store.loadAIConnectionEvidence().record(for: slot) else { return "" }
         let date = record.testedAt.formatted(.dateTime.month().day().hour().minute())
-        return record.succeeded ? AISettingsCopy.restoredOk(date) : AISettingsCopy.restoredFail(date)
+        return record.succeeded ? "上次测试成功 \(date)，可重新测试" : "上次测试失败 \(date)，请重新测试"
     }
 
     private func buildSlot() -> AIProviderSlot {
@@ -1034,7 +999,7 @@ struct AISettingsView: View {
             savedAt = Date()
             NotificationCenter.default.post(name: .hudAIConfigDidChange, object: nil)
         } catch {
-            saveError = AISettingsCopy.saveFailed
+            saveError = "AI 配置保存失败，请重试。"
         }
     }
 

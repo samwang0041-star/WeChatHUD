@@ -152,10 +152,6 @@ final class PanelState: ObservableObject {
     /// to surface silent failures (e.g. WeChatLauncher can't open a
     /// chat because Accessibility isn't granted). Nil = no toast.
     @Published var toastMessage: String? = nil
-    /// Quiet successes (关闭横幅, and 稍后提醒 with an undo) use the mint
-    /// check; everything else is a warning. Closing a banner is not a
-    /// failure, so the receipt must not borrow the error chrome.
-    @Published var toastIsSuccess: Bool = false
     private var toastTimer: Timer?
 
     /// True while an in-place context-briefing card is expanded
@@ -276,14 +272,12 @@ final class PanelState: ObservableObject {
     /// Show a toast that auto-dismisses after `duration` seconds. New
     /// calls replace the previous message and reset the timer, so
     /// spamming doesn't queue up stale messages.
-    func showToast(_ message: String, duration: TimeInterval = 4, success: Bool = false) {
+    func showToast(_ message: String, duration: TimeInterval = 4) {
         toastTimer?.invalidate()
         toastMessage = message
-        toastIsSuccess = success
         toastTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.toastMessage = nil
-                self?.toastIsSuccess = false
                 self?.toastTimer = nil
             }
         }
@@ -685,7 +679,6 @@ final class PanelState: ObservableObject {
         guard currentState != .detail, currentState != .extended, !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
         islandSnoozeUndo = nil
         toastMessage = nil
-        toastIsSuccess = false
         // A new banner may be much shorter or taller than the previous one
         // (short snippet vs. long group message vs. expanded briefing), so
         // drop the stale measurement and let the fresh render drive the

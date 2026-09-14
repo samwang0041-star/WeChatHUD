@@ -120,7 +120,6 @@ struct NotificationBannerView: View {
     let notification: HUDNotification
     @State private var showSnooze = false
     @State private var hovering = false
-    @State private var pressingCard = false
 
     private var content: NotificationBannerContent {
         NotificationBannerContent(notification: notification)
@@ -188,9 +187,6 @@ struct NotificationBannerView: View {
                 .lineSpacing(3)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
-                .scaleEffect(cardPressScale)
-                .opacity(pressingCard ? 0.82 : 1)
-                .animation(CompanionMotion.press(), value: pressingCard)
                 .allowsHitTesting(false)
                 .accessibilityLabel(content.message)
             if showSnooze {
@@ -207,7 +203,6 @@ struct NotificationBannerView: View {
         .background(alignment: .center) { hoverWash }
         .background { tapSurface }
         .companionAnimation(CompanionMotion.hover(), value: hovering)
-        .companionAnimation(CompanionMotion.press(), value: pressingCard)
         .accessibilityElement(children: .contain)
     }
 
@@ -279,16 +274,11 @@ struct NotificationBannerView: View {
             .accessibilityHidden(true)
     }
 
-    private var cardPressScale: CGFloat {
-        pressingCard && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1
-    }
-
     /// Hover wash: the card lights up as one clickable object. Inset a little
     /// so it reads as a control inside the island rather than a new panel.
-    /// Press uses the same wash, one step denser, so the icons can stay put.
     private var hoverWash: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(pressingCard ? IslandInk.hoverPressed : (hovering ? IslandInk.hover : Color.clear))
+            .fill(hovering ? IslandInk.hover : Color.clear)
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
             .allowsHitTesting(false)
@@ -311,7 +301,7 @@ struct NotificationBannerView: View {
             Color.clear
                 .contentShape(Rectangle())
         }
-        .buttonStyle(BannerCardPressStyle(pressed: $pressingCard))
+        .buttonStyle(.plain)
         .accessibilityLabel(content.openLabel)
         .help(content.openLabel)
     }
@@ -330,7 +320,7 @@ struct NotificationBannerView: View {
                         .islandRowTitle()
                         .foregroundStyle(IslandInk.primary)
                 }
-                .buttonStyle(CompanionPressStyle())
+                .buttonStyle(.plain)
                 .accessibilityLabel("返回通知")
                 Spacer()
                 closeButton
@@ -349,7 +339,7 @@ struct NotificationBannerView: View {
     /// banner. `contentShape` has to be *inside* the label: applied to the
     /// Button it has no effect.
     private var closeButton: some View {
-        Button { Self.dismiss(panelState) } label: {
+        Button { panelState.collapseAndYield() } label: {
             Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(hovering ? IslandInk.secondary : IslandInk.tertiary)
                 .frame(width: 24, height: 22)
@@ -420,16 +410,6 @@ struct NotificationBannerView: View {
         panelState.setSnoozeMenuExpanded(false)
     }
 
-    /// 关闭 is a real action: the interrupt goes away, the item stays in
-    /// the inbox. The compact island would otherwise swallow that with no
-    /// words, so the receipt is a quiet toast on the same overlay snooze
-    /// already uses.
-    @MainActor
-    static func dismiss(_ panelState: PanelState) {
-        panelState.showToast(IslandBannerCopy.dismissed, success: true)
-        panelState.collapseAndYield()
-    }
-
     /// The banner's 稍后提醒 handler, split out of the view body so the routing
     /// can be driven against a real PanelState without hosting SwiftUI.
     ///
@@ -454,20 +434,6 @@ struct NotificationBannerView: View {
         panelState.islandSurface = .inbox
         panelState.goExtended()
         return true
-    }
-}
-
-/// Reports press from the full-card hit layer without scaling that layer.
-/// Scaling the clear button would shrink the hit target and slide 稍后/关闭
-/// relative to the click tests; the message and wash take the press instead.
-private struct BannerCardPressStyle: ButtonStyle {
-    @Binding var pressed: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .onChange(of: configuration.isPressed) { _, value in
-                pressed = value
-            }
     }
 }
 
@@ -501,8 +467,4 @@ enum IslandSnoozeOutcome {
 
 enum IslandSnoozeCopy {
     static let failed = "稍后提醒没设置成功，消息还在。请重试。"
-}
-
-enum IslandBannerCopy {
-    static let dismissed = "还在收件箱。"
 }
