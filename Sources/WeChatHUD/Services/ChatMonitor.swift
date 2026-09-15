@@ -1458,6 +1458,20 @@ final class ChatMonitor: ObservableObject {
         publishDiscussionItem(id: id)
     }
 
+    /// Batch update multiple discussion items at once (e.g. one-click clear all).
+    func batchUpdateDiscussionItemsStatus(ids: [Int64], status: DiscussionItemStatus) throws {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            let existing = discussionItem(id: id)
+            try store.updateDiscussionItemStatus(id: id, status: status)
+            if let item = existing,
+               let feedback = DiscussionCorrection.feedback(for: item, status: status) {
+                try? store.writeAIFeedback(feedback)
+            }
+        }
+        reloadPendingDiscussionItems()
+    }
+
     /// Corrects an AI responsibility label and records that correction for
     /// later prompt/evaluation work.
     func setDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws {
@@ -2276,6 +2290,25 @@ final class ChatMonitor: ObservableObject {
         case .pending, .overdue:
             break
         }
+        reloadLiveCommitments()
+        refreshWorkspaceChrome()
+    }
+
+    /// Batch update multiple commitments at once (e.g. one-click clear all).
+    func batchUpdateCommitmentsStatus(commitments: [Commitment], status: CommitmentStatus) throws {
+        guard !commitments.isEmpty else { return }
+        for commitment in commitments {
+            try store.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
+            switch status {
+            case .fulfilled:
+                _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: commitment.msgUID, status: .done)
+            case .cancelled:
+                _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: commitment.msgUID, status: .dismissed)
+            case .pending, .overdue:
+                break
+            }
+        }
+        reloadPendingDiscussionItems()
         reloadLiveCommitments()
         refreshWorkspaceChrome()
     }

@@ -171,6 +171,7 @@ struct SettingsView: View {
                         .companionDimmedByDialog(panelState.modalDialogOpen)
                 }
                 content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
                 WorkspaceStatusBar()
                     .companionDimmedByDialog(panelState.modalDialogOpen)

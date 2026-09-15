@@ -87,7 +87,7 @@ struct IslandGlowLayer: View {
     }
 }
 
-/// 30 Hz conic sweep. Owns its TimelineView so the rest of the island is not
+/// 30 Hz continuous perimeter sweep. Owns its TimelineView so the rest of the island is not
 /// rebuilt at display rate.
 private struct IslandLoadingSweep: View {
     let tint: Color
@@ -97,11 +97,59 @@ private struct IslandLoadingSweep: View {
     /// hardcoded so the sweep cannot drift off the island’s edges when the
     /// radii change with state.
     let radii: IslandChrome.SilhouetteRadii
+    /// One full loop duration in seconds.
+    private let cycleDuration: Double = 2.4
+    /// Length of the glowing beam as a fraction of the shape perimeter.
+    private let beamLength: CGFloat = 0.16
+    /// Number of layered segments to form a smooth fading comet tail.
+    private let tailSteps = 14
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let rotation = (t * 100).truncatingRemainder(dividingBy: 360)
+            let rawProgress = (t / cycleDuration).truncatingRemainder(dividingBy: 1.0)
+            let progress = CGFloat(rawProgress < 0 ? rawProgress + 1.0 : rawProgress)
+            let stepLen = beamLength / CGFloat(tailSteps)
+
+            ZStack {
+                ForEach(0..<tailSteps, id: \.self) { i in
+                    let fraction = CGFloat(tailSteps - i) / CGFloat(tailSteps)
+                    let center = progress - CGFloat(i) * stepLen * 0.92
+                    let norm = center < 0 ? center + 1.0 : (center > 1.0 ? center - 1.0 : center)
+                    let opacity = pow(fraction, 1.6)
+                    let isHead = i == 0
+                    let strokeColor = isHead ? Color.white.opacity(0.95) : tint.opacity(opacity * 0.88)
+                    let lineWidth: CGFloat = isHead ? 3.5 : (1.8 + fraction * 1.6)
+                    let blurRadius: CGFloat = isHead ? 0.6 : (0.8 + (1.0 - fraction) * 2.2)
+
+                    beamSegment(center: norm, length: stepLen * 1.5, color: strokeColor, lineWidth: lineWidth)
+                        .blur(radius: blurRadius)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func beamSegment(center: CGFloat, length: CGFloat, color: Color, lineWidth: CGFloat) -> some View {
+        let shape = IslandShape(
+            notchWidth: notchWidth,
+            notchHeight: notchHeight,
+            pillCornerRadius: radii.pill,
+            notchCornerRadius: radii.notch,
+            topCornerRadius: radii.top
+        )
+        let half = length / 2
+        let start = center - half
+        let end = center + half
+        let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+
+        if start < 0 {
+            shape.trim(from: start + 1.0, to: 1.0).stroke(color, style: style)
+            shape.trim(from: 0.0, to: end).stroke(color, style: style)
+        } else if end > 1.0 {
+            shape.trim(from: start, to: 1.0).stroke(color, style: style)
+            shape.trim(from: 0.0, to: end - 1.0).stroke(color, style: style)
+        } else {
             IslandShape(
                 notchWidth: notchWidth,
                 notchHeight: notchHeight,
@@ -109,21 +157,8 @@ private struct IslandLoadingSweep: View {
                 notchCornerRadius: radii.notch,
                 topCornerRadius: radii.top
             )
-            .stroke(
-                AngularGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: .clear, location: 0.00),
-                        .init(color: tint.opacity(0.0), location: 0.55),
-                        .init(color: tint, location: 0.78),
-                        .init(color: .white.opacity(0.95), location: 0.92),
-                        .init(color: tint.opacity(0.0), location: 1.00),
-                    ]),
-                    center: .center,
-                    angle: .degrees(rotation)
-                ),
-                lineWidth: 4
-            )
-            .blur(radius: 3)
+            .trim(from: start, to: end)
+            .stroke(color, style: style)
         }
     }
 }
