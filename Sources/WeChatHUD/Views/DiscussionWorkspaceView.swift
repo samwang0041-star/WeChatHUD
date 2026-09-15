@@ -13,6 +13,8 @@ struct DiscussionWorkspaceView: View {
     @State private var error: String?
     @State private var receipt: String?
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
+    @State private var batchUndo: [(id: Int64, status: DiscussionItemStatus)]?
+    @State private var showBatchClearConfirm = false
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
     @State private var expandArchived = false
@@ -143,7 +145,8 @@ struct DiscussionWorkspaceView: View {
         .frame(maxWidth: 1180)
         .padding(.horizontal, 28)
         .padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(CompanionPalette.canvas)
         .onAppear {
             applyPendingScope()
             reconcileSelection(in: items)
@@ -164,7 +167,7 @@ struct DiscussionWorkspaceView: View {
         .onReceive(panelState.$pendingDiscussionChatUsername) { _ in
             applyPendingScope()
         }
-        .companionDialogBackdrop(correcting != nil) {
+        .companionDialogBackdrop(correcting != nil || showBatchClearConfirm) {
             if let item = correcting {
                 CompanionDialog(title: "更正这件事", onClose: { correcting = nil }) {
                     DiscussionCorrectionForm(item: item) { content, owner, dueAt in
@@ -179,6 +182,25 @@ struct DiscussionWorkspaceView: View {
                         }
                     } onCancel: {
                         correcting = nil
+                    }
+                }
+            } else if showBatchClearConfirm {
+                CompanionDialog(title: "一键清空当前待办？", onClose: { showBatchClearConfirm = false }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("将当前列表中的 \(items.count) 件待办全部标记为完成。可在「看已处理的」中随时查看或恢复。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer()
+                            Button("取消") { showBatchClearConfirm = false }
+                            Button("全部完成") {
+                                showBatchClearConfirm = false
+                                batchClear(items: items)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SettingsView.Tab.tasks.accentColor)
+                        }
                     }
                 }
             }
@@ -203,6 +225,17 @@ struct DiscussionWorkspaceView: View {
                     ) { scope = value }
                 }
                 Spacer()
+                if !showHistory && !items.isEmpty {
+                    Button {
+                        showBatchClearConfirm = true
+                    } label: {
+                        Label("一键清空", systemImage: "checklist.checked")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("将当前列表的所有待办全部标记为完成")
+                }
                 Toggle("看已处理的", isOn: $showHistory)
                     .font(.system(size: 12))
                     .toggleStyle(.switch)
@@ -256,7 +289,7 @@ struct DiscussionWorkspaceView: View {
                         : "连上微信并选好对话后，还没做完的事会出现在这里。"))
                 : "当前搜索：\(query)")
         )
-        .frame(maxWidth: .infinity, minHeight: 280)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if !query.isEmpty {
                 Button("清除搜索") { query = "" }
@@ -411,6 +444,17 @@ struct DiscussionWorkspaceView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(CompanionPalette.jade)
                     .font(.system(size: 13, weight: .semibold))
+            } else if let previous = batchUndo {
+                Button("撤销") {
+                    for item in previous {
+                        try? monitor.setDiscussionItemStatus(id: item.id, status: item.status)
+                    }
+                    batchUndo = nil
+                    receipt = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CompanionPalette.jade)
+                .font(.system(size: 13, weight: .semibold))
             }
             Button { receipt = nil } label: {
                 Image(systemName: "xmark")
@@ -454,6 +498,7 @@ struct DiscussionWorkspaceView: View {
             if showHistory { refreshHistory() }
             error = nil
             undo = previous.map { (id, $0) }
+            batchUndo = nil
             if status == .done, let title {
                 receipt = "\(title)已标记完成"
             } else if previous != nil {
@@ -464,6 +509,21 @@ struct DiscussionWorkspaceView: View {
         } catch {
             self.error = "保存失败，事项状态未更改。请重试。"
             receipt = nil
+        }
+    }
+
+    private func batchClear(items: [DiscussionItem]) {
+        guard !items.isEmpty else { return }
+        let previous = items.map { ($0.id, $0.status) }
+        batchUndo = previous
+        undo = nil
+        do {
+            try monitor.batchUpdateDiscussionItemsStatus(ids: items.map(\.id), status: .done)
+            if showHistory { refreshHistory() }
+            receipt = "已清空 \(items.count) 件待办"
+            error = nil
+        } catch {
+            self.error = "清空失败，请重试。"
         }
     }
 }

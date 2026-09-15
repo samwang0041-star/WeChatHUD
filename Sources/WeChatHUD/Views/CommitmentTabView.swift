@@ -9,6 +9,8 @@ struct CommitmentTabView: View {
     @State private var query = ""
     @State private var expandedID: Int64?
     @State private var pendingCancel: Commitment?
+    @State private var showBatchClearConfirm = false
+    @State private var batchUndo: [(msgUID: String, status: CommitmentStatus)]?
     @State private var receipt: String?
     @State private var undo: (msgUID: String, status: CommitmentStatus)?
     @State private var actionError: String?
@@ -64,10 +66,32 @@ struct CommitmentTabView: View {
         }
         .frame(maxWidth: 1180)
         .padding(.horizontal, 28).padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(CompanionPalette.canvas)
         .onAppear {
             if expandedID == nil { expandedID = filteredCommitments.first?.id }
+        }
+        .companionDialogBackdrop(showBatchClearConfirm) {
+            if showBatchClearConfirm {
+                CompanionDialog(title: "一键清空当前承诺？", onClose: { showBatchClearConfirm = false }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("将当前显示的 \(filteredCommitments.count) 项承诺标记为已完成。可在「已完成」列表中随时查看。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer()
+                            Button("取消") { showBatchClearConfirm = false }
+                            Button("全部完成") {
+                                showBatchClearConfirm = false
+                                batchClear()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SettingsView.Tab.commitments.accentColor)
+                        }
+                    }
+                }
+            }
         }
         .alert(CompanionProductCopy.cancelCommitmentTitle, isPresented: Binding(
             get: { pendingCancel != nil },
@@ -102,6 +126,17 @@ struct CommitmentTabView: View {
                 CompanionFilterPill(title: "已完成", selected: filter == .fulfilled, tint: SettingsView.Tab.commitments.accentColor) { filter = .fulfilled }
                 CompanionFilterPill(title: "全部", selected: filter == .all, tint: SettingsView.Tab.commitments.accentColor) { filter = .all }
                 Spacer()
+                if (filter == .active || filter == .overdue) && !filteredCommitments.isEmpty {
+                    Button {
+                        showBatchClearConfirm = true
+                    } label: {
+                        Label("一键清空", systemImage: "checkmark.circle")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("将当前承诺全部标记为已完成")
+                }
                 if overdueCount > 0 {
                     Button {
                         filter = .overdue
@@ -140,7 +175,7 @@ struct CommitmentTabView: View {
             systemImage: query.isEmpty ? emptyIcon : "magnifyingglass",
             description: Text(query.isEmpty ? CommitmentPresentation.emptyDescription(for: filter) : "当前搜索：\(query)")
         )
-        .frame(maxWidth: .infinity, minHeight: 280)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if !query.isEmpty {
                 Button("清除搜索") { query = "" }
@@ -271,6 +306,16 @@ struct CommitmentTabView: View {
                 Button("撤销") { undoLast() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+            } else if let previous = batchUndo {
+                Button("撤销") {
+                    for item in previous {
+                        try? monitor.updateCommitmentStatus(msgUID: item.msgUID, status: item.status)
+                    }
+                    batchUndo = nil
+                    receipt = nil
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
         }
         .font(.system(size: 13, weight: .medium))
@@ -284,9 +329,11 @@ struct CommitmentTabView: View {
             actionError = nil
             if status == .fulfilled {
                 undo = (commitment.msgUID, previous)
+                batchUndo = nil
                 receipt = "\(commitment.content)已标记完成"
             } else if status == .cancelled {
                 undo = (commitment.msgUID, previous)
+                batchUndo = nil
                 receipt = "已取消承诺"
             } else {
                 undo = nil
@@ -294,6 +341,20 @@ struct CommitmentTabView: View {
             }
         } catch {
             actionError = "状态没有保存，这条承诺还在原来的位置。请重试。"
+        }
+    }
+
+    private func batchClear() {
+        let targets = filteredCommitments
+        guard !targets.isEmpty else { return }
+        batchUndo = targets.map { ($0.msgUID, $0.status) }
+        undo = nil
+        do {
+            try monitor.batchUpdateCommitmentsStatus(commitments: targets, status: .fulfilled)
+            receipt = "已清空 \(targets.count) 项承诺"
+            actionError = nil
+        } catch {
+            actionError = "清空失败，请重试。"
         }
     }
 
