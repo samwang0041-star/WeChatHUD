@@ -444,10 +444,7 @@ struct AISettingsView: View {
                 saveStatus
                 Spacer(minLength: 20)
             }
-            .frame(maxWidth: 960, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 28)
-            .padding(.bottom, 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear(perform: load)
         .onReceive(NotificationCenter.default.publisher(for: .hudPreviewAITestFailure)) { _ in

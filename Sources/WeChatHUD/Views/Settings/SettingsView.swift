@@ -84,6 +84,23 @@ struct SettingsView: View {
         var isSettings: Bool {
             [.contacts, .aiButler, .notifications, .aiService, .autopilot, .system, .preferences, .localData, .guide].contains(self)
         }
+        /// The page's content width, from the one place that decides it.
+        ///
+        /// The page header reads this too, which is the whole point: before
+        /// this, the header picked its width from a hardcoded list of tabs and
+        /// the body picked its own, so 待确认回复 had a 960pt header above an
+        /// 1180pt body and 关系雷达 had a 1180pt header above a body that ran
+        /// the full width of the window.
+        var pageWidth: CGFloat {
+            switch self {
+            case .today, .tasks, .commitments, .drafts, .contacts,
+                 .insight, .relationshipRadar, .autopilotDashboard:
+                return WorkspacePage.wideWidth
+            case .aiButler, .notifications, .aiService, .autopilot,
+                 .system, .preferences, .localData, .dailyReport, .guide:
+                return WorkspacePage.narrowWidth
+            }
+        }
         var accentColor: Color {
             switch self {
             case .today: return CompanionPalette.jade
@@ -172,6 +189,15 @@ struct SettingsView: View {
                 }
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // A page may scroll; it may not paint over the header above
+                    // it. Same reason `ReplyDraftsView` clips its panes: with
+                    // both the header and a tall body claiming the whole
+                    // `VStack`, a body whose ideal height exceeds the pane can
+                    // draw across the title block instead of scrolling inside
+                    // its own ScrollView. Seen intermittently on 待办 while
+                    // live-resizing toward the window minimum. Clipping makes
+                    // the overflow impossible rather than unlikely.
+                    .clipped()
                     .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
                 WorkspaceStatusBar()
                     .companionDimmedByDialog(panelState.modalDialogOpen)
@@ -273,13 +299,28 @@ struct SettingsView: View {
             }
         }
         .frame(maxWidth: headerWidth, alignment: .leading)
-        .padding(.horizontal, 28).padding(.top, 20).padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: selectedTab == .guide ? .leading : .center)
+        // Inset, top air and the gap down to the body all come from the shared
+        // page tokens. They used to be literals here while the bodies used
+        // theirs, which is precisely how the header and the content underneath
+        // drifted onto different edges.
+        .padding(.horizontal, WorkspacePage.inset)
+        .padding(.top, WorkspacePage.selfHeadedTopGap)
+        .padding(.bottom, WorkspacePage.headerGap)
+        // Leading, not centred.
+        //
+        // Centring looked fine while every page body was centred too, but the
+        // moment a body pinned itself to a corner (the fix that keeps the
+        // status bar at the bottom) the title block drifted ~120pt right of
+        // its own content: the 待办 title sat above and to the right of the
+        // retention bar it belongs to, and 怎么用 was already leading while
+        // every other page was not. One rule for all pages: the header and the
+        // body share the pane's left edge, exactly.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var headerWidth: CGFloat {
-        [.aiButler, .notifications, .aiService, .system, .preferences, .localData, .autopilot, .autopilotDashboard, .guide].contains(selectedTab) ? 960 : 1180
-    }
+    /// The header is as wide as the page it introduces, so the title block and
+    /// the body always start on the same edge.
+    private var headerWidth: CGFloat { selectedTab.pageWidth }
 
     private func applyPendingTab(_ raw: String?) {
         guard let tab = Tab.from(raw: raw) else { return }
@@ -299,33 +340,32 @@ struct SettingsView: View {
             CommitmentTabView()
         case .contacts:
             ContactsSettingsView()
-                .frame(maxWidth: 1180)
-                .padding(.horizontal, 28).padding(.bottom, 24)
-                .frame(maxWidth: .infinity)
+                .workspacePage(selectedTab.pageWidth)
         case .insight:
             ChatInsightWorkspacePage()
+                .workspacePage(selectedTab.pageWidth)
         case .relationshipRadar:
             RelationshipRadarView()
+                .workspacePage(selectedTab.pageWidth)
         case .guide:
             CompanionGuideView(navigate: { selectedTab = $0 }, showIntroduction: {
                 NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)
             })
+            .workspacePage(selectedTab.pageWidth)
         case .aiButler:
             AISettingsView(section: "analysis")
+                .workspacePage(selectedTab.pageWidth)
         case .notifications:
             ScrollView {
                 NotificationSettingsView()
-                    .frame(maxWidth: 960, alignment: .leading)
-                    .padding(.horizontal, 28).padding(.bottom, 28)
-                    .frame(maxWidth: .infinity)
             }
+            .workspacePage(selectedTab.pageWidth)
         case .aiService:
             AISettingsView(section: "service")
+                .workspacePage(selectedTab.pageWidth)
         case .autopilotDashboard:
             ApprovalWorkspaceView()
-                .frame(maxWidth: 1180)
-                .padding(.horizontal, 28).padding(.bottom, 16)
-                .frame(maxWidth: .infinity)
+                .workspacePage(selectedTab.pageWidth)
         default:
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -338,10 +378,8 @@ struct SettingsView: View {
                     default: EmptyView()
                     }
                 }
-                .frame(maxWidth: 960, alignment: .leading)
-                .padding(.horizontal, 28).padding(.bottom, 28)
-                .frame(maxWidth: .infinity)
             }
+            .workspacePage(selectedTab.pageWidth)
         }
     }
 }
@@ -546,7 +584,7 @@ private struct SettingsPreviewChrome: View {
         }
         .font(.callout).foregroundStyle(.orange)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 28).padding(.vertical, 10)
+        .padding(.horizontal, WorkspacePage.inset).padding(.vertical, 10)
         .background(CompanionMotion.reduceTransparency ? CompanionPalette.surface : Color.orange.opacity(0.08))
         .companionDimmedByDialog(panelState.modalDialogOpen)
         .id(previewA11yNonce)
@@ -597,7 +635,7 @@ private struct WorkspaceStatusBar: View {
             .disabled(isSyncing)
             .accessibilityLabel("查看新消息")
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, WorkspacePage.inset)
         .padding(.vertical, 10)
         .background(statusBarBackground)
         .overlay(alignment: .top) { Divider() }

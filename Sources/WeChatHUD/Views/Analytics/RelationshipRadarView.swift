@@ -122,7 +122,7 @@ struct RelationshipRadarView: View {
                 }
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .workspaceGround()
         .accessibilityIdentifier("workspace.relationshipRadar.pane")
     }
 
@@ -154,7 +154,6 @@ struct RelationshipRadarView: View {
             .disabled(refreshing)
             .accessibilityLabel("刷新关系雷达")
         }
-        .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
 

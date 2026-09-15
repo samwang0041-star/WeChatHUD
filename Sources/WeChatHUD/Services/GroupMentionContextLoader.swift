@@ -25,6 +25,72 @@ enum GroupContextSourceLoader {
     /// fallback below still finds it.
     static let fastPathPageLimit = 240
 
+    /// Longest silence that still counts as the same conversation.
+    ///
+    /// The reported defect this bounds: `historyCount` is a *row* count, and
+    /// the only other limit was the seven-day paging window below. On a group
+    /// that had gone quiet, an @mention on Tuesday therefore pulled Monday's
+    /// chatter in as its "context" — and because that context is what
+    /// `group_analysis_v1` summarises, the panel's 话题 / 决议 / 依据 lines were
+    /// built partly from messages that had nothing to do with the @.
+    ///
+    /// So the window is now a *conversation*, not a row count: walking back
+    /// from the source, a message is only kept while each step is within this
+    /// gap of the message after it.
+    ///
+    /// The value is a *session* boundary, not a precise measure: long enough
+    /// that one working session survives a lunch break, short enough that an
+    /// overnight or multi-day silence always ends the link. Both properties are
+    /// pinned as behaviour by `testSameWorkingSessionStaysTogether` and
+    /// `testPreviousEveningIsADifferentConversation`, so the number can move as
+    /// long as those two hold. (It was first set to two hours; that test caught
+    /// a three-hour lunch break being treated as the end of the conversation.)
+    ///
+    /// The source itself is never dropped, however old: it is the anchor the
+    /// notification named, and
+    /// `testSourceAnchoredAnalysisKeepsSourceOlderThan48Hours` pins that.
+    static let maxConversationGapSeconds = 6 * 60 * 60
+
+    /// Trim `history` (ascending, all older than `source`) to the run that is
+    /// contiguous with `source` under `maxConversationGapSeconds`.
+    ///
+    /// Split out as a pure function so the rule is testable without a reader,
+    /// a database or a clock.
+    static func conversationHistory(
+        _ history: [MessageInfo],
+        leadingTo source: MessageInfo,
+        maxGap: Int = maxConversationGapSeconds
+    ) -> [MessageInfo] {
+        var kept: [MessageInfo] = []
+        // Walk backwards: each candidate must be within `maxGap` of the message
+        // already kept after it (the source itself for the first step).
+        var edge = source.createTime
+        for candidate in history.reversed() {
+            guard edge - candidate.createTime <= maxGap else { break }
+            kept.append(candidate)
+            edge = candidate.createTime
+        }
+        return kept.reversed()
+    }
+
+    /// Trim `following` (ascending, all newer than `source`) to the run that is
+    /// contiguous with `source`. Same rule, forwards, so a message sent days
+    /// later cannot be read as a reply to the @.
+    static func conversationContinuation(
+        _ following: [MessageInfo],
+        from source: MessageInfo,
+        maxGap: Int = maxConversationGapSeconds
+    ) -> [MessageInfo] {
+        var kept: [MessageInfo] = []
+        var edge = source.createTime
+        for candidate in following {
+            guard candidate.createTime - edge <= maxGap else { break }
+            kept.append(candidate)
+            edge = candidate.createTime
+        }
+        return kept
+    }
+
     static func newestFirst(_ messages: [MessageInfo]) -> [MessageInfo] {
         messages.sorted {
             if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }
@@ -113,6 +179,9 @@ enum GroupContextSourceLoader {
             .filter { $0.chatUsername == notification.chatUsername && $0.id != source.id }
             .sorted(by: order)
             .suffix(historyCount)
+        // `suffix(historyCount)` is a row count; this is what makes it a
+        // conversation. See `maxConversationGapSeconds`.
+        let contiguousHistory = conversationHistory(Array(history), leadingTo: source)
 
         let future = (try? reader.getMessages(
             chatUsername: notification.chatUsername,
@@ -124,8 +193,11 @@ enum GroupContextSourceLoader {
             endTime: nil,
             beforeCursor: nil
         )) ?? []
-        let following = future.filter { $0.chatUsername == notification.chatUsername }
-        return Array(history) + [source] + following
+        let following = conversationContinuation(
+            future.filter { $0.chatUsername == notification.chatUsername }.sorted(by: order),
+            from: source
+        )
+        return contiguousHistory + [source] + following
     }
 
 
@@ -207,6 +279,7 @@ enum GroupContextSourceLoader {
             .filter { $0.chatUsername == notification.chatUsername && $0.id != source.id }
             .sorted(by: order)
             .suffix(historyCount)
+        let contiguousHistory = conversationHistory(Array(history), leadingTo: source)
 
         let future = (try? await readerActor.getMessages(
             chatUsername: notification.chatUsername,
@@ -218,8 +291,11 @@ enum GroupContextSourceLoader {
             endTime: nil,
             beforeCursor: nil
         )) ?? []
-        let following = future.filter { $0.chatUsername == notification.chatUsername }
-        return Array(history) + [source] + following
+        let following = conversationContinuation(
+            future.filter { $0.chatUsername == notification.chatUsername }.sorted(by: order),
+            from: source
+        )
+        return contiguousHistory + [source] + following
     }
 
     private static func order(_ lhs: MessageInfo, _ rhs: MessageInfo) -> Bool {

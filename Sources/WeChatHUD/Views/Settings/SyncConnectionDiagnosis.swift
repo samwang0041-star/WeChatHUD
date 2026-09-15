@@ -97,7 +97,7 @@ enum SyncConnectionDiagnosis: Equatable {
         case .looseKeyPermissions:
             return "密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。请在「终端」执行 chmod 600 收紧后再继续；文件内容不需要重取。"
         case .unrecognizedKeyFormat(let recognized, let rejected):
-            return "密钥文件能打开，但 (rejected) 条记录里没有本应用认识的格式（已识别 (recognized) 条）。这不代表密钥不对，只代表文件格式不被支持；请先确认拿到的是本机微信的密钥文件。"
+            return "密钥文件能打开，但 \(rejected) 条记录里没有本应用认识的格式（已识别 \(recognized) 条）。这不代表密钥不对，只代表文件格式不被支持；请先确认拿到的是本机微信的密钥文件。"
         case .ready: return "目录可读取；账号与密钥是否匹配，仍需以成功同步为准。"
         }
     }

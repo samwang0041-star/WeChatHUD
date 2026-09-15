@@ -186,6 +186,23 @@ struct CompanionFilterPill: View {
             Text(title)
                 .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
                 .foregroundStyle(selected ? Color.white : .primary)
+                // A pill is one line.
+                //
+                // Measured defect: at the window's own 900pt minimum the 待办
+                // filter row ran out of width and SwiftUI wrapped the labels
+                // *inside* their capsules — 「我要做」 over two lines, then
+                // 「共同推进」 and 「信息备忘」. A wrapped pill reads as a broken
+                // control.
+                //
+                // One line, and explicitly NOT `fixedSize`: that is what a
+                // first attempt used, and at the same width it threw inside
+                // AppKit's layout pass (`_NSViewLayout` → SIGTRAP, exit 133),
+                // taking the whole 待办 page down at launch (the launch smoke in
+                // WorkspacePageLaunchSurvivalTests reproduces it). `lineLimit`
+                // only changes how the text draws — it never removes the view's
+                // ability to be laid out in less space — so a tight row gives
+                // up its trailing controls instead of crashing.
+                .lineLimit(1)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(selected ? tint : CompanionPalette.surface, in: Capsule())
                 .overlay(
@@ -206,6 +223,49 @@ struct CompanionFilterPill: View {
         }
         .buttonStyle(CompanionPressStyle())
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The batch-clear affordance at the trailing end of a filter row.
+///
+/// It shows its label while the row has room and drops to just the glyph when
+/// it does not. The reason is measured, not aesthetic: at the window's own
+/// 900pt minimum a *labelled* button left the 待办 filter pills too little
+/// width, and SwiftUI wrapped 「我要做」·「共同推进」·「信息备忘」 each onto two
+/// lines — a wrapped pill row reads as a broken page. `ViewThatFits` picks the
+/// glyph form instead, and the glyph keeps the tooltip and the accessibility
+/// label, so the only thing that changes is how much room it takes.
+struct CompanionBatchClearButton: View {
+    var title: String = "一键清空"
+    /// Tooltip. Says what will happen, not what the button is called — the
+    /// action is the part a person cannot read off the label.
+    var help: String
+    var action: () -> Void
+
+    private let glyph = "checklist.checked"
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            button(showingTitle: true)
+            button(showingTitle: false)
+        }
+    }
+
+    private func button(showingTitle: Bool) -> some View {
+        Button(action: action) {
+            if showingTitle {
+                Label(title, systemImage: glyph)
+                    .font(.system(size: 12, weight: .medium))
+            } else {
+                Image(systemName: glyph)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(minWidth: 14)
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help(help)
+        .accessibilityLabel(title)
     }
 }
 

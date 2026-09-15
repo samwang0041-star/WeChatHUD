@@ -5,6 +5,17 @@ import Foundation
 /// the same class — all @Published properties stay in the main file.
 extension ChatMonitor {
 
+    /// Readable messages for a group analysis.
+    ///
+    /// `sourceAnchored` means “these came from `GroupContextSourceLoader`, so
+    /// the age of the window has already been decided”. That loader keeps the
+    /// source however old it is (a user may only now see a three-day-old @) and
+    /// bounds everything around it to the same conversation, so applying the
+    /// 48-hour rule on top would drop the source this analysis exists for.
+    ///
+    /// The flag is not a licence to skip age checking on arbitrary input: the
+    /// guarantee it asserts lives in the loader's contiguity bound, which
+    /// `GroupContextSourceLoaderTests` pins.
     static func filterGroupAnalysisMessages(
         _ messages: [MessageInfo],
         sourceAnchored: Bool,
@@ -19,7 +30,18 @@ extension ChatMonitor {
     // MARK: - On-demand chat analysis
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
-        let analysisType = "action_panel_group_v3"
+        // v4: the context window is now bounded to the @'s own conversation
+        // (see `GroupContextSourceLoader.maxConversationGapSeconds`) and
+        // `group_analysis_v1` states the same rule.
+        //
+        // The version has to move or the fix would not reach anyone: the cache
+        // is keyed by `item.generationKey`, which identifies the *message*, not
+        // the window it was analysed in. Every summary already computed from a
+        // stale window would keep being served for its message — for up to the
+        // 72-hour TTL below — so a user looking at the same @ would still see
+        // last week's topic mixed in. `GroupContextBriefingService` does the
+        // same thing for the same reason (`context_window_v2`).
+        let analysisType = "action_panel_group_v4"
         let readerActor = WeChatReaderActor(reader)
         let messages: [MessageInfo]
         let sourceAnchored: Bool
@@ -216,10 +238,21 @@ extension ChatMonitor {
         let readerActor = WeChatReaderActor(reader)
         let messagesNewest = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
         let targetSecond = Int(item.timestamp.timeIntervalSince1970)
+        // No `?? messagesNewest.first` fallback.
+        //
+        // That fallback reintroduced exactly the bug `ContextWindowBuilder`
+        // documents fixing: when the item's message was not among the newest 50,
+        // the window was retargeted onto the chat's newest message instead — so
+        // the reply was drafted from the wrong conversation, `targetFound` came
+        // back true (the fallback *is* in the array), and the result was cached
+        // under this item's `generationKey` as if it were correct. Missing
+        // target now means no context window; the suggester still has the
+        // item's own preview and the constraints block, which is the safe
+        // branch the design already had.
         let target = messagesNewest.first {
             Int($0.createTime) == targetSecond
                 || ($0.text == item.preview && $0.senderName == item.senderName)
-        } ?? messagesNewest.first
+        }
 
         let contextWindow: String? = {
             guard let target else { return nil }
@@ -292,10 +325,12 @@ extension ChatMonitor {
         let readerActor = WeChatReaderActor(reader)
         let messagesNewest = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)) ?? []
         let targetSecond = Int(item.timestamp.timeIntervalSince1970)
+        // Same rule as the InboxItem overload above: never retarget the window
+        // onto an unrelated newest message.
         let target = messagesNewest.first {
             Int($0.createTime) == targetSecond
                 || ($0.text == item.preview && $0.senderName == item.senderName)
-        } ?? messagesNewest.first
+        }
 
         let contextWindow: String? = {
             guard let target else { return nil }
