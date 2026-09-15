@@ -138,6 +138,10 @@ c) **多任务委托 → info（主类型）**
 输出: {"is_ask":false,"type":"none","summary":"","deadline_relative":null,"confidence":0.7}
 （理由：模糊短语，缺主语和具体对象，倾向 none）
 
+输入: "问一下六七千块钱的报价"
+输出: {"is_ask":true,"type":"info","summary":"提供六七千块钱报价","deadline_relative":null,"confidence":0.9}
+（理由：有具体对象的打听/提问，是在向接收者要信息，不是接收者的承诺）
+
 输入: "我下午发你"
 输出: {"is_ask":false,"type":"none","summary":"","deadline_relative":null,"confidence":0.95}
 （理由：主语"我"在描述己方将要做的事，不是给接收者的请求）

@@ -30,7 +30,7 @@ extension ChatMonitor {
     // MARK: - On-demand chat analysis
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
-        // v4: the context window is now bounded to the @'s own conversation
+        // v5: the context window is bounded to the @'s own conversation
         // (see `GroupContextSourceLoader.maxConversationGapSeconds`) and
         // `group_analysis_v1` states the same rule.
         //
@@ -41,7 +41,7 @@ extension ChatMonitor {
         // 72-hour TTL below — so a user looking at the same @ would still see
         // last week's topic mixed in. `GroupContextBriefingService` does the
         // same thing for the same reason (`context_window_v2`).
-        let analysisType = "action_panel_group_v4"
+        let analysisType = "action_panel_group_v5"
         let readerActor = WeChatReaderActor(reader)
         let messages: [MessageInfo]
         let sourceAnchored: Bool

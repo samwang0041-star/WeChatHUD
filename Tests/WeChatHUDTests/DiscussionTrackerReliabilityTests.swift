@@ -95,6 +95,32 @@ final class DiscussionTrackerReliabilityTests: XCTestCase {
         XCTAssertEqual(store.loadDiscussionItems(chatUsername: "peer").first?.owner, .theirs)
     }
 
+    func testOutgoingInquiryIsNotExtractedAsMyTodo() async {
+        let ai = await model(response: #"{"items":[{"kind":"todo","executor":"me","msg":1,"content":"去问一下六七千块钱的报价，之后回复谢潘","confidence":0.9}]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        let count = await extract(tracker, [
+            message(1, time: 1000, text: "问一下六七千块钱的报价/价格情况")
+        ])
+        XCTAssertEqual(count, 1)
+        let item = store.loadDiscussionItems(chatUsername: "peer").first
+        XCTAssertEqual(item?.kind, .question)
+        XCTAssertEqual(item?.owner, .theirs)
+        XCTAssertEqual(item?.anchorMsgUID, "m1")
+    }
+
+    func testTranscriptMarksSeparateSessions() async {
+        let ai = await model(response: #"{"items":[]}"#)
+        let tracker = DiscussionTracker(store: store, aiService: ai)
+        _ = await extract(tracker, [
+            message(1, time: 1000, text: "先聊这个"),
+            message(2, time: 1000 + 3 * 3600, text: "隔了三小时")
+        ])
+        let prompt = await ai.calls.first?.user ?? ""
+        XCTAssertTrue(prompt.contains("属于另一次对话"))
+        XCTAssertTrue(prompt.contains("先聊这个"))
+        XCTAssertTrue(prompt.contains("隔了三小时"))
+    }
+
     func testInvalidMsgIndexFallsBackToNewest() async {
         let ai = await model(response: #"{"items":[{"kind":"info","executor":"unknown","msg":99,"content":"预算30万","confidence":0.9}]}"#)
         let tracker = DiscussionTracker(store: store, aiService: ai)

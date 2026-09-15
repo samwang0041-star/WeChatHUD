@@ -111,6 +111,9 @@ actor CommitmentTracker {
     /// Quick pre-filter: does message contain commitment signal words?
     /// This is additive — signals passed to AI as hints.
     static func hasCommitmentSignal(_ text: String) -> Bool {
+        if isLikelyOutgoingInquiry(text) {
+            return false
+        }
         let signals = [
             "明天", "下周", "今天内", "稍后", "一会儿", "马上",
             "我去", "我来", "我发", "我问", "我看看", "我处理",
@@ -121,6 +124,13 @@ actor CommitmentTracker {
         return signals.contains(where: { text.contains($0) })
     }
 
+    /// Detects if an outgoing message is an inquiry/question directed from the user to the peer.
+    /// When user says "问一下...", "请问...", "...吗？", the direction is user asking peer,
+    /// which must never be confused with user committing to do something for peer.
+    static func isLikelyOutgoingInquiry(_ text: String) -> Bool {
+        MessageFeatureExtractor.isOutgoingInquiryToPeer(text)
+    }
+
     /// Analyze a message you sent. Returns nil if AI unavailable.
     func analyze(
         yourMessage: MessageInfo,
@@ -128,6 +138,24 @@ actor CommitmentTracker {
         recipientName: String,
         recipientRole: ContactRole
     ) async -> CommitmentResult? {
+        // Fast deterministic guard: if user's message is an inquiry/question asked to the recipient,
+        // it cannot be a commitment made by the user. Do not call AI.
+        if Self.isLikelyOutgoingInquiry(yourMessage.text) {
+            return CommitmentResult(
+                isCommitment: false,
+                content: "",
+                commitTo: "",
+                deadlineExtracted: "none",
+                confidence: 0.0,
+                sourceText: yourMessage.text,
+                contextText: "",
+                captureReason: "发出的消息是向对方提问或咨询，非承诺",
+                nextStep: "",
+                deadlineLabel: "",
+                commitmentKind: ""
+            )
+        }
+
         let template: String
         do { template = try promptLoader.load(version: "commitment_v1") }
         catch { print("[WCHUD] CommitmentTracker: prompt load failed: \(error)"); return nil }

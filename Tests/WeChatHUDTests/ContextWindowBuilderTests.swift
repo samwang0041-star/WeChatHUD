@@ -154,4 +154,15 @@ final class ContextWindowBuilderTests: XCTestCase {
         )
         XCTAssertEqual(window.messages.map(\.id), ["m1", "m2", "m3"])
     }
+
+    func testCommitmentWindowDropsPriorConversationAfterSilence() {
+        let old = makeMsg(time: 1000, sender: "peer", text: "帮我问一下报价")
+        let recent = makeMsg(time: 1000 + 7 * 3600, sender: "me", text: "问一下")
+        let window = ContextWindowBuilder.build(
+            target: recent, role: .commitmentTracker, allMessages: [old, recent],
+            chatType: .privateChat, contactLookup: { _ in nil }
+        )
+        XCTAssertEqual(window.messages.map(\.id), [recent.id])
+        XCTAssertFalse(window.serialize().contains("帮我问一下报价"))
+    }
 }

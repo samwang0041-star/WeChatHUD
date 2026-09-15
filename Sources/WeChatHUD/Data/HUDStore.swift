@@ -2613,6 +2613,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return sqlite3_changes(db) > 0
     }
 
+    /// Repairs inverted inquiry rows: kind, owner, and cleaned content together.
+    @discardableResult
+    func repairDiscussionItemDirection(
+        id: Int64,
+        kind: DiscussionItemKind,
+        owner: DiscussionItemOwner,
+        content: String
+    ) throws -> Bool {
+        let now = Int(Date().timeIntervalSince1970)
+        try exec("""
+            UPDATE discussion_items SET kind=?, owner=?, content=?, updated_at=? WHERE id=?
+        """, params: [kind.rawValue, owner.rawValue, content, "\(now)", "\(id)"])
+        return sqlite3_changes(db) > 0
+    }
+
     /// Corrects content, owner, and deadline without touching WeChat source text.
     @discardableResult
     func updateDiscussionItemCorrection(

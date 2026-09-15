@@ -32,6 +32,7 @@ JSON schema:
 3. 如果消息里有 @某人 ≠ 当前用户名，那不是 user 的 action
 4. 如果群里只是吐槽/聊家常/晒照片，noise_ratio 应该 ≥ 0.7
 5. 转发链接、文章标题、广告 → 自动算噪音
+6. 用户本人发出的提问/咨询不是 needs_user_action。那是用户在问别人。
 
 # few-shot 例子
 
