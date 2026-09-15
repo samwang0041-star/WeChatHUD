@@ -140,7 +140,8 @@ struct OnboardingView: View {
                 var isDirectory: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
             }, readable: { FileManager.default.isReadableFile(atPath: $0) },
-            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") })
+            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") },
+            keyMaterial: SyncConnectionDiagnosis.KeyMaterialFacts(reader: monitor.reader))
     }
 
     private var readiness: OnboardingReadiness {
@@ -154,7 +155,11 @@ struct OnboardingView: View {
         }
         return OnboardingReadiness(
             directoryReady: !directoryDiagnosis.needsAttention,
-            keyFileReadable: monitor.reader.accessMaterialState == .available,
+            // A loose-permission key file is readable; it only needs
+            // tightening. Treating it as unreadable would block onboarding on
+            // a file that is right there.
+            keyFileReadable: monitor.reader.accessMaterialState == .available
+                || monitor.reader.accessMaterialState == .loosePermissions,
             hasSuccessfulSync: sourceMatches && monitor.stats.lastSyncAt != nil,
             aiConfigurationValid: AISettingsValidation.connectionError(configuration.provider, requireModel: true) == nil,
             aiConnectionTested: AIConnectionEvidenceStore.isSuccessful(configuration, store: store),

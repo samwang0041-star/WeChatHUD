@@ -455,13 +455,14 @@ struct AssistantTodayView: View {
                         Text("消息原文")
                     }
                 }
-                HStack {
-                    Button { panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName) } label: {
-                        Label("理解上下文与回复", systemImage: "text.bubble")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Menu {
-                        ForEach(CompanionProductCopy.snoozeChoices()) { choice in
+               HStack {
+                   Button { panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName) } label: {
+                       Label("理解上下文与回复", systemImage: "text.bubble")
+                   }
+                   .buttonStyle(.borderedProminent)
+                    .tint(CompanionPalette.jade)
+                   Menu {
+                       ForEach(CompanionProductCopy.snoozeChoices()) { choice in
                             Button("\(choice.label)  \(choice.whenLabel)") { snooze(item, until: choice.until) }
                         }
                     } label: {

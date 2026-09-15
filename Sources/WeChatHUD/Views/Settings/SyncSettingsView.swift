@@ -95,6 +95,7 @@ struct SyncSettingsView: View {
                     WeChatConnectionSetupView()
                         .companionSurface(padding: 22)
                     connectionCapabilityList
+                    keyPermissionNotice
                     DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
                         VStack(alignment: .leading, spacing: 16) {
                             databaseSection
@@ -267,6 +268,42 @@ struct SyncSettingsView: View {
         .companionSurface(padding: 0)
     }
 
+    /// A security warning for the primary connection pane.
+    ///
+    /// Why this is on the *primary* surface and not with the rest of the key
+    /// configuration: the two key problems behave differently. An unrecognised
+    /// format makes reading fail, so "读取聊天 待连接" already reports it. Loose
+    /// permissions do not — reading works perfectly — so nothing on this pane
+    /// would say anything, and a world-readable credential would sit behind a
+    /// collapsed "高级连接设置" indefinitely.
+    ///
+    /// Rendered only when there is something to act on, so the default surface
+    /// stays as simple as it was.
+    @ViewBuilder
+    private var keyPermissionNotice: some View {
+        if monitor.reader.keyFilePermissionsAreLoose {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("密钥文件权限过宽")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("同一台 Mac 上的其他账号也能读到这个文件。在终端执行 chmod 600 收紧即可，不需要重新获取密钥。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.orange.opacity(0.22), lineWidth: 1)
+            )
+        }
+    }
     private func capabilityRow(
         icon: String,
         title: String,
@@ -365,7 +402,8 @@ struct SyncSettingsView: View {
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
             },
             readable: { FileManager.default.isReadableFile(atPath: $0) },
-            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") }
+            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") },
+            keyMaterial: SyncConnectionDiagnosis.KeyMaterialFacts(reader: monitor.reader)
         )
     }
 
@@ -409,7 +447,7 @@ struct SyncSettingsView: View {
                 }
             }
             SettingsRowDivider()
-            SettingsRow("解密密钥文件", subtitle: keyFileMessage, icon: "key", iconColor: keyFileReadable ? .secondary : .orange) {
+            SettingsRow("解密密钥文件", subtitle: keyFileMessage, icon: "key", iconColor: keyFileNeedsAttention ? .orange : .secondary) {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("下次启动：" + (keysFilePath.isEmpty ? "默认路径" : shortenPath(keysFilePath)))
                         .font(.system(size: 12))
@@ -440,10 +478,19 @@ struct SyncSettingsView: View {
         }
     }
 
+    /// True when the key file row should carry a warning.
+    ///
+    /// Loose permissions are read live rather than cached: a user who runs
+    /// `chmod 600` to fix the warning must see it clear without a restart.
+    private var keyFileNeedsAttention: Bool {
+        !keyFileReadable || monitor.reader.keyFilePermissionsAreLoose
+    }
+
     private var keyFileMessage: String {
         let prefix = "本次运行"
         if !keyFileExists { return "\(prefix)：未找到当前连接的密钥文件。请先使用配套的 wechat-cli 为所选账号配置密钥，默认位置为 ~/.wechat-cli/all_keys.json。" }
         if !keyFileReadable { return "\(prefix)：当前连接的密钥文件不可读，请检查本机文件权限。" }
+        if monitor.reader.keyFilePermissionsAreLoose { return "\(prefix)：密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。在终端执行 chmod 600 收紧即可，不需要重新获取密钥。" }
         return "\(prefix)。密钥保留在本机；文件可读不代表内容有效或匹配当前账号，以成功同步为准。"
     }
 
@@ -460,7 +507,10 @@ struct SyncSettingsView: View {
         case .unreadable:
             keyFileExists = true
             keyFileReadable = false
-        case .available:
+        case .available, .loosePermissions:
+            // A loose key file is present and readable; it only needs its
+            // permissions tightened. Reporting it as missing would send the
+            // user looking for a key they already have.
             keyFileExists = true
             keyFileReadable = true
         }

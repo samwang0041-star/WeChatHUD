@@ -183,14 +183,14 @@ struct ReplyDraftsView: View {
                                     .multilineTextAlignment(.leading)
                             }
                         }
-                        .padding(10)
-                        .background(selected?.id == draft.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(alignment: .leading) {
-                            if selected?.id == draft.id {
-                                Capsule().fill(CompanionPalette.jade).frame(width: 3).padding(.vertical, 8)
-                            }
-                        }
-                    }
+                       .padding(10)
+                       .background(selected?.id == draft.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                       .overlay(alignment: .leading) {
+                           if selected?.id == draft.id {
+                                Capsule().fill(SettingsView.Tab.drafts.accentColor).frame(width: 3).padding(.vertical, 8)
+                           }
+                       }
+                   }
                     .buttonStyle(.plain)
                 }
             }
@@ -250,11 +250,11 @@ struct ReplyDraftsView: View {
                         Spacer()
                     }
                 }
-                .padding(12)
-                .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(CompanionPalette.jade.opacity(0.35)))
+               .padding(12)
+               .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(SettingsView.Tab.drafts.accentColor.opacity(0.35)))
 
-                // Four actions plus a saved-stamp do not fit the detail
+               // Four actions plus a saved-stamp do not fit the detail
                 // column at the workspace's minimum width: the row used to
                 // run past the window edge and clip 继续回复 — the primary
                 // action — out of reach. FlowRow wraps instead of
@@ -272,13 +272,14 @@ struct ReplyDraftsView: View {
                         feedback = "回复已复制，发送前请核对收件人。"
                     }
                     Button("删除草稿") { pendingDeleteDraft = selected }
-                    Button("查看对话") {
-                        panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
-                    }
-                    Button("继续回复") { requestContinueReply(selected) }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                   Button("查看对话") {
+                       panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
+                   }
+                   Button("继续回复") { requestContinueReply(selected) }
+                       .buttonStyle(.borderedProminent)
+                        .tint(SettingsView.Tab.drafts.accentColor)
+                       .disabled(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+               }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Text("继续回复会打开对话，发送前再次确认。")
                     .font(.system(size: 12))

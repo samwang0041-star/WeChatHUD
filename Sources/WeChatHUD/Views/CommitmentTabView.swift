@@ -207,14 +207,15 @@ struct CommitmentTabView: View {
                     }
                     if isActive {
                         HStack(spacing: 8) {
-                            Button {
-                                updateStatus(commitment, .fulfilled)
-                            } label: {
-                                Text("标记完成")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            Button("取消承诺") { pendingCancel = commitment }
-                                .buttonStyle(.bordered)
+                           Button {
+                               updateStatus(commitment, .fulfilled)
+                           } label: {
+                               Text("标记完成")
+                           }
+                           .buttonStyle(.borderedProminent)
+                            .tint(SettingsView.Tab.commitments.accentColor)
+                           Button("取消承诺") { pendingCancel = commitment }
+                               .buttonStyle(.bordered)
                             Spacer()
                             Button("查看对话") {
                                 monitor.openWeChatChat(commitment.chatUsername)
