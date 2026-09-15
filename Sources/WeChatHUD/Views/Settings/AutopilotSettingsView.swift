@@ -29,6 +29,12 @@ enum AutopilotSettingsCopy {
     /// The batch option is a window in seconds, not a message count. The old
     /// "连着几条一起回" title read as "reply after N messages", which is not
     /// what `batchWindowSeconds` does.
+    ///
+    /// `batchSection` names the group; `batchTitle` names the knob inside it.
+    /// They used to be the same string, so the page printed the sentence twice
+    /// in a row — a header immediately repeated by the only row under it, which
+    /// reads as a rendering fault rather than as emphasis.
+    static let batchSection = "连发的时候"
     static let batchTitle = "连发时等几秒一起回"
     static let batchHint = "连续几条消息会先等这个时长，再合成一次回复。单位是秒，不是条数。"
 
@@ -237,7 +243,7 @@ struct AutopilotSettingsView: View {
     }
 
     private var limitsBatchRow: some View {
-        SettingsSection(AutopilotSettingsCopy.batchTitle) {
+        SettingsSection(AutopilotSettingsCopy.batchSection) {
             SettingsRow(AutopilotSettingsCopy.batchTitle, subtitle: AutopilotSettingsCopy.batchHint) {
                 Picker(AutopilotSettingsCopy.batchTitle, selection: $batchWindowSeconds) {
                     ForEach(batchOptions, id: \.self) { Text("\($0) 秒").tag($0) }

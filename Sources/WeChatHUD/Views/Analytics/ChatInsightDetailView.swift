@@ -521,8 +521,7 @@ struct ChatInsightDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
+        .companionPanelFace()
     }
 
     @ViewBuilder
@@ -540,8 +539,7 @@ struct ChatInsightDetailView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
+        .companionPanelFace()
     }
 
     @ViewBuilder
@@ -559,8 +557,7 @@ struct ChatInsightDetailView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
+        .companionPanelFace()
     }
 
     private func topicCard(_ topic: TopicInsight) -> some View {

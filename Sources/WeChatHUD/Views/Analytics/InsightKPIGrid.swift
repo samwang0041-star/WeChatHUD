@@ -60,8 +60,7 @@ struct InsightKPIGrid: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
+        .companionPanelFace()
     }
 
     private func densityHint(_ ratio: Double) -> String {

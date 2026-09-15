@@ -24,11 +24,18 @@ struct IslandShape: InsettableShape {
     /// Corner radius of the pill's bottom-left / bottom-right.
     /// Top corners are always flat — the pill is flush with the
     /// screen's top edge.
-    let pillCornerRadius: CGFloat
+    ///
+    /// `var`, not `let`, and part of `animatableData`: the radius is one of
+    /// the things that makes an island read as a living object rather than a
+    /// rectangle being resized. The reference implementation
+    /// (`MrKai77/DynamicNotchKit` via `TheBoredTeam/boring.notch`) exposes
+    /// exactly this pair of radii as `AnimatablePair` so the silhouette
+    /// *reshapes* across the transition instead of only scaling.
+    var pillCornerRadius: CGFloat
     /// Corner radius of the notch's inner bottom corners. Apple's
     /// notch uses ~10pt; matching it here makes the silhouette
     /// read as the same object regardless of display.
-    let notchCornerRadius: CGFloat
+    var notchCornerRadius: CGFloat
 
     /// Radius of the fillet where the pill's top edge meets the screen's top
     /// edge — a curve opening *outward*, the same gesture Apple uses where the
@@ -39,8 +46,29 @@ struct IslandShape: InsettableShape {
     /// top edge tangentially instead, so the panel looks hung from it. It is
     /// clamped to the gap beside the notch so it can never eat into the
     /// cutout, and it never changes the shape's bounds.
-    let topCornerRadius: CGFloat
+    var topCornerRadius: CGFloat
     var inset: CGFloat = 0
+
+    /// The three radii interpolate; the notch geometry and the inset do not.
+    ///
+    /// Notch width/height come from real hardware measurement — they are the
+    /// same on every frame of a transition, and animating them would make the
+    /// cutout drift off the physical notch. The radii are the opposite: they
+    /// are the only part of the silhouette that *should* move, which is what
+    /// turns "a window got taller" into "the island opened".
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, CGFloat> {
+        get {
+            .init(
+                .init(pillCornerRadius, notchCornerRadius),
+                topCornerRadius
+            )
+        }
+        set {
+            pillCornerRadius = newValue.first.first
+            notchCornerRadius = newValue.first.second
+            topCornerRadius = newValue.second
+        }
+    }
 
     func inset(by amount: CGFloat) -> IslandShape {
         var shape = self

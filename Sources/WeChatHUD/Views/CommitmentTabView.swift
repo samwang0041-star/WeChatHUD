@@ -97,10 +97,10 @@ struct CommitmentTabView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                CompanionFilterPill(title: "进行中 \(activeCount)", selected: filter == .active) { filter = .active }
-                CompanionFilterPill(title: "已超期 \(overdueCount)", selected: filter == .overdue) { filter = .overdue }
-                CompanionFilterPill(title: "已完成", selected: filter == .fulfilled) { filter = .fulfilled }
-                CompanionFilterPill(title: "全部", selected: filter == .all) { filter = .all }
+                CompanionFilterPill(title: "进行中 \(activeCount)", selected: filter == .active, tint: SettingsView.Tab.commitments.accentColor) { filter = .active }
+                CompanionFilterPill(title: "已超期 \(overdueCount)", selected: filter == .overdue, tint: SettingsView.Tab.commitments.accentColor) { filter = .overdue }
+                CompanionFilterPill(title: "已完成", selected: filter == .fulfilled, tint: SettingsView.Tab.commitments.accentColor) { filter = .fulfilled }
+                CompanionFilterPill(title: "全部", selected: filter == .all, tint: SettingsView.Tab.commitments.accentColor) { filter = .all }
                 Spacer()
                 if overdueCount > 0 {
                     Button {

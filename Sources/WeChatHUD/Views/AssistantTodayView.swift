@@ -60,14 +60,19 @@ struct AssistantTodayView: View {
                             navigate(.tasks)
                         }
                     }
+                    .companionStagger(index: 0)
                     if geometry.size.width >= 900 {
                         HStack(alignment: .top, spacing: 24) {
                             messageFeed.frame(maxWidth: .infinity)
+                                .companionStagger(index: 1)
                             companionRail.frame(width: 280)
+                                .companionStagger(index: 2)
                         }
                     } else {
                         messageFeed
+                            .companionStagger(index: 1)
                         companionRail
+                            .companionStagger(index: 2)
                     }
                 }
                 .frame(maxWidth: 1180, alignment: .leading)
@@ -90,6 +95,27 @@ struct AssistantTodayView: View {
             HStack(alignment: .center) {
                 Text(showUpdates ? "这些对话有更新" : "先处理这些事").workspaceTitle()
                 Spacer()
+                // Closure, not another queue. Every other number on this page
+                // counts what is left; without this one the page can only ever
+                // report that you are behind. Shown only once there is
+                // something to be finished with, so a fresh install is not
+                // greeted by a zero.
+                if handledTodayCount > 0 {
+                    Text(CompanionInteractionCopy.handledToday(handledTodayCount))
+                        .workspaceMeta()
+                        // On-wash step: this row sits in the band the module
+                        // wash covers, where the ordinary secondary style no
+                        // longer clears AA.
+                        .onWashSecondary()
+                    // A divider, because this is a different kind of number
+                    // from the queue count beside it: one is history, the
+                    // other is an action. Without the rule the two read as
+                    // one crowded meta line.
+                    Text("·")
+                        .workspaceMeta()
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
                 Button { showUpdates.toggle() } label: {
                     HStack(spacing: 4) {
                         Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
@@ -117,8 +143,22 @@ struct AssistantTodayView: View {
                 }
             }
             .padding(12)
-            .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(searchFocused ? CompanionPalette.accent.opacity(0.5) : CompanionPalette.border))
+            .background(searchFieldFace)
+            .overlay(
+                RoundedRectangle(cornerRadius: CompanionElevation.insetRadius, style: .continuous)
+                    .strokeBorder(
+                        searchFocused ? CompanionPalette.accent.opacity(0.55) : CompanionPalette.border,
+                        lineWidth: 1
+                    )
+            )
+            // A field sits *inside* the page rather than on top of it, so it
+            // takes a focus halo instead of the card lift. A light source above
+            // the page means a well reads as recessed, not raised.
+            .shadow(
+                color: searchFocused ? CompanionPalette.accent.opacity(0.16) : .clear,
+                radius: 10, y: 0
+            )
+            .companionAnimation(CompanionMotion.hover(), value: searchFocused)
 
             if visible.isEmpty {
                 if aiReadinessLoaded {
@@ -163,6 +203,32 @@ struct AssistantTodayView: View {
 
     private func collapsedSummary(_ summary: String) -> String {
         summary.count > 28 ? String(summary.prefix(28)) + "…" : summary
+    }
+
+    /// How many items the user has already cleared today. Counts the handled
+    /// list rather than a session counter, so it survives a relaunch and means
+    /// the same thing on every launch.
+    private var handledTodayCount: Int {
+        let start = Calendar.current.startOfDay(for: Date())
+        return monitor.handledItems.filter { $0.timestamp >= start }.count
+    }
+
+    /// The search well: slightly darker than the card it sits on, lit along
+    /// its bottom edge so the top edge reads as the shadowed side.
+    private var searchFieldFace: some View {
+        let shape = RoundedRectangle(cornerRadius: CompanionElevation.insetRadius, style: .continuous)
+        return ZStack {
+            shape.fill(CompanionPalette.surface)
+            if !CompanionMotion.reduceTransparency {
+                shape.fill(
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.10), Color.white.opacity(0.030)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            }
+        }
     }
 
     private func snooze(_ item: InboxItem, until: Date) {
@@ -304,17 +370,15 @@ struct AssistantTodayView: View {
     }
 
     private func filterPill(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text("\(title) \(count)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(selected ? Color.white : .primary)
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(selected ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
-                .overlay(Capsule().strokeBorder(selected ? Color.clear : CompanionPalette.border))
-        }
-        .buttonStyle(CompanionPressStyle())
+        // The page's own module colour, so the selected filter belongs to
+        // 今天 rather than wearing the brand green used for primary actions.
+        CompanionFilterPill(
+            title: "\(title) \(count)",
+            selected: selected,
+            tint: SettingsView.Tab.today.accentColor,
+            action: action
+        )
         .accessibilityLabel("\(title)，\(count) 项")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func jumpPill(_ title: String, count: Int, action: @escaping () -> Void) -> some View {
@@ -326,7 +390,9 @@ struct AssistantTodayView: View {
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 14).padding(.vertical, 8)
+            // Same metrics as CompanionFilterPill: these sit in one row,
+            // and the 2pt mismatch made the group look misaligned.
+            .padding(.horizontal, 12).padding(.vertical, 6)
             .background(CompanionPalette.surface, in: Capsule())
             .overlay(Capsule().strokeBorder(CompanionPalette.border))
         }

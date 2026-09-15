@@ -266,8 +266,7 @@ struct DailyReportCommandCenterView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(isWorkspace ? 14 : 10)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(6)
+        .companionPanelFace(radius: 6)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
@@ -556,8 +555,7 @@ struct DailyReportCommandCenterView: View {
             }
         }
         .padding(8)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(5)
+        .companionPanelFace(radius: 5)
         .padding(.horizontal, 12)
         .padding(.vertical, 2)
     }
@@ -655,8 +653,7 @@ struct DailyReportCommandCenterView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .lineSpacing(2)
                     .padding(8)
-                    .background(Color(NSColor.controlBackgroundColor))
-                    .cornerRadius(5)
+                    .companionPanelFace(radius: 5)
                 Button(action: { WeChatLauncher.copyText(draft) }) {
                     HStack(spacing: 3) {
                         Image(systemName: "doc.on.doc")

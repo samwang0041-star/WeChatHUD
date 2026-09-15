@@ -121,7 +121,8 @@ struct ApprovalWorkspaceView: View {
                     let count = value == .pending ? pendingCount : nil
                     CompanionFilterPill(
                         title: count.map { "\(value.rawValue) \($0)" } ?? value.rawValue,
-                        selected: filter == value
+                        selected: filter == value,
+                        tint: SettingsView.Tab.autopilotDashboard.accentColor
                     ) { filter = value }
                 }
                 Spacer()

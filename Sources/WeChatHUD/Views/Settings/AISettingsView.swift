@@ -612,7 +612,9 @@ struct AISettingsView: View {
     // MARK: - Top Controls
 
     private var topControls: some View {
-        SettingsSection("服务来源") {
+        // Same rule as the sync page: the header names the topic, the row
+        // names the control. Identical strings doubled the phrase on screen.
+        SettingsSection("用哪家 AI") {
             SettingsRow("服务来源", icon: "bolt.fill", iconColor: .purple) {
                 Picker("服务来源", selection: $serviceSource) {
                     Text("预设供应商").tag(ServiceSource.preset)

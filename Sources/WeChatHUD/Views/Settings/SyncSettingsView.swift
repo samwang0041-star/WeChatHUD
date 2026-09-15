@@ -188,8 +188,11 @@ struct SyncSettingsView: View {
     }
 
     private var displaySection: some View {
-        SettingsSection("显示位置") {
-            SettingsRow("显示位置", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: CompanionPalette.jade) {
+        // Section names the group, row names the setting inside it. These were
+        // the same words, so the page stacked the phrase on itself and the
+        // header read as a rendering fault rather than as a heading.
+        SettingsSection("浮窗位置") {
+            SettingsRow("显示在哪块屏幕", subtitle: "选择顶部浮窗所在的屏幕。未连接所选屏幕时使用可用屏幕。", icon: "display", iconColor: CompanionPalette.jade) {
                 Picker("显示位置", selection: $displayScreen) {
                     ForEach(DisplayScreen.allCases, id: \.self) { s in
                         Text(s.label).tag(s)
@@ -590,7 +593,7 @@ struct SyncSettingsView: View {
                     }
                     HStack(spacing: 8) {
                         ForEach(DataSection.allCases, id: \.self) { section in
-                            CompanionFilterPill(title: section.rawValue, selected: selectedSection == section) {
+                            CompanionFilterPill(title: section.rawValue, selected: selectedSection == section, tint: SettingsView.Tab.system.accentColor) {
                                 selectedSection = section
                                 reloadData()
                             }

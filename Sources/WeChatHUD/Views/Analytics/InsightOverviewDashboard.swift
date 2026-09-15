@@ -162,8 +162,7 @@ struct InsightOverviewDashboard: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(12)
+        .companionPanelFace(radius: 12)
     }
 
     private func quietNoiseSection(overview: ChatInsightEngine.GlobalOverview) -> some View {
@@ -215,8 +214,7 @@ struct InsightOverviewDashboard: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(12)
+        .companionPanelFace(radius: 12)
     }
 
     private func collapsibleMetrics(_ overview: ChatInsightEngine.GlobalOverview) -> some View {
@@ -392,8 +390,7 @@ struct InsightOverviewDashboard: View {
                     .padding(14)
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(10)
+        .companionPanelFace()
     }
 
     private func isConcreteFocusSource(_ source: String) -> Bool {

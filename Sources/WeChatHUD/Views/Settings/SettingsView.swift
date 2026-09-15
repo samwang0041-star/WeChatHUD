@@ -84,6 +84,23 @@ struct SettingsView: View {
         var isSettings: Bool {
             [.contacts, .aiButler, .notifications, .aiService, .autopilot, .system, .preferences, .localData, .guide].contains(self)
         }
+        var accentColor: Color {
+            switch self {
+            case .today: return CompanionPalette.jade
+            case .tasks: return Color(red: 0.20, green: 0.55, blue: 0.85) // Crisp productivity blue
+            case .commitments: return Color(red: 0.18, green: 0.68, blue: 0.58) // Mint
+            case .drafts: return Color(red: 0.35, green: 0.45, blue: 0.88) // Indigo
+            case .insight: return Color(red: 0.60, green: 0.38, blue: 0.85) // Clean purple
+            case .dailyReport: return Color(red: 0.88, green: 0.52, blue: 0.18) // Amber
+            case .relationshipRadar: return Color(red: 0.85, green: 0.32, blue: 0.52) // Rose
+            case .autopilotDashboard, .autopilot: return Color(red: 0.22, green: 0.65, blue: 0.85) // Cyan
+            case .contacts: return Color(red: 0.30, green: 0.62, blue: 0.48)
+            case .aiButler, .aiService: return Color(red: 0.55, green: 0.42, blue: 0.90) // Violet
+            case .notifications: return Color(red: 0.90, green: 0.45, blue: 0.20)
+            case .system: return Color(red: 0.25, green: 0.70, blue: 0.55)
+            case .preferences, .localData, .guide: return CompanionPalette.jade
+            }
+        }
         static func from(raw: String?) -> Tab? { raw.flatMap(Self.init(rawValue:)) }
     }
 
@@ -121,6 +138,10 @@ struct SettingsView: View {
                     }
                     Spacer(minLength: 0)
                 }.padding(.horizontal, 14).padding(.top, 16).padding(.bottom, 10)
+                // The inset floats over the scrolling rows. Without its own
+                // ground the last visible row shows through the brand block
+                // and the two read as one garbled line.
+                .background(sidebarInsetGround)
             }
             .safeAreaInset(edge: .bottom) {
                 HStack(alignment: .top, spacing: 8) {
@@ -134,6 +155,11 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.vertical, largeChrome ? 10 : 16)
+                // Opaque, unlike the header: rows scroll *up* behind this
+                // block, so the text would otherwise sit on top of them. The
+                // header can afford a fade because content arrives from below
+                // it already.
+                .background(CompanionPalette.mist)
             }
         } detail: {
             VStack(alignment: .leading, spacing: 0) {
@@ -150,7 +176,7 @@ struct SettingsView: View {
                     .companionDimmedByDialog(panelState.modalDialogOpen)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(CompanionPalette.canvas)
+            .background(CompanionBackdrop(tint: selectedTab.accentColor))
         }
         .navigationTitle(CompanionProductCopy.brandName)
         .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
@@ -199,23 +225,50 @@ struct SettingsView: View {
 
     private var largeChrome: Bool { PreviewRuntime.largeType || typeSize.isAccessibilitySize }
 
+    /// Ground for the sidebar's floating header and footer. The mist colour
+    /// plus a fade toward the rows, so the block separates from scrolled
+    /// content without drawing a hard rule across the column.
+    private var sidebarInsetGround: some View {
+        ZStack {
+            CompanionPalette.mist
+            if !CompanionMotion.reduceTransparency {
+                LinearGradient(
+                    colors: [CompanionPalette.mist.opacity(0), CompanionPalette.mist],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+    }
+
     private var pageHeader: some View {
         HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
-                Text(selectedTab.subtitle).workspaceBody().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .center, spacing: 12) {
+                // The module's own tile, at page scale. Same colour, same
+                // geometry as the sidebar row that opened it, so arriving on
+                // a page confirms where you are without re-reading the title.
+                CompanionModuleTile(
+                    systemImage: selectedTab.icon,
+                    tint: selectedTab.accentColor,
+                    selected: true,
+                    size: 34
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
+                    Text(selectedTab.subtitle).workspaceBody().onWashSecondary()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 10)
             if selectedTab == .today {
                 Text(Date(), format: .dateTime.month().day().weekday(.wide))
-                    .companionFont(size: 13, weight: .medium).foregroundStyle(.secondary)
+                    .companionFont(size: 13, weight: .medium).onWashSecondary()
             }
             if selectedTab == .contacts {
                 Button { NotificationCenter.default.post(name: .hudAddContact, object: nil) } label: {
                     Label("添加关注", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .buttonStyle(CompanionGlowButtonStyle(tint: selectedTab.accentColor))
             }
         }
         .frame(maxWidth: headerWidth, alignment: .leading)
@@ -349,14 +402,13 @@ private struct SettingsSidebarRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Capsule()
-                    .fill(selected ? CompanionPalette.jade : Color.clear)
-                    .frame(width: 3, height: 18)
-                Image(systemName: tab.icon)
-                    .companionFont(size: WorkspaceType.rowTitle, weight: .medium)
-                    .foregroundStyle(selected ? CompanionPalette.jade : .secondary)
-                    .frame(width: 20)
+            HStack(spacing: 9) {
+                CompanionModuleTile(
+                    systemImage: tab.icon,
+                    tint: tab.accentColor,
+                    selected: selected,
+                    hovered: hovered
+                )
                 Text(tab.label)
                     .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
                     .foregroundStyle(.primary)
@@ -367,29 +419,70 @@ private struct SettingsSidebarRow: View {
                     Text(count, format: .number)
                         .workspaceMicro()
                         .monospacedDigit()
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(selected ? tab.accentColor : .secondary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(CompanionPalette.sidebarSelectedFill, in: Capsule())
+                        .background(
+                            tab.accentColor.opacity(selected ? 0.20 : 0.11),
+                            in: Capsule()
+                        )
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.vertical, 5)
+            .padding(.leading, 6)
             .padding(.trailing, 8)
             .contentShape(Rectangle())
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? CompanionPalette.sidebarSelectedFill
-                          : (hovered ? Color.primary.opacity(0.04) : Color.clear))
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(sidebarRowFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(
+                        selected && !CompanionMotion.reduceTransparency
+                            ? tab.accentColor.opacity(0.22) : Color.clear,
+                        lineWidth: 1
+                    )
             )
         }
         .buttonStyle(CompanionPressStyle())
         .onHover { hovered = $0 }
         .companionAnimation(CompanionMotion.hover(), value: hovered)
+        .companionAnimation(CompanionMotion.sidebarSelection(), value: selected)
         .focusable(!panelState.modalDialogOpen)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(tab.label)
-        .accessibilityHint("回车打开这一页")
+        // One string serves the tooltip and VoiceOver, so the promise a
+        // mouse user reads and the one a screen reader announces cannot drift
+        // apart. The hint says what the page is *for*, not what the label
+        // already says.
+        .accessibilityHint(CompanionInteractionCopy.pageHint(for: tab.rawValue))
+        .help(CompanionInteractionCopy.pageHint(for: tab.rawValue))
         .accessibilityIdentifier("workspace.\(tab.rawValue)")
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Selected rows carry a tint of their own module colour rather than the
+    /// brand green, so the sidebar reads as "you are in the blue module"
+    /// before the eye reaches the page title. Hover is the neutral step below.
+    private var sidebarRowFill: LinearGradient {
+        if selected {
+            return LinearGradient(
+                colors: [
+                    tab.accentColor.opacity(CompanionMotion.reduceTransparency ? 0.30 : 0.20),
+                    tab.accentColor.opacity(CompanionMotion.reduceTransparency ? 0.22 : 0.13)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+        return LinearGradient(
+            colors: [
+                Color.primary.opacity(hovered ? 0.055 : 0),
+                Color.primary.opacity(hovered ? 0.035 : 0)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 
@@ -483,13 +576,16 @@ private struct WorkspaceStatusBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
+            // Status carries a light, not an icon. A tinted dot with a halo
+            // says connected / working / needs-attention at a glance and
+            // stops the bar from reading as a row of toolbar buttons; the
+            // symbol that used to sit here duplicated the sentence next to it.
+            CompanionStatusDot(tint: color, pulsing: isSyncing)
             Text(title)
                 .companionFont(size: 12, weight: .medium)
             Spacer()
             if let date = monitor.stats.lastSyncAt {
-                Text("上次同步：\(date.formatted(date: .long, time: .shortened))")
+                Text("上次同步 \(date.formatted(date: .abbreviated, time: .shortened))")
                     .companionFont(size: 11)
                     .foregroundStyle(.secondary)
             }
@@ -502,8 +598,23 @@ private struct WorkspaceStatusBar: View {
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 10)
-        .background(CompanionPalette.surface)
+        .background(statusBarBackground)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    /// The bar is a footer, not a card: it keeps the window ground and adds
+    /// only enough separation to stay legible when content scrolls under it.
+    private var statusBarBackground: some View {
+        ZStack {
+            CompanionPalette.canvas
+            if !CompanionMotion.reduceTransparency {
+                LinearGradient(
+                    colors: [Color.primary.opacity(0.035), Color.primary.opacity(0.055)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
     }
 
     private var isSyncing: Bool { if case .syncing = monitor.stats.syncStatus { return true }; return false }
@@ -511,12 +622,17 @@ private struct WorkspaceStatusBar: View {
     private var title: String {
         switch monitor.stats.syncStatus {
         case .ok: return "微信已连接 · 刚刚同步"
-        case .syncing: return "正在读取你关注的聊天"
-        case .idle: return "等待首次同步"
-        case .stale: return "消息可能不是最新的"
-        case .waitingForWeChat: return "等待微信启动"
-        case .accountSwitched: return "当前微信账号已经读不到了"
-        case .error: return "暂时读不到新消息"
+        case .syncing:
+            // Name the object being read and how much of it. "正在读取你关注
+            // 的聊天" was true but unmeasurable: it left the user unable to
+            // tell a two-chat refresh from a first full scan.
+            let watched = monitor.inboxItems.count
+            return CompanionInteractionCopy.readingChats(watched)
+        case .idle: return CompanionInteractionCopy.firstScan
+        case .stale: return "读到的是旧消息，可能微信刚更新过"
+        case .waitingForWeChat: return CompanionInteractionCopy.waitingForWeChat
+        case .accountSwitched: return "换了微信账号，之前的记录已经读不到了"
+        case .error: return "暂时读不到新消息，可以重试"
         }
     }
 

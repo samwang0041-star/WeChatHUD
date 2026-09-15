@@ -54,8 +54,7 @@ struct InsightRadarSection: View {
             }
         }
         .padding(14)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(12)
+        .companionPanelFace(radius: 12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .stroke(Color.accentColor.opacity(0.12), lineWidth: 0.5)

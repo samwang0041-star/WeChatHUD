@@ -104,7 +104,10 @@ struct GroupContextBriefingCard: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("正在整理群聊上下文…")
+            // Names what is being worked out and what will appear. "正在整理
+            // 群聊上下文…" left the user watching an indeterminate spinner
+            // with no idea what they were waiting for.
+            Text("正在理出大家在聊什么、为什么找你")
                 .islandRowBody()
                 .foregroundColor(IslandInk.secondary)
         }
@@ -192,10 +195,19 @@ struct GroupContextBriefingCard: View {
 
     private func card(_ title: String, text: String, systemImage: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
+            // A tinted glyph well rather than a bare icon: the three cards
+            // are a reading sequence (what is happening → why you → what
+            // next), and giving each a lit marker makes the sequence
+            // followable down the column instead of three identical grey
+            // blocks.
             Image(systemName: systemImage)
-                .font(.system(size: 12))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(CompanionPalette.islandMint)
-                .frame(width: 16)
+                .frame(width: 20, height: 20)
+                .background(
+                    CompanionPalette.islandMint.opacity(CompanionMotion.reduceTransparency ? 0.22 : 0.14),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(title):")
                     .islandSection()
@@ -208,7 +220,23 @@ struct GroupContextBriefingCard: View {
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+            shape.fill(IslandInk.hover)
+            if !CompanionMotion.reduceTransparency {
+                // Same top-lit edge as the workspace cards, one step down:
+                // the island is dark, so the highlight has to be dimmer
+                // here or the cards glow.
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.075), Color.white.opacity(0.0)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            }
+        }
     }
 }
 

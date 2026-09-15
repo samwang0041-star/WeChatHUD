@@ -26,18 +26,21 @@ struct CompanionGuideView: View {
             VStack(alignment: .leading, spacing: 18) {
                 introCard
                 quickStartCard
-                dailyUseCard
-                privacyCard
-                troubleshootingCard
-                shortcutsCard
-                aboutCard
+                dailyUseCard.companionStagger(index: 1)
+                privacyCard.companionStagger(index: 2)
+                troubleshootingCard.companionStagger(index: 3)
+                shortcutsCard.companionStagger(index: 4)
+                aboutCard.companionStagger(index: 5)
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
             .frame(maxWidth: 920, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        // The guide is the one page that owns the whole detail pane, so it
+        // carries the backdrop at full strength rather than the quieter
+        // settings treatment.
+        .background(CompanionBackdrop(tint: SettingsView.Tab.guide.accentColor, intensity: 1.35))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("怎么用 WeChatHUD")
     }
@@ -60,7 +63,7 @@ struct CompanionGuideView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("常见问题").font(.system(size: 15, weight: .semibold))
+                CompanionSectionHeader("常见问题")
                 faqRow("看不到消息？") { navigate(.system) }
                 faqRow("AI 没有生成摘要？") { navigate(.aiService) }
                 faqRow("发送没有成功？") { navigate(.system) }
@@ -220,31 +223,43 @@ private struct GuideCard<Content: View>: View {
     let tint: Color
     let title: String
     @ViewBuilder let content: Content
+    /// Stagger position within the guide. The page is a long form, so the
+    /// cards arrive in reading order rather than all at once.
+    var index: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(title, systemImage: icon)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(tint)
+            // Tile + label, matching the sidebar that opened this page and the
+            // page header that sits above it. The guide used to set its
+            // headings in raw .title3 while every other surface used the
+            // workspace tokens, which made this one page look like a
+            // different app.
+            HStack(spacing: 10) {
+                CompanionModuleTile(systemImage: icon, tint: tint, selected: true, size: 26)
+                Text(title)
+                    .workspaceTitle()
+                    .foregroundStyle(.primary)
+            }
+            .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isHeader)
             content
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor).opacity(0.55)))
+        .companionCardFace(padding: 0, tint: tint)
+        .companionStagger(index: index)
     }
 }
 
 private extension View {
     func guideBody() -> some View {
-        font(.body)
+        workspaceBody()
             .foregroundStyle(.primary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     func guideSecondary() -> some View {
-        font(.callout)
+        workspaceBody()
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }

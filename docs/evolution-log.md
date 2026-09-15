@@ -370,6 +370,25 @@
 - Sync reader overload kept for compat; Autopilot guardrails unchanged
 - Tests: 1522 + 70 green; release OK
 
+## 2026-09-15 Slice 26 — 材质与光 / 错峰动效 / 交互文案分层
+
+参考本机 CleanMyMac 5（真机点击取样，非记忆描述）：彩色模块方块侧栏、随模块变色的环境光、单一发光主按钮。
+
+- 新增 `CompanionMaterial.swift`：一个从上往下的光源（顶边高光 + 面部浅渐变 + 单层柔影）、
+  `CompanionBackdrop` 环境光、`CompanionModuleTile` 模块方块、`CompanionGlowButtonStyle` 发光主按钮、
+  `CompanionStatusDot` 呼吸状态灯、`CompanionSectionHeader`。`CompanionSurface` 改走新面板 → 全站既有卡片一次性升级。
+- `SettingsView.Tab.accentColor`：18 个模块各自的强调色，贯穿侧栏 / 页头 / 环境光 / 选中行 / 筛选胶囊。
+- `CompanionMotion` 新增错峰入场（6pt / 45ms 步进 / 240ms 整组 / 封顶第 6 个）与 cardHover、sidebarSelection、pulse。
+- 新增 `CompanionInteractionCopy.swift`：hover 承诺、等待态、空态、失败下一步、完成度。
+  侧栏 18 行 hint 说明"这页干什么用"且与标签不同；同一串同时供 tooltip 与 VoiceOver。
+- 修掉：toast 边框恒橙（成功态也戴警告框）、侧栏页脚压住滚动内容、待办筛选是手写副本、
+  筛选胶囊全站品牌绿、卡片顶边高光有 trim 接缝、引导页/使用指南用原生系统字体、空列表只有劝退句、
+  预览构建读正式钥匙串导致每次预览弹密码框（把整个界面挡在后面）。
+- `docs/design/ui-language.md` 增「材质与光（v2）」；`docs/qa/2026-09-15-frontend-quality-pass.md` 为本次实测记录。
+- Tests: 1555 green (11 explicit skips), 新增 CompanionMaterialTests 14 用例；release 零警告。
+- 动画实测：peek/extended 形态弹簧 60.0 FPS，最差帧 17.06ms。
+- 边界：走查跑在 `--preview` 演示数据；浅色外观抽查 3 页；浮窗展开态受抓帧时序限制未逐帧复验。
+
 ## 2026-09-13 Slice 22 — peer/trend/fulfillment via WeChatReaderActor
 
 - Manual send receipt + lastPeerMessage + inferRelationship + chatTrend/relationshipStrength + commitment fulfillment hop through WeChatReaderActor
@@ -393,3 +412,117 @@
 - Actor contact wrappers + async ChatMonitor wechatContacts/activePrivateChatCandidates; ContactsSettingsView caches async-loaded candidates
 - ChatNaming left as debt; Autopilot guardrails unchanged
 - Tests: 1522 + 70 green; release OK
+
+## 2026-09-15 Slice 27 — 质检测量：底色强度按可读性反解
+
+把「像不像 CleanMyMac」从目测改成量：同一套采样代码量两边「最平的地面」的通道极差。
+
+- 第一轮测出 **不达标**：参考 59.7，我们 8.0–16.0。模块底色弱到没人会注意到，
+  即该功能自称的目的（切模块换房间）当时并未达成。
+- 量参考为什么敢用 58：它地面相对亮度 0.058，其上 55% 白文字只有 2.9:1——**参考自己不合规**，
+  它敢这样是因为色场上只放又亮又少的字。
+- 因此抄结构不抄数字：**把落在底色上的字提亮**（`onWashSecondary()`），用提亮换回颜色额度。
+- 地面亮度上限从「落在它上面的字必须过 AA」反解（`ambientLuminanceCeiling`）；
+  强度再由**按通道极差归一化**与**亮度天花板**取最小值。
+- 结果：**23.5–35.3**（原 8.0–16.0，参考 59.7）。实测渲染对比度页头 10.0–10.7:1、正文 11.7–16.5:1，AA 门槛 4.5:1。
+- 修掉：浅色外观下 `onWashSecondary` 写死白色导致页头变白底白字（只有浅色截图会暴露）；
+  同一透明度下琥珀房间比玉色房间强一倍多（30.9 vs 13.8）。
+- 新增 3 条质量门，其中 AA 门第一次跑就拦下 4.389:1。
+- Tests: 1559 green (11 explicit skips); release 零警告。
+## 2026-09-15 Slice 28 — 按社区源码质检 HUD 浮岛
+
+读了 `TheBoredTeam/boring.notch`（约 10.6k★）的 `ContentView.swift` / `NotchShape.swift` 全文，
+及其来源 `MrKai77/DynamicNotchKit`。对照后修三处：
+
+- **外形只能缩放不能变形**：参考把两个圆角声明为可变并实现 `animatableData`，让形状本身在过渡中重塑。
+  我们三个半径在每个调用点都是字面量、每个状态都一样，32pt 药丸的曲率一直锁着，岛体长到 250pt 也不变。
+  改为状态驱动（闭合 22/10/16，展开 16/12/20）；硬件缺口几何不参与插值，否则缺口会滑离真实刘海。
+- **圆角会瞬跳**：外层 `.animation(nil, value: presentedState)` 会抑制形状的隐式动画，
+  光有 `animatableData` 不够。新增 `islandSilhouette(expanding:)` 并把动画作用域收到形状本身，
+  弹簧对齐窗口帧弹簧（0.42/0.82 展开、0.26/1.0 收起），不是内容 morph 的 0.30/0.88。
+- **无场景合成**：参考用 `compositingGroup()`；我们的半透明层各自对窗口混合，过渡中有接缝。已加。
+
+顺带修掉活 bug：内容 chrome 的圆角写死 22，没跟轮廓走（半径改为状态驱动后它成了唯一钉死处）。
+
+新增 `--preview-transitions` 测**全部七条**转换（原验收只覆盖一条路径）：
+移入 / 停留展开 / 行展开 / 收起 / 二次移入 / 通知横幅 / 横幅收起 ——
+**全部 60 FPS，最差帧 16.69 ms**。测量本身也修了一个报告 bug（收起腿曾误报 extended→extended）。
+
+## 2026-09-15 Slice 29 — 修「浅色外观下模块底色静默失效」
+
+由测试套件崩溃引出：`strengths.min()!` 强解包在空数组上带崩整个 xctest 进程。
+去掉强解包后立刻报出失败，暴露真 bug：**亮度模型只会提亮地面**，守卫
+`relativeLuminance(tint) > relativeLuminance(canvas)` 在近白画布上对所有模块都为假，
+函数一律返回 0 —— 该功能在浅色外观下从来没生效过。
+
+修：模型显式接收外观（不再读环境），深色提亮受天花板约束、浅色压暗受地板约束；
+浅色另乘 0.38，按感知而非测量值归一。画布颜色改为显式常量，两种外观都能确定性断言。
+测试结构也改为**按外观外层循环**（原按模块循环抓不到「全体归零」）。
+
+- Tests: 1570 green (11 explicit skips), 无 crash；release 零警告。
+- CompanionMaterialTests 21 条；新增门全部验证过能失败。
+## 1.5.0 — 前端质感重做（材质 / 动效 / 文案）与浮岛质检
+
+这一版把界面从"平涂 + 边框"换成一套有光源的语言，并按社区高星实现质检了浮岛。
+
+### 材质与光
+
+- 全站只有一个光源、从上方照：抬起的面同时具备顶边高光、面部浅渐变、单层柔影。
+  既有的 20 多处卡片一次性升级，不是逐页重写。深色浅色两套方向相反（浅色下顶白无效，改由底边定义）。
+- **模块色**：18 个模块各自的强调色，贯穿侧栏方块、页头方块、环境光、选中行、筛选胶囊。
+  选中行用本模块色填充，不再统一品牌绿。
+- **环境光强度是算出来的**：由「按通道极差归一化」与「亮度天花板」两个约束取最小值，
+  天花板从"落在它上面的字必须过 WCAG AA"反解。实测页头 10.0–10.7:1、正文 11.7–16.5:1。
+- 发光主按钮、呼吸状态灯、错峰入场（6pt / 45ms 步进 / 封顶第 6 个）。
+
+### 交互文案分层
+
+新增 `CompanionInteractionCopy`：`CompanionProductCopy` 管"东西叫什么"，
+新层管"用户正在操作时界面对他说什么"。三条硬规则：说结果不说实现、每个等待都要有承诺、每个失败都要有下一步。
+18 行侧栏每行有了说明这页干什么用的 tooltip/VoiceOver，且与标签不同。
+
+### 浮岛（按社区源码质检）
+
+读了 `TheBoredTeam/boring.notch`（约 10.6k★）与 `MrKai77/DynamicNotchKit` 的源码，修三处：
+
+- **外形现在会重塑，不只是缩放**：圆角改为状态驱动（闭合 22/10/16，展开 16/12/20），
+  并实现 `animatableData` 让它们插值。此前三个半径在每个调用点都是字面量、每个状态都一样，
+  32pt 药丸的曲率一直锁着，岛体长到 250pt 也不变。硬件缺口几何不参与插值。
+- **圆角不再瞬跳**：动画作用域收到形状本身（外层 `.animation(nil, …)` 会抑制隐式动画）。
+- **加了场景合成**，消除过渡中阴影轮廓与缺口带相接处的接缝。
+
+新增 `--preview-transitions`，驱动九条转换并逐条记录帧率：
+**八条测到 60 FPS，最差帧 16.69 ms**（一次 vsync 16.67）。
+
+### 修掉的真 bug
+
+| 缺陷 | 事实 |
+|---|---|
+| **浅色外观下模块底色完全不存在** | 亮度模型只会提亮地面，守卫在近白画布上对所有模块都为假，函数一律返回 0。该功能在一半外观下从未生效。 |
+| 浮岛内容 chrome 圆角写死 | 没跟轮廓走，描边与阴影落在与形状不同的圆角上。 |
+| 提示条边框恒为橙色 | 成功态的"已撤销"戴着警告框。 |
+| 侧栏页脚压住滚动内容 | `safeAreaInset` 没有自己的底色。 |
+| 三处分组标题与它唯一的行重复同一句 | 自动回复 / 使用偏好 / AI 服务。 |
+| 待办筛选是手写副本 | 同尺寸但锁死品牌绿、无选中态抬起。 |
+| 卡片顶边高光有接缝 | `trim` 描半个路径，首尾相接处可见断点。 |
+| 引导页与使用指南用原生系统字体 | 与全站 token 不一致。 |
+| 空列表只有劝退句 | 补"今天已经处理了 N 条"，且为 0 时不显示。 |
+| 预览构建读正式钥匙串 | 每次预览弹系统密码框，把界面挡在解锁框之后。 |
+
+### 质量门
+
+- `CompanionMaterialTests` 21 条、`CompanionMotionTests` 24 条，均**验证过能失败**。
+- 源码扫描门禁止任何调用点再写死浮岛圆角（曾抓到 `HUDRootView.swift:148`）。
+- 全部去掉强制解包：测试崩掉进程等于没有任何测试结果。
+
+### 验收
+
+- `swift test`：**1570 通过，0 失败**，11 个显式跳过。
+- `swift build -c release`：零警告零错误。
+- 浮岛九条转换：八条 60 FPS；`peek → compact` 因真实指针监视器正确覆盖合成事件而无法活体测量，
+  由通过的单测 `testLeavingPeekBeforeDwellDoesNotOpenInbox` 覆盖。
+
+### 分发
+
+- arm64，macOS 14+，Developer ID 签名并公证。
+- 数据边界不变：只读本机微信聊天，不修改微信记录；自动托管默认关闭。

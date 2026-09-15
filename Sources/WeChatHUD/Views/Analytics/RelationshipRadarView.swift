@@ -129,7 +129,7 @@ struct RelationshipRadarView: View {
     private var toolbar: some View {
         HStack(spacing: 10) {
             ForEach(RadarFilter.allCases, id: \.self) { value in
-                CompanionFilterPill(title: value.rawValue, selected: filter == value) {
+                CompanionFilterPill(title: value.rawValue, selected: filter == value, tint: SettingsView.Tab.relationshipRadar.accentColor) {
                     filter = value
                     if selectedUsername == nil || !visibleSnapshots.contains(where: { $0.chatUsername == selectedUsername }) {
                         selectedUsername = visibleSnapshots.first?.chatUsername
