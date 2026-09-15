@@ -356,15 +356,16 @@ struct DiscussionWorkspaceView: View {
                 }
                 Spacer(minLength: 12)
                 if item.status == .pending {
-                    Button {
-                        update(id: item.id, to: .done, previous: item.status, title: item.content)
-                    } label: {
-                        Text("标记完成")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                } else {
+                   Button {
+                       update(id: item.id, to: .done, previous: item.status, title: item.content)
+                   } label: {
+                       Text("标记完成")
+                           .frame(maxWidth: .infinity)
+                   }
+                   .buttonStyle(.borderedProminent)
+                    .tint(SettingsView.Tab.tasks.accentColor)
+                   .controlSize(.large)
+               } else {
                     Button("恢复为未完成") { update(id: item.id, to: .pending, previous: item.status, title: item.content) }
                         .buttonStyle(.bordered)
                 }
@@ -373,14 +374,14 @@ struct DiscussionWorkspaceView: View {
                         Label("更正归属", systemImage: "person.crop.circle.badge.questionmark")
                     }
                     .accessibilityIdentifier("workspace.correctOwnership")
-                    Button { showingSource = true } label: {
-                        Label("查看原文", systemImage: "doc.text")
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
-                .font(.system(size: 13, weight: .medium))
-                Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
+                   Button { showingSource = true } label: {
+                       Label("查看原文", systemImage: "doc.text")
+                   }
+               }
+               .buttonStyle(.plain)
+                .foregroundStyle(SettingsView.Tab.tasks.accentColor)
+               .font(.system(size: 13, weight: .medium))
+               Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
             }
@@ -510,15 +511,15 @@ private struct DiscussionRow: View, Equatable {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                isSelected ? CompanionPalette.selectedFill : CompanionPalette.surface,
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isSelected ? CompanionPalette.jade.opacity(0.35) : CompanionPalette.border)
-            )
-        }
+           .background(
+               isSelected ? CompanionPalette.selectedFill : CompanionPalette.surface,
+               in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+           )
+           .overlay(
+               RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isSelected ? SettingsView.Tab.tasks.accentColor.opacity(0.35) : CompanionPalette.border)
+           )
+       }
         .buttonStyle(CompanionPressStyle())
         .accessibilityLabel(item.content)
     }

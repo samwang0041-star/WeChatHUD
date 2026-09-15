@@ -67,6 +67,39 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// dictionary. Distinguishes "no candidate for this file name" (nil, no
     /// scan needed) from "index not built" (fall back to scanning).
     private var keyIndexIsWarm = false
+    /// Keys addressed by database header salt instead of by path.
+    ///
+    /// Populated from a schema-2 salt map, and consulted when a path lookup
+    /// fails. This is what makes a lookup survive a database that was renamed
+    /// or moved, and what lets a key set collected without paths be used at
+    /// all. The salt is already present in this project’s own key
+    /// files, so this needs no new material from anyone.
+    private var saltKeys: [String: Data] = [:]
+    /// Entries in the loaded key file that were recognised and usable.
+    private(set) var recognizedKeyEntryCount = 0
+    /// Entries that looked like keys but could not be read.
+    ///
+    /// Exposed so onboarding can say "this file is not in a shape I read"
+    /// instead of the much more alarming "your key does not match".
+    private(set) var rejectedKeyEntryCount = 0
+    /// Key-file permissions are weaker than owner-only.
+    ///
+    /// Computed, not stored. Two reasons, and the second is the one that bit:
+    ///
+    /// 1. There must be exactly one implementation. As a stored flag it was
+    ///    *declared and read but never assigned*, so it was permanently false
+    ///    and the whole `looseKeyPermissions` diagnosis could never fire — a
+    ///    state that exists, is tested on both halves, and is unreachable in
+    ///    the app. That is the same class of silent defect this round was
+    ///    meant to remove from the key loader.
+    /// 2. Permissions change while the process runs. A user who runs
+    ///    `chmod 600` to fix the warning must see it clear immediately; a
+    ///    value captured at load time would keep reporting the old mode until
+    ///    the key file happened to be reloaded.
+    var keyFilePermissionsAreLoose: Bool {
+        Self.hasLoosePermissions(atPath: keysPath)
+    }
+
     /// Full `keys` dictionary walks performed by `findKey`. Stays at zero once
     /// the index is warm; exposed so tests can prove lookups use the index.
     private(set) var keyLookupLinearScanCount = 0
@@ -242,6 +275,13 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     enum AccessMaterialState {
         case missing, unreadable, available
+        /// Present and readable, but readable by more than its owner.
+        ///
+        /// A database key in a file another local account can read is a key
+        /// disclosed. The reference implementation treats this as its own
+        /// state rather than a footnote, so onboarding can ask for a chmod
+        /// instead of leaving a silently weak setup in place.
+        case loosePermissions
     }
 
     /// Availability only; successful database reads establish whether keys match.
@@ -249,7 +289,19 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: keysPath, isDirectory: &isDirectory) else { return .missing }
-        return !isDirectory.boolValue && fm.isReadableFile(atPath: keysPath) ? .available : .unreadable
+        guard !isDirectory.boolValue, fm.isReadableFile(atPath: keysPath) else { return .unreadable }
+        return Self.hasLoosePermissions(atPath: keysPath) ? .loosePermissions : .available
+    }
+
+    /// True when a file is readable by anyone other than its owner.
+    ///
+    /// Only the group and other bits are inspected. A file the owner cannot
+    /// read is already reported as `.unreadable`, and failing on a missing
+    /// owner-read bit here would report one problem as two different states.
+    static func hasLoosePermissions(atPath path: String) -> Bool {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        guard let mode = attributes?[.posixPermissions] as? NSNumber else { return false }
+        return mode.intValue & 0o077 != 0
     }
 
     // MARK: - Key Loading
@@ -277,14 +329,36 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 contactsMtime = nil
             }
             keys.removeAll(keepingCapacity: true)
+            saltKeys.removeAll(keepingCapacity: true)
+            rejectedKeyEntryCount = 0
+            recognizedKeyEntryCount = 0
+
+            // Shape 3 first: a schema-2 salt map keys its entries by each
+            // database’s own header salt, so its top-level `keys`
+            // dictionary is an envelope field rather than a database path and
+            // must not be fed to the path loop below.
+            var recognized = 0
+            if let saltMap = WeChatKeyMaterial.saltMap(from: json) {
+                saltKeys = saltMap.keys
+                recognized += saltMap.keys.count
+                rejectedKeyEntryCount += saltMap.rejectedEntries
+            }
+
             for (path, value) in json {
-                guard !path.hasPrefix("_") else { continue }
-                guard let dict = value as? [String: Any],
-                      let hexKey = dict["enc_key"] as? String else { continue }
-                guard let keyData = Data(hexString: hexKey), keyData.count == 32 else { continue }
+                guard !WeChatKeyMaterial.isEnvelopeKey(path) else { continue }
+                guard let keyData = WeChatKeyMaterial.keyData(from: value) else {
+                    // Counted, not skipped. A file whose entries are all in an
+                    // unread shape used to load zero keys in silence and then
+                    // report “no key for this database”, which sends the user
+                    // hunting for a new key when nothing was wrong with theirs.
+                    rejectedKeyEntryCount += 1
+                    continue
+                }
                 let normalized = path.replacingOccurrences(of: "\\", with: "/")
                 keys[normalized] = keyData
+                recognized += 1
             }
+            recognizedKeyEntryCount = recognized
             // The index is derived state: it must be rebuilt in lockstep with
             // `keys` (new material, changed file, or an explicit force reload).
             rebuildKeyIndex()
@@ -465,23 +539,55 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             let normalized = path.replacingOccurrences(of: "\\", with: "/")
             let filename = (normalized as NSString).lastPathComponent
 
-            if keyIndexIsWarm {
-                guard let bucket = keyIndex[filename] else { return nil }
-                if !bucket.scopedValues.isEmpty {
-                    return bucket.scopedValues.count == 1 ? bucket.scopedValues.first : nil
-                }
-                if bucket.hasAbsolute { return nil }
-                return bucket.distinctValues.count == 1 ? bucket.distinctValues.first : nil
+            // Path first: an exact match is the strongest evidence, and it
+            // is what every key file written by this project provides.
+            if let byPath = keyByPath(normalized: normalized, filename: filename) {
+                return byPath
             }
-
-            // Cold index: either no keys are loaded yet, or a future writer of
-            // `keys` forgot to rebuild the index. Fall back to the dictionary
-            // filter so a missing index can never turn into a wrong "no key"
-            // verdict; the counter is a canary for exactly that situation.
-            guard !keys.isEmpty else { return nil }
-            keyLookupLinearScanCount += 1
-            return findKeyByScanning(normalized: normalized, filename: filename)
+            // Then the same file by its own header salt. This is not a
+            // convenience: it is what makes a renamed or moved database
+            // still open, and the only way a key set collected without
+            // paths can be used at all.
+            return keyByHeaderSalt(normalized: normalized)
         }
+    }
+
+    /// Path-keyed lookup, exactly as before the salt fallback existed.
+    private func keyByPath(normalized: String, filename: String) -> Data? {
+        if keyIndexIsWarm {
+            guard let bucket = keyIndex[filename] else { return nil }
+            if !bucket.scopedValues.isEmpty {
+                return bucket.scopedValues.count == 1 ? bucket.scopedValues.first : nil
+            }
+            if bucket.hasAbsolute { return nil }
+            return bucket.distinctValues.count == 1 ? bucket.distinctValues.first : nil
+        }
+
+        // Cold index: either no keys are loaded yet, or a future writer of
+        // `keys` forgot to rebuild the index. Fall back to the dictionary
+        // filter so a missing index can never turn into a wrong "no key"
+        // verdict; the counter is a canary for exactly that situation.
+        guard !keys.isEmpty else { return nil }
+        keyLookupLinearScanCount += 1
+        return findKeyByScanning(normalized: normalized, filename: filename)
+    }
+
+    /// Look the database up by the salt in its own first 16 bytes.
+    ///
+    /// Reads at most 16 bytes, and only when a salt-keyed entry exists — so
+    /// a path-keyed key file pays one empty-dictionary check and no I/O.
+    private func keyByHeaderSalt(normalized: String) -> Data? {
+        guard !saltKeys.isEmpty else { return nil }
+        // No database root means nothing to read a salt from. Without this the
+        // relative branch below would build `/message/message_0.db` — an
+        // absolute path at the filesystem root — because `dbDir` is a plain
+        // string that is empty when account detection failed.
+        guard !dbDir.isEmpty else { return nil }
+        let candidate = normalized.hasPrefix("/")
+            ? normalized
+            : "\(dbDir)/\(normalized)"
+        guard let salt = WeChatKeyMaterial.headerSaltHex(atPath: candidate) else { return nil }
+        return saltKeys[salt.lowercased()]
     }
 
     /// The original dictionary filter, kept as the cold-path reference

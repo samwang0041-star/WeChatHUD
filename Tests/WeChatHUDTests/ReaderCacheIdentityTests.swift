@@ -59,6 +59,11 @@ final class ReaderCacheIdentityTests: XCTestCase {
         let reader = WeChatReader(keysPath: keyPath.path, dbDir: root.path, cacheStrategy: .memory)
         XCTAssertEqual(reader.accessMaterialState, .missing)
         try Data("intentionally-not-a-key".utf8).write(to: keyPath)
+        // Pin the permissions so this test isolates the axis it is about:
+        // availability is decided from the path and existence, not from whether
+        // the contents parse. Permissions are a separate state, asserted in
+        // WeChatKeyMaterialTests.
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyPath.path)
         XCTAssertEqual(reader.accessMaterialState, .available)
         try FileManager.default.removeItem(at: keyPath)
         try FileManager.default.createDirectory(at: keyPath, withIntermediateDirectories: true)

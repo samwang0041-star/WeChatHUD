@@ -93,29 +93,29 @@ struct ChatInsightDetailView: View {
                 } label: {
                     if insightCoordinator.chatInsightLoading.contains(chatUsername) {
                         ProgressView().controlSize(.small)
-                    } else {
-                        Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(CompanionPalette.jade)
-                .controlSize(.small)
-                .disabled(insightCoordinator.chatInsightLoading.contains(chatUsername))
-            }
+                   } else {
+                       Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
+                   }
+               }
+               .buttonStyle(.borderedProminent)
+                .tint(SettingsView.Tab.insight.accentColor)
+               .controlSize(.small)
+               .disabled(insightCoordinator.chatInsightLoading.contains(chatUsername))
+           }
 
-            HStack(spacing: 16) {
-                ForEach(ReviewSurface.allCases, id: \.self) { tab in
-                    Button(tab.rawValue) { surface = tab }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 13, weight: surface == tab ? .semibold : .regular))
-                        .foregroundStyle(surface == tab ? CompanionPalette.jade : .secondary)
-                        .padding(.bottom, 6)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(surface == tab ? CompanionPalette.jade : Color.clear)
-                                .frame(height: 2)
-                        }
-                }
+           HStack(spacing: 16) {
+               ForEach(ReviewSurface.allCases, id: \.self) { tab in
+                   Button(tab.rawValue) { surface = tab }
+                       .buttonStyle(.plain)
+                       .font(.system(size: 13, weight: surface == tab ? .semibold : .regular))
+                        .foregroundStyle(surface == tab ? SettingsView.Tab.insight.accentColor : .secondary)
+                       .padding(.bottom, 6)
+                       .overlay(alignment: .bottom) {
+                           Rectangle()
+                                .fill(surface == tab ? SettingsView.Tab.insight.accentColor : Color.clear)
+                               .frame(height: 2)
+                       }
+               }
                 Spacer()
                 Button("查看待办") {
                     panelState.pendingDiscussionChatUsername = chatUsername
@@ -230,17 +230,17 @@ struct ChatInsightDetailView: View {
                 displayName: { _ in chatName }
             )
         }
-        if let result {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(result.headline)
-                    .workspaceTitle()
-                    .fixedSize(horizontal: false, vertical: true)
-                Label("AI 解读", systemImage: "sparkles")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(CompanionPalette.jade)
-                if !result.suggestion.isEmpty {
-                    Text(result.suggestion)
-                        .font(.system(size: 14))
+       if let result {
+           VStack(alignment: .leading, spacing: 10) {
+               Text(result.headline)
+                   .workspaceTitle()
+                   .fixedSize(horizontal: false, vertical: true)
+               Label("AI 解读", systemImage: "sparkles")
+                   .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(SettingsView.Tab.insight.accentColor)
+               if !result.suggestion.isEmpty {
+                   Text(result.suggestion)
+                       .font(.system(size: 14))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -347,42 +347,42 @@ struct ChatInsightDetailView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
-                Button("查看原文") {
-                    panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .companionSurface(padding: 18)
-        } else if msgCount > 0 {
-            Button("查看原文") {
-                panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(CompanionPalette.jade)
-        }
-    }
+               Button("查看原文") {
+                   panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+               }
+               .buttonStyle(.plain)
+                .foregroundStyle(SettingsView.Tab.insight.accentColor)
+           }
+           .frame(maxWidth: .infinity, alignment: .leading)
+           .companionSurface(padding: 18)
+       } else if msgCount > 0 {
+           Button("查看原文") {
+               panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+           }
+           .buttonStyle(.plain)
+            .foregroundStyle(SettingsView.Tab.insight.accentColor)
+       }
+   }
 
-    private var timelineContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let result, !result.topics.isEmpty {
-                Text("下面的条数和人数是模型估计，不是逐条统计。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                ForEach(Array(result.topics.enumerated()), id: \.offset) { index, topic in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(spacing: 0) {
-                            Circle()
-                                .strokeBorder(CompanionPalette.jade, lineWidth: 2)
-                                .background(Circle().fill(topic.status.contains("待") ? Color.clear : CompanionPalette.jade))
-                                .frame(width: 12, height: 12)
-                            if index < result.topics.count - 1 {
-                                Rectangle()
-                                    .fill(CompanionPalette.jade.opacity(0.2))
+   private var timelineContent: some View {
+       VStack(alignment: .leading, spacing: 16) {
+           if let result, !result.topics.isEmpty {
+               Text("下面的条数和人数是模型估计，不是逐条统计。")
+                   .font(.system(size: 11))
+                   .foregroundStyle(.secondary)
+               ForEach(Array(result.topics.enumerated()), id: \.offset) { index, topic in
+                   HStack(alignment: .top, spacing: 12) {
+                       VStack(spacing: 0) {
+                           Circle()
+                                .strokeBorder(SettingsView.Tab.insight.accentColor, lineWidth: 2)
+                                .background(Circle().fill(topic.status.contains("待") ? Color.clear : SettingsView.Tab.insight.accentColor))
+                               .frame(width: 12, height: 12)
+                           if index < result.topics.count - 1 {
+                               Rectangle()
+                                    .fill(SettingsView.Tab.insight.accentColor.opacity(0.2))
                                     .frame(width: 2)
-                            }
-                        }
+                           }
+                       }
                         topicCard(topic)
                     }
                 }

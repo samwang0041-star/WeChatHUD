@@ -113,12 +113,13 @@ struct DailyReportTabView: View {
                 .buttonStyle(.bordered)
                 .disabled(!canGoNext || monitor.dailyReportIsLoading)
                 .accessibilityLabel(scope == .weekly ? "下一周" : "后一天")
-                Button(action: exportReport) {
-                    Label("导出", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
-                .accessibilityLabel("导出今日小结")
+               Button(action: exportReport) {
+                   Label("导出", systemImage: "square.and.arrow.up")
+               }
+               .buttonStyle(.borderedProminent)
+                .tint(SettingsView.Tab.dailyReport.accentColor)
+               .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
+               .accessibilityLabel("导出今日小结")
             }
             if monitor.dailyReportIsLoading {
                 HStack(spacing: 8) {

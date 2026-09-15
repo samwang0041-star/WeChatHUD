@@ -297,12 +297,13 @@ struct ApprovalWorkspaceView: View {
                     }
                 }
 
-                if selected.action == .pending {
-                    HStack(spacing: 8) {
-                        Button("确认发送") { showSendConfirm = true }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
-                        Button("保存修改") {
+               if selected.action == .pending {
+                   HStack(spacing: 8) {
+                       Button("确认发送") { showSendConfirm = true }
+                           .buttonStyle(.borderedProminent)
+                            .tint(SettingsView.Tab.autopilotDashboard.accentColor)
+                           .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                       Button("保存修改") {
                             do {
                                 try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
                                 receipt = "已保存草稿"

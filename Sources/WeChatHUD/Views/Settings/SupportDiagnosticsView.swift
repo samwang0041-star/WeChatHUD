@@ -99,13 +99,14 @@ struct SupportDiagnosticsView: View {
         case .available: return "可读取"
         case .missing: return "未找到"
         case .unreadable: return "不可读取"
+        case .loosePermissions: return "权限过宽（同机其他账号可读）"
         }
     }
 
     private var keyColor: Color {
         switch monitor.reader.accessMaterialState {
         case .available: return .secondary
-        case .missing, .unreadable: return .orange
+        case .missing, .unreadable, .loosePermissions: return .orange
         }
     }
 

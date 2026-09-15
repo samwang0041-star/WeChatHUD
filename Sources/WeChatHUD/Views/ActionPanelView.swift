@@ -133,21 +133,20 @@ struct ActionPanelView: View {
     /// — lives in a discreet pill to the right of the header label.
     private func headlineCard(title: String, primary: String, context: String?, vibe: String?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .islandMeta()
-                    .foregroundColor(.accentColor)
-                Text(title)
+          HStack(spacing: 6) {
+              Image(systemName: "sparkles")
+                  .islandMeta()
+                   .foregroundStyle(CompanionPalette.islandMint)
+              Text(title)
                     .islandSection()
-                    .foregroundColor(.accentColor.opacity(0.85))
+                    .foregroundStyle(CompanionPalette.islandMint.opacity(0.95))
                 if let vibe = vibe, !vibe.isEmpty {
                     Text(vibe)
                         .islandMicro()
                         .foregroundColor(.orange.opacity(0.9))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(3)
+                        .background(Color.orange.opacity(0.15), in: Capsule())
                 }
                 Spacer()
             }
@@ -165,13 +164,12 @@ struct ActionPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.accentColor.opacity(0.08))
+        .padding(12)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
         )
-        .cornerRadius(8)
     }
 
     private func groupHeadlineCard(_ result: ChatAnalyzer.GroupAnalysis) -> some View {
@@ -179,10 +177,10 @@ struct ActionPanelView: View {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .islandMeta()
-                    .foregroundColor(.accentColor)
+                    .foregroundStyle(CompanionPalette.islandMint)
                 Text(item.actionPanelTitle)
                     .islandSection()
-                    .foregroundColor(.accentColor.opacity(0.9))
+                    .foregroundStyle(CompanionPalette.islandMint.opacity(0.95))
                 Spacer(minLength: 0)
                 statusPill(for: result.status)
             }
@@ -206,13 +204,12 @@ struct ActionPanelView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.accentColor.opacity(0.08))
+        .padding(12)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.accentColor.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.5)
         )
-        .cornerRadius(8)
     }
 
     private func statusPill(for status: String) -> some View {
@@ -233,9 +230,8 @@ struct ActionPanelView: View {
             .islandMicro()
             .foregroundColor(color.opacity(0.95))
             .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.16))
-            .cornerRadius(5)
+            .padding(.vertical, 2.5)
+            .background(color.opacity(0.16), in: Capsule())
     }
 
     private func compactInfoLine(icon: String, label: String, text: String) -> some View {
@@ -398,12 +394,12 @@ struct ActionPanelView: View {
                         .islandButton()
                 }
                 .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 7)
-                .background(Color.accentColor)
-                .cornerRadius(6)
+                .frame(maxWidth: .infinity, minHeight: IslandMetrics.buttonHeight)
+                .padding(.vertical, 6)
+                .background(CompanionPalette.jade, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             }
 
             if item.replySuggestionMode != .hidden {
@@ -419,12 +415,12 @@ struct ActionPanelView: View {
                             .islandButton()
                     }
                     .foregroundColor(IslandInk.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(6)
+                    .frame(maxWidth: .infinity, minHeight: IslandMetrics.buttonHeight)
+                    .padding(.vertical, 6)
+                    .background(IslandInk.chip, in: Capsule())
+                    .overlay(Capsule().strokeBorder(IslandInk.divider, lineWidth: 0.5))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .disabled(replyIsLoading)
             }
         }
@@ -475,11 +471,15 @@ struct ActionPanelView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(suggestion.recommended
-                ? Color.blue.opacity(0.1)
-                : Color.white.opacity(0.04))
-            .cornerRadius(5)
+                ? CompanionPalette.jade.opacity(0.12)
+                : Color.white.opacity(0.04),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(suggestion.recommended ? CompanionPalette.jade.opacity(0.24) : IslandInk.divider, lineWidth: 0.5)
+            )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
     }
 
     // MARK: - Actions
@@ -679,8 +679,8 @@ struct ActionPanelView: View {
         }()
         let color: Color = {
             switch label {
-            case "推荐": return .accentColor
-            case "友好": return .green
+            case "推荐": return CompanionPalette.jade
+            case "友好": return CompanionPalette.islandMint
             case "正式": return .blue
             case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)
             default: return .gray
@@ -691,7 +691,6 @@ struct ActionPanelView: View {
             .foregroundColor(color)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
-            .background(color.opacity(0.12))
-            .cornerRadius(3)
+            .background(color.opacity(0.14), in: Capsule())
     }
 }
