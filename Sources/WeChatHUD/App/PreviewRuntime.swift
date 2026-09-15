@@ -343,6 +343,181 @@ enum PreviewRuntime {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { cycle() }
     }
 
+    /// One row of the transition report.
+    struct TransitionSample: Codable {
+        let transition: String
+        let fromState: String
+        let toState: String
+        let durationMs: Double
+        let frames: Int
+        let fps: Double
+        let averageMs: Double
+        let p95Ms: Double
+        let worstMs: Double
+        let wasInstant: Bool
+        /// Wall time from the leg starting to the panel reaching its
+        /// destination state. nil means it never got there inside the poll
+        /// window, which is itself a finding rather than a pass.
+        let settledMs: Double?
+    }
+
+    /// `--preview-transitions` measures **every** island transition, not just
+    /// the one path `--preview-peek` happens to drive.
+    ///
+    /// Why this exists: the acceptance record could say "peek and extended ran
+    /// at 60 fps", which is true and covers two of the island's six transitions.
+    /// Hover-in, hover-out, collapse, the notification banner, the row expand
+    /// and the detail surface were all unmeasured — and a stutter in any one of
+    /// them is exactly what a user notices, because each is triggered by their
+    /// own click or cursor move.
+    ///
+    /// Each transition is driven through the same entry points the real
+    /// pointer uses (`mouseEntered`/`mouseExited`/`goExtended`/`collapse`),
+    /// waits for the frame spring to settle, then reads `IslandFrameTiming`,
+    /// which the panel already feeds every vsync.
+    @MainActor static func runTransitionMeasurement(monitor: ChatMonitor, panelState: PanelState) {
+        guard isEnabled else { return }
+        if monitor.inboxItems.filter(\.surfacesInCompact).count < 3 {
+            seed(store: monitor.store, monitor: monitor)
+        }
+        monitor.stats.syncStatus = .ok
+        let out = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("wechathud-island-transitions.json")
+        var samples: [TransitionSample] = []
+        IslandFrameTiming.resetHistory()
+
+        /// Run one leg, wait for the spring to land, and record what the
+        /// panel measured over that window.
+        func leg(_ name: String, _ body: () -> Void, settle: Double, expect: String? = nil) {
+            let from = "\(panelState.presentedState)"
+            // Let the previous leg’s shadow/glow work drain before the next
+            // window opens, or its frames land in this leg’s average.
+            IslandFrameTiming.begin()
+            let started = Date()
+            body()
+            // Poll for the destination rather than sleeping a fixed guess.
+            // Some transitions resolve on a later run-loop turn: a debounced
+            // pointer exit schedules a timer, and a banner presentation is
+            // resolved by the monitor. With a fixed wait the leg could record
+            // the *previous* state as its destination — which is exactly how
+            // the hover-out leg first reported "peek → peek" with zero frames
+            // and looked like it had passed.
+            var settledMs: Double? = nil
+            let deadline = Date().addingTimeInterval(settle)
+            while Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+                // Record *when* the destination arrived, but keep pumping the
+                // run loop until the deadline. Breaking here would stop before
+                // the frame spring had run, so `IslandFrameTiming` would hold
+                // no samples and the leg would report 0 fps — a measurement
+                // that looks like a result and is actually the absence of one.
+                if settledMs == nil, let expect, "\(panelState.presentedState)" == expect {
+                    settledMs = Date().timeIntervalSince(started) * 1000
+                }
+            }
+            // A leg with no expectation still gets a settle time; it exists to
+            // let the previous animation drain.
+            if settledMs == nil, expect == nil {
+                settledMs = Date().timeIntervalSince(started) * 1000
+            }
+            let to = "\(panelState.presentedState)"
+            // Prefer the run that *finished* during this leg over the live
+            // samples. `begin()` resets the live array, so a retarget — a
+            // content remeasure, the next leg — would otherwise wipe the
+            // numbers before they are read and report 0 fps.
+            let run = IslandFrameTiming.lastRun(since: started)
+            let intervals = run?.intervals ?? IslandFrameTiming.lastIntervals
+            let sorted = intervals.sorted()
+            let avg = intervals.isEmpty ? 0 : intervals.reduce(0, +) / Double(intervals.count)
+            let p95 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+            let worst = sorted.last ?? 0
+            samples.append(TransitionSample(
+                transition: name,
+                fromState: from,
+                toState: to,
+                durationMs: (run?.duration ?? IslandFrameTiming.lastDuration) * 1000,
+                frames: intervals.count,
+                fps: avg > 0 ? 1 / avg : 0,
+                averageMs: avg * 1000,
+                p95Ms: p95 * 1000,
+                worstMs: worst * 1000,
+                wasInstant: IslandFrameTiming.lastWasInstant,
+                settledMs: settledMs
+            ))
+        }
+
+        func write() {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            if let data = try? encoder.encode(samples) { try? data.write(to: out) }
+            let done = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("wechathud-transitions-done")
+            try? "ok".write(to: done, atomically: true, encoding: .utf8)
+        }
+
+        // Let launch settle: the first leg would otherwise race the workspace
+        // window's own first paint and measure that instead.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            panelState.islandSurface = .inbox
+            panelState.popoverOpen = false
+            panelState.collapse()
+            leg("settle-compact", {}, settle: 0.5, expect: "compact")
+
+            leg("hover-in-compact-peek", { panelState.mouseEntered() }, settle: 0.9, expect: "peek")
+            // popoverOpen latches the panel open with no real cursor under it.
+            leg("peek-extended", {
+                panelState.popoverOpen = true
+                panelState.goExtended()
+            }, settle: 1.3, expect: "extended")
+
+            leg("row-expand", {
+                panelState.expandedInboxItemID = monitor.inboxItems.first?.id
+            }, settle: 1.0)
+
+            leg("collapse-open-compact", {
+                panelState.expandedInboxItemID = nil
+                panelState.popoverOpen = false
+                panelState.collapse()
+            }, settle: 1.2, expect: "extended")
+
+            // Hold the peek. The dwell timer promotes peek → extended after
+            // ~180 ms, so a hover-out measured after a hover-in would actually
+            // collapse *from extended* and the peek-exit path would never be
+            // exercised. Pushing the dwell out of the way keeps the panel in
+            // peek for the duration of the two legs below, which is the state
+            // a real cursor produces when it crosses the pill without stopping.
+            CompanionMotion.hoverExpandDelayProvider = { 30 }
+            leg("hover-in-second", { panelState.mouseEntered() }, settle: 0.9, expect: "peek")
+            // Drive the *real* pointer-exit path, not `collapse()`. The two are
+            // not the same code: `mouseExited` runs the debounce, the popover
+            // and text-input guards, the mid-animation deferral, and then
+            // `scheduleExitCollapse`. Measuring only `collapse()` would leave
+            // the path the cursor actually takes unmeasured.
+            leg("hover-out-to-compact", {
+                panelState.popoverOpen = false
+                panelState.mouseExited()
+            }, settle: 1.6, expect: "compact")
+            // Reopen so the banner legs below start from a known state.
+            // Restore the live dwell before the banner legs.
+            CompanionMotion.hoverExpandDelayProvider = { 0.18 }
+            leg("reopen-for-banner", {
+                panelState.mouseEntered()
+                panelState.popoverOpen = true
+                panelState.goExtended()
+            }, settle: 1.2, expect: "extended")
+            leg("banner-from-open", {
+                panelState.popoverOpen = false
+                simulateNotification(monitor: monitor, panelState: panelState, holdSeconds: 3)
+            }, settle: 1.2, expect: "notification")
+            leg("banner-collapse", {
+                panelState.popoverOpen = false
+                panelState.collapse()
+            }, settle: 1.4, expect: "compact")
+
+            write()
+        }
+    }
+
     @MainActor static func simulateEmptyIsland(monitor: ChatMonitor, panelState: PanelState) {
         guard isEnabled else { return }
         monitor.handledItems = monitor.inboxItems + monitor.handledItems

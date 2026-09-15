@@ -45,7 +45,8 @@ struct IslandGlowLayer: View {
                 IslandLoadingSweep(
                     tint: glowColor ?? CompanionPalette.islandMint,
                     notchWidth: notchWidth,
-                    notchHeight: notchHeight
+                    notchHeight: notchHeight,
+                    radii: IslandChrome.radii(for: panelState.presentedState)
                 )
             }
 
@@ -54,6 +55,13 @@ struct IslandGlowLayer: View {
                 .shadow(
                     color: (glowColor ?? Color.clear).opacity(glowColor == nil ? 0 : 0.35),
                     radius: 14, y: 0
+                )
+                // Same reshape spring as the body it traces. The halo and the
+                // silhouette are two drawings of one edge; if they animate on
+                // different curves the glow separates from the shape mid-flight.
+                .animation(
+                    CompanionMotion.islandSilhouette(expanding: expanded),
+                    value: panelState.presentedState
                 )
         }
         .allowsHitTesting(false)
@@ -64,9 +72,9 @@ struct IslandGlowLayer: View {
         IslandShape(
             notchWidth: notchWidth,
             notchHeight: notchHeight,
-            pillCornerRadius: 22,
-            notchCornerRadius: 10,
-            topCornerRadius: 16
+            pillCornerRadius: IslandChrome.radii(for: panelState.presentedState).pill,
+            notchCornerRadius: IslandChrome.radii(for: panelState.presentedState).notch,
+            topCornerRadius: IslandChrome.radii(for: panelState.presentedState).top
         )
     }
 
@@ -85,6 +93,10 @@ private struct IslandLoadingSweep: View {
     let tint: Color
     let notchWidth: CGFloat
     let notchHeight: CGFloat
+    /// Same silhouette as the body it traces. Passed in rather than
+    /// hardcoded so the sweep cannot drift off the island’s edges when the
+    /// radii change with state.
+    let radii: IslandChrome.SilhouetteRadii
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
@@ -93,9 +105,9 @@ private struct IslandLoadingSweep: View {
             IslandShape(
                 notchWidth: notchWidth,
                 notchHeight: notchHeight,
-                pillCornerRadius: 22,
-                notchCornerRadius: 10,
-                topCornerRadius: 16
+                pillCornerRadius: radii.pill,
+                notchCornerRadius: radii.notch,
+                topCornerRadius: radii.top
             )
             .stroke(
                 AngularGradient(

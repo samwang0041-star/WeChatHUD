@@ -454,6 +454,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if CommandLine.arguments.contains("--preview-peek") {
                 PreviewRuntime.runPeekMorphCapture(panelState: panelState)
             } else {
+                // `--preview-transitions` measures every island transition
+                // (hover in/out, peek, expand, row expand, collapse, banner)
+                // and writes frame timing per leg, so acceptance covers the
+                // interactions the pointer actually triggers rather than the
+                // one path `--preview-peek` drives.
+                if CommandLine.arguments.contains("--preview-transitions") {
+                    PreviewRuntime.runTransitionMeasurement(monitor: monitor, panelState: panelState)
+                }
             panelState.showDetail()
             // `--preview-notification` renders the notification banner
             // immediately at launch and holds it, so the island's frame

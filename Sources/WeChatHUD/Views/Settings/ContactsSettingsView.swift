@@ -152,9 +152,9 @@ private struct ContactsListSubView: View {
             .companionSurface(padding: 10)
 
                 HStack(spacing: 8) {
-                    CompanionFilterPill(title: "全部 \(contacts.count)", selected: selectedFilter == .all) { selectedFilter = .all }
-                    CompanionFilterPill(title: "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)", selected: selectedFilter == .vip) { selectedFilter = .vip }
-                    CompanionFilterPill(title: "群聊 \(contacts.filter { isGroupContact($0) }.count)", selected: selectedFilter == .groups) { selectedFilter = .groups }
+                    CompanionFilterPill(title: "全部 \(contacts.count)", selected: selectedFilter == .all, tint: SettingsView.Tab.contacts.accentColor) { selectedFilter = .all }
+                    CompanionFilterPill(title: "重点关注 \(contacts.filter { $0.attentionLevel == .vip }.count)", selected: selectedFilter == .vip, tint: SettingsView.Tab.contacts.accentColor) { selectedFilter = .vip }
+                    CompanionFilterPill(title: "群聊 \(contacts.filter { isGroupContact($0) }.count)", selected: selectedFilter == .groups, tint: SettingsView.Tab.contacts.accentColor) { selectedFilter = .groups }
                 }
                 .onChange(of: selectedFilter) {
                     if let selectedContactID,

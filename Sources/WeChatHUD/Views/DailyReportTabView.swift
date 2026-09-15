@@ -93,7 +93,7 @@ struct DailyReportTabView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 ForEach(ReportScope.allCases, id: \.self) { value in
-                    CompanionFilterPill(title: value.rawValue, selected: scope == value) {
+                    CompanionFilterPill(title: value.rawValue, selected: scope == value, tint: SettingsView.Tab.dailyReport.accentColor) {
                         scope = value
                     }
                 }

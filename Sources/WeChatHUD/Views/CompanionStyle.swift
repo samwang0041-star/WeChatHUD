@@ -50,10 +50,7 @@ private struct CompanionSurface: ViewModifier {
     var padding: CGFloat
     func body(content: Content) -> some View {
         content
-            .padding(padding)
-            .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(CompanionPalette.border, lineWidth: 1))
+            .companionCardFace(padding: padding, radius: CompanionElevation.cardRadius)
     }
 }
 
@@ -177,6 +174,11 @@ struct CompanionPressStyle: ButtonStyle {
 struct CompanionFilterPill: View {
     let title: String
     let selected: Bool
+    /// The owning module's accent. Defaults to the brand green so existing
+    /// call sites keep working, but a page inside a coloured module passes its
+    /// own, which is what makes the selection read as "this page's filter"
+    /// rather than a second, unrelated green.
+    var tint: Color = CompanionPalette.jade
     let action: () -> Void
 
     var body: some View {
@@ -185,7 +187,22 @@ struct CompanionFilterPill: View {
                 .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
                 .foregroundStyle(selected ? Color.white : .primary)
                 .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(selected ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
+                .background(selected ? tint : CompanionPalette.surface, in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(
+                        selected ? Color.white.opacity(0.14) : CompanionPalette.border,
+                        lineWidth: 1
+                    )
+                )
+                // The primary-action glow, at a third of its strength: a
+                // selected filter is the current view, not the page's
+                // call to action, so it lifts without competing with the
+                // button that actually moves work forward.
+                .shadow(
+                    color: selected && !CompanionMotion.reduceTransparency
+                        ? tint.opacity(0.30) : .clear,
+                    radius: 7, y: 2
+                )
         }
         .buttonStyle(CompanionPressStyle())
         .accessibilityAddTraits(selected ? .isSelected : [])

@@ -233,10 +233,17 @@ struct InboxView: View {
         switch monitor.stats.syncStatus {
         case .error, .waitingForWeChat, .accountSwitched:
             HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                // A light rather than a warning triangle: the island already
+                // uses the triangle in the compact wing for the same state,
+                // and repeating the icon inside the panel it opens made the
+                // same failure look like two different problems.
+                CompanionStatusDot(tint: .orange, pulsing: false, size: 7)
+                    .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("暂时读不到新消息。请确认微信已经打开并登录。")
+                    // Fact, then the move. The button below is the action, so
+                    // the sentence names what state WeChat has to be in rather
+                    // than repeating the button verb.
+                    Text("暂时读不到新消息，微信可能没开着或没登录。")
                     if let last = monitor.stats.lastSyncAt {
                         // syncLabel already carries the "同步" suffix
                         // ("270 分钟前同步"), so prefixing it here read as
@@ -251,6 +258,7 @@ struct InboxView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(CompanionPalette.islandMint)
+                    .help(CompanionInteractionCopy.needWeChatRunning)
                 }
             }
             .islandRowBody()

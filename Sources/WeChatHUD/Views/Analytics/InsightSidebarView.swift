@@ -102,7 +102,7 @@ struct InsightSidebarView: View {
     private var filterBar: some View {
         HStack(spacing: 6) {
             ForEach(ChatReviewFilter.allCases, id: \.self) { value in
-                CompanionFilterPill(title: value.rawValue, selected: filter == value) {
+                CompanionFilterPill(title: value.rawValue, selected: filter == value, tint: SettingsView.Tab.insight.accentColor) {
                     filter = value
                 }
             }

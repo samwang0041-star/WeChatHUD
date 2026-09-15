@@ -53,11 +53,22 @@ struct HUDRootView: View {
                 IslandShape(
                     notchWidth: islandNotchWidth,
                     notchHeight: islandNotchHeight,
-                    pillCornerRadius: 22,
-                    notchCornerRadius: 10,
-                    topCornerRadius: 16
+                    pillCornerRadius: radii.pill,
+                    notchCornerRadius: radii.notch,
+                    topCornerRadius: radii.top
                 )
                 .fill(CompanionPalette.island)
+                // Scope the reshape animation to the silhouette itself.
+                //
+                // The outer .animation(nil, value: presentedState) exists so the
+                // content swap does not cross-fade against the mask spring, and
+                // it also suppresses implicit animation here — without this line
+                // the radii would *snap* while the body springs, and the corners
+                // would arrive a quarter second before the edges they belong to.
+                .animation(
+                    CompanionMotion.islandSilhouette(expanding: isExpanding),
+                    value: panelState.presentedState
+                )
             }
         )
         .overlay(alignment: .top) {
@@ -67,6 +78,17 @@ struct HUDRootView: View {
             // compact mode.
             HUDToastLayer()
         }
+        // Composite the island as one scene before it hits the window.
+        //
+        // Every part of this surface is either translucent (the AI sweep, the
+        // severity halo, the row hovers) or drawn with a shadow, so without a
+        // single compositing boundary each layer is blended against the
+        // *window* independently. That is what produces faint seams where the
+        // shadowed silhouette meets the opaque notch band mid-animation, and
+        // it costs a separate offscreen pass per blended layer per frame.
+        // Flattening once is both cleaner at the edges and cheaper to draw —
+        // the reference implementation groups its notch scene the same way.
+        .compositingGroup()
         .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
         .animation(nil, value: panelState.presentedState)
         .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
@@ -78,6 +100,26 @@ struct HUDRootView: View {
 
     private var islandNotchHeight: CGFloat {
         (NSApp.delegate as? AppDelegate)?.attachedPanel?.notch.notchHeight ?? 32
+    }
+
+    /// The silhouette’s corner radii for the state being presented.
+    ///
+    /// Driving these from `presentedState` is what lets the shape animate:
+    /// `IslandShape.animatableData` interpolates them, so the body unfolds
+    /// rather than stretching. Reading the *presented* state (not `currentState`)
+    /// keeps the radii in step with the frame spring, which is the animation
+    /// that is actually on screen.
+    private var radii: IslandChrome.SilhouetteRadii {
+        IslandChrome.radii(for: panelState.presentedState)
+    }
+
+    /// Whether the current transition is opening. Picks the silhouette spring,
+    /// which has to match the window-frame spring rather than the content morph.
+    private var isExpanding: Bool {
+        switch panelState.presentedState {
+        case .compact, .peek: return false
+        case .extended, .notification, .detail: return true
+        }
     }
 }
 
@@ -96,12 +138,32 @@ private struct HUDMonitorSurface: View {
             || panelState.presentedState == .notification
             || panelState.presentedState == .detail
         UnevenRoundedRectangle(
-            cornerRadii: .init(topLeading: 0, bottomLeading: 22, bottomTrailing: 22, topTrailing: 0),
+            // Follows the silhouette rather than a literal. This was pinned at
+            // 22 while the body below it reshapes between 16 and 22, so the
+            // hairline and the shadow it casts sat on a different radius from
+            // the shape they belong to — visible as the border cutting inside
+            // the corner at one end of the transition.
+            cornerRadii: .init(
+                topLeading: 0,
+                bottomLeading: chromeRadii.pill,
+                bottomTrailing: chromeRadii.pill,
+                topTrailing: 0
+            ),
             style: .continuous
         )
         .strokeBorder(IslandChrome.hairline, lineWidth: show ? IslandChrome.hairlineWidth : 0)
         .shadow(color: show ? Color.black.opacity(0.45) : .clear, radius: 20, y: 10)
         .allowsHitTesting(false)
+        .animation(
+            CompanionMotion.islandSilhouette(expanding: show),
+            value: panelState.presentedState
+        )
+    }
+
+    /// The silhouette radii for the state this surface is drawing. Same source
+    /// as the island body, so the chrome cannot drift from the shape.
+    private var chromeRadii: IslandChrome.SilhouetteRadii {
+        IslandChrome.radii(for: panelState.presentedState)
     }
 
     @ViewBuilder
@@ -178,12 +240,16 @@ private struct HUDToastLayer: View {
         return HStack(spacing: 6) {
             Image(systemName: snoozeUndo == nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 10, weight: .medium))
-                .foregroundColor(snoozeUndo == nil ? .orange : CompanionPalette.islandMint)
+                .foregroundColor(toastTint)
+            // The message gets the space the action would have taken when
+            // there is no action. A toast is one line of news; letting the
+            // text keep its full width is what stops it wrapping to two.
             Text(message)
                 .islandMeta()
                 .foregroundColor(IslandInk.primary)
                 .lineLimit(2)
                 .multilineTextAlignment(.leading)
+                .layoutPriority(1)
             Spacer(minLength: 0)
             if snoozeUndo != nil {
                 Button("撤销") {
@@ -215,11 +281,21 @@ private struct HUDToastLayer: View {
                 .fill(Color.black.opacity(0.92))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 0.5)
+                        // The edge takes the toast's own semantic colour. It
+                        // used to be orange unconditionally, so a successful
+                        // 撤销 toast — green check, green action — wore a
+                        // warning border and read as a problem.
+                        .stroke(toastTint.opacity(0.42), lineWidth: 0.5)
                 )
         )
         .frame(maxWidth: 400)
         .padding(.top, 4)
+    }
+
+    /// Orange means "something needs you"; mint means "done". The toast picks
+    /// one, and both the glyph and the border follow it.
+    private var toastTint: Color {
+        panelState.islandSnoozeUndo == nil ? .orange : CompanionPalette.islandMint
     }
 }
 

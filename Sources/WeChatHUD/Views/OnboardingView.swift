@@ -24,13 +24,39 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
-                    .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    // The same lit tile the sidebar and page headers use, at
+                    // greeting scale. The wizard used to open with a flat
+                    // green square, which made the first thing a new user
+                    // ever sees the one surface without the app's material.
+                    .background {
+                        let shape = RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        shape.fill(CompanionPalette.jade)
+                        if !CompanionMotion.reduceTransparency {
+                            shape.fill(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.26), Color.white.opacity(0.0)],
+                                    startPoint: .top,
+                                    endPoint: UnitPoint(x: 0.5, y: 0.7)
+                                )
+                            )
+                        }
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.20), lineWidth: 0.5)
+                    )
+                    .shadow(
+                        color: CompanionMotion.reduceTransparency
+                            ? .clear : CompanionPalette.jade.opacity(0.42),
+                        radius: 10, y: 3
+                    )
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(CompanionProductCopy.brandName).font(.headline)
+                    Text(CompanionProductCopy.brandName).workspaceTitle()
                     if !CompanionProductCopy.brandPromise.isEmpty {
-                        Text(CompanionProductCopy.brandPromise).font(.caption).foregroundStyle(.secondary)
+                        Text(CompanionProductCopy.brandPromise).workspaceMeta().foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -79,14 +105,21 @@ struct OnboardingView: View {
                     if step == 0 { step = 1; refresh() }
                     else { finish(openWorkspace: true) }
                 }
-                .buttonStyle(.borderedProminent)
+                // The wizard has exactly one next step on screen, so it gets
+                // the lit treatment. A .borderedProminent button is correct
+                // inside a form; as the single decision on a full page it
+                // looked like one more control among several.
+                .buttonStyle(CompanionGlowButtonStyle(tint: CompanionPalette.jade))
                 .keyboardShortcut(.defaultAction)
                 .disabled(step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled)
             }
             .controlSize(.regular)
             .padding(20)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        // The wizard owns its whole window, so the ambient wash runs at full
+        // strength here — this is the one screen where setting the room's
+        // temperature is the entire job.
+        .background(CompanionBackdrop(tint: CompanionPalette.jade, intensity: 1.5))
         .tint(CompanionPalette.accent)
         .companionAnimation(CompanionMotion.ease(0.15), value: step)
         .onAppear(perform: refresh)
@@ -153,7 +186,24 @@ struct OnboardingView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(index <= step ? Color.white : .secondary)
                         .frame(width: 26, height: 26)
-                        .background(index <= step ? CompanionPalette.jade : Color.primary.opacity(0.08), in: Circle())
+                        .background(
+                            index <= step ? CompanionPalette.jade : Color.primary.opacity(0.08),
+                            in: Circle()
+                        )
+                        .overlay(
+                            Circle().strokeBorder(
+                                index <= step ? Color.white.opacity(0.22) : CompanionPalette.border,
+                                lineWidth: 0.5
+                            )
+                        )
+                        // Completed steps keep a soft mark of where you have
+                        // been, so the header reads as progress rather than as
+                        // three numbers where only the current one matters.
+                        .shadow(
+                            color: index <= step && !CompanionMotion.reduceTransparency
+                                ? CompanionPalette.jade.opacity(0.45) : .clear,
+                            radius: 7, y: 2
+                        )
                     Text(title)
                         .font(.system(size: 11, weight: index == step ? .semibold : .regular))
                         .foregroundStyle(index == step ? CompanionPalette.jade : .secondary)

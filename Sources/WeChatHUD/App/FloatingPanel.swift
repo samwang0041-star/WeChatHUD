@@ -1046,9 +1046,44 @@ enum IslandFrameTiming {
         previousUptime = uptime
     }
 
+    /// One completed run, kept for inspection.
+    struct CompletedRun {
+        let duration: TimeInterval
+        let intervals: [TimeInterval]
+        let endedAt: Date
+    }
+
+    /// Every run that has finished, newest last.
+    ///
+    /// `begin()` clears the *current* run’s samples, which is correct for the
+    /// live readout but destroys the evidence as soon as the next animation
+    /// starts. A caller measuring a transition therefore had to read between
+    /// `begin()` calls and would silently get an empty array if a retarget
+    /// (a content remeasure, a second leg) had begun in the meantime —
+    /// reported as "0 fps", which looks like a result and is not one.
+    ///
+    /// Keeping the finished runs makes the measurement order-independent.
+    private(set) static var completedRuns: [CompletedRun] = []
+
+    /// The most recent run that finished at or after `since`.
+    static func lastRun(since: Date) -> CompletedRun? {
+        completedRuns.last { $0.endedAt >= since }
+    }
+
+    static func resetHistory() { completedRuns.removeAll() }
+
     static func finish(duration: TimeInterval) {
         lastDuration = duration
         lastWasInstant = false
+        if !lastIntervals.isEmpty {
+            completedRuns.append(CompletedRun(
+                duration: duration,
+                intervals: lastIntervals,
+                endedAt: Date()
+            ))
+            // Bounded: this is evidence for a measurement pass, not a log.
+            if completedRuns.count > 200 { completedRuns.removeFirst(completedRuns.count - 200) }
+        }
         persist()
     }
 

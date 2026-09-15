@@ -105,6 +105,16 @@ enum CompanionMotion {
     /// half its budget barely leaving the start value, which reads as input
     /// lag next to AppKit hover states (Finder, Mail).
     static func hover() -> Animation? { easeOut(hoverDuration) }
+
+    /// Card hover lift/shadow transition.
+    static func cardHover() -> Animation? { easeOut(0.14) }
+
+    /// Sidebar module selection. Slightly slower than a hover wash: the
+    /// selection fill and its tinted border have to arrive together, and a
+    /// 100ms swap on a whole row reads as a flicker next to the page swap
+    /// that follows it.
+    static func sidebarSelection() -> Animation? { ease(0.20) }
+
     /// Island compact → hover: same spring family as the frame expand.
     static func islandExpand() -> Animation? { openMorph }
     /// Island leave collapse: same spring family as the frame collapse.
@@ -118,6 +128,25 @@ enum CompanionMotion {
     /// Shape shrink. Snappier than open. Window-frame collapse stays critically damped.
     static var closeMorph: Animation? {
         springResponse(response: morphCollapseResponse, dampingFraction: morphCollapseDamping)
+    }
+
+    /// The silhouette’s own reshape, matched to the window-frame spring.
+    ///
+    /// The frame is animated by `FloatingPanel`’s display-link spring using
+    /// `IslandMotion.spring(expanding:)` — response 0.42 / damping 0.82 on the
+    /// way out and 0.26 / 1.0 on the way back. The corner radii ride the same
+    /// physics on purpose: if the silhouette reshapes on a different curve from
+    /// the body it is drawing, the corners visibly lead or lag the edges for the
+    /// length of the transition.
+    ///
+    /// Note this is *not* `closeMorph` (0.30 / 0.88). Those values are the
+    /// SwiftUI content morph; the frame’s collapse is the critically damped
+    /// 0.26 / 1.0 pair, and the shape has to match the frame, not the content.
+    static func islandSilhouette(expanding: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return expanding
+            ? .spring(response: morphExpandResponse, dampingFraction: morphExpandDamping)
+            : .spring(response: morphCollapseResponse, dampingFraction: 1.0)
     }
 
     /// Compact hover stays in .peek this long before opening the inbox.
@@ -139,6 +168,56 @@ enum CompanionMotion {
     static func complete() -> Animation? { ease(0.17) }
     /// Save receipt (120ms).
     static func saveReceipt() -> Animation? { ease(0.12) }
+
+    /// A slow, continuous breathe for live status indicators.
+    ///
+    /// Repeating on purpose: it has to read as "still working" for as long as
+    /// the work lasts, unlike every other curve here which is a one-shot
+    /// arrival. Gated like the rest, so Reduce Motion gets a steady ring.
+    static func pulse() -> Animation? {
+        reduceMotion ? nil : .easeInOut(duration: 1.15).repeatForever(autoreverses: true)
+    }
+
+    /// The breathe's period, for callers that need to describe or test it.
+    static let pulsePeriod: TimeInterval = 1.15
+
+    // MARK: - Entrances
+
+    /// How long a staggered group takes from first child to last.
+    ///
+    /// The budget is the point. A page whose cards arrive one after another
+    /// reads as considered; the same idea stretched over a second reads as
+    /// the app being slow to wake up. This covers five to six children at the
+    /// step below and finishes before the eye has settled on the title.
+    static let staggerSpan: TimeInterval = 0.24
+    /// Delay added per child index. Five children span the budget above.
+    static let staggerStep: TimeInterval = 0.045
+    /// Longer than a hover, shorter than a page swap: the child is arriving
+    /// as part of a group, so it must not feel like it is still loading.
+    static let staggerDuration: TimeInterval = 0.30
+
+    /// How far a staggered child rises while fading in.
+    ///
+    /// 6pt, not 20: at workbench density a larger move makes the page look
+    /// like it is assembling itself, and on a list that re-renders it becomes
+    /// the most noticeable thing on screen. This is meant to be felt rather
+    /// than watched.
+    static let staggerRise: CGFloat = 6
+
+    /// One child's entrance: rise a little and fade in. Nil under reduce
+    /// motion, which leaves the content present with no delay.
+    static func staggerEntrance(index: Int) -> Animation? {
+        guard !reduceMotion else { return nil }
+        let capped = min(max(0, index), 6)
+        return .timingCurve(0.23, 1, 0.32, 1, duration: staggerDuration)
+            .delay(Double(capped) * staggerStep)
+    }
+
+    /// The delay a child at this index waits. Exposed separately so the cap
+    /// can be asserted without reaching into SwiftUI's Animation.
+    static func staggerDelay(index: Int) -> TimeInterval {
+        Double(min(max(0, index), 6)) * staggerStep
+    }
     /// Full page swap (Settings tab, report page). Longer than an in-place
     /// disclosure: the whole surface changes, so the eye needs a beat to read
     /// it as one replacement rather than a flicker. Same strong ease-out, so
@@ -297,6 +376,68 @@ enum IslandMeasurement {
 enum IslandChrome {
     static let expandedWidth: CGFloat = 560
     static let notificationMinWidth: CGFloat = 580
+
+    // MARK: - Silhouette radii
+    //
+    // These are state-driven on purpose. Before this, all three radii were
+    // hardcoded (22 / 10 / 16) at every call site, identical in every state,
+    // so the silhouette could only ever *scale* — the corner curvature stayed
+    // pinned to a 32pt pill while the body grew to 250pt, which is what made
+    // an open island read as the same small pill stretched downward.
+    //
+    // The reference implementation (`MrKai77/DynamicNotchKit`, used by
+    // `TheBoredTeam/boring.notch`) keeps an `opened` and a `closed` radius set
+    // and swaps between them, exposing the radii as `animatableData` so they
+    // interpolate over the spring. Adopting that here is what makes the
+    // transition feel like one object unfolding.
+    //
+    // The direction is deliberate: an open island gets *tighter* corners
+    // (it is a panel, not a pill) while the notch's inner radius *grows*, so
+    // the cutout keeps hugging the hardware at any speed.
+
+    /// Bottom corners while the island is a notch-height pill.
+    static let pillRadiusClosed: CGFloat = 22
+    /// Bottom corners once the island is a body. Tighter, so a tall shape
+    /// does not look like a lozenge.
+    static let pillRadiusOpen: CGFloat = 16
+    /// Inner radius of the notch cutout, closed.
+    static let notchRadiusClosed: CGFloat = 10
+    /// Inner radius of the notch cutout, open. Grows slightly so the cutout
+    /// still reads as Apple's notch after the body beneath it widens.
+    static let notchRadiusOpen: CGFloat = 12
+    /// The outward fillet where the body meets the top edge, closed.
+    static let topRadiusClosed: CGFloat = 16
+    /// Same fillet, open — a little larger, so the widened body still meets
+    /// the screen edge tangentially rather than as a hard shoulder.
+    static let topRadiusOpen: CGFloat = 20
+
+    /// The three radii for a presented state, as one value.
+    ///
+    /// Single source of truth: the island body and the glow layer both draw
+    /// the same `IslandShape`, and they used to pass the same three literals
+    /// independently. Two copies of a silhouette that must stay pixel-aligned
+    /// is a drift waiting to happen — the halo would slowly stop tracing the
+    /// body. Everything that draws the silhouette asks here.
+    struct SilhouetteRadii: Equatable {
+        var pill: CGFloat
+        var notch: CGFloat
+        var top: CGFloat
+    }
+
+    /// Radii for a panel state. Compact and peek share the pill shape;
+    /// everything with a body below the notch uses the open set.
+    static func radii(for state: HUDState) -> SilhouetteRadii {
+        switch state {
+        case .compact, .peek:
+            return SilhouetteRadii(pill: pillRadiusClosed,
+                                   notch: notchRadiusClosed,
+                                   top: topRadiusClosed)
+        case .extended, .notification, .detail:
+            return SilhouetteRadii(pill: pillRadiusOpen,
+                                   notch: notchRadiusOpen,
+                                   top: topRadiusOpen)
+        }
+    }
     /// Per-side outboard slot in .peek. Fixed so a count flip cannot jitter the silhouette.
     static let peekSlotWidth: CGFloat = 78
     /// Hairline on the outer silhouette once the island has left compact.

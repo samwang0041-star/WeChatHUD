@@ -75,6 +75,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             self.secretStore = secretStore
         } else if NSClassFromString("XCTestCase") != nil {
             self.secretStore = InMemorySecretStore()
+        } else if PreviewRuntime.isEnabled {
+            // The preview build runs under its own bundle identifier and
+            // ad-hoc signature, so a Keychain read would raise the
+            // "WeChatHUD Preview wants to use com.wechathud.secrets" system
+            // prompt and block every surface behind a password field. The
+            // preview never talks to a real provider, so it keeps its
+            // secrets process-local instead of borrowing the shipping
+            // app's item.
+            self.secretStore = InMemorySecretStore()
         } else {
             self.secretStore = KeychainSecretStore.shared
         }

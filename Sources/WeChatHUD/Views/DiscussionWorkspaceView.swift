@@ -190,17 +190,17 @@ struct DiscussionWorkspaceView: View {
             strictnessBar
             HStack(spacing: 8) {
                 ForEach(DiscussionScope.allCases) { value in
-                    Button {
-                        scope = value
-                    } label: {
-                        Text(value.rawValue)
-                            .font(.system(size: 13, weight: scope == value ? .semibold : .regular))
-                            .foregroundStyle(scope == value ? Color.white : .primary)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(scope == value ? CompanionPalette.jade : CompanionPalette.surface, in: Capsule())
-                    }
-                    .buttonStyle(CompanionPressStyle())
-                    .accessibilityAddTraits(scope == value ? .isSelected : [])
+                    // The shared pill, tinted with the owning module. This
+                    // was a hand-rolled copy of CompanionFilterPill: same
+                    // geometry, but pinned to the brand green and without
+                    // the selected-state lift, so the 待办 row of filters
+                    // looked like a different control from every other
+                    // filter row in the app.
+                    CompanionFilterPill(
+                        title: value.rawValue,
+                        selected: scope == value,
+                        tint: SettingsView.Tab.tasks.accentColor
+                    ) { scope = value }
                 }
                 Spacer()
                 Toggle("看已处理的", isOn: $showHistory)
