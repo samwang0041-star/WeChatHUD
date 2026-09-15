@@ -32,9 +32,8 @@ struct CompanionGuideView: View {
                 shortcutsCard.companionStagger(index: 4)
                 aboutCard.companionStagger(index: 5)
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
-            .frame(maxWidth: 920, alignment: .leading)
+            .padding(.top, WorkspacePage.selfHeadedTopGap)
+            .padding(.bottom, WorkspacePage.bottomGap)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The guide is the one page that owns the whole detail pane, so it

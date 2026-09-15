@@ -64,9 +64,7 @@ struct CommitmentTabView: View {
                 receiptBar(receipt)
             }
         }
-        .frame(maxWidth: 1180)
-        .padding(.horizontal, 28).padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .workspacePage(WorkspacePage.wideWidth)
         .background(CompanionPalette.canvas)
         .onAppear {
             if expandedID == nil { expandedID = filteredCommitments.first?.id }
@@ -127,26 +125,20 @@ struct CommitmentTabView: View {
                 CompanionFilterPill(title: "全部", selected: filter == .all, tint: SettingsView.Tab.commitments.accentColor) { filter = .all }
                 Spacer()
                 if (filter == .active || filter == .overdue) && !filteredCommitments.isEmpty {
-                    Button {
+                    CompanionBatchClearButton(help: "将当前承诺全部标记为已完成") {
                         showBatchClearConfirm = true
-                    } label: {
-                        Label("一键清空", systemImage: "checkmark.circle")
-                            .font(.system(size: 12, weight: .medium))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("将当前承诺全部标记为已完成")
                 }
                 if overdueCount > 0 {
-                    Button {
-                        filter = .overdue
-                    } label: {
-                        Label("有 \(overdueCount) 项已超期，去查看", systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 12, weight: .medium))
+                    // Same contract as the batch button: keep the sentence
+                    // while there is room, fall back to the count alone when
+                    // there is not. It used to truncate to 「有 1 项已超期…」
+                    // once 一键清空 joined the row, and a half-sentence in a
+                    // warning control is worse than a short one.
+                    ViewThatFits(in: .horizontal) {
+                        overdueButton("有 \(overdueCount) 项已超期，去查看")
+                        overdueButton("\(overdueCount) 项超期")
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.orange)
-                    .controlSize(.small)
                 }
             }
             HStack(spacing: 8) {
@@ -191,6 +183,21 @@ struct CommitmentTabView: View {
         case .overdue: return "clock.badge.exclamationmark"
         case .fulfilled, .all: return "tray"
         }
+    }
+
+    /// The overdue notice, in the label length the row can afford.
+    private func overdueButton(_ title: String) -> some View {
+        Button {
+            filter = .overdue
+        } label: {
+            Label(title, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+        }
+        .buttonStyle(.bordered)
+        .tint(.orange)
+        .controlSize(.small)
+        .accessibilityLabel("有 \(overdueCount) 项已超期，去查看")
     }
 
     private func card(_ commitment: Commitment) -> some View {

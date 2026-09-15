@@ -19,6 +19,15 @@ struct DailyReportCommandCenterView: View {
         self.isWorkspace = isWorkspace
     }
 
+    /// Leading/trailing inset for this page's own blocks.
+    ///
+    /// The workspace page already supplies the standard page inset, so in
+    /// workspace mode these must be zero or the report's cards would sit 12–14
+    /// points inside every other page's content edge. The compact (in-island)
+    /// rendering keeps the original numbers.
+    private var cardInset: CGFloat { isWorkspace ? 0 : 12 }
+    private var headerInset: CGFloat { isWorkspace ? 0 : 14 }
+
     /// Daily-report actions cache the name they were generated with, so a
     /// rename or a newly recovered group name has to be resolved on display.
     private func resolvedChatName(_ stored: String, username: String?) -> String {
@@ -55,7 +64,7 @@ struct DailyReportCommandCenterView: View {
             }
         }
         .foregroundStyle(.primary)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(isWorkspace ? WorkspacePage.ground : Color(nsColor: .windowBackgroundColor))
         .onAppear { reloadCommandStates() }
         .onChange(of: monitor.dailyReport?.date) { _, _ in reloadCommandStates() }
         .onChange(of: monitor.dailyReportGeneratedAt) { _, _ in reloadCommandStates() }
@@ -164,7 +173,7 @@ struct DailyReportCommandCenterView: View {
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, headerInset)
         .padding(.vertical, 12)
     }
 
@@ -209,7 +218,7 @@ struct DailyReportCommandCenterView: View {
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, headerInset)
         .padding(.vertical, 18)
     }
 
@@ -235,7 +244,7 @@ struct DailyReportCommandCenterView: View {
             .accessibilityLabel("重新生成日报")
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, headerInset)
         .padding(.vertical, 14)
     }
 
@@ -267,7 +276,7 @@ struct DailyReportCommandCenterView: View {
         }
         .padding(isWorkspace ? 14 : 10)
         .companionPanelFace(radius: 6)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.vertical, 8)
     }
 
@@ -299,7 +308,7 @@ struct DailyReportCommandCenterView: View {
                 .monospacedDigit()
             Spacer()
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, headerInset)
         .padding(.top, 8)
         .padding(.bottom, 4)
     }
@@ -390,7 +399,7 @@ struct DailyReportCommandCenterView: View {
             }
             .opacity(isHovered ? 1.0 : 0.85)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.vertical, 6)
         .background(isHovered ? Color.primary.opacity(0.06) : Color.clear)
         .contentShape(Rectangle())
@@ -432,7 +441,7 @@ struct DailyReportCommandCenterView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isExpanded ? "收起今日高亮" : "展开今日高亮")
-            .padding(.horizontal, 14)
+            .padding(.horizontal, headerInset)
             .padding(.top, 6)
             .padding(.bottom, 4)
 
@@ -468,7 +477,7 @@ struct DailyReportCommandCenterView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(showRisks ? "收起风险与异常" : "展开风险与异常")
-            .padding(.horizontal, 14)
+            .padding(.horizontal, headerInset)
             .padding(.top, 6)
             .padding(.bottom, 4)
 
@@ -504,7 +513,7 @@ struct DailyReportCommandCenterView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(showCompleted ? "收起已完成事项" : "展开已完成事项")
-            .padding(.horizontal, 14)
+            .padding(.horizontal, headerInset)
             .padding(.top, 6)
             .padding(.bottom, 4)
 
@@ -520,7 +529,7 @@ struct DailyReportCommandCenterView: View {
                             .strikethrough()
                         Spacer()
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, cardInset)
                     .padding(.vertical, 3)
                 }
             }
@@ -556,7 +565,7 @@ struct DailyReportCommandCenterView: View {
         }
         .padding(8)
         .companionPanelFace(radius: 5)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.vertical, 2)
     }
 
@@ -595,7 +604,7 @@ struct DailyReportCommandCenterView: View {
                 .accessibilityLabel("忽略风险：\(risk.description)")
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.vertical, 4)
         .background(isHovered ? Color.primary.opacity(0.04) : Color.clear)
         .contentShape(Rectangle())
@@ -640,7 +649,7 @@ struct DailyReportCommandCenterView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Color.cyan.opacity(0.15), lineWidth: 1)
         )
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.vertical, 4)
     }
 
@@ -670,9 +679,9 @@ struct DailyReportCommandCenterView: View {
         } label: {
             Label("查看可复制的小结", systemImage: "doc.on.doc")
                 .font(.system(size: isWorkspace ? 14 : 10, weight: .semibold))
-                .foregroundColor(.secondary)
+            .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, cardInset)
         .padding(.top, 6)
         .padding(.bottom, 8)
     }

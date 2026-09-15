@@ -53,7 +53,7 @@ struct ReplyDraftsView: View {
             }
             if drafts.isEmpty {
                 ContentUnavailableView("还没有回复草稿", systemImage: "square.and.pencil", description: Text("对话里正在写的回复、以及点过「存为草稿」的内容，都会出现在这里。草稿不会自动发送。"))
-                    .frame(maxWidth: .infinity, minHeight: 240)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredDrafts.isEmpty {
                 VStack(spacing: 10) {
                     Text("没有匹配的草稿").font(.system(size: 15, weight: .semibold))
@@ -85,11 +85,7 @@ struct ReplyDraftsView: View {
                 .clipped()
             }
         }
-        .frame(maxWidth: 1180)
-        .padding(.horizontal, 28)
-        .padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .workspacePage(WorkspacePage.wideWidth)
         .onAppear { load() }
         .onChange(of: workspaceBadges.counts.drafts) { _, _ in load() }
         .onChange(of: drafts) { _, _ in reconcileSelection() }

@@ -106,6 +106,42 @@ struct DiscussionWorkspaceView: View {
         )
     }
 
+    /// The scope filters — the shared pill, tinted with the owning module.
+    /// (This was a hand-rolled copy: same geometry, but pinned to the brand
+    /// green and without the selected-state lift, so the 待办 row looked like a
+    /// different control from every other filter row in the app.)
+    private var scopePills: some View {
+        // The HStack is part of the token, not the caller: dropping a bare
+        // `ForEach` into a `VStack` (as the two-line fallback below does) stacks
+        // the pills one per line instead of keeping them in a row.
+        HStack(spacing: 8) {
+            ForEach(DiscussionScope.allCases) { value in
+                CompanionFilterPill(
+                    title: value.rawValue,
+                    selected: scope == value,
+                    tint: SettingsView.Tab.tasks.accentColor
+                ) { scope = value }
+            }
+        }
+    }
+
+    /// The row's trailing controls: batch clear, and the handled-history
+    /// switch.
+    private var scopeActions: some View {
+        HStack(spacing: 8) {
+            if !showHistory && !items.isEmpty {
+                CompanionBatchClearButton(help: "将当前列表的所有待办全部标记为完成") {
+                    showBatchClearConfirm = true
+                }
+            }
+            Toggle("看已处理的", isOn: $showHistory)
+                .font(.system(size: 12))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .fixedSize()
+        }
+    }
+
     /// "已收起 N 条（其中 M 条是我要做的） · 展开".
     ///
     /// Built as one string so the view body stays cheap to type-check, and so
@@ -142,10 +178,7 @@ struct DiscussionWorkspaceView: View {
                 receiptBar(receipt)
             }
         }
-        .frame(maxWidth: 1180)
-        .padding(.horizontal, 28)
-        .padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .workspacePage(WorkspacePage.wideWidth)
         .background(CompanionPalette.canvas)
         .onAppear {
             applyPendingScope()
@@ -210,37 +243,35 @@ struct DiscussionWorkspaceView: View {
     private var filters: some View {
         VStack(alignment: .leading, spacing: 12) {
             strictnessBar
-            HStack(spacing: 8) {
-                ForEach(DiscussionScope.allCases) { value in
-                    // The shared pill, tinted with the owning module. This
-                    // was a hand-rolled copy of CompanionFilterPill: same
-                    // geometry, but pinned to the brand green and without
-                    // the selected-state lift, so the 待办 row of filters
-                    // looked like a different control from every other
-                    // filter row in the app.
-                    CompanionFilterPill(
-                        title: value.rawValue,
-                        selected: scope == value,
-                        tint: SettingsView.Tab.tasks.accentColor
-                    ) { scope = value }
+            // One row while the row has room, two when it does not.
+            //
+            // Measured: at the workspace's own 900pt minimum the pill row ran
+            // out of width. The first symptom was SwiftUI wrapping 「我要做」
+            // *inside* its capsule; adding `lineLimit(1)` only traded that for
+            // truncated pills (「我…」「共同…」), which is barely better — the
+            // filter is unreadable either way. `ViewThatFits` picks the
+            // arrangement instead: filters on the first line and the two
+            // trailing controls right-aligned on a second, so every label stays
+            // whole. The trailing group moves, not the words.
+            //
+            // It also removes the crash the first attempt produced: with the
+            // row forced onto a single line and the pill label marked
+            // `fixedSize`, the constraint conflict threw inside AppKit's layout
+            // pass and killed the page at launch (see
+            // WorkspacePageLaunchSurvivalTests).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    scopePills
+                    Spacer(minLength: 8)
+                    scopeActions
                 }
-                Spacer()
-                if !showHistory && !items.isEmpty {
-                    Button {
-                        showBatchClearConfirm = true
-                    } label: {
-                        Label("一键清空", systemImage: "checklist.checked")
-                            .font(.system(size: 12, weight: .medium))
+                VStack(alignment: .leading, spacing: 8) {
+                    scopePills
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        scopeActions
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("将当前列表的所有待办全部标记为完成")
                 }
-                Toggle("看已处理的", isOn: $showHistory)
-                    .font(.system(size: 12))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                .fixedSize()
             }
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)

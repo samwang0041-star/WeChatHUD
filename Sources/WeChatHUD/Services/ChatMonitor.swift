@@ -1517,6 +1517,46 @@ final class ChatMonitor: ObservableObject {
         refreshWorkspaceChrome()
     }
 
+    /// Messages immediately before and after a recall, oldest first.
+    ///
+    /// Bounded on both sides by the same conversation-contiguity rule the group
+    /// loader uses (`GroupContextSourceLoader.maxConversationGapSeconds`), so a
+    /// chat that went quiet for days does not feed the recall analysis the
+    /// previous session's conversation as if it were this one's.
+    static func recallContext(
+        recalled: RecalledMessage,
+        readerActor: WeChatReaderActor,
+        before: Int = 6,
+        after: Int = 4
+    ) async -> [MessageInfo] {
+        let anchor = recalled.recalledAt
+        let span = GroupContextSourceLoader.maxConversationGapSeconds
+        let older = (try? await readerActor.getMessages(
+            chatUsername: recalled.chatUsername,
+            limit: before,
+            sinceLocalId: nil,
+            afterCursor: nil,
+            oldestFirst: false,
+            startTime: max(0, anchor - span),
+            endTime: anchor,
+            beforeCursor: nil
+        )) ?? []
+        let newer = (try? await readerActor.getMessages(
+            chatUsername: recalled.chatUsername,
+            limit: after,
+            sinceLocalId: nil,
+            afterCursor: nil,
+            oldestFirst: true,
+            startTime: anchor,
+            endTime: anchor + span,
+            beforeCursor: nil
+        )) ?? []
+        func chronological(_ a: MessageInfo, _ b: MessageInfo) -> Bool {
+            a.createTime == b.createTime ? a.localId < b.localId : a.createTime < b.createTime
+        }
+        return older.sorted(by: chronological) + newer.sorted(by: chronological)
+    }
+
     /// Gate for the stale-row archive sweep.
     ///
     /// Both sweeps are whole-table UPDATEs, and they used to run on every scan
@@ -1769,7 +1809,20 @@ final class ChatMonitor: ObservableObject {
             let readerActor = WeChatReaderActor(reader)
             Task {
                 for recalled in unanalyzed {
-                    let context = (try? await readerActor.getMessages(chatUsername: recalled.chatUsername, limit: 10)) ?? []
+                    // Context must straddle the recall, not trail the chat.
+                    //
+                    // This used to pass the chat's newest 10 messages, which
+                    // for a recall are all *after* the event (a recall arrives
+                    // as the newest item) and may be from a later day
+                    // entirely. The prompt asks for 「撤回前后上下文」 and its own
+                    // rules lean on both sides ("之后重发了类似内容" needs the
+                    // after side; judging "said too much" needs the before
+                    // side), so half of the evidence was missing and the other
+                    // half could be unrelated chatter.
+                    let context = await Self.recallContext(
+                        recalled: recalled,
+                        readerActor: readerActor
+                    )
                     guard let result = await analyzer.analyze(recalled: recalled, context: context) else { continue }
                     try? storeRef.updateRecallAnalysis(
                         msgUID: recalled.msgUID,

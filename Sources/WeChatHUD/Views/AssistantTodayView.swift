@@ -75,9 +75,7 @@ struct AssistantTodayView: View {
                             .companionStagger(index: 2)
                     }
                 }
-                .frame(maxWidth: 1180, alignment: .leading)
-                .padding(.horizontal, 28).padding(.bottom, 32)
-                .frame(maxWidth: .infinity)
+                .workspacePage(WorkspacePage.wideWidth)
             }
         }
         .onAppear { refreshAIReadiness() }

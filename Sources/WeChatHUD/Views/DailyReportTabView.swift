@@ -31,7 +31,7 @@ struct DailyReportTabView: View {
             }
         }
         .foregroundStyle(.primary)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .workspaceGround()
         .onChange(of: monitor.dailyReportViewedDate) { _, _ in
             if scope == .weekly { reloadWeeklyCatalog() }
         }
@@ -85,7 +85,7 @@ struct DailyReportTabView: View {
         }
         .font(.system(size: isWorkspace ? 12 : 11))
         .foregroundColor(exportFailed ? .red : .secondary)
-        .padding(.horizontal, isWorkspace ? 20 : 14)
+        .padding(.horizontal, isWorkspace ? 0 : 14)
         .padding(.bottom, 6)
     }
 
@@ -128,8 +128,6 @@ struct DailyReportTabView: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 4)
         .padding(.bottom, 16)
     }
 
