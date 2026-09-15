@@ -211,7 +211,7 @@ struct OnboardingView: View {
                         )
                     Text(title)
                         .font(.system(size: 11, weight: index == step ? .semibold : .regular))
-                        .foregroundStyle(index == step ? CompanionPalette.jade : .secondary)
+                        .foregroundStyle(index == step ? CompanionPalette.jadeInk : .secondary)
                 }
                 if index < FirstLaunchGuide.pageTitles.count - 1 {
                     Rectangle()
@@ -236,7 +236,7 @@ struct OnboardingView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "laptopcomputer")
                         .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                     Text((!NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat").isEmpty
                           || !NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.WeChat").isEmpty)
                          ? "微信已登录" : "等待连接")

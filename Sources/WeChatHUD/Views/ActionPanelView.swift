@@ -679,7 +679,7 @@ struct ActionPanelView: View {
         }()
         let color: Color = {
             switch label {
-            case "推荐": return CompanionPalette.jade
+            case "推荐": return CompanionPalette.jadeInk
             case "友好": return CompanionPalette.islandMint
             case "正式": return .blue
             case "简洁": return Color(red: 0.9, green: 0.6, blue: 0.1)

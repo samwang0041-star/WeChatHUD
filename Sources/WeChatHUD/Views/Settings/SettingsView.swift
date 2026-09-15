@@ -5,7 +5,16 @@ struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var store: HUDStore
     @State private var selectedTab: Tab = .today
+    /// Owned here rather than left implicit so ⌃⌘S (显示 menu) has something to
+    /// toggle. SwiftUI's split view never claims `toggleSidebar:`, so the
+    /// standard menu item has to be routed to a binding instead of the
+    /// responder chain.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var previewA11yNonce = 0
+    /// Mirrors `CompanionAccessibility.generation` into an environment value,
+    /// so every surface whose contrast tokens are statics actually redraws
+    /// when the user flips Increase Contrast. See `CompanionAccessibility`.
+    @State private var displayOptionsGeneration = CompanionAccessibility.generation
     @State private var hideCaptureChrome = false
     @State private var previewAutoSendDialog = false
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -102,27 +111,22 @@ struct SettingsView: View {
             }
         }
         var accentColor: Color {
-            switch self {
-            case .today: return CompanionPalette.jade
-            case .tasks: return Color(red: 0.20, green: 0.55, blue: 0.85) // Crisp productivity blue
-            case .commitments: return Color(red: 0.18, green: 0.68, blue: 0.58) // Mint
-            case .drafts: return Color(red: 0.35, green: 0.45, blue: 0.88) // Indigo
-            case .insight: return Color(red: 0.60, green: 0.38, blue: 0.85) // Clean purple
-            case .dailyReport: return Color(red: 0.88, green: 0.52, blue: 0.18) // Amber
-            case .relationshipRadar: return Color(red: 0.85, green: 0.32, blue: 0.52) // Rose
-            case .autopilotDashboard, .autopilot: return Color(red: 0.22, green: 0.65, blue: 0.85) // Cyan
-            case .contacts: return Color(red: 0.30, green: 0.62, blue: 0.48)
-            case .aiButler, .aiService: return Color(red: 0.55, green: 0.42, blue: 0.90) // Violet
-            case .notifications: return Color(red: 0.90, green: 0.45, blue: 0.20)
-            case .system: return Color(red: 0.25, green: 0.70, blue: 0.55)
-            case .preferences, .localData, .guide: return CompanionPalette.jade
-            }
+            // One accent for the whole workspace.
+            //
+            // A previous pass gave every sidebar row its own hue so the
+            // window would "change rooms". That made 18 saturated tiles
+            // compete with the message list this app exists for, and it
+            // fought macOS: sidebar icons are supposed to follow the app
+            // accent, with a fixed colour only when the colour itself means
+            // something (Mail's VIP star). Red / orange stay reserved for
+            // destructive work and things that need action.
+            CompanionPalette.accent
         }
         static func from(raw: String?) -> Tab? { raw.flatMap(Self.init(rawValue:)) }
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             ScrollView {
                 SettingsSidebarSections(selectedTab: $selectedTab)
                 .padding(.horizontal, 10)
@@ -206,7 +210,8 @@ struct SettingsView: View {
             .background(CompanionBackdrop(tint: selectedTab.accentColor))
         }
         .navigationTitle(CompanionProductCopy.brandName)
-        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
+        .companionDisplayGeneration(displayOptionsGeneration)
+        .dynamicTypeSize(CompanionTypeScale.appliedRange(largeType: PreviewRuntime.largeType))
         .tint(CompanionPalette.accent)
         .accentColor(CompanionPalette.accent)
         .background(SettingsInboxErrorAlert())
@@ -215,8 +220,18 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hudSwitchTab)) { notification in
             applyPendingTab(notification.object as? String ?? notification.userInfo?["tab"] as? String)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .hudToggleSidebar)) { _ in
+            columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hudPreviewCaptureChrome)) { _ in
             hideCaptureChrome = PreviewRuntime.hideDemoChromeForCapture
+        }
+        // Increase Contrast / Differentiate Without Color resolve at draw time
+        // through `CompanionAccessibility`, which SwiftUI cannot observe on its
+        // own. Bumping a @State invalidates this body, and with it every
+        // surface that reads a contrast token.
+        .onReceive(NotificationCenter.default.publisher(for: CompanionAccessibility.displayOptionsDidChange)) { _ in
+            displayOptionsGeneration = CompanionAccessibility.generation
         }
         .onReceive(NotificationCenter.default.publisher(for: .hudPreviewAutoSendConfirm)) { _ in
             applyPendingTab("autopilot")
@@ -270,21 +285,10 @@ struct SettingsView: View {
 
     private var pageHeader: some View {
         HStack(alignment: .center, spacing: 16) {
-            HStack(alignment: .center, spacing: 12) {
-                // The module's own tile, at page scale. Same colour, same
-                // geometry as the sidebar row that opened it, so arriving on
-                // a page confirms where you are without re-reading the title.
-                CompanionModuleTile(
-                    systemImage: selectedTab.icon,
-                    tint: selectedTab.accentColor,
-                    selected: true,
-                    size: 34
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
-                    Text(selectedTab.subtitle).workspaceBody().onWashSecondary()
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
+                Text(headerSubtitle).workspaceBody().onWashSecondary()
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 10)
             if selectedTab == .today {
@@ -295,7 +299,9 @@ struct SettingsView: View {
                 Button { NotificationCenter.default.post(name: .hudAddContact, object: nil) } label: {
                     Label("添加关注", systemImage: "plus")
                 }
-                .buttonStyle(CompanionGlowButtonStyle(tint: selectedTab.accentColor))
+                .buttonStyle(.borderedProminent)
+                .tint(CompanionPalette.accent)
+                .controlSize(.regular)
             }
         }
         .frame(maxWidth: headerWidth, alignment: .leading)
@@ -321,6 +327,13 @@ struct SettingsView: View {
     /// The header is as wide as the page it introduces, so the title block and
     /// the body always start on the same edge.
     private var headerWidth: CGFloat { selectedTab.pageWidth }
+
+    private var headerSubtitle: String {
+        if selectedTab == .today, panelState.todayShowsMissedReplies {
+            return "指定时间里还没回的私聊和群 @"
+        }
+        return selectedTab.subtitle
+    }
 
     private func applyPendingTab(_ raw: String?) {
         guard let tab = Tab.from(raw: raw) else { return }
@@ -388,6 +401,12 @@ private struct SettingsSidebarSections: View {
     @Binding var selectedTab: SettingsView.Tab
     @EnvironmentObject var workspaceBadges: WorkspaceBadges
     @EnvironmentObject var panelState: PanelState
+    /// Which row the keyboard is on. SwiftUI's `List` would track this for
+    /// free, but the sidebar is hand-built (it needs a gradient fill and a
+    /// count capsule per row), so the focus ring has to be drawn by hand —
+    /// otherwise Tab moves through eighteen invisible stops. HIG treats a
+    /// visible focus indicator as a requirement for exactly this reason.
+    @FocusState private var focusedTab: SettingsView.Tab?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -415,8 +434,10 @@ private struct SettingsSidebarSections: View {
             tab: tab,
             selected: selectedTab == tab,
             count: sidebarCount(tab),
+            focused: focusedTab == tab,
             action: { selectedTab = tab }
         )
+        .focused($focusedTab, equals: tab)
     }
 
     private func sidebarCount(_ tab: SettingsView.Tab) -> Int? {
@@ -435,19 +456,23 @@ private struct SettingsSidebarRow: View {
     let tab: SettingsView.Tab
     let selected: Bool
     let count: Int?
+    /// Owning view tracks focus because `List` is not doing it here; the row
+    /// only needs to know whether to draw the ring.
+    var focused: Bool = false
     let action: () -> Void
     @EnvironmentObject var panelState: PanelState
+    @Environment(\.companionDisplayGeneration) private var displayGeneration
     @State private var hovered = false
 
     var body: some View {
-        Button(action: action) {
+        let _ = displayGeneration
+        return Button(action: action) {
             HStack(spacing: 9) {
-                CompanionModuleTile(
-                    systemImage: tab.icon,
-                    tint: tab.accentColor,
-                    selected: selected,
-                    hovered: hovered
-                )
+                Image(systemName: tab.icon)
+                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? CompanionPalette.accent : Color.secondary)
+                    .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
                 Text(tab.label)
                     .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
                     .foregroundStyle(.primary)
@@ -458,10 +483,10 @@ private struct SettingsSidebarRow: View {
                     Text(count, format: .number)
                         .workspaceMicro()
                         .monospacedDigit()
-                        .foregroundStyle(selected ? tab.accentColor : .secondary)
+                        .foregroundStyle(selected ? CompanionPalette.accent : .secondary)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(
-                            tab.accentColor.opacity(selected ? 0.20 : 0.11),
+                            CompanionPalette.accent.opacity(selected ? 0.18 : 0.10),
                             in: Capsule()
                         )
                 }
@@ -474,14 +499,11 @@ private struct SettingsSidebarRow: View {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(sidebarRowFill)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(
-                        selected && !CompanionMotion.reduceTransparency
-                            ? tab.accentColor.opacity(0.22) : Color.clear,
-                        lineWidth: 1
-                    )
-            )
+            // Inside the button label so the ring follows the row's own
+            // rounded rect rather than the enclosing stack, and so it is
+            // visible on the selected row too — where a jade wash would
+            // otherwise swallow a jade ring.
+            .companionFocusRing(focused, radius: 9)
         }
         .buttonStyle(CompanionPressStyle())
         .onHover { hovered = $0 }
@@ -500,15 +522,14 @@ private struct SettingsSidebarRow: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    /// Selected rows carry a tint of their own module colour rather than the
-    /// brand green, so the sidebar reads as "you are in the blue module"
-    /// before the eye reaches the page title. Hover is the neutral step below.
+    /// Selected rows take a quiet jade wash. Colour is not used to name the
+    /// room — the label does that — so the sidebar stays one product.
     private var sidebarRowFill: LinearGradient {
         if selected {
             return LinearGradient(
                 colors: [
-                    tab.accentColor.opacity(CompanionMotion.reduceTransparency ? 0.30 : 0.20),
-                    tab.accentColor.opacity(CompanionMotion.reduceTransparency ? 0.22 : 0.13)
+                    CompanionPalette.accent.opacity(CompanionMotion.reduceTransparency ? 0.22 : 0.14),
+                    CompanionPalette.accent.opacity(CompanionMotion.reduceTransparency ? 0.16 : 0.08)
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
@@ -576,6 +597,12 @@ private struct SettingsPreviewChrome: View {
             Button(PreviewRuntime.largeType ? "关闭大字号" : "模拟大字号") {
                 PreviewRuntime.toggleLargeType(); previewA11yNonce += 1
             }
+            Button(PreviewRuntime.increaseContrastOverride == true ? "关闭提高对比度" : "模拟提高对比度") {
+                PreviewRuntime.toggleIncreaseContrast(); previewA11yNonce += 1
+            }
+            Button(PreviewRuntime.differentiateWithoutColorOverride == true ? "关闭不用颜色区分" : "模拟不用颜色区分") {
+                PreviewRuntime.toggleDifferentiateWithoutColor(); previewA11yNonce += 1
+            }
             Button(PreviewRuntime.usingExternalDisplay ? "回到原生屏" : "模拟扩展屏") {
                 PreviewRuntime.toggleExternalDisplay(store: store); previewA11yNonce += 1
             }
@@ -619,7 +646,7 @@ private struct WorkspaceStatusBar: View {
             // says connected / working / needs-attention at a glance and
             // stops the bar from reading as a row of toolbar buttons; the
             // symbol that used to sit here duplicated the sentence next to it.
-            CompanionStatusDot(tint: color, pulsing: isSyncing)
+            CompanionStatusDot(tint: color, level: level, pulsing: isSyncing)
             Text(title)
                 .companionFont(size: 12, weight: .medium)
             Spacer()
@@ -630,10 +657,17 @@ private struct WorkspaceStatusBar: View {
             }
             Button { monitor.refreshNow() } label: {
                 Image(systemName: "arrow.clockwise")
+                    // Measured at 12×14 before this: the footer's refresh was
+                    // the smallest target in the window, on the control a user
+                    // reaches for when the list looks stale. Same glyph, a
+                    // target the pointer can actually find.
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(isSyncing)
             .accessibilityLabel("查看新消息")
+            .help("查看新消息")
         }
         .padding(.horizontal, WorkspacePage.inset)
         .padding(.vertical, 10)
@@ -677,17 +711,20 @@ private struct WorkspaceStatusBar: View {
 
     private var color: Color {
         switch monitor.stats.syncStatus {
-        case .ok: return CompanionPalette.jade
+        case .ok: return CompanionPalette.jadeInk
         case .syncing, .idle: return .secondary
         default: return .orange
         }
     }
 
-    private var symbol: String {
+    /// The same three states as a shape, for the Differentiate Without Color
+    /// switch. Kept next to `color` so the two can never disagree about how
+    /// many levels exist.
+    private var level: CompanionStatusDot.Level {
         switch monitor.stats.syncStatus {
-        case .ok: return "checkmark.circle.fill"
-        case .syncing, .idle: return "arrow.triangle.2.circlepath"
-        default: return "exclamationmark.triangle.fill"
+        case .ok: return .ok
+        case .syncing, .idle: return .working
+        default: return .attention
         }
     }
 }

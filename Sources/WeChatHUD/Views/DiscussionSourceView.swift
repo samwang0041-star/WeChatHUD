@@ -53,7 +53,7 @@ struct DiscussionSourceView: View {
                                 }
                                 Text(message.text).font(.body).textSelection(.enabled)
                                 if message.id == item.anchorMsgUID {
-                                    Text("已识别的关键原话").font(.caption.weight(.semibold)).foregroundStyle(CompanionPalette.jade)
+                                    Text("已识别的关键原话").font(.caption.weight(.semibold)).foregroundStyle(CompanionPalette.jadeInk)
                                 }
                             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))

@@ -285,14 +285,13 @@ final class CompanionMaterialTests: XCTestCase {
         XCTAssertTrue(CompanionInteractionCopy.waitingOnOthers(2).contains("2"))
     }
 
-    /// Every module owns a colour, and they are not all the same one — the
-    /// point of the tile is that a sidebar can be scanned by shape.
-    func testEveryModuleHasItsOwnAccent() {
-        let accents = SettingsView.Tab.allCases.map { "\($0.accentColor)" }
-        XCTAssertEqual(accents.count, SettingsView.Tab.allCases.count)
-        XCTAssertGreaterThan(
-            Set(accents).count, 4,
-            "the sidebar relies on distinct module colours"
+    /// The workspace has one accent. Colour names meaning, not rooms —
+    /// a rainbow of module tiles made the sidebar louder than the work.
+    func testWorkspaceSharesOneAccent() {
+        let accents = Set(SettingsView.Tab.allCases.map { "\($0.accentColor)" })
+        XCTAssertEqual(
+            accents.count, 1,
+            "every page should share CompanionPalette.accent; got \(accents)"
         )
     }
 
@@ -334,6 +333,89 @@ final class CompanionMaterialTests: XCTestCase {
         XCTAssertTrue(
             offenders.isEmpty,
             "a settings header repeats its only row title: \(offenders.joined(separator: ", "))"
+        )
+    }
+
+    // MARK: - Accent text legibility
+
+    /// `CompanionPalette.jade` is a light-appearance colour. As a **fill** it is
+    /// correct in both schemes; as **text** on a dark card it measured 2.94–3.08:1
+    /// against the 4.5:1 AA floor, while every body text on the same cards
+    /// measured 5.9–12.3:1 — the accent tier was the only illegible one, on
+    /// system / autopilot / AI 分析与建议 and eleven other pages.
+    ///
+    /// `jadeInk` is the scheme-aware token for text and glyphs. These assert the
+    /// resolved colours, so a future edit that "tidies" the two names back into
+    /// one fails here instead of shipping.
+    func testAccentInkPassesAAOnTheDarkCardSurface() {
+        // The card surface is `CompanionPalette.surface` = controlBackgroundColor.
+        // Measured on the rendered app at #1F1F1F–#232323; the darker end is the
+        // one that matters for a floor test.
+        let darkCard: [Double] = [31.0 / 255, 31.0 / 255, 31.0 / 255]
+        let ink = CompanionElevation.resolveRGB(CompanionPalette.jadeInk)
+        let ratio = CompanionElevation.contrastRatio(ink, darkCard)
+        XCTAssertGreaterThanOrEqual(
+            ratio, CompanionElevation.aaNormalText,
+            "accent text on a dark card is \(String(format: "%.2f", ratio)):1 — AA needs 4.5"
+        )
+    }
+
+    /// …and the raw fill colour is the one that does *not* pass, so the reason
+    /// two tokens exist stays visible in the suite. If this ever starts passing,
+    /// the palette changed underneath and `jadeInk` can be reconsidered —
+    /// but not before.
+    func testRawJadeIsStillAFillColourNotATextColourInDarkMode() {
+        let darkCard: [Double] = [31.0 / 255, 31.0 / 255, 31.0 / 255]
+        let jade = CompanionElevation.resolveRGB(CompanionPalette.jade)
+        XCTAssertLessThan(
+            CompanionElevation.contrastRatio(jade, darkCard), CompanionElevation.aaNormalText,
+            "jade now passes as dark-mode text; the jadeInk split may no longer be needed"
+        )
+        // Fills still work: white label text on a jade fill.
+        let white: [Double] = [1, 1, 1]
+        XCTAssertGreaterThanOrEqual(
+            CompanionElevation.contrastRatio(white, jade), CompanionElevation.aaNormalText,
+            "white on a jade fill must stay legible"
+        )
+    }
+
+    /// A source gate for the rule itself, because the token only helps if the
+    /// call sites use it: `foregroundStyle(CompanionPalette.jade)` anywhere in
+    /// Views is the pre-v3 palette creeping back one label at a time.
+    func testNoViewPaintsTextWithTheRawJadeFill() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views")
+        var files: [URL] = []
+        if let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in walker where url.pathExtension == "swift" {
+                files.append(url)
+            }
+        }
+        XCTAssertFalse(files.isEmpty, "no view sources found")
+
+        var offenders: [String] = []
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for (index, line) in text.components(separatedBy: .newlines).enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("//") || trimmed.hasPrefix("///") { continue }
+                guard trimmed.contains("foregroundStyle(") || trimmed.contains("foregroundColor(") else { continue }
+                guard trimmed.contains("CompanionPalette.jade") else { continue }
+                // `.jadeInk` and `jade.opacity(...)` are not the raw fill.
+                let stripped = trimmed
+                    .replacingOccurrences(of: "CompanionPalette.jadeInk", with: "")
+                    .replacingOccurrences(of: "CompanionPalette.jade.opacity", with: "")
+                if stripped.contains("CompanionPalette.jade") {
+                    offenders.append("\(file.lastPathComponent):\(index + 1)")
+                }
+            }
+        }
+        XCTAssertTrue(
+            offenders.isEmpty,
+            "raw jade used as text (2.94–3.08:1 on a dark card): \(offenders.joined(separator: ", "))"
         )
     }
 }

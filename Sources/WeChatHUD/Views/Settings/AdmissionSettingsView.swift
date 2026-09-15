@@ -196,7 +196,7 @@ struct AdmissionSettingsView: View {
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: config.mode == mode ? "largecircle.fill.circle" : "circle")
                                 .font(.system(size: 14))
-                                .foregroundStyle(config.mode == mode ? CompanionPalette.jade : .secondary)
+                                .foregroundStyle(config.mode == mode ? CompanionPalette.jadeInk : .secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(mode.label)
                                     .font(.system(size: 13, weight: .medium))
@@ -254,7 +254,7 @@ struct AdmissionSettingsView: View {
                                 HStack(spacing: 8) {
                                     Image(systemName: "person.fill")
                                         .font(.system(size: 11))
-                                        .foregroundStyle(CompanionPalette.jade)
+                                        .foregroundStyle(CompanionPalette.jadeInk)
                                     Text(rule.senderName)
                                         .font(.system(size: 13))
                                     Spacer(minLength: 4)
@@ -515,7 +515,7 @@ private struct GroupMemberPickerSheet: View {
                                 HStack {
                                     Image(systemName: "person.3.fill")
                                         .font(.system(size: 11))
-                                        .foregroundStyle(CompanionPalette.jade)
+                                        .foregroundStyle(CompanionPalette.jadeInk)
                                     Text(group.displayName).font(.system(size: 13))
                                     Spacer(minLength: 4)
                                     Image(systemName: "chevron.right")

@@ -86,7 +86,7 @@ struct DiscussionWorkspaceView: View {
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                     .accessibilityHint("切到「全部都记」，这些内容会回到列表里")
                 }
             }
@@ -106,10 +106,7 @@ struct DiscussionWorkspaceView: View {
         )
     }
 
-    /// The scope filters — the shared pill, tinted with the owning module.
-    /// (This was a hand-rolled copy: same geometry, but pinned to the brand
-    /// green and without the selected-state lift, so the 待办 row looked like a
-    /// different control from every other filter row in the app.)
+    /// The scope filters — the shared pill, in the one workspace accent.
     private var scopePills: some View {
         // The HStack is part of the token, not the caller: dropping a bare
         // `ForEach` into a `VStack` (as the two-line fallback below does) stacks
@@ -139,6 +136,12 @@ struct DiscussionWorkspaceView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .fixedSize()
+                // SwiftUI drew the title as a sibling static text and left the
+                // switch itself unnamed: the live AX tree reported an
+                // `AXCheckBox` with an empty label next to the words 看已处理的.
+                // VoiceOver announced a bare checkbox with no idea what it
+                // toggles.
+                .accessibilityLabel("看已处理的")
         }
     }
 
@@ -282,17 +285,25 @@ struct DiscussionWorkspaceView: View {
                     Button("清除搜索") { query = "" }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                 }
             }
             .padding(10)
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+            .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             Text(showHistory
                  ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
                  : "当前只显示还没做完的。过期太久的会收起，不占这个列表。")
                 .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+                // `.secondary`, not `.tertiary`.
+                //
+                // This is a sentence the user has to read to understand what the
+                // list is showing, not decoration. Measured on the shipped build:
+                // tertiary is #565656 on #1E1E1E = **2.27:1**, against the 4.5:1
+                // AA floor, while the same page's secondary measures 5.9–12.3:1.
+                // `.tertiary` stays correct for the chevrons and the ⌘F hint,
+                // which are affordances rather than prose.
+                .foregroundStyle(.secondary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
@@ -344,7 +355,7 @@ struct DiscussionWorkspaceView: View {
                             } label: {
                                 Text("\(group.items.count) 件过期未处理，点开查看")
                                     .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(CompanionPalette.jade)
+                                    .foregroundStyle(CompanionPalette.jadeInk)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("展开较早收起的 \(group.items.count) 件待办")
@@ -423,12 +434,20 @@ struct DiscussionWorkspaceView: View {
                    Button {
                        update(id: item.id, to: .done, previous: item.status, title: item.content)
                    } label: {
+                       // Sized to its title, not to the pane.
+                       //
+                       // This was `Text("标记完成").frame(maxWidth: .infinity)`,
+                       // which rendered a 436pt-wide filled bar for a 4-character
+                       // label — width driven by the pane, not the word. A
+                       // full-bleed filled button is the iOS primary-action
+                       // pattern; on macOS a push button is sized to its title
+                       // and sits at the trailing edge of the row it belongs to.
                        Text("标记完成")
-                           .frame(maxWidth: .infinity)
                    }
                    .buttonStyle(.borderedProminent)
                     .tint(SettingsView.Tab.tasks.accentColor)
                    .controlSize(.large)
+                   .frame(maxWidth: .infinity, alignment: .trailing)
                } else {
                     Button("恢复为未完成") { update(id: item.id, to: .pending, previous: item.status, title: item.content) }
                         .buttonStyle(.bordered)
@@ -447,7 +466,10 @@ struct DiscussionWorkspaceView: View {
                .font(.system(size: 13, weight: .medium))
                Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    // An assurance the user has to be able to read: it is what
+                    // tells them editing here will not touch WeChat. It measured
+                    // 2.27:1 in `.tertiary` (see the note on the hint above).
+                    .foregroundStyle(.secondary)
             }
             .padding(20)
         }
@@ -467,13 +489,13 @@ struct DiscussionWorkspaceView: View {
 
     private func receiptBar(_ text: String) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jade)
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jadeInk)
             Text(text).font(.system(size: 13, weight: .medium))
             Spacer()
             if let undo {
                 Button("撤销") { update(id: undo.id, to: undo.status, previous: nil, title: nil) }
                     .buttonStyle(.plain)
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .semibold))
             } else if let previous = batchUndo {
                 Button("撤销") {
@@ -484,7 +506,7 @@ struct DiscussionWorkspaceView: View {
                     receipt = nil
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
+                .foregroundStyle(CompanionPalette.jadeInk)
                 .font(.system(size: 13, weight: .semibold))
             }
             Button { receipt = nil } label: {
@@ -580,7 +602,7 @@ private struct DiscussionRow: View, Equatable {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: item.status == .done ? "checkmark.circle.fill" : "circle")
                     .companionFont(size: WorkspaceType.title, weight: .medium)
-                    .foregroundStyle(item.status == .done ? CompanionPalette.jade : .secondary)
+                    .foregroundStyle(item.status == .done ? CompanionPalette.jadeInk : .secondary)
                     .frame(width: 22)
                     .accessibilityLabel(item.status == .done ? "已完成" : "未完成")
                 VStack(alignment: .leading, spacing: 4) {
@@ -608,7 +630,7 @@ private struct DiscussionRow: View, Equatable {
            )
            .overlay(
                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isSelected ? SettingsView.Tab.tasks.accentColor.opacity(0.35) : CompanionPalette.border)
+                    .strokeBorder(isSelected ? SettingsView.Tab.tasks.accentColor.opacity(0.35) : CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
            )
        }
         .buttonStyle(CompanionPressStyle())

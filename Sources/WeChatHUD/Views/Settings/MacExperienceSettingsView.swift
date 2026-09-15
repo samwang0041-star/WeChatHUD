@@ -33,7 +33,7 @@ struct MacExperienceSettingsView: View {
                     Label(accessibilityGranted ? "已允许" : "待授权",
                           systemImage: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(accessibilityGranted ? CompanionPalette.jade : .orange)
+                        .foregroundStyle(accessibilityGranted ? CompanionPalette.jadeInk : .orange)
                     Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
                         openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
                     }.disabled(PreviewRuntime.isEnabled)
@@ -81,7 +81,7 @@ struct MacExperienceSettingsView: View {
                     if notificationStatus == .authorized {
                         Label("已允许", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     if notificationStatus == .notDetermined {
                         Button("允许系统通知", action: requestNotifications)
@@ -106,7 +106,7 @@ struct MacExperienceSettingsView: View {
                     .multilineTextAlignment(.trailing)
             }
             HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jade)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jadeInk)
                 Text("更改已保存").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 16).padding(.bottom, 12)

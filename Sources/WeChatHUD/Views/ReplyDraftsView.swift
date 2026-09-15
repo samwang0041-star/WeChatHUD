@@ -48,7 +48,7 @@ struct ReplyDraftsView: View {
             if let feedback {
                 Label(feedback, systemImage: feedback.contains("失败") || feedback.contains("无法") ? "exclamationmark.triangle" : "checkmark.circle")
                     .font(.system(size: 13))
-                    .foregroundStyle(feedback.contains("失败") || feedback.contains("无法") ? .orange : CompanionPalette.jade)
+                    .foregroundStyle(feedback.contains("失败") || feedback.contains("无法") ? .orange : CompanionPalette.jadeInk)
                     .padding(.vertical, 8)
             }
             if drafts.isEmpty {
@@ -144,12 +144,12 @@ struct ReplyDraftsView: View {
                 Button("清除搜索") { query = "" }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .padding(10)
         .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+        .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
         .padding(.bottom, 12)
     }
 
@@ -210,7 +210,7 @@ struct ReplyDraftsView: View {
                     }
                     Spacer()
                     Menu {
-                        Button("删除草稿") { pendingDeleteDraft = selected }
+                        Button("删除草稿", role: .destructive) { pendingDeleteDraft = selected }
                     } label: {
                         Image(systemName: "ellipsis")
                     }
@@ -260,14 +260,22 @@ struct ReplyDraftsView: View {
                     if let savedAt {
                         Label("修改已保存 · \(savedAt.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     Button("复制") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(selected.text, forType: .string)
                         feedback = "回复已复制，发送前请核对收件人。"
                     }
-                    Button("删除草稿") { pendingDeleteDraft = selected }
+                    // Destructive, and styled as such.
+                    //
+                    // It sat in a row of four identically grey-bordered buttons
+                    // next to 复制, reading as the same weight of action as
+                    // copying text — for something that cannot be undone from
+                    // the list. The confirmation dialog already exists; the
+                    // button just was not telling the truth about what it does.
+                    Button("删除草稿", role: .destructive) { pendingDeleteDraft = selected }
+                        .foregroundStyle(.red)
                    Button("查看对话") {
                        panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                    }

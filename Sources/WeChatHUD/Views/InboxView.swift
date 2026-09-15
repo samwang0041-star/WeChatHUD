@@ -237,7 +237,7 @@ struct InboxView: View {
                 // uses the triangle in the compact wing for the same state,
                 // and repeating the icon inside the panel it opens made the
                 // same failure look like two different problems.
-                CompanionStatusDot(tint: .orange, pulsing: false, size: 7)
+                CompanionStatusDot(tint: .orange, level: .attention, pulsing: false, size: 7)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 4) {
                     // Fact, then the move. The button below is the action, so
@@ -278,6 +278,12 @@ struct InboxView: View {
                 Image(systemName: "checklist")
                     .font(.system(size: 11))
                     .foregroundColor(IslandInk.secondary)
+                    // Measured at 12.5×11 in the live AX tree — the smallest
+                    // target in the island, in the one piece of chrome that is
+                    // always on screen. The glyph stays 11pt; the frame is what
+                    // the pointer aims at.
+                    .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("查看待办")
@@ -290,6 +296,8 @@ struct InboxView: View {
                 Image(systemName: "macwindow")
                     .font(.system(size: 11))
                     .foregroundColor(IslandInk.tertiary)
+                    .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(CompanionProductCopy.openCompanion)
@@ -304,6 +312,13 @@ struct InboxView: View {
         .padding(.vertical, 8)
         .background(IslandInk.bar)
     }
+
+    /// Hit area for the two glyph buttons in the island's bottom bar.
+    ///
+    /// 22pt is the standard macOS push-button height. The island cannot afford
+    /// much more than that in a 32pt-tall bar, but it should not ask the pointer
+    /// for 12pt precision either.
+    static let barIconTarget: CGFloat = 22
 
     // MARK: - Header
 

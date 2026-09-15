@@ -37,9 +37,8 @@ struct CompanionGuideView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The guide is the one page that owns the whole detail pane, so it
-        // carries the backdrop at full strength rather than the quieter
-        // settings treatment.
-        .background(CompanionBackdrop(tint: SettingsView.Tab.guide.accentColor, intensity: 1.35))
+        // shares the same quiet jade atmosphere as every other page.
+        .background(CompanionBackdrop(tint: CompanionPalette.accent))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("怎么用 WeChatHUD")
     }
@@ -72,8 +71,9 @@ struct CompanionGuideView: View {
     }
 
     private var dailyUseCard: some View {
-        GuideCard(icon: "tray.full.fill", tint: .blue, title: "每天怎么用") {
+        GuideCard(icon: "tray.full.fill", tint: CompanionPalette.accent, title: "每天怎么用") {
             guideTopic("从「今天」开始", "看待回和待办。点开一条消息看原文和摘要。", icon: "bubble.left.and.bubble.right")
+            guideTopic("没回的", "在「今天」里选时间，找出私聊和群 @ 里你还没回的。", icon: "clock.badge.questionmark")
             guideTopic("群里有人 @你", "会标出谁提到了你。", icon: "person.2.fill")
             guideTopic("我答应的事", "带着原话和截止时间。做完后点完成。", icon: "checkmark.bubble.fill")
             guideTopic("草稿", "写好后存草稿，确认再发。", icon: "square.and.pencil")
@@ -83,7 +83,7 @@ struct CompanionGuideView: View {
     }
 
     private var privacyCard: some View {
-        GuideCard(icon: "lock.shield.fill", tint: .orange, title: "数据与隐私") {
+        GuideCard(icon: "lock.shield.fill", tint: CompanionPalette.accent, title: "数据与隐私") {
             privacyRow("本机聊天资料", "只读取聊天原文，不改微信记录。事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
             privacyRow("发给 AI 的内容", "打开 AI 后，相关聊天片段会发给你选的服务，用来写摘要和草稿。请只用你信任的服务。", icon: "arrow.up.right")
             privacyRow("发送和自动回复", "默认每次发送都要你确认。自动回复默认关着；若打开「自动发出去」，符合条件的回复会自己发出。钱、红包这类消息仍不会自动回。", icon: "hand.raised")
@@ -91,7 +91,7 @@ struct CompanionGuideView: View {
     }
 
     private var troubleshootingCard: some View {
-        GuideCard(icon: "wrench.and.screwdriver.fill", tint: .purple, title: "遇到问题时") {
+        GuideCard(icon: "wrench.and.screwdriver.fill", tint: CompanionPalette.accent, title: "遇到问题时") {
             troubleshootingRow("看不到新消息", "先确认这台 Mac 上的微信已经登录，再打开「微信连接」。页面会告诉你还差哪一步。连上之后点「查看新消息」。", buttonTitle: "检查连接", tab: .system)
             troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
             troubleshootingRow("跳转或发送没反应", "确认微信已登录，并在「隐私与安全性 → 辅助功能」里允许 WeChatHUD。发送失败时回微信核对，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
@@ -100,7 +100,7 @@ struct CompanionGuideView: View {
     }
 
     private var shortcutsCard: some View {
-        GuideCard(icon: "command", tint: .gray, title: "键盘快捷键") {
+        GuideCard(icon: "command", tint: CompanionPalette.accent, title: "键盘快捷键") {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
             shortcutRow("Esc", "收起浮窗（仅当前窗口时有效）")
@@ -111,7 +111,7 @@ struct CompanionGuideView: View {
     }
 
     private var aboutCard: some View {
-        GuideCard(icon: "info.circle.fill", tint: .secondary, title: "关于") {
+        GuideCard(icon: "info.circle.fill", tint: CompanionPalette.accent, title: "关于") {
             HStack {
                 Text(CompanionProductCopy.brandName)
                     .font(.body.weight(.semibold))
@@ -228,11 +228,8 @@ private struct GuideCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Tile + label, matching the sidebar that opened this page and the
-            // page header that sits above it. The guide used to set its
-            // headings in raw .title3 while every other surface used the
-            // workspace tokens, which made this one page look like a
-            // different app.
+            // Quiet glyph + title. Same type tokens as the rest of the
+            // workspace, so this page does not look like a different app.
             HStack(spacing: 10) {
                 CompanionModuleTile(systemImage: icon, tint: tint, selected: true, size: 26)
                 Text(title)

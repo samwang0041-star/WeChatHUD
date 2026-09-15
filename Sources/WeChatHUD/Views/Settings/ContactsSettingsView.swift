@@ -44,7 +44,7 @@ struct ContactsSettingsView: View {
     private var organizeBack: some View {
         Button("返回关注列表") { selectedSubTab = .contacts }
             .buttonStyle(.plain)
-            .foregroundStyle(CompanionPalette.jade)
+            .foregroundStyle(CompanionPalette.jadeInk)
             .font(.system(size: 13, weight: .medium))
     }
 }
@@ -336,7 +336,7 @@ private struct ContactsListSubView: View {
                                 }
                                 Spacer()
                                 Image(systemName: selectedAddUsernames.contains(contact.username) ? "checkmark.square.fill" : "square")
-                                    .foregroundStyle(CompanionPalette.jade)
+                                    .foregroundStyle(CompanionPalette.jadeInk)
                             }
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
@@ -633,7 +633,13 @@ private struct ContactInspectorView: View {
             Text("只整理已关注的对话")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
-            infoRow("关注级别", value: attentionLevelTitle(contact.attentionLevel))
+            // 关注级别 is not repeated here.
+            //
+            // It was a read-only row in this section *and* the editable
+            // segmented control below, under the identical label — the same
+            // fact stated twice in one panel, once in a way the user cannot
+            // act on. The editable control owns the fact; this row was the
+            // echo. 类型 and 提醒时机 have no control elsewhere, so they stay.
             infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
                 infoRow("提醒时机", value: "\(contact.replyWindowMinutes) 分钟后提醒")

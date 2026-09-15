@@ -292,7 +292,7 @@ struct WeChatConnectionSetupView: View {
             if let changeAccountReceipt {
                 Text(changeAccountReceipt)
                     .font(.caption)
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
             }
             Text("更换账号前先看清范围：新账号只读自己的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
                 .font(.caption).foregroundStyle(.secondary)

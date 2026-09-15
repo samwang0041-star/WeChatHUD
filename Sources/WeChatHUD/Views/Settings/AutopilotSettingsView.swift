@@ -90,7 +90,7 @@ struct AutopilotSettingsView: View {
                 Spacer()
                 Button("查看待确认回复") { panelState.pendingSettingsTab = "autopilotDashboard" }
                     .buttonStyle(.plain)
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .medium))
             }
 
@@ -139,7 +139,7 @@ struct AutopilotSettingsView: View {
                         Spacer()
                         Text("\(Int(confidenceThreshold * 100))%")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
                         .tint(CompanionPalette.jade)
@@ -201,7 +201,7 @@ struct AutopilotSettingsView: View {
                 Button("重试保存设置") { save() }
             } else if saved {
                 Label("设置已保存", systemImage: "checkmark.circle.fill")
-                    .font(.callout).foregroundStyle(CompanionPalette.jade)
+                    .font(.callout).foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .onAppear {

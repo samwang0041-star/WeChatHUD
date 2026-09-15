@@ -936,6 +936,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     struct MessageBatchRequest: Sendable {
         let chatUsername: String
         let limit: Int
+        var startTime: Int? = nil
+        var endTime: Int? = nil
     }
 
     func getMessages(chatUsername: String, limit: Int = 50, sinceLocalId: Int? = nil) throws -> [MessageInfo] {
@@ -977,8 +979,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 sinceLocalId: nil,
                 afterCursor: nil,
                 oldestFirst: false,
-                startTime: nil,
-                endTime: nil,
+                startTime: req.startTime,
+                endTime: req.endTime,
                 beforeCursor: nil
             )
         }

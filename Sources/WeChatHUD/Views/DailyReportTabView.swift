@@ -184,7 +184,7 @@ struct DailyReportTabView: View {
                                     panelState.pendingSettingsTab = "tasks"
                                 }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(CompanionPalette.jade)
+                                .foregroundStyle(CompanionPalette.jadeInk)
                             }
                            .font(.system(size: 14))
                        }
@@ -193,7 +193,7 @@ struct DailyReportTabView: View {
                                 panelState.pendingSettingsTab = "tasks"
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                             .font(.system(size: 13, weight: .medium))
                         }
                     }

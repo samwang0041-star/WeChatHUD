@@ -144,16 +144,21 @@ struct CommitmentTabView: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("搜索承诺、原话或对象", text: $query).textFieldStyle(.plain)
+                    // The prompt alone is not a spoken name: the live AX tree
+                    // reported this field as `AXTextField` with an empty label,
+                    // while the identically-built fields on 待办 and 草稿 read
+                    // their titles out. VoiceOver users got an unnamed box.
+                    .accessibilityLabel("搜索承诺、原话或对象")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
                         .buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                 }
             }
             .padding(10)
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+            .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             if let actionError {
                 Label(actionError, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
             }
@@ -212,7 +217,7 @@ struct CommitmentTabView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: commitment.status == .fulfilled ? "checkmark.circle.fill" : "circle")
                         .companionFont(size: WorkspaceType.title, weight: .medium)
-                        .foregroundStyle(commitment.status == .fulfilled ? CompanionPalette.jade : .secondary)
+                        .foregroundStyle(commitment.status == .fulfilled ? CompanionPalette.jadeInk : .secondary)
                         .frame(width: 22)
                         .accessibilityLabel(commitment.status == .fulfilled ? "已完成" : "未完成")
                     VStack(alignment: .leading, spacing: 4) {
@@ -263,7 +268,7 @@ struct CommitmentTabView: View {
                                 monitor.openWeChatChat(commitment.chatUsername)
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                         }
                         .controlSize(.regular)
                     } else {
@@ -279,7 +284,7 @@ struct CommitmentTabView: View {
         .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(expanded ? CompanionPalette.jade.opacity(0.45) : CompanionPalette.border, lineWidth: 1)
+                .strokeBorder(expanded ? CompanionPalette.jade.opacity(0.45) : CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
         )
         .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
     }
@@ -307,7 +312,7 @@ struct CommitmentTabView: View {
     private func receiptBar(_ text: String) -> some View {
         HStack {
             Label(text, systemImage: "checkmark.circle.fill")
-                .foregroundStyle(CompanionPalette.jade)
+                .foregroundStyle(CompanionPalette.jadeInk)
             Spacer()
             if undo != nil {
                 Button("撤销") { undoLast() }

@@ -352,7 +352,7 @@ struct RelationshipRadarView: View {
         switch RelationshipRadarService.attentionRank(snap) {
         case 0: return .orange
         case 1: return .yellow
-        case 3: return CompanionPalette.jade
+        case 3: return CompanionPalette.jadeInk
         default: return .secondary.opacity(0.5)
         }
     }

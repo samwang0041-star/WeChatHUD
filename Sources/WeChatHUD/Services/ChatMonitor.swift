@@ -56,6 +56,14 @@ final class ChatMonitor: ObservableObject {
     /// Cross-chat reply debt ledger derived from recent sessions plus
     /// message windows. Independent from WeChat unread state.
     @Published var replyDebtItems: [ReplyDebtItem] = []
+    /// Private chats and group @-mentions in a chosen window that still have
+    /// no substantive reply. Independent from the live inbox: silence does
+    /// not age these out.
+    @Published var missedReplies: [MissedReplyFinder.Item] = []
+    @Published var missedReplyLoading = false
+    @Published var missedReplyError: String?
+    var missedReplyTask: Task<Void, Never>?
+    var missedReplyGeneration: UUID?
     /// On-demand AI context briefings for group @ mentions. Shared
     /// between the notification banner and the follow-feed rows.
     @Published var groupContextStates: [String: GroupContextBriefingLoadState] = [:]
@@ -2006,6 +2014,26 @@ final class ChatMonitor: ObservableObject {
             return []
         }
         return msgs.map { (sender: $0.senderName, body: $0.text) }
+    }
+
+    /// Oldest-first window around a missed inbound so the detail view can
+    /// land on that line instead of only the latest 20 messages.
+    func messagesAroundFocus(chatUsername: String, timestamp: Date) async -> [(sender: String, body: String)] {
+        let readerActor = WeChatReaderActor(reader)
+        let start = timestamp.addingTimeInterval(-6 * 3600)
+        let end = Date().addingTimeInterval(1)
+        guard let msgs = try? await readerActor.getMessages(
+            chatUsername: chatUsername,
+            limit: 80,
+            sinceLocalId: nil,
+            afterCursor: nil,
+            oldestFirst: true,
+            startTime: Int(start.timeIntervalSince1970),
+            endTime: Int(end.timeIntervalSince1970)
+        ) else {
+            return []
+        }
+        return msgs.map { (sender: $0.senderName, body: MessageHelpers.displayText($0.text)) }
     }
 
     /// Newest-first messages for manual-send receipt confirmation.

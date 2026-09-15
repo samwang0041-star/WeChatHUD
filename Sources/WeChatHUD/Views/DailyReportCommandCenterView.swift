@@ -264,7 +264,7 @@ struct DailyReportCommandCenterView: View {
             }
 
             HStack(spacing: 16) {
-                statLabel("今日处理", value: progress.completedCount, color: CompanionPalette.jade)
+                statLabel("今日处理", value: progress.completedCount, color: CompanionPalette.jadeInk)
                 statLabel("待跟进", value: progress.activeCount, color: .primary)
                 if progress.overdueCount > 0 {
                     statLabel("超期", value: progress.overdueCount, color: .red)

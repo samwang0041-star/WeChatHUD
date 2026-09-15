@@ -40,6 +40,8 @@ struct ModelPicker: View {
                     } else {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 13))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                 }
                 .buttonStyle(.borderless)
@@ -51,9 +53,16 @@ struct ModelPicker: View {
                     Button { isExpanded.toggle() } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 12))
+                            // Measured at 10×6pt — the smallest target in the
+                            // app, on the control that reveals the model list.
+                            // A chevron is a full-size button with a small
+                            // glyph, not a small button.
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel(isExpanded ? "收起模型列表" : "展开模型列表")
+                    .help(isExpanded ? "收起模型列表" : "展开模型列表")
                 }
             }
 
@@ -577,11 +586,11 @@ struct AISettingsView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Text("AI 提炼")
                         .font(.system(size: 11))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                         .frame(width: 52, alignment: .leading)
                     Text("明天 12:00 前提交修改稿")
                         .font(.system(size: 13))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(CompanionPalette.jade.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -589,7 +598,7 @@ struct AISettingsView: View {
             }
             .padding(12)
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(CompanionPalette.border))
+            .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
         }
     }
 

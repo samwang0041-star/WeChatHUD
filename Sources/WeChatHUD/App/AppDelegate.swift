@@ -66,6 +66,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// animation" every launch.
     private var didHandleInitialStateEmission = false
 
+    /// Install the menu bar before the first window exists.
+    ///
+    /// `configureMainMenu()` was written, documented and unit-tested — and never
+    /// called. `MainMenuTests` builds the menu in isolation and passes, so the
+    /// only thing missing was the one line that puts it on screen: a menu-bar
+    /// app with no `NSApp.mainMenu` shows the app name and nothing else, and
+    /// every item 关于 / 服务 / 重做 / ⌃⌘S was unreachable while the suite was
+    /// green. This is the "two ends are right, the wire between them is
+    /// missing" shape a previous QA round already caught once in the key-file
+    /// diagnostics; `MainMenuWiringTests` now scans this file so it cannot
+    /// happen a third time.
+    ///
+    /// `applicationWillFinishLaunching` rather than `…DidFinishLaunching`:
+    /// that is the documented place to build the main menu, and it runs before
+    /// any window is shown, so the first activation already has its menu.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        configureMainMenu()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[WCHUD] launch — pid=\(ProcessInfo.processInfo.processIdentifier)")
         // Resolve the selected account before opening its business database.
@@ -435,11 +454,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             PreviewRuntime.applyAppearanceOverride()
             PreviewRuntime.simulateHover()
             PreviewRuntime.installCaptureBridge()
+            PreviewRuntime.scheduleLaunchCapture()
+            PreviewRuntime.scheduleAccessibilityAudit()
+            PreviewRuntime.activateForMenuCheck()
             PreviewRuntime.seed(store: store, monitor: monitor)
-            PreviewRuntime.applyIslandSnapshotOverrides(monitor: monitor, panelState: panelState)
         } else {
             startMonitoringAfterRelaunch()
         }
+
+        // Increase Contrast / Differentiate Without Color change how chrome is
+        // drawn. NSWorkspace announces both on its own notification centre,
+        // which SwiftUI does not observe; the bridge re-posts them where the
+        // workspace and island roots are listening.
+        CompanionAccessibility.installSystemBridge()
 
         AppUpdateController.shared.bind(store: store)
         if !PreviewRuntime.isEnabled {
@@ -636,39 +663,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func configureMainMenu() {
-        let main = NSMenu()
-        let applicationItem = NSMenuItem()
-        let application = NSMenu(title: CompanionProductCopy.brandName)
-        application.addItem(NSMenuItem(title: CompanionProductCopy.openCompanion, action: #selector(toggleCompanionFromMenu), keyEquivalent: "1"))
-        application.addItem(NSMenuItem(title: "设置…", action: #selector(openPreferences), keyEquivalent: ","))
-        application.addItem(NSMenuItem(title: CompanionProductCopy.checkUpdates, action: #selector(checkForUpdates), keyEquivalent: ""))
-        application.addItem(.separator())
-        let quit = NSMenuItem(title: CompanionProductCopy.quitCompanion, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        quit.target = NSApp
-        application.addItem(quit)
-        applicationItem.submenu = application
-        main.addItem(applicationItem)
-        let editItem = NSMenuItem()
-        let edit = NSMenu(title: "编辑")
-        for (title, selector, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] {
-            edit.addItem(NSMenuItem(title: title, action: Selector(selector), keyEquivalent: key))
-        }
-        editItem.submenu = edit
-        main.addItem(editItem)
-        let windowItem = NSMenuItem()
-        let window = NSMenu(title: "窗口")
-        window.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-        window.addItem(NSMenuItem(title: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
-        windowItem.submenu = window
-        main.addItem(windowItem)
-        let helpItem = NSMenuItem()
-        let help = NSMenu(title: "帮助")
-        help.addItem(NSMenuItem(title: CompanionProductCopy.howToUse, action: #selector(openGuide), keyEquivalent: "?"))
-        helpItem.submenu = help
-        main.addItem(helpItem)
-        NSApp.mainMenu = main
-        NSApp.windowsMenu = window
-        NSApp.helpMenu = help
+        let registration = MainMenu.build(target: self)
+        NSApp.mainMenu = registration.menu
+        // Each of these three is a separate handshake with AppKit: the system
+        // discovers services for the Services menu, appends the open-window
+        // list to the Window menu, and attaches the Help search field. None of
+        // it happens from `mainMenu` alone.
+        NSApp.servicesMenu = registration.services
+        NSApp.windowsMenu = registration.windows
+        NSApp.helpMenu = registration.help
     }
 
     @objc func openGuide() {
@@ -678,10 +681,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    @objc private func openPreferences() {
+    /// 设置… (⌘,) — bring the workspace window forward.
+    ///
+    /// It deliberately does not force a tab. The item's first job is what every
+    /// Mac user expects from ⌘,: open the settings window. It used to jump to
+    /// 微信连接 as well, so pressing ⌘, from 待办 threw away the page the user
+    /// was on and dropped them into a connection screen with side effects —
+    /// the same behaviour as `openGuide` (⌘?), which is a *destination* item
+    /// and therefore right to pick its own page.
+    @objc func openPreferences() {
         MainActor.assumeIsolated {
-            panelState.pendingSettingsTab = "system"
             panelState.showDetail()
+        }
+    }
+
+    /// ⌃⌘S — show or hide the workspace sidebar.
+    ///
+    /// The window is a SwiftUI `NavigationSplitView` and only the view knows
+    /// its current column visibility, so the menu item forwards the intent
+    /// rather than flipping a flag here. Two reasons not to call
+    /// `toggleSidebar:` through the responder chain instead: SwiftUI's
+    /// split view does not claim that selector, and an item that does nothing
+    /// when pressed is worse than no item.
+    @objc func toggleSidebar() {
+        MainActor.assumeIsolated {
+            NotificationCenter.default.post(name: .hudToggleSidebar, object: nil)
         }
     }
 
@@ -744,6 +768,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the measurement sink ignores any SwiftUI size reports to avoid
         // reacting to stale geometry produced during window creation.
         panelState.isReady = true
+
+        // Preview island overrides go *after* `isReady`, not with the rest of
+        // the preview setup.
+        //
+        // They expand the island, and the expanded island's size comes from its
+        // content's own `SizePreferenceKey` report — which the sink above drops
+        // while `isReady` is false. Called early, the flag therefore produced a
+        // panel at the fallback size with an unpainted body: a black slab.
+        // A QA pass measured that slab, could not reconcile it with the AX dump,
+        // and nearly filed it as a product bug (the real peek/click path renders
+        // correctly). A preview flag that manufactures the defect it is supposed
+        // to photograph is worse than no flag.
+        if PreviewRuntime.isEnabled {
+            PreviewRuntime.applyIslandSnapshotOverrides(monitor: monitor, panelState: panelState)
+            PreviewRuntime.applyWorkspaceTabOverride(panelState: panelState)
+        }
     }
 
     @MainActor
@@ -874,27 +914,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Handle keyboard shortcuts. Returns true if the event was consumed.
     /// Called from NSEvent local monitor (always main thread).
+    ///
+    /// Only *cancel* is claimed here. Command chords belong to the menu bar:
+    /// this monitor runs first and a `true` return swallows the event, so
+    /// claiming ⌘1 / ⌘, here made the menu items that advertise those chords
+    /// (显示 > 打开 WeChatHUD, 设置…) unreachable and did something else
+    /// instead. Which keys are cancel, and what cancel means per window, is
+    /// `KeyboardShortcutPolicy` — a pure function, so it is testable.
     @MainActor
     private func handleKeyDown(_ event: NSEvent) -> Bool {
-        // Esc → collapse to compact
-        if event.keyCode == 53 {
-            guard event.window === panel else { return false }
-            panelState.collapse()
-            return true
+        let target: KeyboardShortcutPolicy.Target
+        if event.window === panel {
+            target = .island
+        } else if event.window is SettingsWindow {
+            target = .workspace
+        } else {
+            target = .other
         }
 
-        guard event.modifierFlags.contains(.command) else { return false }
-
-        switch event.charactersIgnoringModifiers {
-        case "1":
-            panelState.pendingSettingsTab = "today"
-            panelState.showDetail()
+        switch KeyboardShortcutPolicy.action(
+            keyCode: event.keyCode,
+            characters: event.charactersIgnoringModifiers,
+            modifiers: event.modifierFlags,
+            target: target,
+            hasAttachedSheet: event.window?.attachedSheet != nil
+        ) {
+        case .collapseIsland:
+            panelState.collapse()
             return true
-        case ",":
-            panelState.pendingSettingsTab = "system"
-            panelState.showDetail()
+        case .closeWorkspace:
+            event.window?.performClose(nil)
             return true
-        default:
+        case nil:
             return false
         }
     }

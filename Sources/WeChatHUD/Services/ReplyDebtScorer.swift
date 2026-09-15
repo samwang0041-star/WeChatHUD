@@ -78,6 +78,12 @@ enum ReplyDebtScorer {
         return false
     }
 
+    /// Inbound that should not create a debt or a missed-reply row: acks,
+    /// stickers, and very short closers without an ask.
+    static func isIgnorableInbound(_ text: String) -> Bool {
+        isAckMessage(text)
+    }
+
     /// Grace period: if user replied and counterpart responds within N seconds,
     /// treat the conversation as "done" (no new debt).
     private static let postReplyGraceSeconds = 120

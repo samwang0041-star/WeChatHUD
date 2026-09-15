@@ -16,6 +16,13 @@ struct SizePreferenceKey: PreferenceKey {
 
 struct HUDRootView: View {
     @EnvironmentObject var panelState: PanelState
+    /// Bumped when Increase Contrast / Differentiate Without Color move, so
+    /// the island's hairline chrome and status lights redraw with the new
+    /// tokens. See `CompanionAccessibility`.
+    @State private var displayOptionsNonce = 0
+        // Read so the island re-evaluates when the flag flips; the value is
+        // carried by `.companionDisplayGeneration` below.
+
 
     var body: some View {
         // Each pill state is rendered at its own fixed intrinsic width,
@@ -91,7 +98,11 @@ struct HUDRootView: View {
         .compositingGroup()
         .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
         .animation(nil, value: panelState.presentedState)
-        .dynamicTypeSize(PreviewRuntime.largeType ? .accessibility2 : .large)
+        .companionDisplayGeneration(CompanionAccessibility.generation)
+        .dynamicTypeSize(CompanionTypeScale.appliedRange(largeType: PreviewRuntime.largeType))
+        .onReceive(NotificationCenter.default.publisher(for: CompanionAccessibility.displayOptionsDidChange)) { _ in
+            displayOptionsNonce &+= 1
+        }
     }
 
     private var islandNotchWidth: CGFloat {

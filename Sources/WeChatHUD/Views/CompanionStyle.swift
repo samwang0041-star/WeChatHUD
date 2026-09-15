@@ -36,14 +36,45 @@ enum CompanionPalette {
             ? NSColor(red: 0.51, green: 0.83, blue: 0.74, alpha: 1)
             : NSColor(red: 22 / 255, green: 119 / 255, blue: 108 / 255, alpha: 1)
     })
+
+    /// Jade for **text and glyphs**, as opposed to `jade` for **fills**.
+    ///
+    /// `jade` (#16776C) is a light-appearance colour. Used as a fill it is
+    /// correct in both schemes — white label text on it measures ~5.5:1. Used
+    /// as *text* on a dark card it is not: measured on the shipped build, the
+    /// 已就绪 / 设置 AI / 查看待确认回复 labels painted `rgb(56,117,108)` on
+    /// `#1F1F1F`, which is **3.08:1** against the 4.5:1 AA floor, while every
+    /// body text on the same cards measured 5.9–12.3:1. The accent tier was the
+    /// only illegible one.
+    ///
+    /// This is a name for the existing scheme-aware accent, not a new colour:
+    /// `ui-language.md` v3 already settled that the workspace has exactly one
+    /// accent, and `accent` already resolves to the mint (≈9:1 on the same
+    /// surface) in dark mode. The 42 `foregroundStyle(CompanionPalette.jade)`
+    /// call sites were the last holdouts of the pre-v3 palette.
+    static var jadeInk: Color { accent }
     static let surface = Color(nsColor: .controlBackgroundColor)
     static let canvas = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor.windowBackgroundColor
             : NSColor(red: 248 / 255, green: 250 / 255, blue: 249 / 255, alpha: 1)
     })
-    static let border = Color.primary.opacity(0.075)
+    /// Card and control outline.
+    ///
+    /// 7.5 % of the label colour is the tuned default; under **Increase
+    /// Contrast** it steps up to the weight `NSColor.separatorColor` uses in
+    /// its own increased-contrast variant, so this window stops being the
+    /// faintest thing on a screen where every other app deepened its edges.
+    /// See `CompanionAccessibility`.
+    static var border: Color {
+        Color.primary.opacity(CompanionAccessibility.contrastAdjusted(0.075))
+    }
     static let secondarySurface = Color.primary.opacity(0.035)
+
+    /// Inset sub-panel outline: one step lighter than `border`.
+    static var insetBorder: Color {
+        Color.primary.opacity(CompanionAccessibility.contrastAdjusted(0.055))
+    }
 }
 
 private struct CompanionSurface: ViewModifier {
@@ -76,6 +107,43 @@ enum WorkspaceType {
 
 /// Scales hardcoded chrome sizes when the system (or preview) asks for larger type.
 enum CompanionTypeScale {
+    /// The band this app's text is allowed to occupy.
+    ///
+    /// Both ends are deliberate, and both are HIG requirements rather than
+    /// taste:
+    ///
+    /// - **Floor `.large`.** Every measurement in `ui-language.md` — the 36pt
+    ///   compact bar, the 560/580pt panel widths, the card gutters — was taken
+    ///   at the system default. Rendering below it would clip the island's
+    ///   fixed-height chrome, so a user who set a *smaller* system size gets
+    ///   the design size instead.
+    /// - **Ceiling `.accessibility2`.** This is the largest step that has been
+    ///   verified against the real pages (it is what the preview's 大字号
+    ///   toggle drives). Above it the two-column pages have nowhere to put
+    ///   their inspector.
+    ///
+    /// The important part is what it *stops* doing. This used to be
+    /// `.dynamicTypeSize(.large)`, a hard pin: a user who set 文字大小 to
+    /// "更大" in 系统设置 got no change at all, in an app whose own preview
+    /// ships a 大字号 button proving the layout can take it. Pinning to the
+    /// default is indistinguishable from ignoring the setting.
+    static let range: ClosedRange<DynamicTypeSize> = .large ... .accessibility2
+
+    /// The size to pin in preview, so the two ends of the band are reachable
+    /// from a repeatable launch instead of by changing the host Mac's settings.
+    static var previewSize: DynamicTypeSize { range.upperBound }
+
+    /// The band to hand to `.dynamicTypeSize(_:)` for a given preview toggle.
+    ///
+    /// `dynamicTypeSize` has two overloads — a single `DynamicTypeSize` and a
+    /// `ClosedRange<DynamicTypeSize>` — so a bare `largeType ? previewSize :
+    /// range` ternary does not type-check, and spelling the band out at each
+    /// call site is exactly how the two of them would drift apart. One
+    /// function, both callers.
+    static func appliedRange(largeType: Bool) -> ClosedRange<DynamicTypeSize> {
+        largeType ? previewSize ... previewSize : range
+    }
+
     static func factor(for size: DynamicTypeSize) -> CGFloat {
         switch size {
         case .xSmall: return 0.88
@@ -174,10 +242,8 @@ struct CompanionPressStyle: ButtonStyle {
 struct CompanionFilterPill: View {
     let title: String
     let selected: Bool
-    /// The owning module's accent. Defaults to the brand green so existing
-    /// call sites keep working, but a page inside a coloured module passes its
-    /// own, which is what makes the selection read as "this page's filter"
-    /// rather than a second, unrelated green.
+    /// Brand accent. A selected filter is the current view, not a primary
+    /// action, so it uses a quiet wash rather than a filled glowing capsule.
     var tint: Color = CompanionPalette.jade
     let action: () -> Void
 
@@ -185,7 +251,7 @@ struct CompanionFilterPill: View {
         Button(action: action) {
             Text(title)
                 .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
-                .foregroundStyle(selected ? Color.white : .primary)
+                .foregroundStyle(selected ? tint : .primary)
                 // A pill is one line.
                 //
                 // Measured defect: at the window's own 900pt minimum the 待办
@@ -204,21 +270,12 @@ struct CompanionFilterPill: View {
                 // up its trailing controls instead of crashing.
                 .lineLimit(1)
                 .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(selected ? tint : CompanionPalette.surface, in: Capsule())
+                .background(selected ? tint.opacity(0.16) : CompanionPalette.surface, in: Capsule())
                 .overlay(
                     Capsule().strokeBorder(
-                        selected ? Color.white.opacity(0.14) : CompanionPalette.border,
+                        selected ? tint.opacity(0.28) : CompanionPalette.border,
                         lineWidth: 1
                     )
-                )
-                // The primary-action glow, at a third of its strength: a
-                // selected filter is the current view, not the page's
-                // call to action, so it lifts without competing with the
-                // button that actually moves work forward.
-                .shadow(
-                    color: selected && !CompanionMotion.reduceTransparency
-                        ? tint.opacity(0.30) : .clear,
-                    radius: 7, y: 2
                 )
         }
         .buttonStyle(CompanionPressStyle())

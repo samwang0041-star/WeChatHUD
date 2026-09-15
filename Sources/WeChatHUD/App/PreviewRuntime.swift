@@ -13,10 +13,65 @@ enum PreviewRuntime {
     /// without changing the host Mac's settings.
     static var reduceMotionOverride: Bool?
     static var reduceTransparencyOverride: Bool?
+    static var increaseContrastOverride: Bool?
+    static var differentiateWithoutColorOverride: Bool?
     static var largeType = false
     static var usingExternalDisplay = false
     static var hideDemoChromeForCapture = false
     private static var captureBridgeInstalled = false
+
+    /// `--preview-capture=<seconds>` snapshots every visible surface once,
+    /// that many seconds after launch — no pointer, no clicking the in-app
+    /// 导出界面快照 button, no cross-process notification.
+    ///
+    /// The distributed-notification bridge below (`installCaptureBridge`)
+    /// stays for a human driving the app by hand, but a script on a current
+    /// macOS does not reliably get its notification delivered, which made
+    /// "launch, then snap" unrepeatable for automated walkthroughs.
+    /// A launch flag removes both the pointer and the IPC from the loop.
+    @MainActor static func scheduleLaunchCapture() {
+        guard isEnabled else { return }
+        let prefix = "--preview-capture="
+        guard let raw = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }),
+              let delay = TimeInterval(raw.dropFirst(prefix.count)),
+              delay >= 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            captureSurfaces(as: "auto")
+            // A second sample a beat later: sheets and menu tracking settle on
+            // their own schedule, and a single frame can catch a window
+            // mid-presentation and report it as absent.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                captureSurfaces(as: "auto2")
+            }
+        }
+    }
+
+    /// `--preview-hig-audit=<seconds>` runs `AccessibilityAudit` against the
+    /// live window hierarchy once, that many seconds after launch. Separate
+    /// from `--preview-capture` so a walkthrough can screenshot and measure in
+    /// the same launch without one waiting on the other.
+    @MainActor static func scheduleAccessibilityAudit() {
+        guard isEnabled else { return }
+        let prefix = "--preview-hig-audit="
+        guard let raw = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }),
+              let delay = TimeInterval(raw.dropFirst(prefix.count)),
+              delay >= 0 else { return }
+        AccessibilityAudit.run(after: delay)
+    }
+
+    /// `--preview-activate` brings the preview app to the front once.
+    ///
+    /// A menu-bar-only app (`LSUIElement`) has no menu bar of its own until it
+    /// is active, so "does the 文件 menu actually appear" cannot be checked
+    /// from a background launch. This flag exists so that check can be run
+    /// from a repeatable launch instead of by clicking the Dock.
+    @MainActor static func activateForMenuCheck() {
+        guard isEnabled, CommandLine.arguments.contains("--preview-activate") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first { $0 is SettingsWindow }?.makeKeyAndOrderFront(nil)
+        }
+    }
 
     /// `--preview-dark` / `--preview-light` pin this preview process to one
     /// appearance, so a surface that only follows the *system* scheme can be
@@ -42,12 +97,44 @@ enum PreviewRuntime {
     }
 
     static func applyAccessibilityOverrides() {
+        let arguments = CommandLine.arguments
+        // Launch flags as well as the in-app demo buttons. The buttons move a
+        // pointer and cannot be replayed; a flag makes "capture the app under
+        // Increase Contrast" a repeatable command, which is the same reason
+        // `--preview-tab` exists for the workspace pages.
+        if arguments.contains("--preview-contrast") { increaseContrastOverride = true }
+        if arguments.contains("--preview-no-color") { differentiateWithoutColorOverride = true }
+        if arguments.contains("--preview-large-type") { largeType = true }
+
         CompanionMotion.reduceMotionProvider = {
             reduceMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
         CompanionMotion.reduceTransparencyProvider = {
             reduceTransparencyOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         }
+        CompanionAccessibility.increaseContrastProvider = {
+            increaseContrastOverride ?? NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        }
+        CompanionAccessibility.differentiateWithoutColorProvider = {
+            differentiateWithoutColorOverride
+                ?? NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
+        }
+    }
+
+    @MainActor static func toggleIncreaseContrast() {
+        guard isEnabled else { return }
+        increaseContrastOverride = !(increaseContrastOverride ?? false)
+        applyAccessibilityOverrides()
+        // Same signal the real system switch raises, so the demo path and the
+        // real one cannot diverge in what they redraw.
+        CompanionAccessibility.noteDisplayOptionsChanged()
+    }
+
+    @MainActor static func toggleDifferentiateWithoutColor() {
+        guard isEnabled else { return }
+        differentiateWithoutColorOverride = !(differentiateWithoutColorOverride ?? false)
+        applyAccessibilityOverrides()
+        CompanionAccessibility.noteDisplayOptionsChanged()
     }
 
     @MainActor static func toggleReduceMotion() {
@@ -163,6 +250,39 @@ enum PreviewRuntime {
         }
     }
 
+    static func missedReplyFixtures(now: Date = Date()) -> [MissedReplyFinder.Item] {
+        [
+            MissedReplyFinder.Item(
+                id: "preview-xu|missed-1",
+                chatUsername: "preview-xu",
+                chatName: "许宁",
+                senderName: "许宁",
+                preview: "上周说的报价，你看了没？我这边要交差。",
+                timestamp: now.addingTimeInterval(-3 * 86400),
+                isGroup: false,
+                isAtMention: false,
+                isVIP: false,
+                unrepliedCount: 2,
+                sourceMessageID: "missed-1",
+                sourceText: "上周说的报价，你看了没？我这边要交差。"
+            ),
+            MissedReplyFinder.Item(
+                id: "preview-project|missed-2",
+                chatUsername: "preview-project",
+                chatName: "项目协作群",
+                senderName: "林晓",
+                preview: "@我 纪要还差你那一段，今天下班前能补上吗？",
+                timestamp: now.addingTimeInterval(-2 * 86400),
+                isGroup: true,
+                isAtMention: true,
+                isVIP: false,
+                unrepliedCount: 1,
+                sourceMessageID: "missed-2",
+                sourceText: "@我 纪要还差你那一段，今天下班前能补上吗？"
+            )
+        ]
+    }
+
     @MainActor static func seed(store: HUDStore, monitor: ChatMonitor) {
         try? store.setSetting("onboarded", value: "1")
         let now = Date()
@@ -182,6 +302,7 @@ enum PreviewRuntime {
                     "今晚想请你过一遍首页改版和标注。"
                 ][index], moodEmoji: nil)
         }
+        monitor.missedReplies = missedReplyFixtures(now: now)
         monitor.recentNotifications = examples.map { row in
             HUDNotification(chatUsername: row.0, chatName: row.1, senderUsername: "preview-peer", senderName: "林晓",
                 attentionLevel: .vip, messageID: "preview-message-\(row.0)", rawText: row.2, snippet: row.2,
@@ -592,23 +713,39 @@ enum PreviewRuntime {
     /// snapshot can capture expanded surfaces that normally collapse the
     /// moment the pointer is not inside them. Without this, QA has to move
     /// the user's pointer into the panel to keep it on screen.
+    ///
+    /// The expand is **deferred to the next runloop turn**, not performed here.
+    ///
+    /// Called inline from `applicationDidFinishLaunching`, `goExtended()` ran
+    /// before the panel had laid out its first frame. The state flip and the
+    /// window frame then disagreed about which shape was on screen, and the
+    /// mask kept covering the whole stage while only the workspace bar painted:
+    /// the flag produced a 560×252 black slab with two glyphs in the corner.
+    /// An independent review measured that slab and could not reconcile it with
+    /// the AX dump for the same run, because the two artifacts were of two
+    /// different states — the real hover/click path renders correctly.
+    ///
+    /// A preview flag that manufactures the defect it exists to photograph is
+    /// worse than no flag, so this now waits for the first layout, exactly as
+    /// the `--preview-expand-row` path below already did.
     @MainActor static func applyIslandSnapshotOverrides(monitor: ChatMonitor, panelState: PanelState) {
         guard isEnabled else { return }
         let arguments = CommandLine.arguments
         if arguments.contains("--preview-disconnected") {
             monitor.stats.syncStatus = .error("preview")
         }
-        if arguments.contains("--preview-hold-island") {
+        let holdIsland = arguments.contains("--preview-hold-island")
+        let expandRow = arguments.contains("--preview-expand-row")
+        guard holdIsland || expandRow else { return }
+
+        DispatchQueue.main.async {
             panelState.islandSurface = .inbox
             panelState.goExtended()
             // popoverOpen is the panel's existing "do not auto-collapse"
             // latch; reuse it rather than adding preview state to PanelState.
             panelState.popoverOpen = true
-        }
-        if arguments.contains("--preview-expand-row") {
-            panelState.islandSurface = .inbox
-            panelState.goExtended()
-            panelState.popoverOpen = true
+
+            guard expandRow else { return }
             // Let the inbox measure and the mask spring land before the row
             // opens, so this is a real click-expand, not a launch-sized panel.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
@@ -621,12 +758,20 @@ enum PreviewRuntime {
                 }
             }
         }
+    }
+
+    /// `--preview-tab=<raw>` opens the workspace on one page, so every
+    /// workspace surface can be captured from a repeatable launch instead of
+    /// by clicking through the sidebar (which moves the operator's pointer and
+    /// cannot be replayed).
+    @MainActor static func applyWorkspaceTabOverride(panelState: PanelState) {
+        guard isEnabled else { return }
         // `--preview-tab=<raw>` opens the workspace on one page, so every
         // workspace surface can be captured from a repeatable launch
         // instead of by clicking through the sidebar (which moves the
         // operator's pointer and cannot be replayed).
         let tabPrefix = "--preview-tab="
-        if let raw = arguments.first(where: { $0.hasPrefix(tabPrefix) }) {
+        if let raw = CommandLine.arguments.first(where: { $0.hasPrefix(tabPrefix) }) {
             let tab = String(raw.dropFirst(tabPrefix.count))
             if !tab.isEmpty {
                 panelState.pendingSettingsTab = tab

@@ -81,7 +81,7 @@ struct ApprovalWorkspaceView: View {
             if let receipt {
                 Label(receipt, systemImage: receipt.contains("失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jade)
+                    .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jadeInk)
                     .padding(.top, 10)
             }
         }
@@ -259,7 +259,7 @@ struct ApprovalWorkspaceView: View {
                         panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                 }
 
                 VStack(alignment: .leading, spacing: 6) {

@@ -22,7 +22,8 @@ struct ConversationDetailView: View {
     @State private var showSendConfirm = false
     @State private var sourceSavedDraftID: Int64?
     @State private var isRenaming = false
-    @State private var transcriptMessages: [(sender: String, body: String)] = []
+    @State private var transcriptRows: [FocusedTranscript.Row] = []
+    @State private var hasTranscriptFocus = false
     @State private var selfNames: Set<String> = []
 
     var body: some View {
@@ -48,7 +49,8 @@ struct ConversationDetailView: View {
                 }
                 .onAppear { scrollTranscriptToLatest(proxy) }
                 .onChange(of: chatUsername) { _, _ in scrollTranscriptToLatest(proxy) }
-                .onChange(of: transcriptMessages.count) { _, _ in scrollTranscriptToLatest(proxy) }
+                .onChange(of: transcriptRows.count) { _, _ in scrollTranscriptToLatest(proxy) }
+                .onChange(of: hasTranscriptFocus) { _, _ in scrollTranscriptToLatest(proxy) }
             }
 
             Divider().background(Color.white.opacity(0.12))
@@ -69,6 +71,10 @@ struct ConversationDetailView: View {
         }
         .onChange(of: panelState.pendingReplyDraftContinuation) { _, _ in
             applyPendingReplyDraftContinuation()
+        }
+        .onChange(of: panelState.pendingTranscriptFocus) { _, focus in
+            guard let focus, focus.chatUsername == chatUsername else { return }
+            Task { await loadTranscriptAndIdentity() }
         }
         .onChange(of: replyText) { _, value in
             monitor.composerDraftEdits[chatUsername] = value
@@ -437,34 +443,40 @@ struct ConversationDetailView: View {
     /// (oldest at top). Sync `recentMessages` stays for WhitelistScan.
     private func loadTranscriptAndIdentity() async {
         // Clear stale rows when routing between chats before the async hop returns.
-        transcriptMessages = []
-        async let rowsTask = monitor.recentMessagesAsync(
-            chatUsername: chatUsername, limit: Self.transcriptLimit
-        )
+        transcriptRows = []
+        hasTranscriptFocus = false
+        let focus = panelState.consumeTranscriptFocus(for: chatUsername)
         async let identityTask = monitor.selfMessageIdentity()
-        let newestFirst = await rowsTask
-            .map { (sender: $0.sender, body: MessageHelpers.displayText($0.body)) }
-        transcriptMessages = MessageHelpers.chronologicalWindow(
-            newestFirst: newestFirst,
-            visible: Self.transcriptLimit
-        )
+        let loaded: [(sender: String, body: String)]
+        if let focus {
+            loaded = await monitor.messagesAroundFocus(chatUsername: chatUsername, timestamp: focus.timestamp)
+        } else {
+            let newestFirst = await monitor.recentMessagesAsync(
+                chatUsername: chatUsername, limit: Self.transcriptLimit
+            ).map { (sender: $0.sender, body: MessageHelpers.displayText($0.body)) }
+            loaded = MessageHelpers.chronologicalWindow(
+                newestFirst: newestFirst,
+                visible: Self.transcriptLimit
+            )
+        }
         selfNames = await identityTask.selfNames
+        transcriptRows = FocusedTranscript.assemble(loaded: loaded, focus: focus)
+        hasTranscriptFocus = transcriptRows.contains { $0.isFocus }
     }
 
     private var messagesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            let messages = transcriptMessages
-            if messages.isEmpty && PreviewRuntime.isEnabled {
+            if transcriptRows.isEmpty && PreviewRuntime.isEnabled && !hasTranscriptFocus {
                 previewTranscript
-            } else if messages.isEmpty {
+            } else if transcriptRows.isEmpty {
                 Text("暂无消息记录")
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.35))
                     .padding(.vertical, 6)
             } else {
-                ForEach(Array(messages.enumerated()), id: \.offset) { index, msg in
-                    messageBubble(msg)
-                        .id(transcriptAnchor(index, isLast: index == messages.count - 1))
+                ForEach(Array(transcriptRows.enumerated()), id: \.offset) { index, msg in
+                    messageBubble(sender: msg.sender, body: msg.body, highlighted: msg.isFocus)
+                        .id(msg.isFocus ? "transcript-focus" : transcriptAnchor(index, isLast: index == transcriptRows.count - 1))
                 }
             }
         }
@@ -475,25 +487,32 @@ struct ConversationDetailView: View {
 
     private var previewTranscript: some View {
         VStack(alignment: .leading, spacing: 10) {
-            messageBubble((sender: "林晓", body: "今天的评审定在几点？"))
-            messageBubble((sender: "我", body: "我先确认一下。"))
+            messageBubble(sender: "林晓", body: "今天的评审定在几点？")
+            messageBubble(sender: "我", body: "我先确认一下。")
         }
     }
 
-    private func messageBubble(_ msg: (sender: String, body: String)) -> some View {
-        let mine = msg.sender == "我" || selfNames.contains(msg.sender)
+    private func messageBubble(sender: String, body: String, highlighted: Bool = false) -> some View {
+        let mine = sender == "我" || selfNames.contains(sender)
         return HStack(alignment: .top, spacing: 8) {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
-                Text(msg.sender)
+                Text(sender)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.white.opacity(0.45))
-                Text(msg.body)
+                Text(body)
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
-                    .background(Color.white.opacity(mine ? 0.06 : 0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(
+                        (highlighted ? CompanionPalette.jade.opacity(0.28) : Color.white.opacity(mine ? 0.06 : 0.10)),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(highlighted ? CompanionPalette.jade.opacity(0.7) : Color.clear, lineWidth: 1)
+                    )
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
@@ -508,7 +527,7 @@ struct ConversationDetailView: View {
     private func scrollTranscriptToLatest(_ proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             withAnimation(nil) {
-                proxy.scrollTo("transcript-latest", anchor: .bottom)
+                proxy.scrollTo(hasTranscriptFocus ? "transcript-focus" : "transcript-latest", anchor: hasTranscriptFocus ? .center : .bottom)
             }
         }
     }

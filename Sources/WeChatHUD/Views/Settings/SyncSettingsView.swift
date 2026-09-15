@@ -34,6 +34,8 @@ struct SyncSettingsView: View {
     @State private var saveError = ""
     @State private var syncSaveFailed = false
     @State private var needsRestart = false
+    /// 记录回溯 row whose 取消 is awaiting confirmation.
+    @State private var pendingCommitmentCancel: Commitment?
     @State private var exportedURL: URL?
     @State private var legacyStatus: DeviceSettingsStore.LegacyStoreStatus?
     @State private var showLegacyBindConfirm = false
@@ -129,6 +131,23 @@ struct SyncSettingsView: View {
             Button("取消", role: .cancel) { }
         } message: {
             Text("只有在当前新账号库没有业务资料时才应绑定。绑定不会复制或删除数据；重启助手后，将读取旧版记录。请先备份旧数据库和同目录 WAL/SHM 文件。")
+        }
+        // 记录回溯's 取消 is irreversible from the list, so it asks first.
+        // The wording says what changes and what does not, in the same voice
+        // as the rest of the app's confirmations.
+        .alert(CompanionProductCopy.cancelCommitmentTitle, isPresented: Binding(
+            get: { pendingCommitmentCancel != nil },
+            set: { if !$0 { pendingCommitmentCancel = nil } }
+        )) {
+            Button("取消承诺", role: .destructive) {
+                if let item = pendingCommitmentCancel {
+                    mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
+                }
+                pendingCommitmentCancel = nil
+            }
+            Button("保留", role: .cancel) { pendingCommitmentCancel = nil }
+        } message: {
+            Text(CompanionProductCopy.cancelCommitmentMessage)
         }
         .onAppear {
             guard !didLoad else { return }
@@ -258,7 +277,7 @@ struct SyncSettingsView: View {
             }
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle")
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                 Text(Self.connectionFooter(readingReady: readingReady, sendReady: sendReady))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -316,7 +335,7 @@ struct SyncSettingsView: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(CompanionPalette.jade)
+                .foregroundStyle(CompanionPalette.jadeInk)
                 .frame(width: 28, height: 28)
                 .background(CompanionPalette.jade.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 4) {
@@ -330,7 +349,7 @@ struct SyncSettingsView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 Label(status, systemImage: ready ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(ready ? CompanionPalette.jade : .secondary)
+                    .foregroundStyle(ready ? CompanionPalette.jadeInk : .secondary)
                 if let actionTitle, let action {
                     Button(action: action) {
                         HStack(spacing: 3) {
@@ -340,7 +359,7 @@ struct SyncSettingsView: View {
                         }
                     }
                         .buttonStyle(.plain)
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                         .font(.system(size: 12, weight: .medium))
                 }
             }
@@ -601,14 +620,14 @@ struct SyncSettingsView: View {
                 if let msg = exportMessage {
                     HStack(spacing: 8) {
                         Image(systemName: msg.hasPrefix("导出失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : CompanionPalette.jade)
+                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : CompanionPalette.jadeInk)
                         Text(msg)
                             .font(.system(size: 12))
                             .foregroundColor(msg.hasPrefix("导出失败") ? .red : .secondary)
                         if let url = exportedURL, !msg.hasPrefix("导出失败") {
                             Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(CompanionPalette.jade)
+                                .foregroundStyle(CompanionPalette.jadeInk)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -624,7 +643,7 @@ struct SyncSettingsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 12) {
-                        sectionHeaderIcon("clock.arrow.circlepath", color: CompanionPalette.jade)
+                        sectionHeaderIcon("clock.arrow.circlepath", color: CompanionPalette.jadeInk)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("记录回溯")
                                 .font(.system(size: 13, weight: .medium))
@@ -737,7 +756,7 @@ struct SyncSettingsView: View {
                                 if item.status == .fulfilled {
                                     Text("已完成")
                                         .font(.system(size: 12))
-                                        .foregroundColor(CompanionPalette.jade)
+                                        .foregroundColor(CompanionPalette.jadeInk)
                                 } else if item.status == .pending || item.status == .overdue, let d = item.deadlineAt {
                                     Text(d < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(d.timeIntervalSince1970)))")
                                         .font(.system(size: 12))
@@ -747,19 +766,30 @@ struct SyncSettingsView: View {
                         }
                         Spacer()
                         if item.status == .pending {
+                            // Sized and coloured for what they do.
+                            //
+                            // Measured at 34×13pt with 8.5pt between them, and
+                            // 取消 was plain secondary grey — a mis-click
+                            // away from 完成, discarding a commitment the app
+                            // tracked from the user's own message, with no
+                            // confirmation. macOS asks for two things here and
+                            // this had neither: a target the pointer can hit,
+                            // and a red, confirmed destructive action.
                             Button("完成") {
                                 mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .fulfilled) }
                             }
-                            .controlSize(.mini)
-                            Button("取消") {
-                                mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
+                            .controlSize(.small)
+                            .frame(minHeight: 22)
+                            Button("取消", role: .destructive) {
+                                pendingCommitmentCancel = item
                             }
-                            .controlSize(.mini)
-                            .foregroundColor(.secondary)
+                            .controlSize(.small)
+                            .frame(minHeight: 22)
+                            .foregroundColor(.red)
                         } else {
                             Text(commitmentStatusLabel(item.status))
                                 .font(.system(size: 12))
-                                .foregroundColor(item.status == .fulfilled ? CompanionPalette.jade : .secondary)
+                                .foregroundColor(item.status == .fulfilled ? CompanionPalette.jadeInk : .secondary)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -800,12 +830,13 @@ struct SyncSettingsView: View {
                             Button("已处理") {
                                 mutateData { try store.updatePendingAskStatus(msgUID: ask.msgUID, status: .done) }
                             }
-                            .controlSize(.mini)
+                            .controlSize(.small)
+                            .frame(minHeight: 22)
                             Button("忽略") {
                                 mutateData { try store.dismissPendingAsk(msgUID: ask.msgUID) }
                             }
-                            .controlSize(.mini)
-                            .foregroundColor(.secondary)
+                            .controlSize(.small)
+                            .frame(minHeight: 22)
                         } else {
                             Text(ask.status.rawValue).font(.system(size: 12)).foregroundColor(.secondary)
                         }

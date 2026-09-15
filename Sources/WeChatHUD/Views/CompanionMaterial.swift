@@ -57,18 +57,24 @@ enum CompanionElevation {
     /// The card’s outline, lit along the top edge. On the dark canvas the
     /// lit edge is white; on the light canvas a white edge vanishes into the
     /// card, so the outline carries a light top and a defined bottom instead.
+    ///
+    /// Under **Increase Contrast** every non-zero stop is scaled by
+    /// `CompanionAccessibility.borderOpacityScale`. The ramp keeps its shape —
+    /// the light still comes from above — but the edge becomes an edge rather
+    /// than a suggestion, which is the whole point of the switch.
     static var edgeRamp: [Color] {
+        let k = CompanionAccessibility.borderOpacityScale
         if isLightAppearance {
             return [
                 Color.white.opacity(0.0),
-                Color.black.opacity(0.055),
-                Color.black.opacity(0.085)
+                Color.black.opacity(0.055 * k),
+                Color.black.opacity(0.085 * k)
             ]
         }
         return [
-            topHighlight,
-            topHighlight.opacity(0),
-            Color.black.opacity(0.10)
+            Color.white.opacity(topHighlightOpacity * k),
+            Color.white.opacity(0.0),
+            Color.black.opacity(0.10 * k)
         ]
     }
     /// The same highlight as a number, so its relationship to the bottom
@@ -313,14 +319,12 @@ enum CompanionElevation {
 
 /// The window ground.
 ///
-/// The detail pane used to be a flat `CompanionPalette.canvas` fill. This
-/// keeps the canvas colour as the base and lays a single accent-tinted radial
-/// wash over the top of it, anchored where the page title sits: the same
-/// trick CleanMyMac uses to make each module feel like it has its own light.
-/// The wash is *per module*, so switching tabs changes the room's temperature
-/// rather than only its text.
+/// Canvas plus a single quiet jade wash under the title. Every page shares
+/// this atmosphere so switching tabs does not recolour the room. Colour is
+/// for meaning (the one accent, plus red/orange when something needs action),
+/// not for naming modules.
 struct CompanionBackdrop: View {
-    /// Module accent. Drives the wash; the base stays the canvas colour.
+    /// Brand accent. Drives the wash; the base stays the canvas colour.
     var tint: Color = CompanionPalette.jade
     /// Extra emphasis for surfaces that own the whole window (onboarding,
     /// the guide) versus a settings page that wants to stay quiet.
@@ -381,8 +385,15 @@ struct CompanionCardFace: ViewModifier {
     var radius: CGFloat
     var tint: Color?
 
+    /// The card's whole outline and ramp come from `CompanionAccessibility`
+    /// statics, which establish no SwiftUI dependency on their own. Reading
+    /// the generation here is what makes an Increase Contrast flip reach every
+    /// card in the app instead of only the ones that happen to redraw.
+    @Environment(\.companionDisplayGeneration) private var displayGeneration
+
     func body(content: Content) -> some View {
-        content
+        let _ = displayGeneration
+        return content
             .padding(padding)
             .background(background)
             .overlay(border)
@@ -428,8 +439,9 @@ struct CompanionCardFace: ViewModifier {
 
     private var border: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        let edge = CompanionAccessibility.cardEdgeWidth
         return shape
-            .strokeBorder(CompanionPalette.border, lineWidth: 1)
+            .strokeBorder(CompanionPalette.border, lineWidth: edge)
             .overlay(
                 // The lit edge: a hairline that is white along the top and
                 // fades to nothing by mid-height. Stroking the border with a
@@ -442,7 +454,7 @@ struct CompanionCardFace: ViewModifier {
                         startPoint: .top,
                         endPoint: .bottom
                     ),
-                    lineWidth: 1
+                    lineWidth: edge
                 )
                 .opacity(CompanionMotion.reduceTransparency ? 0 : 1)
             )
@@ -625,11 +637,10 @@ extension CompanionSectionHeader where Trailing == EmptyView {
 
 /// The one action that moves things forward, lit.
 ///
-/// CleanMyMac's 扫描 button is the reference: a filled accent capsule with a
-/// warm halo behind it, so on a page of neutral cards there is exactly one
-/// thing that looks like the next step. `CompanionGlowButtonStyle` is that
-/// treatment at our scale — a 0.28-alpha accent shadow at rest, brighter and
-/// slightly tighter under the pointer, plus the house press scale.
+/// A filled jade capsule for the rare next step (onboarding continue).
+/// The halo is a whisper: a lantern on every page header made the chrome
+/// louder than the work. Prefer a system bordered-prominent button unless
+/// the action is the only thing on the screen.
 struct CompanionGlowButtonStyle: ButtonStyle {
     var tint: Color = CompanionPalette.jade
     var compact: Bool = false
@@ -650,9 +661,9 @@ struct CompanionGlowButtonStyle: ButtonStyle {
             .shadow(
                 color: CompanionMotion.reduceTransparency
                     ? .clear
-                    : tint.opacity(configuration.isPressed ? 0.34 : 0.52),
-                radius: configuration.isPressed ? 8 : 12,
-                y: configuration.isPressed ? 2 : 4
+                    : tint.opacity(configuration.isPressed ? 0.14 : 0.22),
+                radius: configuration.isPressed ? 4 : 6,
+                y: configuration.isPressed ? 1 : 2
             )
             .scaleEffect(
                 configuration.isPressed && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1
@@ -674,15 +685,58 @@ extension ButtonStyle where Self == CompanionGlowButtonStyle {
 /// Static dots can only say "good / bad". The pulse says "in progress" without
 /// a spinner, which matters on the status bar where a spinner would fight the
 /// text next to it. Under reduce-motion the halo is replaced by a steady ring.
+///
+/// Under **Differentiate Without Color** the three levels stop being the same
+/// circle in three hues and become three silhouettes — solid disc, ring,
+/// diamond. HIG is explicit that colour alone must never carry meaning, and a
+/// dot whose entire payload is its hue is the textbook violation. The shapes
+/// only appear when the switch is on, so the default rendering is byte-for-byte
+/// what it was before this existed.
 struct CompanionStatusDot: View {
+    /// What the light means, independent of what colour it is.
+    enum Level: CaseIterable {
+        /// Connected / healthy.
+        case ok
+        /// In progress. Also the neutral "nothing to report" light.
+        case working
+        /// Needs the user: failure, stale data, a switched account.
+        case attention
+
+        /// The outline a level is drawn with.
+        enum Silhouette {
+            /// A filled circle — the default for every level.
+            case disc
+            /// A hollow circle: same footprint, half the ink.
+            case ring
+            /// A square stood on its corner.
+            case diamond
+        }
+
+        /// Resolved against the live switch, so the token and the view can
+        /// never disagree about whether shapes are doing the work.
+        var silhouette: Silhouette {
+            guard CompanionAccessibility.differentiateWithoutColor else { return .disc }
+            switch self {
+            case .ok: return .disc
+            case .working: return .ring
+            case .attention: return .diamond
+            }
+        }
+    }
+
     var tint: Color
+    var level: Level = .working
     var pulsing: Bool = false
     var size: CGFloat = 8
 
     @State private var phase: Double = 0
+    /// The silhouette is chosen from an accessibility static, so the dot has
+    /// to depend on the generation to redraw when the switch moves.
+    @Environment(\.companionDisplayGeneration) private var displayGeneration
 
     var body: some View {
-        ZStack {
+        let _ = displayGeneration
+        return ZStack {
             if pulsing {
                 Circle()
                     .fill(tint.opacity(0.30))
@@ -690,15 +744,38 @@ struct CompanionStatusDot: View {
                     .scaleEffect(CompanionMotion.reduceMotion ? 1 : (1 + phase * 0.32))
                     .opacity(CompanionMotion.reduceMotion ? 0.5 : (0.62 - phase * 0.32))
             }
-            Circle()
-                .fill(tint)
+            mark
                 .frame(width: size, height: size)
-                .overlay(Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5))
+                .overlay(edge)
         }
         .frame(width: size * 2.2, height: size * 2.2)
         .onAppear { startPulseIfNeeded() }
         .onChange(of: pulsing) { _, _ in startPulseIfNeeded() }
         .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var mark: some View {
+        switch level.silhouette {
+        case .disc:
+            Circle().fill(tint)
+        case .ring:
+            Circle().strokeBorder(tint, lineWidth: max(1.5, size * 0.26))
+        case .diamond:
+            Rectangle()
+                .fill(tint)
+                .frame(width: size * 0.82, height: size * 0.82)
+                .rotationEffect(.degrees(45))
+        }
+    }
+
+    /// Hairline that keeps the light from melting into a dark ground. A
+    /// diamond has four straight edges already and needs no ring.
+    @ViewBuilder private var edge: some View {
+        if level.silhouette == .diamond {
+            EmptyView()
+        } else {
+            Circle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
+        }
     }
 
     private func startPulseIfNeeded() {
@@ -707,19 +784,12 @@ struct CompanionStatusDot: View {
     }
 }
 
-/// The coloured module tile that heads every sidebar row.
+/// A quiet glyph mark for section headers that still want a small icon.
 ///
-/// This is the single most identifiable thing about the reference app's
-/// shell: each module owns a colour, and that colour is carried by a small
-/// rounded square next to its name. It costs one glyph of space and it does
-/// three jobs at once — it makes a 18-row sidebar scannable by shape rather
-/// than by reading, it gives the page it opens a colour to inherit (header,
-/// selection, primary button), and it makes the unselected state look like a
-/// considered default instead of a greyed-out one.
-///
-/// The tint is *muted* when the row is not selected: a wall of 18 saturated
-/// tiles would out-shout the message list the app exists for. Selection
-/// brightens the tile to full strength and lights its bottom edge.
+/// The sidebar itself no longer uses this: macOS sidebars are SF Symbols in
+/// the app accent, not a wall of saturated squares. Cards that need a
+/// leading mark (the guide) keep a glyph on a faint wash so they still
+/// belong to the same language without shouting.
 struct CompanionModuleTile: View {
     let systemImage: String
     let tint: Color
@@ -729,43 +799,13 @@ struct CompanionModuleTile: View {
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: size * 0.46, weight: .semibold))
-            .foregroundStyle(.white)
+            .font(.system(size: size * 0.46, weight: selected ? .semibold : .medium))
+            .foregroundStyle(selected || hovered ? tint : Color.secondary)
             .frame(width: size, height: size)
             .background {
                 let shape = RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
-                shape.fill(tint.opacity(tileStrength))
-                if !CompanionMotion.reduceTransparency {
-                    // Same top-edge highlight as the cards, so a tile and a
-                    // card read as the same material.
-                    shape.fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.22), Color.white.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: UnitPoint(x: 0.5, y: 0.65)
-                        )
-                    )
-                }
+                shape.fill(tint.opacity(selected ? 0.16 : (hovered ? 0.10 : 0.06)))
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
-                    .strokeBorder(Color.white.opacity(selected ? 0.26 : 0.14), lineWidth: 0.5)
-            )
-            .shadow(
-                color: CompanionMotion.reduceTransparency
-                    ? .clear
-                    : tint.opacity(selected ? 0.42 : (hovered ? 0.24 : 0.14)),
-                radius: selected ? 6 : 3,
-                y: selected ? 2 : 1
-            )
-            .scaleEffect(selected && !CompanionMotion.reduceMotion ? 1.06 : 1)
-            .companionAnimation(CompanionMotion.sidebarSelection(), value: selected)
             .accessibilityHidden(true)
-    }
-
-    /// Unselected tiles stay muted: a wall of 18 saturated squares would
-    /// out-shout the message list the app exists for.
-    private var tileStrength: Double {
-        selected ? 1.0 : (hovered ? 0.86 : 0.62)
     }
 }

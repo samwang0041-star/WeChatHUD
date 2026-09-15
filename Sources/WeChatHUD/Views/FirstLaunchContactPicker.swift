@@ -90,11 +90,11 @@ struct FirstLaunchContactPicker: View {
                     if session.isGroup {
                         Image(systemName: "person.2.fill")
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(following ? Color.white : CompanionPalette.jade)
+                            .foregroundStyle(following ? Color.white : CompanionPalette.jadeInk)
                     } else {
                         Text(String(displayName(for: session).prefix(1)))
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(following ? Color.white : CompanionPalette.jade)
+                            .foregroundStyle(following ? Color.white : CompanionPalette.jadeInk)
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
@@ -108,7 +108,7 @@ struct FirstLaunchContactPicker: View {
                 Spacer()
                 Image(systemName: following ? "checkmark.square.fill" : "square")
                     .companionFont(size: WorkspaceType.title, weight: .medium)
-                    .foregroundStyle(following ? CompanionPalette.jade : .secondary)
+                    .foregroundStyle(following ? CompanionPalette.jadeInk : .secondary)
             }
             .padding(12)
             .background(
@@ -117,7 +117,7 @@ struct FirstLaunchContactPicker: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(following ? CompanionPalette.jade.opacity(0.35) : CompanionPalette.border, lineWidth: 1)
+                    .stroke(following ? CompanionPalette.jade.opacity(0.35) : CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
             )
             .contentShape(Rectangle())
         }

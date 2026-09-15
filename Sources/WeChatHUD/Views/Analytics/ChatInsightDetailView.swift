@@ -68,7 +68,7 @@ struct ChatInsightDetailView: View {
                         .frame(width: 44, height: 44)
                     Text(String(chatName.prefix(1)))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -123,12 +123,12 @@ struct ChatInsightDetailView: View {
                     panelState.showDetail()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
+                .foregroundStyle(CompanionPalette.jadeInk)
                 Button("查看原文") {
                     panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jade)
+                .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .padding(.horizontal, 20)
@@ -283,13 +283,21 @@ struct ChatInsightDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        // Bordered, not a second filled accent.
+                        //
+                        // This page already has one filled primary action in the
+                        // header (分析 / 重新分析). Two filled accent controls on
+                        // one screen — in two different hues, mint in the header
+                        // and jade here — leaves the eye no ranking to follow;
+                        // macOS gives a view one prominent action and styles the
+                        // rest as bordered or plain. It also matches the two
+                        // 查看待办 / 查看原文 links already in the header row.
                         Button("查看待办") {
                             panelState.pendingDiscussionChatUsername = chatUsername
                             panelState.pendingSettingsTab = "tasks"
                             panelState.showDetail()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(CompanionPalette.jade)
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
                     .padding(16)
@@ -306,7 +314,7 @@ struct ChatInsightDetailView: View {
                         panelState.showDetail()
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .medium))
                 }
            }

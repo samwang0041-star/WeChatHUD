@@ -20,14 +20,24 @@ struct SettingsSection<Content: View>: View {
                     .foregroundStyle(.primary)
                     .padding(.leading, 4)
             }
-            VStack(spacing: 0) {
+            // Leading, not the default centre.
+            //
+            // Any child that does not stretch itself — a footnote, a warning
+            // banner's sentence, a lone button under a row — was being centred
+            // in the card. Measured in the shipped build: 提醒方式's footnote sat
+            // at x1168–1791 inside a card spanning x528–2444 whose every row
+            // starts at x561. Four pages had the same floating block, and it is
+            // the one layout rule in `ui-language.md` that was being broken
+            // everywhere at once (header, content and cards share one left edge).
+            VStack(alignment: .leading, spacing: 0) {
                 content()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(CompanionPalette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(CompanionPalette.border, lineWidth: 1)
+                    .stroke(CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
             )
         }
     }

@@ -1,6 +1,15 @@
 import SwiftUI
 
 struct AssistantTodayView: View {
+    /// Hit area for the two inline glyph buttons in the search row.
+    ///
+    /// 22pt is the standard macOS push-button height; it is the smallest target
+    /// this app uses anywhere for something the pointer has to find, and it is
+    /// deliberately larger than the 13pt glyph it wraps. Before this the
+    /// magnifier measured 12×13 — a target the hand cannot reliably hit, in a
+    /// row the eye reads as a single control.
+    static let inlineIconTarget: CGFloat = 22
+
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var panelState: PanelState
@@ -8,6 +17,10 @@ struct AssistantTodayView: View {
     @FocusState private var searchFocused: Bool
     @State private var query = ""
     @State private var showUpdates = false
+    @State private var showMissed = false
+    @State private var missedWindow: MissedReplyFinder.Window = .last7Days
+    @State private var missedCustomStart = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
+    @State private var missedCustomEnd = Date()
     @State private var dismissed: InboxItem?
     @State private var expandedID: String?
     @State private var snoozeReceipt: String?
@@ -47,17 +60,14 @@ struct AssistantTodayView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     CompanionSetupCard(navigate: navigate)
-                    HStack(spacing: 8) {
-                        filterPill("需要回复", count: needsReply.count, selected: !showUpdates) {
-                            showUpdates = false
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            todayScopePills
+                            todayJumpPills
                         }
-                        jumpPill("我要做", count: mineTasks.count) {
-                            panelState.pendingDiscussionScope = .mine
-                            navigate(.tasks)
-                        }
-                        jumpPill("等对方", count: waitingTasks.count) {
-                            panelState.pendingDiscussionScope = .theirs
-                            navigate(.tasks)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) { todayScopePills }
+                            HStack(spacing: 8) { todayJumpPills }
                         }
                     }
                     .companionStagger(index: 0)
@@ -78,7 +88,19 @@ struct AssistantTodayView: View {
                 .workspacePage(WorkspacePage.wideWidth)
             }
         }
-        .onAppear { refreshAIReadiness() }
+        .onAppear {
+            refreshAIReadiness()
+            if monitor.missedReplies.isEmpty && !monitor.missedReplyLoading {
+                let bounds = missedWindow.bounds(customStart: missedCustomStart, customEnd: missedCustomEnd)
+                monitor.refreshMissedReplies(start: bounds.start, end: bounds.end)
+            }
+        }
+        .onChange(of: showMissed) { _, showing in
+            panelState.todayShowsMissedReplies = showing
+        }
+        .onDisappear {
+            panelState.todayShowsMissedReplies = false
+        }
     }
 
     private func refreshAIReadiness() {
@@ -91,14 +113,14 @@ struct AssistantTodayView: View {
     private var messageFeed: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center) {
-                Text(showUpdates ? "这些对话有更新" : "先处理这些事").workspaceTitle()
+                Text(showMissed ? "这段时间有人找你" : (showUpdates ? "这些对话有更新" : "先处理这些事")).workspaceTitle()
                 Spacer()
                 // Closure, not another queue. Every other number on this page
                 // counts what is left; without this one the page can only ever
                 // report that you are behind. Shown only once there is
                 // something to be finished with, so a fresh install is not
                 // greeted by a zero.
-                if handledTodayCount > 0 {
+                if handledTodayCount > 0 && !showMissed {
                     Text(CompanionInteractionCopy.handledToday(handledTodayCount))
                         .workspaceMeta()
                         // On-wash step: this row sits in the band the module
@@ -120,22 +142,41 @@ struct AssistantTodayView: View {
                         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                     }
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                 }
                 .buttonStyle(.plain)
+                .disabled(showMissed)
+                .opacity(showMissed ? 0 : 1)
             }
             HStack(spacing: 9) {
                 Button { searchFocused = true } label: {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        // The glyph is 13pt; the target is what the pointer
+                        // has to hit. Measured at 12×13 before this frame,
+                        // which is under every macOS control metric — the
+                        // smallest system control is 16pt and the standard
+                        // one 22. The extra area is invisible: it is the same
+                        // glyph in the same place, with a hit region that the
+                        // hand can actually find.
+                        .frame(width: Self.inlineIconTarget, height: Self.inlineIconTarget)
+                        .contentShape(Rectangle())
                 }.buttonStyle(.plain).keyboardShortcut("f", modifiers: .command)
                     .accessibilityLabel("搜索联系人或消息")
+                    .help("搜索联系人或消息（⌘F）")
                 TextField("搜索联系人或消息", text: $query)
                     .textFieldStyle(.plain)
                     .focused($searchFocused)
                     .accessibilityLabel("搜索联系人或消息")
                 if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .frame(width: Self.inlineIconTarget, height: Self.inlineIconTarget)
+                            .contentShape(Rectangle())
+                    }
                         .buttonStyle(.plain).accessibilityLabel("清除搜索")
+                        .help("清除搜索")
                 } else {
                     Text("⌘ F").font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
                 }
@@ -158,7 +199,14 @@ struct AssistantTodayView: View {
             )
             .companionAnimation(CompanionMotion.hover(), value: searchFocused)
 
-            if visible.isEmpty {
+            if showMissed {
+                MissedReplyFeed(
+                    window: $missedWindow,
+                    customStart: $missedCustomStart,
+                    customEnd: $missedCustomEnd,
+                    query: query
+                )
+            } else if visible.isEmpty {
                 if aiReadinessLoaded {
                     let empty = FirstLaunchGuide.todayEmpty(
                         wechatConnected: wechatConnected,
@@ -191,7 +239,7 @@ struct AssistantTodayView: View {
             if let snoozeReceipt {
                 HStack {
                     Label(snoozeReceipt, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(CompanionPalette.jade)
+                        .foregroundStyle(CompanionPalette.jadeInk)
                     Spacer()
                     Button("知道了") { self.snoozeReceipt = nil }
                 }.font(.callout).companionSurface(padding: 14)
@@ -367,9 +415,31 @@ struct AssistantTodayView: View {
         switch monitor.stats.syncStatus { case .ok: return "checkmark.circle"; case .syncing, .idle: return "arrow.triangle.2.circlepath"; default: return "exclamationmark.triangle" }
     }
 
+    @ViewBuilder private var todayScopePills: some View {
+        filterPill("需要回复", count: needsReply.count, selected: !showUpdates && !showMissed) {
+            showUpdates = false
+            showMissed = false
+        }
+        filterPill("没回的", count: monitor.missedReplies.count, selected: showMissed) {
+            showMissed = true
+            showUpdates = false
+        }
+    }
+
+    @ViewBuilder private var todayJumpPills: some View {
+        jumpPill("我要做", count: mineTasks.count) {
+            panelState.pendingDiscussionScope = .mine
+            navigate(.tasks)
+        }
+        jumpPill("等对方", count: waitingTasks.count) {
+            panelState.pendingDiscussionScope = .theirs
+            navigate(.tasks)
+        }
+    }
+
     private func filterPill(_ title: String, count: Int, selected: Bool, action: @escaping () -> Void) -> some View {
-        // The page's own module colour, so the selected filter belongs to
-        // 今天 rather than wearing the brand green used for primary actions.
+        // Quiet selected wash in the brand accent. Filters are the current
+        // view, not a second primary action.
         CompanionFilterPill(
             title: "\(title) \(count)",
             selected: selected,
@@ -392,7 +462,7 @@ struct AssistantTodayView: View {
             // and the 2pt mismatch made the group look misaligned.
             .padding(.horizontal, 12).padding(.vertical, 6)
             .background(CompanionPalette.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(CompanionPalette.border))
+            .overlay(Capsule().companionHairline())
         }
         .buttonStyle(CompanionPressStyle())
         .accessibilityLabel("\(title)，\(count) 项")
@@ -427,7 +497,7 @@ struct AssistantTodayView: View {
                 if let summary = item.aiSummary, !summary.isEmpty {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jade)
+                            Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jadeInk)
                             Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
                         }
                         Spacer(minLength: 8)
@@ -436,7 +506,7 @@ struct AssistantTodayView: View {
                         }
                             .buttonStyle(.plain)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(CompanionPalette.jade)
+                            .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     .padding(12)
                     .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

@@ -88,7 +88,7 @@ struct InsightSidebarView: View {
                 Button("清除搜索") { searchText = "" }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jade)
+                    .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .padding(8)

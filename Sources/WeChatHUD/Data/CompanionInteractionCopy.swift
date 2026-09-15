@@ -51,6 +51,12 @@ enum CompanionInteractionCopy {
         }
     }
 
+    static let missedRepliesHint = "按你选的时间，找出私聊和群 @ 里还没回的"
+    static let readingMissedReplies = "正在按时间翻私聊和群 @，看哪些还没回"
+    static let missedRepliesEmpty = "这段时间里，关注的私聊和点名你的群消息都回过了。"
+    static let missedRepliesFailed = "刚才没读完聊天。点时间再试一次，或先检查微信连接。"
+    static let missedRepliesNeedConnection = "先连上微信，才能按时间找出还没回的消息。"
+
     /// Row-level hover promise in the message list: what opening this row
     /// actually gives you.
     static let openConversationHint = "展开这条，看原文、AI 解读和可以回的话"

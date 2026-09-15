@@ -109,6 +109,10 @@ final class PanelState: ObservableObject {
     /// `ConversationDetailView` after routing, including when that view is
     /// already showing the same chat.
     @Published private(set) var pendingReplyDraftContinuation: ReplyDraftContinuation?
+    /// Conversation detail should land on this inbound, not the latest line.
+    @Published private(set) var pendingTranscriptFocus: TranscriptFocus?
+    /// Workspace 「今天」 is showing the missed-reply surface.
+    @Published var todayShowsMissedReplies = false
 
     private var notificationTimer: Timer?
     private var notificationDuration: TimeInterval = 3
@@ -476,7 +480,19 @@ final class PanelState: ObservableObject {
 
     /// Show detail view for a specific conversation.
     func showChatDetail(chatUsername: String, chatName: String) {
+        pendingTranscriptFocus = nil
         showDetail(kind: .conversation(chatUsername: chatUsername), chatName: chatName)
+    }
+
+    func showChatDetail(chatUsername: String, chatName: String, focus: TranscriptFocus) {
+        pendingTranscriptFocus = focus
+        showDetail(kind: .conversation(chatUsername: chatUsername), chatName: chatName)
+    }
+
+    func consumeTranscriptFocus(for chatUsername: String) -> TranscriptFocus? {
+        guard let pending = pendingTranscriptFocus, pending.chatUsername == chatUsername else { return nil }
+        pendingTranscriptFocus = nil
+        return pending
     }
 
     func requestReplyDraftContinuation(chatUsername: String, text: String, savedDraftID: Int64? = nil) {
@@ -524,6 +540,7 @@ final class PanelState: ObservableObject {
     func clearDetail() {
         detailKind = nil
         selectedChatName = nil
+        pendingTranscriptFocus = nil
     }
 
     /// Dismiss the detail view back to the compact bar.
