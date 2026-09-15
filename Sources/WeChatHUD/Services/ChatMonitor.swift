@@ -1337,6 +1337,10 @@ final class ChatMonitor: ObservableObject {
         if repairedTargets > 0 {
             print("[WCHUD] repaired \(repairedTargets) commitment target rows")
         }
+        let repairedInquiries = repairInvertedInquiryRecords()
+        if repairedInquiries.commitments + repairedInquiries.discussions > 0 {
+            print("[WCHUD] repaired inverted inquiries: commitments=\(repairedInquiries.commitments) discussions=\(repairedInquiries.discussions)")
+        }
         reloadAIData()
         runPostScanAI(o)
 

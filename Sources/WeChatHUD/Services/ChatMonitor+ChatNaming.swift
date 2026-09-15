@@ -252,4 +252,36 @@ extension ChatMonitor {
         }
         return store.applyResolvedCommitTargets(updates)
     }
+
+    /// Drop persisted commitments/todos that inverted a user question into a promise.
+    @discardableResult
+    func repairInvertedInquiryRecords() -> (commitments: Int, discussions: Int) {
+        Self.repairInvertedInquiryRecords(store: store)
+    }
+
+    @discardableResult
+    static func repairInvertedInquiryRecords(store: HUDStore) -> (commitments: Int, discussions: Int) {
+        var cancelled = 0
+        for commitment in store.loadCommitments() where commitment.status == .pending || commitment.status == .overdue {
+            guard MessageFeatureExtractor.isInvertedInquiryRecord(
+                sourceText: commitment.sourceText,
+                summary: commitment.content
+            ) else { continue }
+            try? store.updateCommitmentStatus(msgUID: commitment.msgUID, status: .cancelled)
+            cancelled += 1
+        }
+        var reclassified = 0
+        for item in store.loadDiscussionItems(status: .pending) {
+            guard let repaired = MessageFeatureExtractor.repairedInquiryDiscussion(
+                kind: item.kind, owner: item.owner, content: item.content
+            ) else { continue }
+            guard repaired.kind != item.kind || repaired.owner != item.owner || repaired.content != item.content else { continue }
+            if (try? store.repairDiscussionItemDirection(
+                id: item.id, kind: repaired.kind, owner: repaired.owner, content: repaired.content
+            )) == true {
+                reclassified += 1
+            }
+        }
+        return (cancelled, reclassified)
+    }
 }

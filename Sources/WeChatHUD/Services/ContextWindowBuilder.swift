@@ -49,6 +49,18 @@ enum ContextRole {
         case .autopilot: return 2
         }
     }
+
+    /// Longest silence still counted as the same conversation as the target.
+    /// Count-based look-behind used to pull an old request into a later
+    /// acknowledgement or inquiry. nil keeps the old count window.
+    var conversationGapSeconds: Int? {
+        switch self {
+        case .classifier, .commitmentTracker, .replyGenerator, .autopilot:
+            return GroupContextSourceLoader.maxConversationGapSeconds
+        case .contextAnalyzer, .vipAggregator, .groupDigestor, .retrospector:
+            return nil
+        }
+    }
 }
 
 /// Message annotated with sender role for prompt injection.
@@ -147,7 +159,14 @@ enum ContextWindowBuilder {
         }
         let start = max(0, targetIdx - role.lookBehind)
         let end = min(ordered.count - 1, targetIdx + role.lookAhead)
-        let slice = Array(ordered[start...end])
+        var slice = Array(ordered[start...end])
+        if let maxGap = role.conversationGapSeconds {
+            let history = Array(slice.prefix { $0.id != target.id })
+            let following = Array(slice.drop { $0.id != target.id }.dropFirst())
+            slice = GroupContextSourceLoader.conversationHistory(history, leadingTo: target, maxGap: maxGap)
+                + [target]
+                + GroupContextSourceLoader.conversationContinuation(following, from: target, maxGap: maxGap)
+        }
 
         let annotated = slice.map { msg -> AnnotatedMessage in
             let lookup = contactLookup(msg.senderUsername)

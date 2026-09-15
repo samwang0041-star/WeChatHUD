@@ -8,7 +8,8 @@ import Foundation
 actor AIChatInsight {
     // Keep the template, audit label and cache identity in sync. Version 3
     // preserves sparse readable messages instead of treating them as empty.
-    private static let analysisType = "chat_insight_v3"
+    // v3d: direction rules — user questions are not the user's commitments.
+    private static let analysisType = "chat_insight_v3d"
     private let store: HUDStore
     private let aiService: AIService
     private let pipeline: AIAnalysisPipeline

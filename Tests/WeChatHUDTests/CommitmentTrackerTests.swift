@@ -30,6 +30,9 @@ final class CommitmentTrackerTests: XCTestCase {
         XCTAssertFalse(CommitmentTracker.hasCommitmentSignal("哈哈好搞笑"))
         XCTAssertFalse(CommitmentTracker.hasCommitmentSignal("这个怎么做"))
         XCTAssertFalse(CommitmentTracker.hasCommitmentSignal("？"))
+        XCTAssertFalse(CommitmentTracker.hasCommitmentSignal("问一下六七千块钱的报价"))
+        XCTAssertTrue(CommitmentTracker.hasCommitmentSignal("我去问一下老板再回你"))
+        XCTAssertTrue(CommitmentTracker.hasCommitmentSignal("无论如何我明天发给你"))
     }
 
     func testCommitmentDBRoundtrip() {
@@ -124,5 +127,100 @@ final class CommitmentTrackerTests: XCTestCase {
             apiKey: "sk-test"
         )
         return AIService(config: cfg)
+    }
+
+    func testOutgoingInquiriesAreNotCommitments() async throws {
+        let inquiries = [
+            "问一下",
+            "问一下六七千块钱的报价",
+            "问一下六七千块钱的报价/价格情况",
+            "问下这个功能怎么用？",
+            "请问今天下午几点开会",
+            "想问下周五放假吗",
+            "这个价格能优惠吗？",
+            "什么时候发货呢"
+        ]
+
+        let tracker = CommitmentTracker(store: store, aiService: makeAIService())
+
+        for text in inquiries {
+            XCTAssertTrue(CommitmentTracker.isLikelyOutgoingInquiry(text), "Should detect inquiry: \(text)")
+            XCTAssertFalse(CommitmentTracker.hasCommitmentSignal(text), "Should not have commitment signal: \(text)")
+
+            let result = await tracker.analyze(
+                yourMessage: MessageInfo(
+                    id: "test_\(UUID().uuidString)", chatUsername: "chat1", chatName: "谢潘",
+                    senderUsername: "me", senderName: "我",
+                    text: text,
+                    baseType: 1, subType: 0, createTime: Int(Date().timeIntervalSince1970)
+                ),
+                contextMessages: [],
+                recipientName: "谢潘",
+                recipientRole: ContactRole.colleague
+            )
+
+            XCTAssertEqual(result?.isCommitment, false, "Inquiry should not be a commitment: \(text)")
+        }
+        XCTAssertTrue(URLRequestRecorder.capturedRequests.isEmpty, "inquiries must not call the model")
+    }
+
+    func testFollowupAskThenReplyIsNotAnInquiry() {
+        XCTAssertFalse(CommitmentTracker.isLikelyOutgoingInquiry("我去问一下老板再回你"))
+        XCTAssertFalse(CommitmentTracker.isLikelyOutgoingInquiry("无论如何我明天发给你"))
+        XCTAssertTrue(CommitmentTracker.hasCommitmentSignal("我去问一下老板再回你"))
+    }
+
+    @MainActor
+    func testRepairCancelsPersistedInquiryCommitmentsAndReclassifiesTodos() throws {
+        try store.upsertCommitment(
+            msgUID: "inq1", chatUsername: "chat1", chatName: "谢潘",
+            content: "去问一下六七千块钱的报价/价格情况，之后回复谢潘", commitTo: "谢潘",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "commitment_v1",
+            sourceText: "问一下六七千块钱的报价/价格情况"
+        )
+        try store.upsertCommitment(
+            msgUID: "real1", chatUsername: "chat1", chatName: "谢潘",
+            content: "我去问一下老板再回你", commitTo: "谢潘",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "commitment_v1",
+            sourceText: "我去问一下老板再回你"
+        )
+        _ = try store.insertDiscussionItem(
+            chatUsername: "chat1", chatName: "谢潘", kind: .todo, owner: .mine,
+            content: "去问一下六七千块钱的报价，之后回复谢潘", detail: nil,
+            anchorMsgUID: "inq1", sourceTimestamp: 1000, dueAt: nil,
+            confidence: 0.9, promptVersion: "discussion_v3"
+        )
+
+        let repaired = ChatMonitor.repairInvertedInquiryRecords(store: store)
+        XCTAssertEqual(repaired.commitments, 1)
+        XCTAssertEqual(repaired.discussions, 1)
+
+        XCTAssertEqual(store.loadCommitments(status: .cancelled).first?.msgUID, "inq1")
+        XCTAssertEqual(store.loadCommitments(status: .pending).map(\.msgUID), ["real1"])
+        let item = store.loadDiscussionItems(chatUsername: "chat1").first
+        XCTAssertEqual(item?.kind, .question)
+        XCTAssertEqual(item?.owner, .theirs)
+        XCTAssertEqual(item?.content, "问一下六七千块钱的报价")
+    }
+
+    @MainActor
+    func testRepairDoesNotCancelTaskSummariesThatOnlyContainWhether() throws {
+        try store.upsertCommitment(
+            msgUID: "real2", chatUsername: "chat1", chatName: "林总",
+            content: "确认是否周五前交货", commitTo: "林总",
+            deadlineAt: nil, confidence: 0.9, promptVersion: "commitment_v1",
+            sourceText: ""
+        )
+        _ = try store.insertDiscussionItem(
+            chatUsername: "chat1", chatName: "林总", kind: .todo, owner: .mine,
+            content: "确认是否可以周五交货", detail: nil,
+            anchorMsgUID: "real2", sourceTimestamp: 1000, dueAt: nil,
+            confidence: 0.9, promptVersion: "discussion_v3"
+        )
+        let repaired = ChatMonitor.repairInvertedInquiryRecords(store: store)
+        XCTAssertEqual(repaired.commitments, 0)
+        XCTAssertEqual(repaired.discussions, 0)
+        XCTAssertEqual(store.loadCommitments(status: .pending).map(\.msgUID), ["real2"])
+        XCTAssertEqual(store.loadDiscussionItems(chatUsername: "chat1").first?.owner, .mine)
     }
 }

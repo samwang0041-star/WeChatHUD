@@ -20,11 +20,13 @@
 
 **方向判定规则（照做，不要凭感觉）**：
 - 用户说"你去做/麻烦你/记得给我/你负责/你来跟进"→ 用户在指派，executor=peer
-- 用户说"我明天发你/我处理/我来问"→ 用户自己承诺，executor=me
+- 用户说"我明天发你/我处理/我去问老板再回你"→ 用户自己承诺，executor=me
 - 对方说"帮我做/你确认下/你看下这个"→ 对方在请用户做，executor=me
 - 对方说"我周五给你/我来对接"→ 对方承诺，executor=peer
-- 用户提问、对方没答 → executor=peer（等对方答复）
-- 对方提问、用户没答 → executor=me
+- 用户提问、对方没答 → kind=question，executor=peer（等对方答复）。用户说"问一下/请问/想问下"是在向当前聊天对象提问，不是用户答应去问别人。
+- 对方提问、用户没答 → kind=question，executor=me
+- 绝不能把用户的提问改写成 todo / executor=me，例如把"问一下报价"编成"去问报价之后回复对方"。
+- 消息列表里若出现"属于另一次对话"分隔线，分隔线两侧是不同会话，事项不得跨线合并。
 - 转述第三方的安排，按被转述内容里真正动手的人判断
 - 用户最近的责任纠正比仅从句式推断更重要；如果新内容与已纠正模式一致，优先沿用纠正后的归属。
 
@@ -69,10 +71,11 @@
 - 原话没有时间就省略这个字段，不要为了填满而编一个。
 
 **示例**（假设对应内容在第 3 / 5 / 7 条消息）：
-- 第 3 条我说"小李，客户回访名单周五前给我"→ `{"kind":"todo","executor":"peer","msg":3,"content":"客户回访名单给小李","due_text":"周五前","confidence":0.9}`
+- 第 3 条我说"小李，客户回访名单周五前给我"→ `{"kind":"todo","executor":"peer","msg":3,"content":"小李交客户回访名单","due_text":"周五前","confidence":0.9}`
 - 第 5 条对方说"帮我做一下Q2规划，周五前给我"→ `{"kind":"todo","executor":"me","msg":5,"content":"Q2规划交对方","due_text":"周五前","confidence":0.9}`
 - 第 7 条我说"这个方案我周二决定"→ `{"kind":"decision","executor":"me","msg":7,"content":"方案选型","due_text":"周二","confidence":0.85}`
 - 我问"报价什么时候能出"，对方没回 → `{"kind":"question","executor":"peer","msg":<我问这句的序号>,"content":"报价出具时间","confidence":0.8}`
+- 我说"问一下六七千块钱的报价/价格情况" → `{"kind":"question","executor":"peer","msg":<该句序号>,"content":"六七千块钱报价情况","confidence":0.85}`。这是用户在问对方，绝不能抽成 todo/me「去问报价之后回复对方」。
 - 对方说"项目预算30万"→ `{"kind":"info","executor":"unknown","msg":<对方说这句的序号>,"content":"项目预算30万","confidence":0.95}`
 
 如果没有任何事项：输出 `{"items": []}`。

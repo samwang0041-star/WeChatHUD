@@ -213,20 +213,29 @@ actor DiscussionTracker {
         // actual sender) and a timestamp — the model echoes `msg` back
         // per item so ownership and the "原文" anchor land on the line
         // that actually produced the item, not the batch's newest one.
-        let lines = fresh.enumerated().map { idx, msg -> String in
+        // Absolute date + weekday, not "3小时前": the model now echoes the
+        // original time wording ("周五前") instead of computing an offset
+        // itself. Session separators stop a Monday thread being fused with
+        // Thursday's new messages in the same extraction window.
+        let gapThreshold = isGroup ? ConversationSegmenter.groupGapThreshold : ConversationSegmenter.privateGapThreshold
+        var transcript: [String] = []
+        var previousTime: Int?
+        for (idx, msg) in fresh.enumerated() {
+            if let previousTime, msg.createTime - previousTime >= gapThreshold {
+                let hours = max(1, (msg.createTime - previousTime) / 3600)
+                transcript.append("—— 与上一段间隔 \(hours) 小时，属于另一次对话，不要把两段的事项混在一起 ——")
+            }
             let isSelf = MessageHelpers.isFromSelf(
                 msg, chatUsername: chatUsername,
                 myUsername: myUsername, myDisplayName: myDisplayName,
                 mySelfNames: mySelfNames
             )
             let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : msg.senderName)
-            // Absolute date + weekday, not "3小时前": the model now echoes the
-            // original time wording ("周五前") instead of computing an offset
-            // itself, and it can only do that usefully if it can see which day
-            // the line was sent on.
             let ts = MessageInfo.formatAbsoluteForPrompt(msg.createTime)
-            return "[\(idx + 1)] [\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))"
-        }.joined(separator: "\n")
+            transcript.append("[\(idx + 1)] [\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))")
+            previousTime = msg.createTime
+        }
+        let lines = transcript.joined(separator: "\n")
 
         let knownList = existing.map { "- \($0.kind.label): \($0.content)" }.joined(separator: "\n")
         let correctionHint = DiscussionCorrection.hint(
@@ -260,7 +269,14 @@ actor DiscussionTracker {
             return (0, false)
         }
 
-        var items = parseItems(body, messages: fresh)
+        let isSelfMessage: (MessageInfo) -> Bool = { msg in
+            MessageHelpers.isFromSelf(
+                msg, chatUsername: chatUsername,
+                myUsername: myUsername, myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames
+            )
+        }
+        var items = parseItems(body, messages: fresh, isSelf: isSelfMessage)
         var outputBody = body
         // One strict-retry, same pattern as CommitmentTracker / Classifier
         if items == nil {
@@ -271,7 +287,7 @@ actor DiscussionTracker {
             }
             if let retryBody = retry.text {
                 outputBody = retryBody
-                items = parseItems(retryBody, messages: fresh)
+                items = parseItems(retryBody, messages: fresh, isSelf: isSelfMessage)
             }
         }
         guard let parsed = items else {
@@ -340,7 +356,7 @@ actor DiscussionTracker {
 
     // MARK: - Parsing
 
-    private func parseItems(_ raw: String, messages: [MessageInfo]) -> [ExtractedItem]? {
+    private func parseItems(_ raw: String, messages: [MessageInfo], isSelf: (MessageInfo) -> Bool) -> [ExtractedItem]? {
         let cleaned = Self.cleanJSON(raw)
         guard let data = cleaned.data(using: .utf8) else { return nil }
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -372,8 +388,11 @@ actor DiscussionTracker {
             let detail = row["detail"] as? String
             let deadline = Self.resolveDue(row, sourceDate: sourceDate)
             let confidence = (row["confidence"] as? Double) ?? 0.6
+            let corrected = Self.correctInvertedSelfInquiry(
+                kind: kind, owner: owner, source: source, isSelf: isSelf
+            )
             out.append(ExtractedItem(
-                kind: kind, owner: owner,
+                kind: corrected.kind, owner: corrected.owner,
                 content: content, detail: detail?.isEmpty == true ? nil : detail,
                 dueAt: deadline, confidence: confidence,
                 anchorMsgUID: source?.id ?? "",
@@ -426,6 +445,26 @@ actor DiscussionTracker {
     /// `executor` (who performs the action) is authoritative in v3 —
     /// "我指派对方" reads `peer` and lands in 等对方 instead of 我要做.
     /// `owner` survives as a fallback for models that ignore the new field.
+    /// User asking the current peer is never the user's todo. The model
+    /// otherwise inverts "问一下报价" into "去问报价之后回复对方".
+    private static func correctInvertedSelfInquiry(
+        kind: DiscussionItemKind,
+        owner: DiscussionItemOwner,
+        source: MessageInfo?,
+        isSelf: (MessageInfo) -> Bool
+    ) -> (kind: DiscussionItemKind, owner: DiscussionItemOwner) {
+        guard let source, isSelf(source),
+              MessageFeatureExtractor.isOutgoingInquiryToPeer(source.text) else {
+            return (kind, owner)
+        }
+        switch kind {
+        case .todo, .decision, .question:
+            return (.question, .theirs)
+        case .info, .timePlace:
+            return (kind, owner)
+        }
+    }
+
     private static func owner(for row: [String: Any]) -> DiscussionItemOwner? {
         if let executor = row["executor"] as? String {
             switch executor {
