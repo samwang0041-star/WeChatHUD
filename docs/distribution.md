@@ -102,14 +102,14 @@ spctl --assess --type execute --verbose=4 .build/WeChatHUD.app
 ```bash
 make notarize \
   SIGN_IDENTITY="Developer ID Application: Example, Inc." \
-  NOTARY_PROFILE="wechathud-notary"
+  NOTARY_PROFILE="WeChatHUD-Notarization"
 ```
 
 审阅命令和目标后，由发布者手动执行输出的命令：
 
 ```bash
 xcrun notarytool submit ".build/distribution/WeChatHUD-<version>-macOS14-arm64.zip" \
-  --keychain-profile "wechathud-notary" --wait
+  --keychain-profile "WeChatHUD-Notarization" --wait
 xcrun stapler staple .build/WeChatHUD.app
 spctl --assess --type execute --verbose=4 .build/WeChatHUD.app
 make archive-notarized
