@@ -10,3 +10,10 @@ DerivedData/
 Tests/Fixtures/labeled_messages_private.json
 # classify-real default output goes to /tmp; ignore any local redirects too.
 classify_real_*.json
+
+# Local AI-agent working dirs (session logs, machine paths, harness state).
+# Never publish: they leak host paths and are not part of the product.
+.agent-harness/
+.agent-checkpoints/
+.superpowers/
+.claude/

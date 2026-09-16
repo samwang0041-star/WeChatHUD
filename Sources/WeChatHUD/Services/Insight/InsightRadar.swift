@@ -407,10 +407,10 @@ private extension InsightRadarFinding.Kind {
 
 private extension String {
     var normalizedForRadarKey: String {
+        // Self-references arrive here already normalized to "我" by the
+        // engine's configured self-alias pass; only the generic Chinese
+        // self-references need folding here.
         let lowered = lowercased()
-            .replacingOccurrences(of: "lilei", with: "我")
-            .replacingOccurrences(of: "lilei", with: "我")
-            .replacingOccurrences(of: "李雷", with: "我")
             .replacingOccurrences(of: "本人", with: "我")
             .replacingOccurrences(of: "自己", with: "我")
         return lowered

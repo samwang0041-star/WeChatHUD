@@ -51,7 +51,7 @@ final class ConnectionSetupPolicyTests: XCTestCase {
             processRoots: ["/wechat/account-b/db_storage"]
         )
 
-        XCTAssertEqual(result, .useConfiguredRoot("/Users/lilei/wechat/account-a/db_storage"))
+        XCTAssertEqual(result, .useConfiguredRoot(NSHomeDirectory() + "/wechat/account-a/db_storage"))
     }
 
     func testSingleProcessRootIsSelectedOnlyWhenItMatchesCandidate() {
@@ -149,7 +149,7 @@ final class ConnectionSetupPolicyTests: XCTestCase {
             persist: { _ in persistCalled = true }
         )
 
-        XCTAssertEqual(result, "/Users/lilei/wechat/account-a/db_storage")
+        XCTAssertEqual(result, NSHomeDirectory() + "/wechat/account-a/db_storage")
         XCTAssertFalse(probeCalled)
         XCTAssertFalse(persistCalled)
     }

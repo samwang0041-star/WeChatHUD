@@ -201,7 +201,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             loadManifest()
         }
         // Hydrate learned group-chat self-aliases from last run so the
-        // first scan after a restart already knows "我" vs "李雷" and
+        // first scan after a restart already knows "我" vs a group nickname and
         // the AI summarizer doesn't mis-attribute the user's own
         // messages on day one. Aliases expire: a nickname I stopped
         // using (or never owned — a mislearned hint) must not mark a
@@ -779,7 +779,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // realSenderId==0 branch — previously we `= [me]`'d which
         // threw away every learned alias on every contact.db refresh.
         // That's why the AI summarizer kept seeing the user's own
-        // messages labelled as the group nickname (e.g. "李雷") and
+        // messages labelled as the group nickname (e.g. a group alias) and
         // mis-attributing them to a bystander of the same name.
         let me = myUsername()
         if !me.isEmpty {

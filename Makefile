@@ -22,7 +22,9 @@ icon:
 # notarytool keychain profile before a human runs the printed command.
 APP_VERSION := $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist 2>/dev/null)
 DIST_ARCHIVE := .build/distribution/WeChatHUD-$(APP_VERSION)-macOS14-arm64.zip
-KEY_TOOL_SRC := /Users/lilei/wechatcli/repo/wechat_cli/bin/find_all_keys_macos.arm64
+# Optional: path to the wechat-cli key finder copied into the preview app.
+# Override per machine, e.g. `make preview KEY_TOOL_SRC=/path/to/find_all_keys_macos.arm64`.
+KEY_TOOL_SRC ?= $(HOME)/wechatcli/repo/wechat_cli/bin/find_all_keys_macos.arm64
 
 notarize:
 	@case "$(SIGN_IDENTITY)" in "Developer ID Application:"*) ;; *) echo "notarize requires SIGN_IDENTITY='Developer ID Application: ...'" >&2; exit 2 ;; esac
