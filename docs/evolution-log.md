@@ -2,6 +2,15 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-16 — 1.5.6：发行包补回 Apple 公证，公开版本号与公证产物对齐
+
+### [Engineer] 1.5.1–1.5.5 的公开包只有签名没有公证，Gatekeeper 直接拒绝；本版把公证链路补回并重新发行
+
+- **问题**：Apple 公证提交历史停在 1.5.0。1.5.1 之后发出去的包都有 Developer ID 签名，却没有公证票据，`spctl` 判定 `rejected: source=Unnotarized Developer ID`，下载者双击会被 Gatekeeper 挡下。README 上「已签名并公证，双击即开」与实物不符。
+- **修正**：从源码重新构建，Developer ID Application 签名 → Apple 公证 Accepted → 装订票据 → 重新压缩。公开下载链路逐项复验：严格签名、公证票据、Gatekeeper `accepted / Notarized Developer ID`、包内 `bundle-check`、arm64 与 minos 14.0、无开发机路径、第三方许可证随包。
+- **版本号说明**：运行代码与 1.5.5 相同，本版只以新版本号重新发行公证产物，让公开版本与公证包一一对应，不改变任何运行行为。
+- 验证：全量 1746 个 XCTest + 70 个 Swift Testing 测试全绿；release 构建零警告。
+
 ## 2026-09-15 — 1.5.5：简洁视觉 + 按时间找回没回的消息
 
 ### [Engineer] 工作台一条玉色；「今天」可按时间找出还没回的私聊和群 @
