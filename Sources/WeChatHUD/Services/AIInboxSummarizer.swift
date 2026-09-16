@@ -84,7 +84,10 @@ actor AIInboxSummarizer {
                 .replacingOccurrences(of: "\"", with: "")
                 .replacingOccurrences(of: "\u{201C}", with: "")
                 .replacingOccurrences(of: "\u{201D}", with: "")
-            let summary = String(cleaned.prefix(25))
+            // Cap at 25 chars to match the prompt. When the model overshoots
+            // and we actually cut, leave an ellipsis so the row doesn't read
+            // as a broken half-phrase.
+            let summary = cleaned.count > 25 ? String(cleaned.prefix(24)) + "…" : cleaned
             let finalSummary = replacementForOverGenericSummary(summary, context: context) ?? summary
             await audit(input: context.triggerMessageText, output: finalSummary, latencyMs: latencyMs, status: .ok, error: nil, model: result.model)
             return finalSummary

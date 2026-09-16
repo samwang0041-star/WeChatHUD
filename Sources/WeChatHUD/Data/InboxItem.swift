@@ -166,7 +166,12 @@ extension InboxItem {
     var displayReason: String {
         switch messageType {
         case .privateActionRequired: return "等你回复"
-        case .privateVIPRisk: return "重要联系人"
+        case .privateVIPRisk:
+            // A VIP who is actually waiting on you should say so in the
+            // glanceable reason slot — "重要联系人" alone hides that the ball
+            // is in your court. VIP identity is still carried by the orange
+            // priority dot, mood emoji and the panel title, so it isn't lost.
+            return actionRequired ? "等你回复" : "重要联系人"
         case .groupActionRequired: return "需要你处理"
         case .groupMentionFYI: return "@了你"
         case .groupInfoOnly: return "群聊更新"

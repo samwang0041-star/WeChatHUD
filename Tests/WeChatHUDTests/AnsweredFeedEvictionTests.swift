@@ -14,13 +14,14 @@ final class AnsweredFeedEvictionTests: XCTestCase {
     private func scan(
         _ reader: WeChatReader,
         store: HUDStore,
-        recent: [HUDNotification] = []
+        recent: [HUDNotification] = [],
+        changed: Set<String>? = nil
     ) async throws -> ScanEngine.ScanOutcome? {
         await ScanEngine.performScan(
             reader: reader,
             store: store,
             aiService: AIService(config: AIConfig()),
-            changedRelPaths: nil,
+            changedRelPaths: changed,
             thresholds: UnreadThresholds(),
             replyDebtConfig: ReplyDebtConfig(),
             currentRecent: recent,
@@ -124,7 +125,7 @@ final class AnsweredFeedEvictionTests: XCTestCase {
     }
 
     /// An inbound that lands AFTER your reply is a new ask: the notification
-    //  for it must survive the eviction pass.
+    /// for it must survive the eviction pass.
     func testInboundAfterReplySurvives() async throws {
         let fixture = try SyntheticShardedScanFixture(
             chatUsername: chat,
@@ -144,5 +145,39 @@ final class AnsweredFeedEvictionTests: XCTestCase {
         let outcome = try XCTUnwrap(scanned)
         let notif = outcome.recentNotifications.first { $0.chatUsername == chat }
         XCTAssertEqual(notif?.snippet, "对方又追问")
+    }
+
+    /// The production trigger is FSEvents → an incremental scan carrying the
+    /// changed shard's rel path. Eviction must work there too, not only on
+    /// the full safety-timer sweep.
+    func testEvictionWorksOnIncrementalScan() async throws {
+        let inbound = SyntheticShardedScanFixture.MessageRow(
+            localId: 1, createTime: 1_000, senderId: 1, text: "看到回我一下"
+        )
+        let fixture = try SyntheticShardedScanFixture(
+            chatUsername: chat, shards: [0: [inbound]], unreadCount: 1
+        )
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+        try whitelist(store)
+
+        let first = try await scan(fixture.reader, store: store)
+        let outcome1 = try XCTUnwrap(first)
+        XCTAssertTrue(outcome1.recentNotifications.contains { $0.chatUsername == chat })
+
+        try fixture.rewriteShard(0, rows: [
+            inbound,
+            .init(localId: 2, createTime: 1_010, senderId: 2, text: "看到了"),
+        ])
+
+        // Exactly what onFSEvent delivers after WeChat writes the reply.
+        let second = try await scan(
+            fixture.reader, store: store,
+            recent: outcome1.recentNotifications,
+            changed: ["message/message_0.db"]
+        )
+        let outcome2 = try XCTUnwrap(second)
+        XCTAssertFalse(outcome2.recentNotifications.contains { $0.chatUsername == chat })
     }
 }

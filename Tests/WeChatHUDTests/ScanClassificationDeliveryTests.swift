@@ -250,8 +250,16 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(store.loadPendingAutopilotInbound().count, 0)
     }
 
-    /// You replied after the inbound arrived → the banner must not pop;
-    /// the message still lands in the recent-notifications feed.
+    /// You replied after the inbound arrived → the banner must not pop, and the
+    /// answered-feed eviction clears the stale "私聊更新" row.
+    ///
+    /// The reply here is ack-only ("收到"). Eviction is positional: any self
+    /// message at/after the inbound clears the feed row. The "an ack doesn't
+    /// discharge a real ask" safety net lives in the reply-debt path and gates
+    /// on ImportanceDetector signals (金额/时间/决策/承诺) — see
+    /// ReplyDebtScorerTests.testUnsubstantiveReply*. "请确认方案" carries none of
+    /// those, so the scorer treats the exchange as handled and no debt item is
+    /// kept; an importance-flagged ask would survive here as "未实质回应".
     func testInboundNewerThanYourReplyDoesNotPopBanner() async throws {
         let fixture = try SyntheticScanFixture(chatUsername: chatUsername, selfReplyAt: 1_050)
         defer { fixture.cleanup() }
@@ -272,10 +280,9 @@ final class ScanClassificationDeliveryTests: XCTestCase {
 
         let outcome = try await scan(fixture.reader, store: store)
         XCTAssertNil(outcome?.latestPreview, "already-answered inbound must not pop the banner")
-        XCTAssertEqual(
-            outcome?.recentNotifications.first(where: { $0.chatUsername == chatUsername })?.kind,
-            .privateChat,
-            "the message should still be recorded in the inbox feed"
+        XCTAssertNil(
+            outcome?.recentNotifications.first(where: { $0.chatUsername == chatUsername }),
+            "a reply at/after the inbound evicts the answered feed row"
         )
     }
 

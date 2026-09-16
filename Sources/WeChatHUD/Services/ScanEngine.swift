@@ -472,10 +472,17 @@ enum ScanEngine {
                 //      are the far side answering you, not a new ask
                 // The message still lands in the inbox feed
                 // (`perChatLatest`); only the popup is suppressed.
-                let latestSelfMsg = messages
+                let latestSelfTime = messages
                     .filter { MessageHelpers.isFromSelf($0, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
+                    .map(\.createTime)
+                    .max() ?? 0
+                // Answered-feed eviction needs the newest self REPLY, which is
+                // stricter than live-exchange evidence: sysKind rows (e.g. the
+                // revokemsg "你撤回了一条消息") can carry my sender id — a recall
+                // is activity in the chat but it is not a reply.
+                let latestSelfMsg = messages
+                    .filter { $0.sysKind == nil && MessageHelpers.isFromSelf($0, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
                     .max { MessageHelpers.isAfter($1, $0) }
-                let latestSelfTime = latestSelfMsg?.createTime ?? 0
                 if let selfMsg = latestSelfMsg {
                     latestSelfByChat[entry.id] = selfMsg
                     fetchedPageByChat[entry.id] = messages

@@ -428,7 +428,46 @@ func completeWithMetadata(
         for ph in placeholders {
             t = t.replacingOccurrences(of: ph, with: "")
         }
-        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        return maskDirectIdentifiers(
+            t.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    /// Mask uniquely-identifying tokens before chat text leaves the machine for
+    /// an AI endpoint. Every live inbox / classifier / reply / briefing /
+    /// autopilot prompt funnels user-controlled chat content through
+    /// `sanitizeForAI`, so this is the single outbound boundary — masking here
+    /// keeps the whole live path consistent instead of only the retrospective
+    /// path (which already masked via `Redactor.applyMasks`, leaving the much
+    /// larger live surface sending raw identifiers).
+    ///
+    /// Scope is deliberate: phone / email / national ID / bank card are direct
+    /// identifiers with no summarization value, so they go. Money amounts and
+    /// short digit runs (order numbers, verification codes, dates) are LEFT
+    /// intact — they are often the very thing the user asked the AI about, and
+    /// they are not uniquely identifying. The retrospective path layers
+    /// stronger masking (also money + name→codename) on top for persisted
+    /// aggregate analysis; this is the floor, not the ceiling.
+    static func maskDirectIdentifiers(_ text: String) -> String {
+        var out = text
+        // 18-digit mainland national ID (last digit may be X) — before the
+        // generic bank-card run so IDs get the right label.
+        out = out.replacingOccurrences(
+            of: #"(?<!\d)\d{17}[\dXx](?!\d)"#,
+            with: "[证件]", options: .regularExpression)
+        // 16-19 digit bank / credit card number.
+        out = out.replacingOccurrences(
+            of: #"(?<!\d)\d{16,19}(?!\d)"#,
+            with: "[卡号]", options: .regularExpression)
+        // 11-digit mainland mobile (1[3-9]xxxxxxxxx).
+        out = out.replacingOccurrences(
+            of: #"(?<!\d)1[3-9]\d{9}(?!\d)"#,
+            with: "[手机]", options: .regularExpression)
+        // Email address.
+        out = out.replacingOccurrences(
+            of: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
+            with: "[邮箱]", options: .regularExpression)
+        return out
     }
 
     /// Collapse newlines for fields embedded in "[ts] name: text" transcript

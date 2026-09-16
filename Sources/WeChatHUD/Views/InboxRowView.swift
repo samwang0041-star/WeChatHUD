@@ -318,6 +318,14 @@ struct InboxRowView: View {
     /// chat in `recentNotifications` (which is capped to ~10 items).
     private var matchingNotification: HUDNotification? {
         guard item.isGroup, item.isAtMention else { return nil }
+        // Prefer the notification this row was actually built from. Searching
+        // recentNotifications by chatUsername alone can return a *different*
+        // @ for the same group, so the "他想你…" briefing line ends up
+        // explaining another message than the preview/timestamp on this row.
+        if let ctx = item.contextNotification,
+           ctx.chatUsername == item.chatUsername, ctx.canExplainContext {
+            return ctx
+        }
         return monitor.recentNotifications.first {
             $0.chatUsername == item.chatUsername && $0.canExplainContext
         }
