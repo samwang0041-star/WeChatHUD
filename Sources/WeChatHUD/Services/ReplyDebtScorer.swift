@@ -84,6 +84,20 @@ enum ReplyDebtScorer {
         isAckMessage(text)
     }
 
+    /// Media placeholders that may carry real content — a voice message can
+    /// be the actual ask, a screenshot can be the question. These keep the
+    /// old trailing-ack treatment in anchorInbound instead of being
+    /// unconditionally unanchorable like stickers and ack words.
+    private static let contentBearingPlaceholders = [
+        "[图片]", "[视频]", "[语音]", "[通话]",
+        "[链接]", "[文件]", "[位置]", "[名片]",
+    ]
+
+    private static func isContentBearingPlaceholder(_ text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return contentBearingPlaceholders.contains { t.hasPrefix($0) }
+    }
+
     /// Grace period: if user replied and counterpart responds within N seconds,
     /// treat the conversation as "done" (no new debt).
     private static let postReplyGraceSeconds = 120
@@ -148,8 +162,10 @@ enum ReplyDebtScorer {
     ///
     /// 从新到旧扫入站消息，逐条看它之后的我方消息：
     /// - 有我方实质回复 → 它已经被回应，继续往前找。
-    /// - 对方自己发来的短 ack（「好」「收到」）且它前面已有我方消息 → 它只是
-    ///   收尾语，不构成新债务（保持旧行为），跳过它继续往前找。
+    /// - 入站本身是永远不需要回话的内容（ack 短句、表情、贴纸、未解析
+    ///   XML、≤3 字无问句短句）→ 永远跳过：对方单发一个「加油」表情不构成
+    ///   「等你回复」的债。注意这比 isAckMessage 窄 —— 语音/图片/文件等
+    ///   占位可能承载真实内容（语音里就是正事），仍走旧的收尾语判定。
     /// - 否则它就是锚点。若锚点之后只有 ack 回复、或根本没有回复，就交给后面的
     ///   评分路径：要么记「未实质回应」（ack 只降权，不再把整条债务抹掉），要么
     ///   按「对方发了一句短消息我还没回」维持旧行为。
@@ -166,12 +182,17 @@ enum ReplyDebtScorer {
             if seed.session.isGroup, !inbound.isAtMe, !hasUrgentKeywordInText(inbound.message.text) {
                 continue
             }
+            // 永远不需要回话的入站（ack 短句、表情、贴纸、解析失败的占位）
+            // 不构成债务锚点 —— 对方一个孤零零的表情不该挂着「等你回复」。
+            // 语音/图片/文件等占位可能有真实内容，留给下面的收尾语分支。
+            if isAckMessage(inbound.message.text)
+               && !isContentBearingPlaceholder(inbound.message.text) { continue }
             let myReplies = outbounds.filter { MessageHelpers.isSameOrAfter($0.message, inbound.message) }
             let hasSubstantiveReply = myReplies.contains {
                 !ImportanceDetector.isAckOnly($0.message.text)
             }
             if hasSubstantiveReply { continue }
-            // 对方自己发来的短 ack，且它前面已经有我说过话 → 收尾语，跳过。
+            // 对方发来的媒体占位/ack，且它前面已经有我说过话 → 收尾语，跳过。
             let isPeerTrailingAck = isAckMessage(inbound.message.text) && outbounds.contains {
                 !MessageHelpers.isSameOrAfter($0.message, inbound.message)
             }

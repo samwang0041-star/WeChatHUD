@@ -252,6 +252,15 @@ enum ScanEngine {
             var vipTraceMessages: [(vipUsername: String, vipName: String, chatUsername: String, chatName: String, msgUID: String, rawText: String, msgTime: Int)] = []
             var newInboundForClassifier: [(msg: MessageInfo, chatUsername: String, isVIP: Bool)] = []
             var selfOutgoingMessages: [(msg: MessageInfo, chatUsername: String, chatName: String, recipientName: String)] = []
+            /// Newest self-authored row per whitelisted chat this scan — the
+            /// "already answered" evidence used to evict stale feed rows when
+            /// mergedRecent is assembled below.
+            var latestSelfByChat: [String: MessageInfo] = [:]
+            /// This scan's fetched page for chats that produced a self row —
+            /// lets the eviction compare localId ordering for same-second
+            /// messages instead of trusting second-resolution timestamps.
+            /// Array assignment shares the page's buffer, so this is free.
+            var fetchedPageByChat: [String: [MessageInfo]] = [:]
             // Shared budget for backward paging over over-cap unread backlogs,
             // so the whitelist loop stays inside the scan interval.
             var backlogPageBudget = Self.backlogPageBudgetPerScan
@@ -463,10 +472,14 @@ enum ScanEngine {
                 //      are the far side answering you, not a new ask
                 // The message still lands in the inbox feed
                 // (`perChatLatest`); only the popup is suppressed.
-                let latestSelfTime = messages
+                let latestSelfMsg = messages
                     .filter { MessageHelpers.isFromSelf($0, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) }
-                    .map(\.createTime)
-                    .max() ?? 0
+                    .max { MessageHelpers.isAfter($1, $0) }
+                let latestSelfTime = latestSelfMsg?.createTime ?? 0
+                if let selfMsg = latestSelfMsg {
+                    latestSelfByChat[entry.id] = selfMsg
+                    fetchedPageByChat[entry.id] = messages
+                }
                 let isLiveExchange = latestSelfTime > 0
                     && nowEpoch - latestSelfTime <= Self.activeConversationWindow
                 if isLiveExchange { activeConversations.insert(entry.id) }
@@ -764,9 +777,33 @@ enum ScanEngine {
                     mergedRecent.append(notif)
                 }
                 mergedRecent.sort(by: Self.recentNotificationOrder)
-                if mergedRecent.count > recentLimit {
-                    mergedRecent = Array(mergedRecent.prefix(recentLimit))
+            }
+            // Answered-feed eviction: once your own newest message in a chat
+            // is at/after the stored notification's source message, the row's
+            // job is done — before this, a chat you had already replied to in
+            // WeChat kept its "私聊更新 / @了你" row until the recent-limit
+            // pushed it out or you dismissed it by hand. Replies produce no
+            // inbound rows, so without this pass nothing ever cleared them.
+            // Runs before the limit truncation so answered rows can't hold
+            // slots that newer unanswered chats should take.
+            if !latestSelfByChat.isEmpty {
+                mergedRecent.removeAll { notif in
+                    guard let mine = latestSelfByChat[notif.chatUsername] else { return false }
+                    if let source = fetchedPageByChat[notif.chatUsername]?
+                        .first(where: { $0.id == notif.messageID }) {
+                        return MessageHelpers.isSameOrAfter(mine, source)
+                    }
+                    // The source row left the fetched window, or moved
+                    // message_N.db shards (which rewrites its id): fall back
+                    // to the notification's timestamp — max(create_time,
+                    // session ts) capped at now. Your own reply bumps the
+                    // session timestamp too, so >= is the right edge.
+                    return mine.createTime >= Int(notif.timestamp.timeIntervalSince1970)
                 }
+            }
+            mergedRecent.sort(by: Self.recentNotificationOrder)
+            if mergedRecent.count > recentLimit {
+                mergedRecent = Array(mergedRecent.prefix(recentLimit))
             }
             let vipCount = mergedRecent.filter(\.isVIP).count
 

@@ -306,6 +306,75 @@ final class ReplyDebtScorerTests: XCTestCase {
         XCTAssertTrue(items.isEmpty)
     }
 
+    func testLoneStickerInboundDoesNotCreateDebt() {
+        // 对方单发一个表情 —— 永远不需要回话的内容不该锚出「等你回复」。
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: "[动画表情]",
+                    latestOutbound: nil,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+        XCTAssertTrue(items.isEmpty)
+    }
+
+    func testLoneAckOpenerDoesNotCreateDebt() {
+        // 对方开场就是一句「好」—— ack 永远不作锚点。
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: "好",
+                    latestOutbound: nil,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+        XCTAssertTrue(items.isEmpty)
+    }
+
+    func testLoneVoiceMessageStillCreatesDebt() {
+        // 回归防护：语音占位可能承载真实内容（语音里就是正事），
+        // 不能像表情一样无条件跳过 —— 它仍应锚出债务。
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: "[语音]",
+                    latestOutbound: nil,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+        XCTAssertEqual(items.first?.chatUsername, "alice")
+    }
+
+    func testTrailingMediaPlaceholderStillClosesAfterMyMessage() {
+        // 媒体占位的旧语义保留：前面有我说过话 → 收尾语，不锚定。
+        let items = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 500,
+                    latestInboundText: "[图片]",
+                    latestOutbound: 100,
+                    now: 560
+                )
+            ],
+            config: ReplyDebtConfig()
+        )
+        XCTAssertTrue(items.isEmpty)
+    }
+
     private func makeSeed(
         username: String = "alice",
         chatName: String = "Alice",
