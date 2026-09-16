@@ -730,3 +730,42 @@ session ts，故 ≥ 是对的）。驱逐跑在 recentLimit 截断之前，已�
   同秒 localId 定序 / 回复后的新入站存活）+ ReplyDebtScorerTests 新增 4 条
   锚点边界（孤表情不锚 / 孤 ack 不锚 / 孤语音仍锚 / 媒体占位收尾仍跳过），
   全量套件通过；debug/release 构建零警告。
+
+## 2026-09-16 — 新用户上手链路收口：AI 设置接回引导卡片 + 一键体检
+
+### 背景
+
+核对「新用户从零到能用」整条链路：取密钥/微信重签名（WeChatKeyPreparationService，
+自动+引导）、读库（自动探测唯一账号目录，歧义时 NSOpenPanel 兜底）、AI 设置三件事
+其实都已实现。真正的毛病是 AI 这一段：向导只有 2 页（连接微信 / 选择关注），AI 不在
+向导里，而早先做好的内联 AI 设置页 `FirstLaunchAISetupView` 在某次砍向导步骤时被
+孤立成全仓零引用的死代码——于是「配 AI」只能跳去设置页，配完容易忘了点测试，卡片
+就一直挂着「测试 AI 连接」却没有显眼的回头路。
+
+### 修法
+
+- **就绪状态收口到单一真源**：新增 `OnboardingReadiness.evaluate(monitor:store:candidates:)`，
+  把原先散在 OnboardingView / CompanionSetupCard / AssistantTodayView 三处、各自重算的
+  「微信连没连 / AI 配没配 / AI 测没测」判定合并成一份（三处此前对「connected」的定义
+  并不一致：卡片看 syncStatus，向导看 lastSyncAt+目录匹配）。candidates 由调用方缓存传入，
+  工厂不在 body 每帧扫盘。三处视图改为消费同一工厂。
+- **AI 设置内联回卡片**：CompanionSetupCard 的「设置 AI / 测试 AI」步骤改为可展开，
+  内联宿主现成的 `FirstLaunchAISetupView`（选服务→填密钥→测试连接，不跳页），保留
+  「更多 AI 设置」深链到设置页。测试成功后 evidence 通知触发卡片刷新，该步骤自动消失。
+- **一键体检**：卡片顶部加三灯条（数据库可读 / 微信已连接 / AI 可达）+「重新检测」，
+  状态直接取自 evaluate，让新用户一眼看出还差哪条腿，而不是从步骤列表反推。
+- **不可读目录给具体指引**：`directoryUnreadable` 文案从「请检查文件访问权限」改为
+  指明「系统设置 → 隐私与安全性 → 完全磁盘访问权限」勾选 WeChatHUD 后重开——微信资料
+  在它自己的沙盒容器里，这正是新机器上最常见的卡点。
+
+### 对照后确认已做到、不改的
+
+- 发行包对取密钥扫描器（keytools/find_all_keys_macos.arm64）已有打包期存在性守卫
+  （package-app.sh 缺失即 exit 1）+ codesign --verify --deep + bundle-check，运行期缺件
+  也有「准备组件没有随应用安装」兜底，无需再加。
+- AGENTS.md「4 步 onboarding 向导」是过时描述，已改为实际的 2 页 + 卡片引导。
+
+- Tests: OnboardingReadiness / OnboardingStepContract / SyncConnectionDiagnosis /
+  FirstLaunchGuide / Companion* 共 38 条相关用例全绿；evaluate 为既有已测组件
+  （SyncConnectionDiagnosis.evaluate / AISettingsValidation / AIConnectionEvidenceStore）
+  的薄封装，未另加重型夹具测试。debug 构建零警告。

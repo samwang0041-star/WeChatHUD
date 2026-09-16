@@ -92,7 +92,7 @@ enum SyncConnectionDiagnosis: Equatable {
         case .noCandidate: return "尚未找到微信账号资料。请先在这台 Mac 登录微信；也可以手动选择该账号的资料目录。"
         case .needsAccountSelection(let count): return "发现 \(count) 个账号目录，请明确选择要读取的目录。目录存在不代表该账号当前已登录。"
         case .directoryMissing: return "所选目录不存在，请重新选择。不要使用其他账号目录替代当前账号。"
-        case .directoryUnreadable: return "所选目录不可读，请检查 macOS 文件访问权限。"
+        case .directoryUnreadable: return "所选目录不可读。微信把资料放在它自己的沙盒容器里，需要在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」里勾选 WeChatHUD，然后重开本应用再试。"
         case .noDatabaseFiles: return "目录内未找到该账号的会话资料，请选择微信账号自己的资料根目录。"
         case .looseKeyPermissions:
             return "密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。请在「终端」执行 chmod 600 收紧后再继续；文件内容不需要重取。"

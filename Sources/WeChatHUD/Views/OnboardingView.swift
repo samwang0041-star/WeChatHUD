@@ -11,7 +11,6 @@ struct OnboardingView: View {
 
     @State private var step = 0
     @State private var candidates: [String] = []
-    @State private var configuration = AIConfig()
     @State private var saveError: String?
     @State private var refreshID = 0
 
@@ -133,37 +132,9 @@ struct OnboardingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
     }
 
-    private var directoryDiagnosis: SyncConnectionDiagnosis {
-        let configured = (store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()).wechatDBPath
-        return SyncConnectionDiagnosis.evaluate(configuredPath: configured, candidates: candidates,
-            exists: { path in
-                var isDirectory: ObjCBool = false
-                return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
-            }, readable: { FileManager.default.isReadableFile(atPath: $0) },
-            containsDatabase: { FileManager.default.fileExists(atPath: $0 + "/session/session.db") },
-            keyMaterial: SyncConnectionDiagnosis.KeyMaterialFacts(reader: monitor.reader))
-    }
-
     private var readiness: OnboardingReadiness {
         _ = refreshID
-        let sourceMatches: Bool
-        if case .ready(let root) = directoryDiagnosis {
-            sourceMatches = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
-                == URL(fileURLWithPath: monitor.reader.dbDir).standardizedFileURL.resolvingSymlinksInPath()
-        } else {
-            sourceMatches = false
-        }
-        return OnboardingReadiness(
-            directoryReady: !directoryDiagnosis.needsAttention,
-            // A loose-permission key file is readable; it only needs
-            // tightening. Treating it as unreadable would block onboarding on
-            // a file that is right there.
-            keyFileReadable: monitor.reader.accessMaterialState == .available
-                || monitor.reader.accessMaterialState == .loosePermissions,
-            hasSuccessfulSync: sourceMatches && monitor.stats.lastSyncAt != nil,
-            aiConfigurationValid: AISettingsValidation.connectionError(configuration.provider, requireModel: true) == nil,
-            aiConnectionTested: AIConnectionEvidenceStore.isSuccessful(configuration, store: store),
-            trackedConversationCount: store.getWhitelist().count)
+        return OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: candidates)
     }
 
     private var primaryCTA: String {
@@ -290,7 +261,6 @@ struct OnboardingView: View {
 
     private func refresh() {
         candidates = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
-        configuration = store.loadAIConfig()
         refreshID += 1
     }
 

@@ -25,9 +25,7 @@ struct AssistantTodayView: View {
     @State private var expandedID: String?
     @State private var snoozeReceipt: String?
     @State private var revealedOriginalIDs: Set<String> = []
-    @State private var aiReadinessLoaded = false
-    @State private var aiConfigured = false
-    @State private var aiTested = false
+    @State private var readiness: OnboardingReadiness?
 
     private var visible: [InboxItem] {
         let items = showUpdates ? monitor.inboxItems : TodayFeed.needsReply(monitor.inboxItems)
@@ -45,14 +43,6 @@ struct AssistantTodayView: View {
     private var upcoming: [Commitment] {
         monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }
             .sorted { ($0.deadlineAt ?? .distantFuture) < ($1.deadlineAt ?? .distantFuture) }
-    }
-
-    private var wechatConnected: Bool {
-        guard monitor.stats.lastSyncAt != nil else { return false }
-        switch monitor.stats.syncStatus {
-        case .ok, .idle, .syncing, .stale: return true
-        default: return false
-        }
     }
 
     var body: some View {
@@ -89,12 +79,19 @@ struct AssistantTodayView: View {
             }
         }
         .onAppear {
-            refreshAIReadiness()
+            refreshReadiness()
             if monitor.missedReplies.isEmpty && !monitor.missedReplyLoading {
                 let bounds = missedWindow.bounds(customStart: missedCustomStart, customEnd: missedCustomEnd)
                 monitor.refreshMissedReplies(start: bounds.start, end: bounds.end)
             }
         }
+        // Keep the empty-state copy honest after the user configures/tests AI
+        // from the setup card or a sync completes while this page is open.
+        // onChange fires only on an actual transition, so the directory scan
+        // in refreshReadiness isn't repeated on every monitor publish.
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConfigDidChange)) { _ in refreshReadiness() }
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConnectionEvidenceDidChange).receive(on: RunLoop.main)) { _ in refreshReadiness() }
+        .onChange(of: monitor.stats.lastSyncAt) { _, _ in refreshReadiness() }
         .onChange(of: showMissed) { _, showing in
             panelState.todayShowsMissedReplies = showing
         }
@@ -103,11 +100,9 @@ struct AssistantTodayView: View {
         }
     }
 
-    private func refreshAIReadiness() {
-        let config = store.loadAIConfig()
-        aiConfigured = AISettingsValidation.connectionError(config.provider, requireModel: true) == nil
-        aiTested = AIConnectionEvidenceStore.isSuccessful(config, store: store)
-        aiReadinessLoaded = true
+    private func refreshReadiness() {
+        let candidates = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
+        readiness = OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: candidates)
     }
 
     private var messageFeed: some View {
@@ -207,12 +202,12 @@ struct AssistantTodayView: View {
                     query: query
                 )
             } else if visible.isEmpty {
-                if aiReadinessLoaded {
+                if let readiness {
                     let empty = FirstLaunchGuide.todayEmpty(
-                        wechatConnected: wechatConnected,
-                        hasTrackedConversations: store.hasWhitelistEntries(),
-                        aiConfigured: aiConfigured,
-                        aiTested: aiTested,
+                        wechatConnected: readiness.hasSuccessfulSync,
+                        hasTrackedConversations: readiness.trackedConversationCount > 0,
+                        aiConfigured: readiness.aiConfigurationValid,
+                        aiTested: readiness.aiConnectionTested,
                         searching: !query.isEmpty,
                         hasOpenTasks: TodayFeed.hasOpenWork(mine: mineTasks, waiting: waitingTasks, upcoming: upcoming),
                         hasOtherInboxItems: !showUpdates && TodayFeed.hasNonReplyUpdates(monitor.inboxItems)
