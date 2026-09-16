@@ -660,7 +660,7 @@ struct ActionPanelView: View {
                 }
                 .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
         }
         .padding(.vertical, 2)
     }

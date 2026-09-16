@@ -18,6 +18,20 @@ final class SyntheticShardedScanFixture {
         let createTime: Int
         let senderId: Int
         let text: String
+        /// WeChat `local_type` (low 32 bits = baseType, high = subType).
+        /// 1 = text, 10000 = sysmsg.
+        let localType: Int64
+
+        init(localId: Int, createTime: Int, senderId: Int, text: String, localType: Int64 = 1) {
+            self.localId = localId
+            self.createTime = createTime
+            self.senderId = senderId
+            self.text = text
+            self.localType = localType
+        }
+
+        /// Single-quote escape so XML/text payloads containing ' survive.
+        var escapedText: String { text.replacingOccurrences(of: "'", with: "''") }
     }
 
     let root: URL
@@ -29,9 +43,25 @@ final class SyntheticShardedScanFixture {
 
     /// - Parameters:
     ///   - shards: shard index → rows for `chatUsername`'s table in that shard.
+    ///     A nil value creates the shard without the chat's `Msg_` table at
+    ///     all — the shape a dormant chat takes before WeChat lazily adds its
+    ///     table to an already-keyed file.
     ///   - unreadCount: what `session.db` reports for the chat, which is what
     ///     the scan sizes its page by.
-    init(chatUsername: String, shards: [Int: [MessageRow]], unreadCount: Int = 0) throws {
+    convenience init(chatUsername: String, shards: [Int: [MessageRow]], unreadCount: Int = 0) throws {
+        try self.init(
+            chatUsername: chatUsername,
+            optionalShards: shards.mapValues { Optional($0) },
+            unreadCount: unreadCount
+        )
+    }
+
+    /// `optionalShards` value nil → shard file exists and is keyed, but the
+    /// chat's `Msg_` table is absent from it. `extraName2Id` appends member
+    /// names (group name2id rows) — pass the same value twice to build an
+    /// ambiguous nickname shared by two member ids.
+    init(chatUsername: String, optionalShards shards: [Int: [MessageRow]?], unreadCount: Int = 0,
+         extraName2Id: [String] = []) throws {
         self.chatUsername = chatUsername
         root = FileManager.default.temporaryDirectory.appendingPathComponent("sharded-scan-\(UUID().uuidString)")
         dbDir = root.appendingPathComponent("synthetic_account/db_storage", isDirectory: true)
@@ -42,15 +72,17 @@ final class SyntheticShardedScanFixture {
         var keyJSON: [String: Any] = [:]
         var newestTimestamp = 0
 
-        for (index, rows) in shards.sorted(by: { $0.key < $1.key }) {
+        let extraNameInserts = extraName2Id.map {
+            "INSERT INTO Name2Id(user_name) VALUES ('\($0.replacingOccurrences(of: "'", with: "''"))');"
+        }.joined(separator: "\n")
+
+        for (index, maybeRows) in shards.sorted(by: { $0.key < $1.key }) {
+            let rows = maybeRows ?? []
             let inserts = rows.map {
-                "INSERT INTO [\(table)] VALUES (\($0.localId), 1, \($0.createTime), \($0.senderId), '\($0.text)', 0);"
+                "INSERT INTO [\(table)] VALUES (\($0.localId), \($0.localType), \($0.createTime), \($0.senderId), '\($0.escapedText)', 0);"
             }.joined(separator: "\n")
             newestTimestamp = max(newestTimestamp, rows.map(\.createTime).max() ?? 0)
-            let schema = """
-                PRAGMA page_size=4096;
-                VACUUM;
-                CREATE TABLE Name2Id(user_name TEXT);
+            let tableDDL = maybeRows == nil ? "" : """
                 CREATE TABLE [\(table)] (
                     local_id INTEGER PRIMARY KEY,
                     local_type INTEGER,
@@ -59,8 +91,15 @@ final class SyntheticShardedScanFixture {
                     message_content TEXT,
                     WCDB_CT_message_content INTEGER
                 );
+                """
+            let schema = """
+                PRAGMA page_size=4096;
+                VACUUM;
+                CREATE TABLE Name2Id(user_name TEXT);
+                \(tableDDL)
                 INSERT INTO Name2Id(user_name) VALUES ('\(chatUsername)');
                 INSERT INTO Name2Id(user_name) VALUES ('synthetic_account');
+                \(extraNameInserts)
                 \(inserts)
                 """
             let encrypted = dbDir.appendingPathComponent("message/message_\(index).db")
@@ -107,6 +146,62 @@ final class SyntheticShardedScanFixture {
         let store = HUDStore(dbPath: root.appendingPathComponent("hud.sqlite3").path)
         try store.open()
         return store
+    }
+
+    /// Rewrite a message shard's encrypted file — either adding the chat's
+    /// `Msg_` table with `rows` or carrying no such table (nil). Simulates
+    /// WeChat lazily creating the table inside an already-keyed shard. The
+    /// rewrite changes the file's mtime, which is what `refreshIfChanged`
+    /// keys on.
+    func rewriteShard(_ index: Int, rows: [MessageRow]?) throws {
+        let table = Self.messageTable(for: chatUsername)
+        let inserts = (rows ?? []).map {
+            "INSERT INTO [\(table)] VALUES (\($0.localId), \($0.localType), \($0.createTime), \($0.senderId), '\($0.escapedText)', 0);"
+        }.joined(separator: "\n")
+        let tableDDL = rows == nil ? "" : """
+            CREATE TABLE [\(table)] (
+                local_id INTEGER PRIMARY KEY,
+                local_type INTEGER,
+                create_time INTEGER,
+                real_sender_id INTEGER,
+                message_content TEXT,
+                WCDB_CT_message_content INTEGER
+            );
+            """
+        let schema = """
+            PRAGMA page_size=4096;
+            VACUUM;
+            CREATE TABLE Name2Id(user_name TEXT);
+            \(tableDDL)
+            INSERT INTO Name2Id(user_name) VALUES ('\(chatUsername)');
+            INSERT INTO Name2Id(user_name) VALUES ('synthetic_account');
+            \(inserts)
+            """
+        let encrypted = dbDir.appendingPathComponent("message/message_\(index).db")
+        try Self.writeEncryptedStore(
+            plain: root.appendingPathComponent("message_\(index)_rewrite_\(UUID().uuidString).sqlite"),
+            encrypted: encrypted,
+            key: key,
+            schema: schema
+        )
+    }
+
+    /// Add a keys.json entry for a shard whose encrypted file does not exist —
+    /// WeChat's key manifest can list `message_N.db` ahead of the file itself.
+    /// The reader must skip it, not fail every chat query.
+    func addKeyForMissingShard(_ index: Int) throws {
+        let data = try Data(contentsOf: keysURL)
+        guard var json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        json["message/message_\(index).db"] = ["enc_key": Self.hex(key)]
+        try JSONSerialization.data(withJSONObject: json).write(to: keysURL)
+        try reader.loadKeys(force: true)
+    }
+
+    /// Overwrite an existing shard with bytes that do not decrypt to SQLite —
+    /// a torn write / truncated file the reader must skip, not propagate.
+    func corruptShard(_ index: Int) throws {
+        let encrypted = dbDir.appendingPathComponent("message/message_\(index).db")
+        try Data(repeating: 0xAA, count: 8192).write(to: encrypted)
     }
 
     func cleanup() {
@@ -168,8 +263,14 @@ final class SyntheticShardedScanFixture {
                 }
             }
             XCTAssertEqual(status, CCCryptorStatus(kCCSuccess))
+            let pageNo = UInt32(start / 4096 + 1)
+            var bodyWithIV = cipher
+            bodyWithIV.append(iv)
+            let mac = WeChatFixtureEncrypt.pageMAC(
+                key: key, dbSalt: Data(repeating: 0x11, count: 16),
+                bodyWithIV: bodyWithIV, pageNumber: pageNo)
             if first { output += Data(repeating: 0x11, count: 16) }
-            output += cipher + iv + Data(count: 64)
+            output += cipher + iv + mac
         }
         try output.write(to: encrypted, options: .atomic)
     }

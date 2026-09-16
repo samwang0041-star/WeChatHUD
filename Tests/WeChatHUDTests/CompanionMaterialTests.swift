@@ -352,7 +352,12 @@ final class CompanionMaterialTests: XCTestCase {
         // Measured on the rendered app at #1F1F1F–#232323; the darker end is the
         // one that matters for a floor test.
         let darkCard: [Double] = [31.0 / 255, 31.0 / 255, 31.0 / 255]
-        let ink = CompanionElevation.resolveRGB(CompanionPalette.jadeInk)
+        // jadeInk is scheme-aware — pin the dark appearance or the system
+        // light/dark flip changes which colour this test resolves.
+        let ink = CompanionElevation.resolveRGB(
+            CompanionPalette.jadeInk,
+            appearance: NSAppearance(named: .darkAqua)
+        )
         let ratio = CompanionElevation.contrastRatio(ink, darkCard)
         XCTAssertGreaterThanOrEqual(
             ratio, CompanionElevation.aaNormalText,
@@ -366,7 +371,10 @@ final class CompanionMaterialTests: XCTestCase {
     /// but not before.
     func testRawJadeIsStillAFillColourNotATextColourInDarkMode() {
         let darkCard: [Double] = [31.0 / 255, 31.0 / 255, 31.0 / 255]
-        let jade = CompanionElevation.resolveRGB(CompanionPalette.jade)
+        let jade = CompanionElevation.resolveRGB(
+            CompanionPalette.jade,
+            appearance: NSAppearance(named: .darkAqua)
+        )
         XCTAssertLessThan(
             CompanionElevation.contrastRatio(jade, darkCard), CompanionElevation.aaNormalText,
             "jade now passes as dark-mode text; the jadeInk split may no longer be needed"

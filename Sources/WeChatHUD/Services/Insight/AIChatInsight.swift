@@ -234,14 +234,14 @@ actor AIChatInsight {
         recentContext: String
     ) -> String {
         let formattedMessages = messages.enumerated().map { index, message in
-            "[m\(index + 1)][\(message.time)][\(message.sender)] \(message.body)"
+            "[m\(index + 1)][\(message.time)][\(AIService.oneLine(message.sender))] \(AIService.oneLine(message.body))"
         }.joined(separator: "\n")
         let formattedRecalled = recalledMessages.isEmpty
             ? "无"
-            : recalledMessages.map { "[\($0.sender)] \($0.content)" }.joined(separator: "\n")
+            : recalledMessages.map { "[\(AIService.oneLine($0.sender))] \(AIService.oneLine($0.content))" }.joined(separator: "\n")
 
         return template
-            .replacingOccurrences(of: "{chat_name}", with: chatName)
+            .replacingOccurrences(of: "{chat_name}", with: AIService.oneLine(chatName))
             .replacingOccurrences(of: "{chat_type}", with: chatType)
             .replacingOccurrences(of: "{category}", with: category)
             .replacingOccurrences(of: "{self_name}", with: selfName)

@@ -151,9 +151,16 @@ enum WeChatLauncher {
         }
     }
 
-    private static func postWillOpenWeChat() {
+    /// `automation` marks opens our own send path requested — user-initiated
+    /// opens (在微信中打开, paste-draft) must NOT suppress the autopilot
+    /// pause observer, or autopilot keeps running while the user sits in
+    /// WeChat.
+    private static func postWillOpenWeChat(automation: Bool) {
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .hudWillOpenWeChat, object: nil)
+            NotificationCenter.default.post(
+                name: .hudWillOpenWeChat, object: nil,
+                userInfo: ["automation": automation]
+            )
         }
     }
 
@@ -210,7 +217,7 @@ enum WeChatLauncher {
             let names = searchNames.isEmpty
                 ? WeChatOpenSearch.names(stored: [chatName], username: chatName)
                 : WeChatOpenSearch.names(stored: searchNames)
-            if let failure = await navigateToChat(app: app, searchNames: names) { notifyUser(failure.userMessage) }
+            if let failure = await navigateToChat(app: app, searchNames: names, automation: false) { notifyUser(failure.userMessage) }
         }
     }
 
@@ -734,7 +741,9 @@ enum WeChatLauncher {
             finishClipboardRestore()
         }
         let axApp = AXUIElementCreateApplication(binding.processID)
-        if let failure = await navigateToChat(app: app, searchNames: searchNames) { return .failed(failure) }
+        // A paste-draft (sendKey == nil) is a USER standing in WeChat; only a
+        // real send is automation whose activation may suppress the pause.
+        if let failure = await navigateToChat(app: app, searchNames: searchNames, automation: sendKey != nil) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
         guard let input = findMessageInput(in: axApp) else { return .failed(.inputNotFound) }
@@ -756,20 +765,20 @@ enum WeChatLauncher {
         postCmdKey(kVK_ANSI_V)
         // Keep the reply on the pasteboard until the queued paste event is consumed.
         guard await pause(0.15) else {
-            retractPastedDraft(axApp: axApp)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(.accountUnverified)
         }
         guard let sendKey else { return .completed }
         if let failure = await accountFailure(binding) {
-            retractPastedDraft(axApp: axApp)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(failure)
         }
         guard isWeChatFrontmost(app) else {
-            retractPastedDraft(axApp: axApp)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(.lostForeground)
         }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else {
-            retractPastedDraft(axApp: axApp)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(.chatMismatch)
         }
         switch sendKey {
@@ -782,12 +791,16 @@ enum WeChatLauncher {
 
     /// Every navigation step is awaited while the shared automation lock is held.
     /// No delayed search or clipboard callback survives this method's return.
-    @MainActor private static func navigateToChat(app: NSRunningApplication, searchNames: [String]) async -> SendFailureReason? {
-        postWillOpenWeChat()
+    @MainActor private static func navigateToChat(app: NSRunningApplication, searchNames: [String], automation: Bool = true) async -> SendFailureReason? {
         let activated = await withCheckedContinuation { continuation in
             activateWeChat(app: app) { continuation.resume(returning: $0) }
         }
         guard activated else { return .lostForeground }
+        // Stamp suppression only AFTER activation succeeded — a failed
+        // automation must not eat a real user activation that lands inside
+        // the 8s window (autopilot would stay unpaused while the user is in
+        // WeChat).
+        postWillOpenWeChat(automation: automation)
         for _ in 0..<40 {
             if isWeChatFrontmost(app) { break }
             guard await pause(0.04) else { return .lostForeground }
@@ -841,7 +854,20 @@ enum WeChatLauncher {
         return .chatMismatch
     }
 
-    @MainActor private static func retractPastedDraft(axApp: AXUIElement) {
+    /// CGEvent keystrokes go to whatever app is *frontmost*, not to the AX
+    /// element — and this function is called precisely in the states where
+    /// WeChat just lost the foreground or shows a different chat. Without a
+    /// re-check here, Cmd+A+Delete would type into the user's own document
+    /// or wipe a draft in an unrelated WeChat chat. Failing to retract
+    /// leaves a draft; typing into the wrong app destroys content, so a
+    /// failed check must mean *don't type*.
+    @MainActor private static func retractPastedDraft(
+        axApp: AXUIElement, app: NSRunningApplication, searchNames: [String]
+    ) {
+        guard isWeChatFrontmost(app), isCurrentChat(axApp: axApp, searchNames: searchNames) else {
+            log("skipped draft retraction — WeChat not frontmost or chat changed; draft may remain")
+            return
+        }
         guard let input = findMessageInput(in: axApp) else { return }
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         postCmdKey(kVK_ANSI_A)

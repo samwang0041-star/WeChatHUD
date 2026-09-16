@@ -764,10 +764,17 @@ extension HUDStore {
             SELECT id, ts, target_table, target_id, operation, payload_before, payload_after
             FROM undo_stack ORDER BY ts DESC, id DESC LIMIT 1;
         """
-        let entry = queryOne(selectSQL, bind: { _ in }, decode: decodeUndoEntry)
-        if let entry {
-            executeUpdate("DELETE FROM undo_stack WHERE id = ?;") { stmt in
-                sqlite3_bind_int(stmt, 1, Int32(entry.id))
+        // SELECT + DELETE must share one transaction — two concurrent pops
+        // would otherwise return the same entry and double-apply the undo.
+        var entry: UndoEntry? = nil
+        try? withTransaction {
+            let row = queryOne(selectSQL, bind: { _ in }, decode: decodeUndoEntry)
+            if let row {
+                try exec("DELETE FROM undo_stack WHERE id = ?;", params: [String(row.id)])
+                // Assign only after the delete commits — if the DELETE throws
+                // the transaction rolls back, the row survives, and returning
+                // `row` here would apply the same undo twice on the next pop.
+                entry = row
             }
         }
         return entry

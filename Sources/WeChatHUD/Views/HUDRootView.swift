@@ -78,13 +78,12 @@ struct HUDRootView: View {
                 )
             }
         )
-        .overlay(alignment: .top) {
-            // Toast overlay — transient feedback for silent failures
-            // like "在微信中打开" not working. Sits on top of whatever
-            // state the panel is in so the user sees it even from
-            // compact mode.
-            HUDToastLayer()
-        }
+        // The toast is NOT painted here — the compositor mask clips the
+        // island's content, so anything inside this surface is invisible
+        // below the ~34pt compact band. AppDelegate floats it as its own
+        // nonactivating window just below the island instead. Only the
+        // toast *triggers* live in this tree (they must always be mounted).
+        .background(HUDToastTriggers())
         // Composite the island as one scene before it hits the window.
         //
         // Every part of this surface is either translucent (the AI sweep, the
@@ -96,7 +95,6 @@ struct HUDRootView: View {
         // Flattening once is both cleaner at the edges and cheaper to draw —
         // the reference implementation groups its notch scene the same way.
         .compositingGroup()
-        .companionAnimation(CompanionMotion.ease(0.2), value: panelState.toastMessage)
         .animation(nil, value: panelState.presentedState)
         .companionDisplayGeneration(CompanionAccessibility.generation)
         .dynamicTypeSize(CompanionTypeScale.appliedRange(largeType: PreviewRuntime.largeType))
@@ -223,27 +221,34 @@ private struct HUDMonitorSurface: View {
     }
 }
 
-private struct HUDToastLayer: View {
+/// Toast trigger observer — the publishers that CREATE toasts must stay
+/// mounted inside the panel tree; the toast window only exists while a
+/// toast is visible, so hosting these there would swallow the first one.
+private struct HUDToastTriggers: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
-        Group {
-            if let message = panelState.toastMessage {
-                toastView(message)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+        EmptyView()
+            .onReceive(monitor.$inboxActionError) { message in
+                if let message { panelState.showToast(message) }
             }
-        }
-        .onReceive(monitor.$inboxActionError) { message in
-            if let message { panelState.showToast(message) }
-        }
-        .onReceive(monitor.$discussionArchiveNotice) { message in
-            if let message {
-                panelState.showToast(message, duration: 8)
-                monitor.discussionArchiveNotice = nil
+            .onReceive(monitor.$discussionArchiveNotice) { message in
+                if let message {
+                    panelState.showToast(message, duration: 8)
+                    monitor.discussionArchiveNotice = nil
+                }
             }
-        }
+    }
+}
 
+struct IslandToastContent: View {
+    @EnvironmentObject var panelState: PanelState
+    @EnvironmentObject var monitor: ChatMonitor
+    let message: String
+
+    var body: some View {
+        toastView(message)
     }
 
     private func toastView(_ message: String) -> some View {

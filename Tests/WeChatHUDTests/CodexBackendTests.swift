@@ -206,12 +206,16 @@ final class CodexBackendTests: XCTestCase {
             dir = try CodexTestSupport.writeAuthJSON(json)
         } catch {
             XCTFail("Failed to prep auth.json: \(error)")
-            return (CodexTokenStore(), jwt)
+            return (CodexTokenStore(
+                persistedTokensURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent("wchud-test-tokens-\(UUID().uuidString).json")
+            ), jwt)
         }
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         return (store, jwt)
     }

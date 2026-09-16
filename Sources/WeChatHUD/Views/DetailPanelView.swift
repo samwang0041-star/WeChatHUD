@@ -65,6 +65,7 @@ struct DetailPanelView: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭")
             .padding(10)
         }
     }
@@ -131,7 +132,7 @@ struct DetailNoticeBar: View {
                     .foregroundColor(.red)
             }
             Spacer()
-            Button("[查看]") {
+            Button("查看") {
                 // Switch to .extended directly — the old "collapse
                 // then mouseEntered 0.3s later" dance produced a
                 // visible shrink-then-grow flicker.
@@ -252,13 +253,18 @@ struct AutopilotDetailPane: View {
         HStack(spacing: 8) {
             Button(action: {
                 panelState.clearDetail()
-                panelState.currentState = .extended
+                // goExtended(), not a bare state write — the state setter
+                // also bumps exitGeneration, cancels hover-expand, and
+                // clears the notification timer; skipping that cleanup is
+                // how stale latches outlive the transition.
+                panelState.goExtended()
             }) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("返回")
 
             Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
                 .font(.system(size: 11))

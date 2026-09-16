@@ -74,7 +74,7 @@ extension ChatMonitor {
             )
             guard admissionRules.decide(
                 chatUsername: msg.chatUsername,
-                isGroup: msg.chatUsername.contains("@chatroom"),
+                isGroup: MessageHelpers.isGroupChat(msg.chatUsername),
                 senderUsername: msg.senderUsername,
                 senderName: msg.senderName,
                 isAtMention: isAt
@@ -83,7 +83,7 @@ extension ChatMonitor {
                 continue
             }
             let input = ClassifierInput(msgUID: msg.id, text: msg.text, senderName: msg.senderName,
-                                        chatName: msg.chatName, isGroup: msg.chatUsername.contains("@chatroom"))
+                                        chatName: msg.chatName, isGroup: MessageHelpers.isGroupChat(msg.chatUsername))
             // SQL bounds precede LIMIT: an old queued message gets its own prior
             // context, never whatever happens to be latest today. Exclude the whole
             // target second to avoid incorporating later same-second messages.
@@ -91,7 +91,9 @@ extension ChatMonitor {
                 chatUsername: msg.chatUsername, limit: 12, afterCursor: nil,
                 startTime: msg.createTime - 86400, endTime: msg.createTime
             )) ?? []
-            let context = contextMessages.reversed().map { "\($0.senderName): \($0.text)" }.joined(separator: "\n")
+            let context = contextMessages.reversed().map {
+                "\(AIService.oneLine($0.senderName)): \(AIService.oneLine(AIService.sanitizeForAI($0.text)))"
+            }.joined(separator: "\n")
             var knownOtherNames = Set(store.loadContacts()
                 .filter { $0.username != myUsername }
                 .flatMap { [$0.username, $0.displayName] }

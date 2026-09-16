@@ -108,7 +108,7 @@ private struct ContactsListSubView: View {
     }
 
     private func isGroupContact(_ contact: ContactEntry) -> Bool {
-        contact.username.contains("@chatroom") || store.getWhitelistEntry(username: contact.username)?.isGroup == true
+        MessageHelpers.isGroupChat(contact.username) || store.getWhitelistEntry(username: contact.username)?.isGroup == true
     }
 
     private var selectedContact: ContactEntry? {
@@ -376,7 +376,7 @@ private struct ContactsListSubView: View {
             guard !PreviewRuntime.isEnabled else { return [] }
             return cachedAddWechatContacts
                 .filter { !existingSet.contains($0.key) && !$0.key.hasPrefix("gh_") && $0.key != "filehelper" }
-                .map { (username: $0.key, displayName: $0.value, isGroup: $0.key.contains("@chatroom")) }
+                .map { (username: $0.key, displayName: $0.value, isGroup: MessageHelpers.isGroupChat($0.key)) }
         }()
         return (preview + live)
             .filter { !existingSet.contains($0.username) }
@@ -527,7 +527,7 @@ private struct ContactsListSubView: View {
             try store.saveContactTracking(
                 username: contact.username,
                 displayName: contact.displayName,
-                isGroup: whitelistEntry?.isGroup ?? contact.username.contains("@chatroom"),
+                isGroup: whitelistEntry?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
                 category: whitelistEntry?.category ?? whitelistCategory(for: contact.role),
                 attentionLevel: level,
                 role: contact.role,
@@ -621,7 +621,7 @@ private struct ContactInspectorView: View {
 
             DisclosureGroup("账号信息") {
                 infoRow("微信 ID", value: contact.username)
-                infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
+                infoRow("类型", value: (MessageHelpers.isGroupChat(contact.username) || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
             }
             .font(.system(size: 12, weight: .medium))
         }
@@ -640,7 +640,7 @@ private struct ContactInspectorView: View {
             // fact stated twice in one panel, once in a way the user cannot
             // act on. The editable control owns the fact; this row was the
             // echo. 类型 and 提醒时机 have no control elsewhere, so they stay.
-            infoRow("类型", value: (contact.username.contains("@chatroom") || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
+            infoRow("类型", value: (MessageHelpers.isGroupChat(contact.username) || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
                 infoRow("提醒时机", value: "\(contact.replyWindowMinutes) 分钟后提醒")
             }
@@ -942,7 +942,7 @@ struct ContactEditSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("账号信息") {
                         LabeledContent("微信 ID", value: contact.username)
-                        LabeledContent("类型", value: contact.username.contains("@chatroom") || store.getWhitelistEntry(username: contact.username)?.isGroup == true ? "群聊" : "联系人")
+                        LabeledContent("类型", value: MessageHelpers.isGroupChat(contact.username) || store.getWhitelistEntry(username: contact.username)?.isGroup == true ? "群聊" : "联系人")
                     }
                 }
 
@@ -1048,7 +1048,7 @@ struct ContactEditSheet: View {
     }
 
     private var customNameHint: String {
-        if contact.username.contains("@chatroom"), monitor.hasOnlyFallbackName(chatUsername: contact.username) {
+        if MessageHelpers.isGroupChat(contact.username), monitor.hasOnlyFallbackName(chatUsername: contact.username) {
             return "微信里这个群没有名字，助手只能显示群成员。起个名字后，收件箱和「我答应的事」都会用它。"
         }
         return "留空则使用微信里的名字。"
@@ -1088,7 +1088,7 @@ struct ContactEditSheet: View {
                 try store.saveContactTracking(
                     username: contact.username,
                     displayName: displayName,
-                    isGroup: whitelistEntry?.isGroup ?? contact.username.contains("@chatroom"),
+                    isGroup: whitelistEntry?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
                     category: whitelistEntry?.category ?? whitelistCategory(for: selectedRole),
                     attentionLevel: selectedLevel,
                     role: selectedRole,

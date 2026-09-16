@@ -83,16 +83,21 @@ extension HUDStore {
             return 0
         }
         let now = "\(Int(Date().timeIntervalSince1970))"
-        let written = executeUpdate(
-            "INSERT OR REPLACE INTO chat_aliases(username, display_name, updated_at) VALUES(?,?,?)",
-            bind: { stmt in
-                sqlite3_bind_text(stmt, 1, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                sqlite3_bind_text(stmt, 2, trimmed, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                sqlite3_bind_text(stmt, 3, now, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-            }
-        )
-        guard written > 0 else { throw HUDStoreError.sqlError("chat alias write failed") }
-        return propagateChatName(username: username, displayName: trimmed, previousName: previousName)
+        // Alias write + propagation must commit together — previously the
+        // INSERT committed first, so a rolled-back propagation left the
+        // alias table authoritative while 15 denormalized name columns kept
+        // the old label. The nested transaction is a savepoint.
+        var changed = 0
+        try withTransaction {
+            try exec(
+                "INSERT OR REPLACE INTO chat_aliases(username, display_name, updated_at) VALUES(?,?,?)",
+                params: [username, trimmed, now]
+            )
+            changed = try propagateChatNameThrowing(
+                username: username, displayName: trimmed, previousName: previousName
+            )
+        }
+        return changed
     }
 
     func removeChatAlias(username: String) throws {
@@ -116,26 +121,35 @@ extension HUDStore {
     @discardableResult
     func propagateChatName(username: String, displayName: String, previousName: String? = nil) -> Int {
         guard !username.isEmpty, !displayName.isEmpty else { return 0 }
+        do {
+            return try propagateChatNameThrowing(
+                username: username, displayName: displayName, previousName: previousName
+            )
+        } catch {
+            return 0  // rolled back — nothing was applied
+        }
+    }
+
+    /// Throwing variant — `setChatAlias` runs it inside its own transaction
+    /// (nested savepoint) so the alias write and propagation commit together.
+    private func propagateChatNameThrowing(
+        username: String, displayName: String, previousName: String?
+    ) throws -> Int {
         var changed = 0
-        try? withTransaction {
+        // Throwing writes: executeUpdate swallows per-statement errors, so a
+        // mid-loop failure would commit a half-renamed set across the 15
+        // cached-name tables while the returned count claimed success.
+        try withTransaction {
             for pair in Self.chatNameColumnPairs {
-                changed += executeUpdate(
+                changed += try execReturningChanges(
                     "UPDATE \(pair.table) SET \(pair.nameColumn)=? WHERE \(pair.keyColumn)=? AND \(pair.nameColumn)<>?",
-                    bind: { stmt in
-                        sqlite3_bind_text(stmt, 1, displayName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 2, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 3, displayName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                    }
+                    params: [displayName, username, displayName]
                 )
             }
             if let previousName, !previousName.isEmpty, previousName != displayName {
-                changed += executeUpdate(
+                changed += try execReturningChanges(
                     "UPDATE commitments SET commit_to=? WHERE chat_username=? AND commit_to=?",
-                    bind: { stmt in
-                        sqlite3_bind_text(stmt, 1, displayName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 2, username, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 3, previousName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                    }
+                    params: [displayName, username, previousName]
                 )
             }
         }
@@ -191,17 +205,17 @@ extension HUDStore {
     func applyResolvedCommitTargets(_ updates: [(msgUID: String, oldTarget: String, newTarget: String)]) -> Int {
         guard !updates.isEmpty else { return 0 }
         var changed = 0
-        try? withTransaction {
-            for update in updates {
-                changed += executeUpdate(
-                    "UPDATE commitments SET commit_to=? WHERE msg_uid=? AND commit_to=?",
-                    bind: { stmt in
-                        sqlite3_bind_text(stmt, 1, update.newTarget, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 2, update.msgUID, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 3, update.oldTarget, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                    }
-                )
+        do {
+            try withTransaction {
+                for update in updates {
+                    changed += try execReturningChanges(
+                        "UPDATE commitments SET commit_to=? WHERE msg_uid=? AND commit_to=?",
+                        params: [update.newTarget, update.msgUID, update.oldTarget]
+                    )
+                }
             }
+        } catch {
+            return 0
         }
         return changed
     }
@@ -216,17 +230,17 @@ extension HUDStore {
     ) -> Int {
         guard !updates.isEmpty else { return 0 }
         var changed = 0
-        try? withTransaction {
-            for update in updates {
-                changed += executeUpdate(
-                    "UPDATE \(update.table) SET \(update.nameColumn)=? WHERE \(update.keyColumn)=? AND \(update.nameColumn)=?",
-                    bind: { stmt in
-                        sqlite3_bind_text(stmt, 1, update.newName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 2, update.key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                        sqlite3_bind_text(stmt, 3, update.oldName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-                    }
-                )
+        do {
+            try withTransaction {
+                for update in updates {
+                    changed += try execReturningChanges(
+                        "UPDATE \(update.table) SET \(update.nameColumn)=? WHERE \(update.keyColumn)=? AND \(update.nameColumn)=?",
+                        params: [update.newName, update.key, update.oldName]
+                    )
+                }
             }
+        } catch {
+            return 0
         }
         return changed
     }

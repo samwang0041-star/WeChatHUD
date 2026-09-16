@@ -57,8 +57,8 @@ actor RelationshipInferrer {
 
         let formatted = messages.prefix(50).map { msg in
             let isMe = MessageHelpers.isFromSelf(msg, chatUsername: contactUsername, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: mySelfNames)
-            let sender = isMe ? "用户" : (msg.senderName.isEmpty ? contactName : msg.senderName)
-            return "\(sender): \(AIService.sanitizeForAI(msg.text))"
+            let sender = isMe ? "用户" : (msg.senderName.isEmpty ? contactName : AIService.oneLine(msg.senderName))
+            return "\(sender): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))"
         }.joined(separator: "\n")
 
         let userPrompt = template

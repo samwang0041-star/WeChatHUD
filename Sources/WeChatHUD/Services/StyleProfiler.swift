@@ -176,10 +176,14 @@ actor StyleProfiler {
         let pairs = extractMessagePairs(chrono: chrono, chatUsername: chatUsername, myUsername: myUname, myDisplayName: myDisplay, mySelfNames: mySelfNames, excludeMsgUIDs: excludeMsgUIDs)
 
         // --- Few-shot examples (diverse, skip very short or system-like) ---
+        // oneLine + sanitize at ingest: these strings are interpolated
+        // verbatim into autopilot/reply prompts — a multi-line or
+        // instruction-looking self message becomes prompt structure.
         let examples = outgoing
             .filter { $0.text.count >= 4 && $0.text.count <= 200 && !$0.text.hasPrefix("[") }
             .prefix(10)
-            .map { $0.text }
+            .map { AIService.sanitizeForAI(AIService.oneLine($0.text)) }
+            .filter { !$0.isEmpty }
 
         // --- Typing rhythm ---
         let rhythm = analyzeTypingRhythm(outgoing: outgoing)

@@ -284,7 +284,18 @@ enum CompanionElevation {
 
     /// sRGB components in 0...1. Falls back to mid-grey if a colour cannot be
     /// resolved, which makes the budget conservative rather than unbounded.
-    static func resolveRGB(_ color: Color) -> [Double] {
+    /// Scheme-aware colours resolve under `appearance` when given — tests
+    /// must pin one or a system light/dark flip changes the result.
+    static func resolveRGB(_ color: Color, appearance: NSAppearance? = nil) -> [Double] {
+        if let appearance {
+            var resolved: [Double] = [0.5, 0.5, 0.5]
+            appearance.performAsCurrentDrawingAppearance {
+                if let ns = NSColor(color).usingColorSpace(.sRGB) {
+                    resolved = [Double(ns.redComponent), Double(ns.greenComponent), Double(ns.blueComponent)]
+                }
+            }
+            return resolved
+        }
         let ns = NSColor(color).usingColorSpace(.sRGB)
         guard let ns else { return [0.5, 0.5, 0.5] }
         return [Double(ns.redComponent), Double(ns.greenComponent), Double(ns.blueComponent)]

@@ -99,8 +99,21 @@ enum CodexAuth {
     static func assertSecureAuthFile(at url: URL) throws {
         var info = stat()
         let result = url.path.withCString { lstat($0, &info) }
-        guard result == 0 else { throw CodexError.notLoggedIn }
+        guard result == 0 else {
+            // lstat failing on an existing path (EACCES etc.) is a security
+            // signal, not "not logged in" — don't misreport it.
+            throw CodexError.insecureAuthFile
+        }
         if (info.st_mode & S_IFMT) == S_IFLNK {
+            throw CodexError.insecureAuthFile
+        }
+        // A non-regular file (FIFO/socket/device) passes mode checks but
+        // blocks the reader forever on open — reject it.
+        guard (info.st_mode & S_IFMT) == S_IFREG else {
+            throw CodexError.insecureAuthFile
+        }
+        // auth.json is small; an oversized file is not a credential file.
+        guard info.st_size > 0, info.st_size <= 1024 * 1024 else {
             throw CodexError.insecureAuthFile
         }
         if info.st_uid != getuid() {

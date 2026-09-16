@@ -143,9 +143,9 @@ actor AIReplySuggester {
             .replacingOccurrences(of: "{relationship_hierarchy}", with: input.relationshipHierarchy ?? "unknown")
             .replacingOccurrences(of: "{tone_preference}", with: input.tonePreference ?? "unknown")
             .replacingOccurrences(of: "{context_window}", with: input.contextWindow ?? "（无可用上下文）")
-            .replacingOccurrences(of: "{my_last_reply}", with: input.myLastReply ?? "（无）")
-            .replacingOccurrences(of: "{analysis_summary}", with: input.analysisSummary ?? "（无）")
-            .replacingOccurrences(of: "{known_constraints}", with: input.knownConstraints ?? "（无）")
+            .replacingOccurrences(of: "{my_last_reply}", with: input.myLastReply.map(AIService.oneLine) ?? "（无）")
+            .replacingOccurrences(of: "{analysis_summary}", with: input.analysisSummary.map(AIService.oneLine) ?? "（无）")
+            .replacingOccurrences(of: "{known_constraints}", with: input.knownConstraints.map(AIService.oneLine) ?? "（无）")
 
         // Append style hint if available (from StyleProfiler)
         if let hint = input.styleHint {

@@ -173,7 +173,7 @@ actor AIDailyReportActionInsightGenerator {
         let capped = Array(actions.prefix(Self.actionsPerCall))
         let lines = capped.map { a -> String in
             let deadline = a.deadline.map { " deadline=\"\($0.formatted(date: .abbreviated, time: .shortened))\"" } ?? ""
-            return "id=\"\(a.id)\" type=\"\(a.type.rawValue)\" source=\"\(a.sourceChatName)\"\(deadline) content=\"\(a.content.replacingOccurrences(of: "\"", with: "'"))\""
+            return "id=\"\(a.id)\" type=\"\(a.type.rawValue)\" source=\"\(AIService.oneLine(a.sourceChatName))\"\(deadline) content=\"\(AIService.oneLine(a.content.replacingOccurrences(of: "\"", with: "'")))\""
         }
         return template
             .replacingOccurrences(of: "{count}", with: "\(capped.count)")

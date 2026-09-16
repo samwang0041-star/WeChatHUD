@@ -94,8 +94,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     func open() throws {
+        // A second open would overwrite `db` and leak the first handle —
+        // close it first so the call is idempotent. If the close could not
+        // finish (SQLITE_BUSY — a live statement elsewhere), `db` is still
+        // non-nil; overwriting it here would orphan that handle with its WAL
+        // uncheckpointed.
+        if db != nil { close() }
+        guard db == nil else {
+            throw HUDStoreError.openFailed("previous connection still open (SQLITE_BUSY)")
+        }
         guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
-            throw HUDStoreError.openFailed(String(cString: sqlite3_errmsg(db)))
+            // Even on failure SQLite may allocate a handle — close it or the
+            // store is left pointing at a half-open connection.
+            let msg = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
+            if let handle = db { sqlite3_close(handle); db = nil }
+            throw HUDStoreError.openFailed(msg)
         }
         // A previous connection's cached statements belong to that handle.
         prepareStatementCacheForNewConnection()
@@ -123,6 +136,11 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 retry_after INTEGER NOT NULL DEFAULT 0
             )
         """)
+        // Queue dedup on shard-independent identity: WCDB checkpointing can
+        // move a row between message_N.db files, changing its relPath/localId
+        // (and thus msg_uid). content_key survives the move.
+        _ = try? exec("ALTER TABLE classification_queue ADD COLUMN content_key TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("CREATE INDEX IF NOT EXISTS idx_classification_content_key ON classification_queue(content_key)")
 
         // Seed AI configs to the settings table on first launch. After
         // this runs, every code path reads its AI config from the DB —
@@ -200,8 +218,18 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // `mode=ro` permits SQLite to consult an existing WAL for current
         // data while keeping the primary database connection read-only.
         // Do not use immutable=1 here: it would silently ignore an active WAL.
+        if db != nil { close() }
+        // Same guard as open(): a BUSY close leaves db non-nil — overwriting
+        // it would orphan the old handle and its un-checkpointed WAL.
+        guard db == nil else {
+            throw HUDStoreError.openFailed("existing database handle could not be closed")
+        }
         guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else {
-            throw HUDStoreError.openFailed(String(cString: sqlite3_errmsg(db)))
+            // SQLite can allocate a handle even on failure — close it or the
+            // store is left pointing at a half-open connection.
+            let msg = db.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
+            if let handle = db { sqlite3_close(handle); db = nil }
+            throw HUDStoreError.openFailed(msg)
         }
         prepareStatementCacheForNewConnection()
     }
@@ -210,11 +238,22 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // sqlite3_close returns SQLITE_BUSY while any statement is still
         // alive, so every cached statement must be finalized first. Without
         // this the connection would leak and the on-disk WAL would never be
-        // checkpointed on the final close.
-        finalizeCachedStatements()
-        if let db = db {
-            sqlite3_close(db)
-            self.db = nil
+        // checkpointed on the final close. Finalize + close must share one
+        // serial-queue section — a racing exec between them would
+        // re-prepare a statement, sqlite3_close would return SQLITE_BUSY,
+        // and the handle would leak while `db` tombstoned to nil.
+        // Do NOT wrap this in withDatabaseMutex: its defer calls
+        // sqlite3_mutex_leave on the connection mutex, which is freed by
+        // sqlite3_close inside — a use-after-free.
+        perform {
+            finalizeCachedStatements()
+            if let db = db {
+                if sqlite3_close(db) == SQLITE_OK {
+                    self.db = nil
+                }
+                // SQLITE_BUSY: leave `db` in place — a future close() can
+                // retry once whatever prepared the statement finalizes.
+            }
         }
         if let cleanupPath { try? FileManager.default.removeItem(atPath: cleanupPath) }
     }
@@ -292,6 +331,31 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // comparable. Failure means the column already exists (older DB).
         _ = try? exec("ALTER TABLE sync_state ADD COLUMN last_create_time INTEGER NOT NULL DEFAULT 0")
         _ = try? exec("ALTER TABLE whitelist ADD COLUMN attention_level TEXT NOT NULL DEFAULT 'vip'")
+        // Shard-aware + resumable backlog state:
+        //  last_shard — the message_N.db relPath of the watermark row, so a
+        //      same-second row written to a *different* shard isn't filtered
+        //      by a localId comparison that only means something in-shard.
+        //  backfill_* — the deepest point reached by an interrupted backlog
+        //      walk, so a multi-page gap converges over scans instead of
+        //      restarting at the page bottom every time.
+        _ = try? exec("ALTER TABLE sync_state ADD COLUMN last_shard TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("ALTER TABLE sync_state ADD COLUMN backfill_create_time INTEGER NOT NULL DEFAULT 0")
+        _ = try? exec("ALTER TABLE sync_state ADD COLUMN backfill_local_id INTEGER NOT NULL DEFAULT 0")
+
+        // Self messages are scanned for commitments off the durable queues,
+        // so a chat whose watermark is held (backlog still walking) would
+        // re-run the same AI analysis every scan. This table marks each
+        // analyzed msg_uid once.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS commitment_scans (
+                msg_uid     TEXT PRIMARY KEY,
+                created_at  INTEGER NOT NULL,
+                attempts    INTEGER NOT NULL DEFAULT 3
+            )
+        """)
+        // Pre-migration rows were already marked-and-analyzed — they must
+        // not gain retries. DEFAULT 3 = exhausted; new claims insert 1.
+        _ = try? exec("ALTER TABLE commitment_scans ADD COLUMN attempts INTEGER NOT NULL DEFAULT 3")
 
         // Per-chat HUD-side action state (silence / snooze). Independent
         // from WeChat's own read state — we're layering our own triage
@@ -465,10 +529,12 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 ai_should_notify      INTEGER,
                 ai_notify_level       TEXT,
                 ai_analyzed_at        INTEGER,
+                ai_attempts           INTEGER NOT NULL DEFAULT 0,
                 created_at            INTEGER NOT NULL
             )
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_recalled_sender ON recalled_messages(sender_username, recalled_at)")
+        _ = try? exec("ALTER TABLE recalled_messages ADD COLUMN ai_attempts INTEGER NOT NULL DEFAULT 0")
         try exec("CREATE INDEX IF NOT EXISTS idx_recalled_time ON recalled_messages(recalled_at)")
 
         // -- commitments table
@@ -563,6 +629,12 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_session ON autopilot_log(session_id, created_at DESC)")
         try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_action ON autopilot_log(action)")
+        // The log row ↔ pending_sends row twin link. Rows written before
+        // this column existed keep NULL and fall back to (chat, reply) text
+        // matching — new rows always carry the queue item's UUID, so an
+        // identical reply ("好的") can never resolve its sibling's twin.
+        _ = try? exec("ALTER TABLE autopilot_log ADD COLUMN queue_id TEXT")
+        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_queue_id ON autopilot_log(queue_id)")
 
         // -- autopilot_pending_sends table
         try exec("""
@@ -607,6 +679,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             )
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_inbound_time ON autopilot_inbound_queue(msg_timestamp ASC, created_at ASC)")
+        // Same message reappearing under a different msg_uid after a
+        // cross-shard move must not enqueue twice.
+        _ = try? exec("ALTER TABLE autopilot_inbound_queue ADD COLUMN content_key TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("CREATE INDEX IF NOT EXISTS idx_autopilot_content_key ON autopilot_inbound_queue(content_key)")
 
         // Migrations for pending_asks new columns (four-tier system)
         _ = try? exec("ALTER TABLE pending_asks ADD COLUMN sender_level TEXT")
@@ -730,6 +806,13 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         try exec("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", params: [key, value])
     }
 
+    /// Remove a row from the local `settings` table. Deliberately NOT routed
+    /// through `deviceSettings`: this exists to scrub stale local copies
+    /// (e.g. a plaintext API key) that the device store now shadows.
+    func deleteSetting(_ key: String) throws {
+        try exec("DELETE FROM settings WHERE key=?", params: [key])
+    }
+
     func getSettingJSON<T: Decodable>(_ key: String, as type: T.Type) -> T? {
         guard let raw = getSetting(key), let data = raw.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
@@ -814,6 +897,17 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // is the strongest reset signal we have, and leaving those
         // behind would make a re-added chat come back already muted.
         try? exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
+        // Derived artifacts die with the scope change — otherwise a removed
+        // chat's pending commitments keep firing overdue alerts and its
+        // discussion items / memory rows persist until the model overwrites.
+        try? exec(
+            "UPDATE commitments SET status='cancelled' WHERE chat_username=? AND status IN ('pending','overdue')",
+            params: [username])
+        try? exec(
+            "UPDATE discussion_items SET status='dismissed' WHERE chat_username=? AND status='pending'",
+            params: [username])
+        try? exec("DELETE FROM pending_asks WHERE chat_username=?", params: [username])
+        try? exec("DELETE FROM discussion_queue WHERE chat_username=?", params: [username])
     }
 
     func isWhitelisted(_ username: String) -> Bool {
@@ -875,22 +969,22 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         getWhitelistCursor(username: username)?.lastCreateTime
     }
 
-    func getWhitelistCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
+    func getWhitelistCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int, lastShard: String)? {
         getMessageCursor(sourceKey: "wl/\(username)")
     }
 
-    func getAutopilotCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
+    func getAutopilotCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int, lastShard: String)? {
         getMessageCursor(sourceKey: "ap/\(username)")
     }
 
-    private func getMessageCursor(sourceKey key: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
-        guard let row: (time: Int, localId: Int) = queryOne(
-            "SELECT last_create_time, last_local_id FROM sync_state WHERE source_key=?",
+    private func getMessageCursor(sourceKey key: String) -> (lastCreateTime: Int, lastLocalId: Int, lastShard: String)? {
+        guard let row: (time: Int, localId: Int, shard: String) = queryOne(
+            "SELECT last_create_time, last_local_id, last_shard FROM sync_state WHERE source_key=?",
             bind: { stmt in
                 sqlite3_bind_text(stmt, 1, key, -1, Self.sqliteTransient)
             },
             decode: { stmt in
-                (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+                (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)), Self.textColumn(stmt, 2))
             }
         ) else { return nil }
         let time = row.time
@@ -903,31 +997,64 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // to avoid a one-time replay of historical same-second rows after
         // upgrading.
         let safeLocalId = localId > 0 ? localId : Int.max
-        return time > 0 ? (time, safeLocalId) : nil
+        return time > 0 ? (time, safeLocalId, row.shard) : nil
+    }
+
+    /// Deepest point an interrupted backlog walk reached for this chat.
+    /// nil means no backfill is in flight.
+    func getBackfillCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int)? {
+        guard let row: (time: Int, localId: Int) = queryOne(
+            "SELECT backfill_create_time, backfill_local_id FROM sync_state WHERE source_key=?",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, "wl/\(username)", -1, Self.sqliteTransient)
+            },
+            decode: { stmt in
+                (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)))
+            }
+        ), row.time > 0 else { return nil }
+        return (row.time, row.localId)
+    }
+
+    func setBackfillCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
+        try exec("""
+            INSERT INTO sync_state(source_key, backfill_create_time, backfill_local_id)
+            VALUES(?, ?, ?)
+            ON CONFLICT(source_key) DO UPDATE SET
+                backfill_create_time = excluded.backfill_create_time,
+                backfill_local_id    = excluded.backfill_local_id
+        """, params: ["wl/\(username)", "\(lastCreateTime)", "\(lastLocalId)"])
+    }
+
+    func clearBackfillCursor(username: String) throws {
+        try exec("""
+            UPDATE sync_state SET backfill_create_time=0, backfill_local_id=0
+            WHERE source_key=?
+        """, params: ["wl/\(username)"])
     }
 
     func setWhitelistBaseline(username: String, lastCreateTime: Int) throws {
         try setWhitelistCursor(username: username, lastCreateTime: lastCreateTime, lastLocalId: 0)
     }
 
-    func setWhitelistCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
-        try setMessageCursor(sourceKey: "wl/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId)
+    func setWhitelistCursor(username: String, lastCreateTime: Int, lastLocalId: Int, lastShard: String = "") throws {
+        try setMessageCursor(sourceKey: "wl/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId, lastShard: lastShard)
     }
 
-    func setAutopilotCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
-        try setMessageCursor(sourceKey: "ap/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId)
+    func setAutopilotCursor(username: String, lastCreateTime: Int, lastLocalId: Int, lastShard: String = "") throws {
+        try setMessageCursor(sourceKey: "ap/\(username)", lastCreateTime: lastCreateTime, lastLocalId: lastLocalId, lastShard: lastShard)
     }
 
-    private func setMessageCursor(sourceKey key: String, lastCreateTime: Int, lastLocalId: Int) throws {
+    private func setMessageCursor(sourceKey key: String, lastCreateTime: Int, lastLocalId: Int, lastShard: String) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
-            INSERT INTO sync_state(source_key, last_local_id, last_check_at, last_create_time)
-            VALUES(?, ?, ?, ?)
+            INSERT INTO sync_state(source_key, last_local_id, last_check_at, last_create_time, last_shard)
+            VALUES(?, ?, ?, ?, ?)
             ON CONFLICT(source_key) DO UPDATE SET
                 last_local_id    = excluded.last_local_id,
                 last_create_time = excluded.last_create_time,
-                last_check_at    = excluded.last_check_at
-        """, params: [key, "\(lastLocalId)", "\(now)", "\(lastCreateTime)"])
+                last_check_at    = excluded.last_check_at,
+                last_shard       = excluded.last_shard
+        """, params: [key, "\(lastLocalId)", "\(now)", "\(lastCreateTime)", lastShard])
     }
 
     // MARK: - Chat actions (HUD-side triage state)
@@ -1250,7 +1377,13 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     func upsertPendingAsk(_ ask: PendingAsk) throws {
         let now = Int(Date().timeIntervalSince1970)
         let createdAt = Int(ask.createdAt.timeIntervalSince1970)
-        let deadline: String = ask.deadlineAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        // NULL, not '' — an empty string stores as TEXT in this INTEGER-
+        // affinity column, outranks every number in comparisons, and makes
+        // `deadline_at IS NULL` / `= 0` predicates misjudge the row.
+        // COALESCE keeps a previously stored deadline when a re-extraction
+        // (queue replay under a surviving msg_uid) comes back without one —
+        // unconditional overwrite would silently wipe it.
+        let deadline: String? = ask.deadlineAt.map { String(Int($0.timeIntervalSince1970)) }
         try exec("""
             INSERT INTO pending_asks(
                 msg_uid, chat_username, chat_name, sender_name, raw_text,
@@ -1262,7 +1395,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             ON CONFLICT(msg_uid) DO UPDATE SET
                 summary        = excluded.summary,
                 ask_type       = excluded.ask_type,
-                deadline_at    = excluded.deadline_at,
+                deadline_at    = COALESCE(excluded.deadline_at, pending_asks.deadline_at),
                 confidence     = excluded.confidence,
                 bucket         = excluded.bucket,
                 status         = CASE
@@ -1434,7 +1567,11 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             AIAuditPrivacy.persistableText(entry.outputText),
             "\(entry.latencyMs)",
             entry.status.rawValue,
-            entry.errorMessage ?? ""
+            // Error strings embed raw provider bodies — an endpoint can echo
+            // anything (including secrets) into them, unbounded. Redact +
+            // cap; no sha prefix — there is no raw row to correlate it with.
+            String(Redactor.applyMasks(entry.errorMessage ?? "")
+                .prefix(AIAuditPrivacy.snippetLimit))
         ])
     }
 
@@ -1598,7 +1735,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             "\(ts)",
             entry.msgUID,
             entry.feedbackType.rawValue,
-            entry.originalOutput,
+            // Model output can echo raw message text — redact + cap it like
+            // the audit table does rather than persisting it verbatim.
+            AIAuditPrivacy.persistableText(entry.originalOutput),
             entry.userAction ?? "",
             entry.note ?? ""
         ])
@@ -1687,6 +1826,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 if let model = json["model"] as? String { cfg.provider.model = model }
                 if let key = json["apiKey"] as? String { cfg.provider.apiKey = key }
                 try? setSettingJSON("ai", value: cfg)
+                // The legacy row holds the API key in plaintext — copying it
+                // without deleting keeps the secret at rest forever.
+                try? deleteSetting("classifier")
                 print("[WCHUD] migrated classifier config → ai config")
             } else {
                 try? setSettingJSON("ai", value: HUDStore.factoryAIConfig)
@@ -2103,6 +2245,23 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     // MARK: - Recalled Messages
 
+    /// A recalled message's derived artifacts must die with it — otherwise a
+    /// withdrawn "我明天把合同发你" stays a live commitment forever, and a
+    /// recalled ask keeps anchoring discussion items. Tombstone by the
+    /// ORIGINAL message's uid (not the recall row's).
+    func tombstoneForRecall(originalMsgUID: String) {
+        // An empty uid would match every malformed row ever written —
+        // the cascade must no-op on it, not wipe the boards.
+        guard !originalMsgUID.isEmpty else { return }
+        try? exec(
+            "UPDATE commitments SET status='cancelled' WHERE msg_uid=? AND status IN ('pending','overdue')",
+            params: [originalMsgUID])
+        try? exec(
+            "UPDATE discussion_items SET status='dismissed' WHERE anchor_msg_uid=? AND status='pending'",
+            params: [originalMsgUID])
+        try? exec("DELETE FROM pending_asks WHERE msg_uid=?", params: [originalMsgUID])
+    }
+
     func insertRecalledMessage(
         msgUID: String,
         senderUsername: String,
@@ -2149,7 +2308,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                    sent_at, recalled_at, recall_delay_seconds,
                    ai_reason, ai_intelligence_value, ai_detail,
                    ai_should_notify, ai_notify_level, ai_analyzed_at,
-                   created_at
+                   ai_attempts, created_at
             FROM recalled_messages
             WHERE recalled_at >= ?
             ORDER BY recalled_at DESC
@@ -2187,9 +2346,20 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 aiShouldNotify: aiShouldNotify,
                 aiNotifyLevel: aiNotifyStr.flatMap { NotifyLevel(rawValue: $0) },
                 aiAnalyzedAt: aiAnalyzedAt,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 19)))
+                aiAttempts: Int(sqlite3_column_int64(stmt, 19)),
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 20)))
             )
         })
+    }
+
+    /// Bump the attempts counter on every analysis pass — success or
+    /// failure. A permanently-failing analyzer must not get an unbounded
+    /// retry loop on every scan.
+    func markRecallAnalysisAttempted(msgUID: String) throws {
+        try exec(
+            "UPDATE recalled_messages SET ai_attempts = ai_attempts + 1 WHERE msg_uid=?",
+            params: [msgUID]
+        )
     }
 
     func updateRecallAnalysis(
@@ -2238,7 +2408,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     ) throws {
         let now = Int(Date().timeIntervalSince1970)
         let created = Int(createdAt.timeIntervalSince1970)
-        let deadlineStr = deadlineAt.map { String(Int($0.timeIntervalSince1970)) } ?? ""
+        // Same TEXT-in-INTEGER trap as pending_asks: nil binds NULL, and
+        // COALESCE preserves a stored deadline when a re-extraction omits it.
+        let deadlineStr: String? = deadlineAt.map { String(Int($0.timeIntervalSince1970)) }
         try exec("""
             INSERT INTO commitments(
                 msg_uid, chat_username, chat_name, content, commit_to,
@@ -2251,7 +2423,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             ON CONFLICT(msg_uid) DO UPDATE SET
                 content        = excluded.content,
                 commit_to      = excluded.commit_to,
-                deadline_at    = excluded.deadline_at,
+                deadline_at    = COALESCE(excluded.deadline_at, commitments.deadline_at),
                 confidence     = excluded.confidence,
                 prompt_version = excluded.prompt_version,
                 source_text    = excluded.source_text,
@@ -2298,9 +2470,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             params.append(status.rawValue)
         }
         if let relevantSince {
+            // Pending/overdue alone no longer admits a row — the live window
+            // is purely age-based so phantom commitments age out.
             clauses.append(Self.commitmentRelevantSinceClause)
-            params.append(CommitmentStatus.pending.rawValue)
-            params.append(CommitmentStatus.overdue.rawValue)
             params.append("\(relevantSince)")
             params.append("\(relevantSince)")
             params.append("\(relevantSince)")
@@ -2400,7 +2572,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // `due_at IS NULL` matched none. Any "is this dated?" check silently
         // read as yes. Passing nil binds NULL.
         let dueValue: String? = dueAt.map { String(Int($0.timeIntervalSince1970)) }
-        try exec("""
+        return try execReturningChanges("""
             INSERT OR IGNORE INTO discussion_items(
                 chat_username, chat_name, kind, owner, content, detail,
                 anchor_msg_uid, source_timestamp, due_at, status,
@@ -2414,8 +2586,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             DiscussionItemStatus.pending.rawValue,
             String(confidence), promptVersion,
             "\(now)", "\(now)"
-        ])
-        return sqlite3_changes(db) > 0
+        ]) > 0
     }
 
     /// Load discussion items with optional filters.
@@ -2537,7 +2708,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     @discardableResult
     func archiveStalePendingDiscussionItems(cutoff: Int, now: Date = Date()) throws -> Int {
         let ts = String(Int(now.timeIntervalSince1970))
-        try exec("""
+        return try execReturningChanges("""
             UPDATE discussion_items
             SET status=?, updated_at=?
             WHERE status=?
@@ -2556,14 +2727,29 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             "\(cutoff)",
             "\(cutoff)"
         ])
-        return Int(sqlite3_changes(db))
+    }
+
+    /// Pending/overdue commitments never age out — a stale or phantom row
+    /// re-fires overdue alerts on a 24h cooldown forever. Bound them like the
+    /// discussion sweeps (the overdue ones get a longer 30-day window).
+    @discardableResult
+    func archiveStalePendingCommitments(cutoff: Int, now: Date = Date()) throws -> Int {
+        let ts = String(Int(now.timeIntervalSince1970))
+        return try execReturningChanges("""
+            UPDATE commitments
+            SET status='cancelled', updated_at=?
+            WHERE status IN ('pending','overdue')
+              AND CAST(created_at AS INTEGER) < ?
+              AND CAST(updated_at AS INTEGER) < ?
+              AND (deadline_at IS NULL OR CAST(deadline_at AS INTEGER) < ?)
+        """, params: [ts, "\(cutoff)", "\(cutoff)", "\(cutoff)"])
     }
 
     /// Stale classifier asks use the same 14-day source/due window as discussion.
     @discardableResult
     func archiveStalePendingAsks(cutoff: Int, now: Date = Date()) throws -> Int {
         let ts = String(Int(now.timeIntervalSince1970))
-        try exec("""
+        return try execReturningChanges("""
             UPDATE pending_asks
             SET status=?, updated_at=?
             WHERE status=?
@@ -2581,7 +2767,6 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             "\(cutoff)",
             "\(cutoff)"
         ])
-        return Int(sqlite3_changes(db))
     }
 
     func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
@@ -2595,11 +2780,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     @discardableResult
     func updatePendingDiscussionItems(matchingAnchorMsgUID uid: String, status: DiscussionItemStatus) throws -> Int {
         let now = Int(Date().timeIntervalSince1970)
-        try exec(
+        return try execReturningChanges(
             "UPDATE discussion_items SET status=?, updated_at=? WHERE anchor_msg_uid=? AND status=?",
             params: [status.rawValue, "\(now)", uid, DiscussionItemStatus.pending.rawValue]
         )
-        return Int(sqlite3_changes(db))
     }
 
     /// Corrects AI-assigned responsibility without changing the item's status.
@@ -2607,10 +2791,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     @discardableResult
     func updateDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws -> Bool {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("""
+        return try execReturningChanges("""
             UPDATE discussion_items SET owner=?, updated_at=? WHERE id=?
-        """, params: [owner.rawValue, "\(now)", "\(id)"])
-        return sqlite3_changes(db) > 0
+        """, params: [owner.rawValue, "\(now)", "\(id)"]) > 0
     }
 
     /// Repairs inverted inquiry rows: kind, owner, and cleaned content together.
@@ -2622,10 +2805,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         content: String
     ) throws -> Bool {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("""
+        return try execReturningChanges("""
             UPDATE discussion_items SET kind=?, owner=?, content=?, updated_at=? WHERE id=?
-        """, params: [kind.rawValue, owner.rawValue, content, "\(now)", "\(id)"])
-        return sqlite3_changes(db) > 0
+        """, params: [kind.rawValue, owner.rawValue, content, "\(now)", "\(id)"]) > 0
     }
 
     /// Corrects content, owner, and deadline without touching WeChat source text.
@@ -2641,10 +2823,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // path does: an empty string stores as TEXT, which outranks every
         // number and makes "has a deadline" read as true forever.
         let dueValue: String? = dueAt.map { String(Int($0.timeIntervalSince1970)) }
-        try exec("""
+        return try execReturningChanges("""
             UPDATE discussion_items SET content=?, owner=?, due_at=?, updated_at=? WHERE id=?
-        """, params: [content, owner.rawValue, dueValue, "\(now)", "\(id)"])
-        return sqlite3_changes(db) > 0
+        """, params: [content, owner.rawValue, dueValue, "\(now)", "\(id)"]) > 0
     }
 
     /// The most recent `source_timestamp` extracted for a chat — used
@@ -2983,8 +3164,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     func startAutopilotSession() throws -> Int64 {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("INSERT INTO autopilot_sessions(started_at) VALUES(?)", params: [String(now)])
-        return sqlite3_last_insert_rowid(db)
+        return try execReturningRowID(
+            "INSERT INTO autopilot_sessions(started_at) VALUES(?)", params: [String(now)]
+        )
     }
 
     func endAutopilotSession(id: Int64) throws {
@@ -3025,8 +3207,8 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     func insertAutopilotLog(_ entry: AutopilotLogEntry) throws {
         try withCachedStatement("""
             INSERT INTO autopilot_log(session_id, chat_username, chat_name, sender_username, sender_name,
-                trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level, action, ai_reasoning, sent_at, created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                trigger_msg_uid, trigger_text, generated_reply, confidence, risk_level, action, ai_reasoning, sent_at, created_at, queue_id)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """) { stmt in
             sqlite3_bind_int64(stmt, 1, entry.sessionId)
             sqlite3_bind_text(stmt, 2, entry.chatUsername, -1, Self.sqliteTransient)
@@ -3054,6 +3236,11 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 sqlite3_bind_null(stmt, 13)
             }
             sqlite3_bind_int64(stmt, 14, Int64(entry.createdAt.timeIntervalSince1970))
+            if let queueId = entry.queueId {
+                sqlite3_bind_text(stmt, 15, queueId, -1, Self.sqliteTransient)
+            } else {
+                sqlite3_bind_null(stmt, 15)
+            }
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw HUDStoreError.sqlError("step autopilot_log insert: \(String(cString: sqlite3_errmsg(db)))")
             }
@@ -3198,8 +3385,13 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return result
     }
 
+    /// A draft save must only touch a still-pending row — a save landing
+    /// after resolve would rewrite the audit trail of a sent/skipped send.
     func updateAutopilotLogReply(id: Int64, reply: String) throws {
-        try exec("UPDATE autopilot_log SET generated_reply=? WHERE id=?", params: [reply, String(id)])
+        try exec(
+            "UPDATE autopilot_log SET generated_reply=? WHERE id=? AND action='pending'",
+            params: [reply, String(id)]
+        )
     }
 
     func upsertPendingSend(_ item: PendingSend, sessionId: Int64) throws {
@@ -3299,17 +3491,314 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         try exec("DELETE FROM autopilot_pending_sends WHERE id=?", params: [id.uuidString])
     }
 
+    /// A held reply exists as BOTH a pending_sends row and an autopilot_log
+    /// row. New log rows carry the queue item's UUID in `queue_id` — resolve
+    /// by that key. Rows written before the column existed match by
+    /// (chat, replyText) but only ONE row at a time — resolving every
+    /// identical-text match would send/skip a sibling's draft.
+    /// `?N` bind indices differ per call site, so the predicate takes them.
+    private func legacyTwinPredicate(chatParam: Int, replyParam: Int) -> String {
+        "queue_id IS NULL AND rowid = (SELECT rowid FROM autopilot_log "
+            + "WHERE queue_id IS NULL AND chat_username=?\(chatParam) AND generated_reply=?\(replyParam) "
+            + "AND action='pending' ORDER BY created_at, rowid LIMIT 1)"
+    }
+
+    /// True when no log row claims this queue id — only then may the legacy
+    /// text fallback run. Gating on flip-count alone would misfire for a
+    /// new-format row whose twin is 'sent'/'stall' (legitimately 0 pending
+    /// flips) and rewrite an unrelated same-text legacy row.
+    private func twinClaimed(queueId: String) -> Bool {
+        queryOne("SELECT 1 FROM autopilot_log WHERE queue_id=? LIMIT 1",
+                 bind: { sqlite3_bind_text($0, 1, queueId, -1, Self.sqliteTransient) },
+                 decode: { _ in 1 }) != nil
+    }
+
+    /// True while the queue item's log twin is still unresolved — i.e.
+    /// 'pending' or an unverified send claim. A resolved twin ('skipped',
+    /// stamped 'sent', 'failed') means the item was cancelled/rejected/stopped
+    /// and must not be re-queued.
+    func autopilotLogTwinOpen(queueId: UUID) -> Bool {
+        let qid = queueId.uuidString
+        return queryOne(
+            "SELECT action, sent_at FROM autopilot_log WHERE queue_id=? LIMIT 1",
+            bind: { sqlite3_bind_text($0, 1, qid, -1, Self.sqliteTransient) },
+            decode: { stmt -> Bool in
+                guard let c = sqlite3_column_text(stmt, 0) else { return false }
+                let action = String(cString: c)
+                return action == "pending" || action == "stall"
+                    || (action == "sent" && sqlite3_column_type(stmt, 1) == SQLITE_NULL)
+            }
+        ) ?? false
+    }
+
+    /// A queued-but-unverified send claim: 'sent' written at enqueue time
+    /// (sent_at NULL) or a 'stall' row — both assert a send that has not
+    /// completed.
+    private static let unverifiedClaim = "(action='sent' AND sent_at IS NULL OR action='stall')"
+
+    /// Resolve the log twin of a queue item. Returns the flipped row count —
+    /// callers decrement pending counters only when a pending row resolved.
+    @discardableResult
+    func markAutopilotLogSent(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        let now = String(Int(Date().timeIntervalSince1970))
+        let qid = queueId.uuidString
+        // .sent rows are written at ENQUEUE time with sent_at NULL — stamp
+        // the verified-send time on the .sent twin too. A 'skipped' twin means
+        // a reject raced an in-flight send that then verifiably completed —
+        // the send is the truth; flip it back.
+        try exec(
+            "UPDATE autopilot_log SET action='sent', sent_at=? WHERE queue_id=? AND \(Self.unverifiedClaim)",
+            params: [now, qid]
+        )
+        try exec(
+            "UPDATE autopilot_log SET action='sent', sent_at=? WHERE queue_id=? AND action='skipped'",
+            params: [now, qid]
+        )
+        var changes = try execReturningChanges(
+            "UPDATE autopilot_log SET action='sent', sent_at=? WHERE queue_id=? AND action='pending'",
+            params: [now, qid]
+        )
+        if changes == 0 && !twinClaimed(queueId: qid) {
+            // Legacy row without queue_id — bound to a single match.
+            changes = try execReturningChanges(
+                """
+                UPDATE autopilot_log SET action='sent', sent_at=?1
+                WHERE \(legacyTwinPredicate(chatParam: 2, replyParam: 3))
+                """,
+                params: [now, chatUsername, replyText]
+            )
+            // Also stamp a legacy .sent twin — bounded to one row so two
+            // same-text legacy items don't share the first send's stamp.
+            try exec(
+                """
+                UPDATE autopilot_log SET action='sent', sent_at=?1
+                WHERE queue_id IS NULL AND rowid = (
+                    SELECT rowid FROM autopilot_log WHERE queue_id IS NULL
+                        AND chat_username=?2 AND generated_reply=?3
+                        AND \(Self.unverifiedClaim)
+                    ORDER BY created_at, rowid LIMIT 1)
+                """,
+                params: [now, chatUsername, replyText]
+            )
+        }
+        return changes
+    }
+
+    /// The cancel counterpart — a canceled queue row must also resolve the
+    /// pending log twin, or the approval UI keeps offering 确认发送 for a
+    /// reply the user just canceled. Returns the flipped row count.
+    @discardableResult
+    func markAutopilotLogSkipped(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        let qid = queueId.uuidString
+        // An unverified send claim (enqueue-time '.sent', or a 'stall' row)
+        // claimed a send that never happened — a stop/cancel must un-claim
+        // it too. Only the pending-flip counts toward counter decrements.
+        try exec(
+            "UPDATE autopilot_log SET action='skipped' WHERE queue_id=? AND \(Self.unverifiedClaim)",
+            params: [qid]
+        )
+        var changes = try execReturningChanges(
+            "UPDATE autopilot_log SET action='skipped' WHERE queue_id=? AND action='pending'",
+            params: [qid]
+        )
+        if changes == 0 && !twinClaimed(queueId: qid) {
+            changes = try execReturningChanges(
+                "UPDATE autopilot_log SET action='skipped' WHERE \(legacyTwinPredicate(chatParam: 1, replyParam: 2))",
+                params: [chatUsername, replyText]
+            )
+        }
+        return changes
+    }
+
+    /// An auto-queued item converted to manual-only (cap/stale/send-failure)
+    /// must flip its log twin back to 'pending' — it now needs a human, and
+    /// leaving it '.sent' would claim a send that never happened AND keep it
+    /// out of the approval list forever. Returns the flipped row count.
+    @discardableResult
+    func markAutopilotLogPending(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        let qid = queueId.uuidString
+        var changes = try execReturningChanges(
+            "UPDATE autopilot_log SET action='pending' WHERE queue_id=? AND \(Self.unverifiedClaim)",
+            params: [qid]
+        )
+        if changes == 0 && !twinClaimed(queueId: qid) {
+            changes = try execReturningChanges(
+                """
+                UPDATE autopilot_log SET action='pending'
+                WHERE queue_id IS NULL AND rowid = (
+                    SELECT rowid FROM autopilot_log WHERE queue_id IS NULL
+                        AND chat_username=?1 AND generated_reply=?2
+                        AND \(Self.unverifiedClaim)
+                    ORDER BY created_at, rowid LIMIT 1)
+                """,
+                params: [chatUsername, replyText]
+            )
+        }
+        return changes
+    }
+
+    /// Delete the queue twin of a LOG row — the reverse direction. Keyed by
+    /// the log's queue_id; the legacy text match only runs when the log row
+    /// itself carries no queue_id (a claimed twin was already deleted above;
+    /// deleting again by text could kill an unclaimed sibling).
+    func deletePendingSendForLog(logId: Int64, chatUsername: String, replyText: String) throws {
+        if let qid = autopilotLogQueueId(id: logId), !qid.isEmpty {
+            try exec("DELETE FROM autopilot_pending_sends WHERE id=?", params: [qid])
+            return
+        }
+        // Legacy twins have no queue_id anywhere — bounded single match.
+        try exec(
+            """
+            DELETE FROM autopilot_pending_sends WHERE rowid = (
+                SELECT rowid FROM autopilot_pending_sends
+                WHERE chat_username=?1 AND reply_text=?2
+                    AND NOT EXISTS(SELECT 1 FROM autopilot_log WHERE queue_id=autopilot_pending_sends.id)
+                ORDER BY created_at, rowid LIMIT 1)
+            """,
+            params: [chatUsername, replyText]
+        )
+    }
+
+    /// The queue item UUID a log row twins with.
+    func autopilotLogQueueId(id: Int64) -> String? {
+        queryOne(
+            "SELECT queue_id FROM autopilot_log WHERE id=?",
+            bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+            decode: { stmt in
+                sqlite3_column_type(stmt, 0) != SQLITE_NULL ? Self.textColumn(stmt, 0) : nil
+            }
+        )
+    }
+
+    /// Atomically record a verified send on a log row. Returns whether a
+    /// 'pending' row was consumed — the check and the write share one
+    /// transaction so a racing reject can't double-count sessionPending.
+    /// The send DID happen, so the row is written 'sent' regardless of its
+    /// prior action; only the pending-flip is counted.
+    @discardableResult
+    func resolveAutopilotLogSent(id: Int64) -> Bool {
+        var consumed = false
+        try? withTransaction {
+            let action = queryOne(
+                "SELECT action FROM autopilot_log WHERE id=?",
+                bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+                decode: { stmt in Self.textColumn(stmt, 0) }
+            )
+            consumed = (action == AutopilotAction.pending.rawValue)
+            try exec(
+                "UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?",
+                params: [String(Int(Date().timeIntervalSince1970)), String(id)]
+            )
+        }
+        return consumed
+    }
+
+    /// Atomically skip a log row ONLY if still pending — a reject racing an
+    /// in-flight approve must not stomp a completed send. Returns whether a
+    /// pending row was consumed (for sessionPending accounting).
+    @discardableResult
+    func resolveAutopilotLogSkipped(id: Int64) -> Bool {
+        (try? execReturningChanges(
+            "UPDATE autopilot_log SET action='skipped' WHERE id=? AND action='pending'",
+            params: [String(id)]
+        )) == 1
+    }
+
+    /// Sync the log twin's text when a queue item's reply is edited —
+    /// after a blocked editAndSend the log must show/send the edited text,
+    /// not the superseded original.
+    func updateAutopilotLogReplyForQueue(queueId: UUID, reply: String) throws {
+        try exec(
+            "UPDATE autopilot_log SET generated_reply=? WHERE queue_id=? AND action='pending'",
+            params: [reply, queueId.uuidString]
+        )
+    }
+
+    /// Re-key the queue twin when a draft is edited in place — the log's
+    /// generated_reply changes, so the queue row's reply_text must follow
+    /// or the twin link breaks and the pre-edit text stays sendable.
+    func updatePendingSendReply(id: UUID, newReply: String) throws {
+        try exec(
+            "UPDATE autopilot_pending_sends SET reply_text=? WHERE id=?",
+            params: [newReply, id.uuidString]
+        )
+    }
+
+    /// The reply text ONLY when the row is still pending — approvePending
+    /// re-validates against this so a stale UI snapshot cannot re-send a
+    /// row that was already rejected/sent/canceled.
+    func autopilotLogPendingReply(id: Int64) -> String? {
+        queryOne(
+            "SELECT generated_reply FROM autopilot_log WHERE id=? AND action='pending'",
+            bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+            decode: { stmt in Self.textColumn(stmt, 0) }
+        )
+    }
+
     func clearPendingSends(sessionId: Int64) throws {
         try exec("DELETE FROM autopilot_pending_sends WHERE session_id=?", params: [String(sessionId)])
     }
 
+    /// Commitment analysis runs once per msg_uid ever — a chat whose
+    /// watermark is held mid-backfill re-surfaces the same self messages
+    /// every scan, and without this mark each pass would re-pay the AI call.
+    /// Returns true when the uid was newly marked (first sight).
+    /// Claim one analysis attempt for a msg_uid — bounded at `maxAttempts`.
+    /// Mark-first-then-analyze used to permanently lose commitments on a
+    /// transient failure (the mark survived, the analysis died with it);
+    /// an attempts counter lets a failed pass retry on the next scan
+    /// without ever becoming an unbounded per-scan AI call.
+    func markCommitmentAnalyzedIfNew(msgUID: String, maxAttempts: Int = 3) -> Bool {
+        do {
+            var changes = 0
+            // changes() must be read inside the same mutex acquisition as the
+            // write — a separate query hop lets another writer's statement
+            // interleave and corrupt the count.
+            try withCachedStatement("""
+                INSERT INTO commitment_scans(msg_uid, created_at, attempts)
+                VALUES(?, ?, 1)
+                ON CONFLICT(msg_uid) DO UPDATE SET attempts = attempts + 1
+                WHERE attempts < ?
+            """) { stmt in
+                sqlite3_bind_text(stmt, 1, msgUID, -1, Self.sqliteTransient)
+                sqlite3_bind_int64(stmt, 2, Int64(Date().timeIntervalSince1970))
+                sqlite3_bind_int64(stmt, 3, Int64(maxAttempts))
+                // A failed step must THROW — returning false here would
+                // fail closed (the caller skips analysis forever), while
+                // the catch below is deliberately fail-open. changes==0 is
+                // the legitimate "attempts exhausted" signal, not an error.
+                guard sqlite3_step(stmt) == SQLITE_DONE else {
+                    throw HUDStoreError.sqlError(
+                        String(cString: sqlite3_errmsg(sqlite3_db_handle(stmt)))
+                    )
+                }
+                changes = Int(sqlite3_changes(sqlite3_db_handle(stmt)))
+            }
+            return changes == 1
+        } catch {
+            // A failed mark must not suppress analysis — the message may
+            // never have been seen. Failing open is a wasted AI call,
+            // not a lost commitment.
+            return true
+        }
+    }
+
+    /// Same rule as `MessageInfo.contentKey`: the timestamp distinguishes a
+    /// genuinely repeated text from a moved/shard-replayed row.
+    private static func autopilotContentKey(_ msg: AutopilotService.InboundMessage) -> String {
+        "\(msg.chatUsername)|\(msg.timestamp)|\(msg.messageType)|\(msg.appType)|\(msg.senderUsername)|\(msg.text)"
+    }
+
     func enqueueAutopilotInbound(_ msg: AutopilotService.InboundMessage) throws {
         try withCachedStatement("""
-            INSERT OR IGNORE INTO autopilot_inbound_queue(
+            INSERT INTO autopilot_inbound_queue(
                 msg_uid, chat_username, chat_name, sender_username, sender_name, text,
                 is_group, is_at_mention, attention_level, contact_role, msg_timestamp,
-                message_type, app_type, created_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                message_type, app_type, created_at, content_key
+            ) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+            WHERE NOT EXISTS(
+                SELECT 1 FROM autopilot_inbound_queue WHERE msg_uid=? OR content_key=?
+            )
         """) { stmt in
             sqlite3_bind_text(stmt, 1, msg.msgUID, -1, Self.sqliteTransient)
             sqlite3_bind_text(stmt, 2, msg.chatUsername, -1, Self.sqliteTransient)
@@ -3325,6 +3814,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             sqlite3_bind_int(stmt, 12, Int32(msg.messageType))
             sqlite3_bind_int(stmt, 13, Int32(msg.appType))
             sqlite3_bind_int64(stmt, 14, Int64(Date().timeIntervalSince1970))
+            sqlite3_bind_text(stmt, 15, Self.autopilotContentKey(msg), -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 16, msg.msgUID, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 17, Self.autopilotContentKey(msg), -1, Self.sqliteTransient)
             guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw HUDStoreError.sqlError("step autopilot_inbound_queue insert: \(String(cString: sqlite3_errmsg(db)))")
             }
@@ -3390,9 +3882,12 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 throw NSError(domain: "WeChatHUD", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "请先结束自动托管，再清除历史记录。"])
             }
-            // History maintenance must never discard queued work or pending sends.
+            // Only reachable with no live session — pending_sends rows are
+            // keyed by session_id, so deleting the log+sessions would orphan
+            // them (loadPendingSends could never reach them again).
             try exec("DELETE FROM autopilot_log")
             try exec("DELETE FROM autopilot_sessions WHERE ended_at IS NOT NULL")
+            try exec("DELETE FROM autopilot_pending_sends")
         }
     }
 
@@ -3468,19 +3963,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     private func parseRelationshipRow(_ stmt: OpaquePointer?) -> RelationshipProfile {
+        // textColumn is NULL-safe; `String(cString: column_text)` traps on a
+        // NULL pointer, and `context`/`user_note` are nullable columns.
         RelationshipProfile(
-            username: String(cString: sqlite3_column_text(stmt, 0)),
-            displayName: String(cString: sqlite3_column_text(stmt, 1)),
-            relationship: String(cString: sqlite3_column_text(stmt, 2)),
-            hierarchy: RelationshipProfile.Hierarchy(rawValue: String(cString: sqlite3_column_text(stmt, 3))) ?? .peer,
-            tonePreference: RelationshipProfile.TonePreference(rawValue: String(cString: sqlite3_column_text(stmt, 4))) ?? .formal,
+            username: Self.textColumn(stmt, 0),
+            displayName: Self.textColumn(stmt, 1),
+            relationship: Self.textColumn(stmt, 2),
+            hierarchy: RelationshipProfile.Hierarchy(rawValue: Self.textColumn(stmt, 3)) ?? .peer,
+            tonePreference: RelationshipProfile.TonePreference(rawValue: Self.textColumn(stmt, 4)) ?? .formal,
             context: {
-                let s = String(cString: sqlite3_column_text(stmt, 5))
+                let s = Self.textColumn(stmt, 5)
                 return s.isEmpty ? nil : s
             }(),
             confidence: sqlite3_column_double(stmt, 6),
             userNote: {
-                let s = String(cString: sqlite3_column_text(stmt, 7))
+                let s = Self.textColumn(stmt, 7)
                 return s.isEmpty ? nil : s
             }(),
             userEdited: sqlite3_column_int(stmt, 8) != 0,
@@ -3519,7 +4016,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             try? upsertWhitelistTracking(
                 username: contact.username,
                 displayName: existing?.displayName ?? contact.displayName,
-                isGroup: existing?.isGroup ?? contact.username.contains("@chatroom"),
+                isGroup: existing?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
                 category: existing?.category ?? .other,
                 attentionLevel: .vip
             )
@@ -3546,29 +4043,59 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             // EXISTS predicate provides idempotency without INSERT OR IGNORE
             // swallowing an actual write error.
             try exec("""
-                INSERT INTO classification_queue(msg_uid,payload,source_timestamp)
-                SELECT ?,?,? WHERE NOT EXISTS(
-                    SELECT 1 FROM classification_queue WHERE msg_uid=?
+                INSERT INTO classification_queue(msg_uid,payload,source_timestamp,content_key)
+                SELECT ?,?,?,? WHERE NOT EXISTS(
+                    SELECT 1 FROM classification_queue WHERE msg_uid=? OR content_key=?
                 )
-            """, params: [message.id, payload, String(message.createTime), message.id])
+            """, params: [message.id, payload, String(message.createTime), message.contentKey,
+                          message.id, message.contentKey])
         }
     }
 
+    /// An undecodable payload used to survive forever — decoded to nil on
+    /// every poll, never completed/deferred, and its message never
+    /// classified. Quarantine it (delete + log) so the queue moves on.
     func pendingClassificationMessages(limit: Int = 40) -> [MessageInfo] {
         let now = Int64(Date().timeIntervalSince1970)
         let capped = Int32(max(1, min(limit, 200)))
-        return queryAll(
-            "SELECT payload FROM classification_queue WHERE retry_after <= ? ORDER BY source_timestamp, msg_uid LIMIT ?",
+        var poisoned: [String] = []
+        let rows = queryAll(
+            "SELECT msg_uid, payload FROM classification_queue WHERE retry_after <= ? ORDER BY source_timestamp, msg_uid LIMIT ?",
             bind: { stmt in
                 sqlite3_bind_int64(stmt, 1, now)
                 sqlite3_bind_int(stmt, 2, capped)
             },
-            decode: { stmt in
-                let payload = Self.textColumn(stmt, 0)
-                guard let data = payload.data(using: .utf8) else { return nil }
-                return try? JSONDecoder().decode(MessageInfo.self, from: data)
+            decode: { stmt -> MessageInfo? in
+                let uid = Self.textColumn(stmt, 0)
+                let payload = Self.textColumn(stmt, 1)
+                guard let data = payload.data(using: .utf8),
+                      let msg = try? JSONDecoder().decode(MessageInfo.self, from: data),
+                      // A payload that decodes but names a different uid is
+                      // still poison — the queue key is the STORED uid, and
+                      // completing by the decoded id would never delete this
+                      // row, leaving it to ride every batch forever.
+                      msg.id == uid else {
+                    poisoned.append(uid)
+                    return nil
+                }
+                return msg
             }
         )
+        if !poisoned.isEmpty {
+            print("[WCHUD] classification queue: dropped \(poisoned.count) undecodable rows")
+            for uid in poisoned {
+                if uid.isEmpty {
+                    // textColumn maps NULL → "" and `WHERE msg_uid=''` never
+                    // matches NULL — an externally-corrupted NULL-uid row
+                    // would otherwise re-poison every poll.
+                    // Stored '' uids are equally unmatchable — same poison.
+                    try? exec("DELETE FROM classification_queue WHERE msg_uid IS NULL OR msg_uid=''")
+                } else {
+                    try? completeClassificationMessage(id: uid)
+                }
+            }
+        }
+        return rows
     }
 
     func classificationQueueCount() -> Int {
@@ -3601,6 +4128,44 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
             }
         }
+    }
+
+    /// `exec` plus the statement's `sqlite3_changes`, read inside the same
+    /// mutex acquisition. Callers that exec-then-read-changes across two
+    /// scope hops race: another writer's statement between them rewrites
+    /// the connection's change counter.
+    func execReturningChanges(_ sql: String, params: [String?] = []) throws -> Int {
+        var changes = 0
+        try withCachedStatement(sql, params: params) { stmt in
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE {
+                    changes = Int(sqlite3_changes(sqlite3_db_handle(stmt)))
+                    return
+                }
+                if rc == SQLITE_ROW { continue }
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(sqlite3_db_handle(stmt))))
+            }
+        }
+        return changes
+    }
+
+    /// `exec` plus `sqlite3_last_insert_rowid`, read inside the same mutex
+    /// acquisition — same interleaving race as `execReturningChanges`.
+    func execReturningRowID(_ sql: String, params: [String?] = []) throws -> Int64 {
+        var rowID: Int64 = 0
+        try withCachedStatement(sql, params: params) { stmt in
+            while true {
+                let rc = sqlite3_step(stmt)
+                if rc == SQLITE_DONE {
+                    rowID = sqlite3_last_insert_rowid(sqlite3_db_handle(stmt))
+                    return
+                }
+                if rc == SQLITE_ROW { continue }
+                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(sqlite3_db_handle(stmt))))
+            }
+        }
+        return rowID
     }
 
     // MARK: - Cached statement plumbing
@@ -3723,12 +4288,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             do {
                 try body(stmt)
             } catch {
-                // Poisoned statement: drop it instead of caching a
-                // half-stepped handle that would surface SQLITE_MISUSE.
-                if statementCache.removeValue(forKey: sql) != nil {
-                    statementCacheLRU.removeAll { $0 == sql }
-                    sqlite3_finalize(stmt)
-                }
+                // Poisoned statement: never reused, never kept. It must be
+                // finalized unconditionally — a first-time failure happens
+                // BEFORE storeCachedStatement, so gating finalize on a cache
+                // hit leaked the prepared handle (and a leaked statement
+                // makes sqlite3_close return SQLITE_BUSY — the connection
+                // and its WAL never checkpoint).
+                statementCache.removeValue(forKey: sql)
+                statementCacheLRU.removeAll { $0 == sql }
+                sqlite3_finalize(stmt)
                 throw error
             }
 
@@ -3739,59 +4307,19 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             }
             // Callers that report their own bind failures opt out of caching
             // so a partially-bound statement can never be reused.
-            if cacheOnSuccess { storeCachedStatement(sql, stmt) }
-            // Always reset after use. queryOne often returns while still on
-            // SQLITE_ROW; leaving that cursor open pins a read transaction and
-            // later UPDATEs on this connection cannot see committed writes from
-            // other connections (DiscussionDueAtStorageTests migration path).
-            sqlite3_reset(stmt)
-        }
-    }
-
-    /// Same contract as withCachedStatement, but for callers that bind a
-    /// dynamic parameter list themselves. The bind closure returns false to
-    /// report a bind failure; the throwing callers then raise the same
-    /// "step" error surface the uncached code produced.
-    private func withCachedStatement(
-        _ sql: String,
-        _ bind: (OpaquePointer?) -> Bool,
-        _ body: (OpaquePointer) throws -> Void
-    ) throws {
-        try withDatabaseMutex {
-            let statement: OpaquePointer?
-            if let cached = statementCache[sql] {
-                sqlite3_reset(cached)
-                sqlite3_clear_bindings(cached)
-                touchStatementCacheLRU(sql)
-                statement = cached
+            if cacheOnSuccess {
+                storeCachedStatement(sql, stmt)
+                // Always reset after use. queryOne often returns while still
+                // on SQLITE_ROW; leaving that cursor open pins a read
+                // transaction and later UPDATEs on this connection cannot see
+                // committed writes from other connections
+                // (DiscussionDueAtStorageTests migration path).
+                sqlite3_reset(stmt)
             } else {
-                var prepared: OpaquePointer?
-                guard sqlite3_prepare_v2(db, sql, -1, &prepared, nil) == SQLITE_OK else {
-                    sqlite3_finalize(prepared)
-                    throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
-                }
-                statementPrepareCount += 1
-                statement = prepared
+                // Opted out of the cache — the handle is orphaned if not
+                // finalized here.
+                sqlite3_finalize(stmt)
             }
-            guard let stmt = statement else {
-                throw HUDStoreError.sqlError(String(cString: sqlite3_errmsg(db)))
-            }
-
-            let isWrite = sqlite3_stmt_readonly(stmt) == 0
-            let bound = bind(stmt)
-            do {
-                try body(stmt)
-            } catch {
-                if statementCache.removeValue(forKey: sql) != nil {
-                    statementCacheLRU.removeAll { $0 == sql }
-                    sqlite3_finalize(stmt)
-                }
-                throw error
-            }
-            if isWrite { writeStatementCount += 1 }
-            if bound { storeCachedStatement(sql, stmt) }
-            // See the params overload: release any open read cursor.
-            sqlite3_reset(stmt)
         }
     }
 
@@ -3996,8 +4524,7 @@ extension HUDStore {
     // HUDStoreQueryPlanPerfTests.testTextAndIntegerTimestampRowsBothMatch.
     static var commitmentRelevantSinceClause: String {
         """
-        (status IN (?, ?)
-         OR created_at >= ?
+        (created_at >= ?
          OR (IFNULL(deadline_at, 0) > 0 AND deadline_at >= ?)
          OR updated_at >= ?)
         """

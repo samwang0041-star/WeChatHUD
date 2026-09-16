@@ -535,7 +535,8 @@ private struct PendingReviewRow: View {
                     Task {
                         _ = await monitor.approveAutopilotItem(
                             logId: entry.id, reply: text,
-                            chatName: entry.chatName, chatUsername: entry.chatUsername
+                            chatName: entry.chatName, chatUsername: entry.chatUsername,
+                            createdAt: entry.createdAt
                         )
                     }
                 }) {
@@ -559,7 +560,7 @@ private struct PendingReviewRow: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(editing ? "取消编辑回复" : "编辑回复")
 
-                Button(action: { monitor.rejectAutopilotItem(logId: entry.id) }) {
+                Button(action: { monitor.rejectAutopilotItem(logId: entry.id, chatUsername: entry.chatUsername, replyText: entry.generatedReply) }) {
                     Text("忽略")
                         .font(.system(size: 11))
                         .foregroundColor(.red)

@@ -336,6 +336,13 @@ enum ReplyDebtScorer {
         } else {
             priority = .p2
         }
+        // In a group, an urgent-keyword anchor without an @ can reach P0 and
+        // bypass the alert budget — anyone in a followed group could spam
+        // "尽快/截止" and force a notification. Keyword-only caps at P2.
+        var effectivePriority = priority
+        if seed.session.isGroup && !effective.isAtMention && effectivePriority != .p2 {
+            effectivePriority = .p2
+        }
 
         return ReplyDebtItem(
             id: seed.session.username,
@@ -348,8 +355,10 @@ enum ReplyDebtScorer {
             // WeChat's create_time can be stale for certain message types (bots,
             // forwarded messages), but session.lastTimestamp is always updated
             // when new activity happens.
-            timestamp: Date(timeIntervalSince1970: Double(max(latestInbound.createTime, seed.session.lastTimestamp))),
-            priority: priority,
+            // Cap at now — a future-dated create_time would pin the debt at
+            // the top of the list until real time catches up.
+            timestamp: Date(timeIntervalSince1970: Double(min(max(latestInbound.createTime, seed.session.lastTimestamp), nowTs))),
+            priority: effectivePriority,
             score: score,
             unreadCount: seed.session.unreadCount,
             isGroup: seed.session.isGroup,
@@ -425,7 +434,7 @@ enum ReplyDebtScorer {
             preview: String(latestInbound.text.prefix(80)),
             latestOutboundPreview: String(latestOutbound.text.prefix(80)),
             timestamp: Date(timeIntervalSince1970: Double(
-                max(latestInbound.createTime, seed.session.lastTimestamp)
+                min(max(latestInbound.createTime, seed.session.lastTimestamp), nowTs)
             )),
             priority: priority,
             score: score,

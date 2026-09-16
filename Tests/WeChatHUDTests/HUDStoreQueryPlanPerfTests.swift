@@ -181,15 +181,17 @@ final class HUDStoreQueryPlanPerfTests: XCTestCase {
         defer { store.close(); try? FileManager.default.removeItem(atPath: path) }
         let db = try XCTUnwrap(store.rawDB)
 
-        // An explicitly pending row stays visible regardless of what its
-        // deadline column holds, which is the behavior the live window
-        // promises. Removing the CAST must not change that.
+        // A live (recently-created) row stays visible regardless of what its
+        // deadline column holds — 'garbage' CASTs to 0 and must not hide it.
+        // Pending status alone no longer admits a row, so the row is made
+        // live through created_at.
+        let recent = Int(Date().timeIntervalSince1970)
         XCTAssertEqual(sqlite3_exec(db, """
             INSERT INTO commitments(msg_uid, chat_username, chat_name, content, commit_to,
                                     deadline_at, confidence, status, prompt_version,
                                     created_at, updated_at)
             VALUES('garbage-deadline', 'c', 'C', '垃圾截止时间', 'peer', 'garbage', 0.9, 'pending', 't',
-                   1, 1)
+                   \(recent), \(recent))
             """, nil, nil, nil), SQLITE_OK)
 
         let rows = store.loadCommitments(relevantSince: 1_700_000_000)
@@ -236,16 +238,17 @@ final class HUDStoreQueryPlanPerfTests: XCTestCase {
         let db = try XCTUnwrap(store.rawDB)
         try seedCommitments(store, rows: 120)
 
-        let bind = [CommitmentStatus.pending.rawValue, CommitmentStatus.overdue.rawValue,
-                    "1700000000", "1700000000", "1700000000"]
+        // The clause dropped the status disjunct (pending no longer admits a
+        // stale row on its own) — parity now runs against the CAST form of
+        // the same age-only predicate.
+        let bind = ["1700000000", "1700000000", "1700000000"]
         let newRows = try ids(db: db,
                               sql: "SELECT id FROM commitments WHERE "
                                 + HUDStore.commitmentRelevantSinceClause + " ORDER BY id",
                               bind: bind)
         let oldRows = try ids(db: db, sql: """
             SELECT id FROM commitments
-            WHERE (status IN (?, ?)
-             OR CAST(created_at AS INTEGER) >= ?
+            WHERE (CAST(created_at AS INTEGER) >= ?
              OR (CAST(IFNULL(deadline_at, 0) AS INTEGER) > 0 AND CAST(deadline_at AS INTEGER) >= ?)
              OR CAST(updated_at AS INTEGER) >= ?)
             ORDER BY id

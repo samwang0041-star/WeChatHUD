@@ -140,19 +140,19 @@ actor AIDailyReportGenerator {
         }
 
         let highlightsText = report.highlights.prefix(8).enumerated().map { (i, h) in
-            let snippet = h.quotedSnippet.map { " \"\($0.prefix(40))\($0.count > 40 ? "…" : "")\"" } ?? ""
-            return "\(i + 1). [\(h.sourceChatName)] \(h.summary.prefix(60))\(h.summary.count > 60 ? "…" : "")\(snippet)"
+            let snippet = h.quotedSnippet.map { " \"\(AIService.oneLine(String($0.prefix(40))))\($0.count > 40 ? "…" : "")\"" } ?? ""
+            return "\(i + 1). [\(AIService.oneLine(h.sourceChatName))] \(AIService.oneLine(String(h.summary.prefix(60))))\(h.summary.count > 60 ? "…" : "")\(snippet)"
         }.joined(separator: "\n")
 
         let actionsText = report.actions.prefix(12).enumerated().map { (i, a) in
             let deadlineStr = a.deadline.map { " (截止: \($0.formatted(date: .abbreviated, time: .shortened))" } ?? ""
             let typeLabel = typeLabel(a.type)
-            return "\(i + 1). [\(typeLabel)][\(a.sourceChatName)] \(a.content.prefix(60))\(a.content.count > 60 ? "…" : "")\(deadlineStr)"
+            return "\(i + 1). [\(typeLabel)][\(AIService.oneLine(a.sourceChatName))] \(AIService.oneLine(String(a.content.prefix(60))))\(a.content.count > 60 ? "…" : "")\(deadlineStr)"
         }.joined(separator: "\n")
 
         let risksText = report.risks.prefix(5).enumerated().map { (i, r) in
-            let source = r.sourceChatName.map { " [\($0)]" } ?? ""
-            return "\(i + 1).\(source) \(r.description)"
+            let source = r.sourceChatName.map { " [\(AIService.oneLine($0))]" } ?? ""
+            return "\(i + 1).\(source) \(AIService.oneLine(r.description))"
         }.joined(separator: "\n")
 
         let unread = historical ? "未知（历史报告未保存该项）" : "\(metrics.unreadMessageCount)"

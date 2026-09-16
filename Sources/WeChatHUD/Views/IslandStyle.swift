@@ -150,6 +150,56 @@ extension View {
     func islandMicro() -> some View { companionFont(size: IslandType.micro, weight: .medium) }
 }
 
+/// Full-width island row/menu button: hover wash + press dip, no scale.
+///
+/// A row-wide surface scaling under the cursor reads as rubber — the wash is
+/// the affordance — but the press still has to register (invariant: every
+/// press gets visible feedback), so the fill steps from `hover` to
+/// `hoverPressed` for the 120ms the button is down. Used for footer text
+/// rows, the snooze menu, the handled-section header, and back/inline
+/// actions whose label is text rather than a glyph.
+struct IslandRowButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 6
+    /// False when another layer already owns the hover wash (the banner's
+    /// `hoverWash` is inset from the card edge; a second full-bleed wash on
+    /// the tap layer would paint past that silhouette).
+    var paintsHover: Bool = true
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(configuration.isPressed ? IslandInk.hoverPressed
+                          : (paintsHover && hovered ? IslandInk.hover : Color.clear))
+            )
+            .onHover { hovered = $0 }
+            .animation(CompanionMotion.hover(), value: hovered)
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
+/// Fixed-slot glyph button (bars, headers, row actions): a hover halo plus
+/// the shared 0.96 press dip. The slot's own `.frame` defines the halo size,
+/// so the same style works for a 22pt bar glyph and a 10pt row chevron.
+struct IslandIconButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(configuration.isPressed ? IslandInk.hoverPressed
+                          : (hovered ? IslandInk.hover : Color.clear))
+            )
+            .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion
+                         ? CompanionMotion.pressScale : 1)
+            .onHover { hovered = $0 }
+            .animation(CompanionMotion.hover(), value: hovered)
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
 /// Pill button used by the extended inbox's bottom bar and the notification
 /// banner. Primary = the one action that moves things forward.
 struct IslandPillButtonStyle: ButtonStyle {

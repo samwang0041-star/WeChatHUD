@@ -430,7 +430,10 @@ extension ChatMonitor {
             parts.append("常用语: \(style.frequentPhrases.prefix(5).joined(separator: "、"))")
         }
         if !style.fewShotExamples.isEmpty {
-            parts.append("真实例句: \(style.fewShotExamples.prefix(3).joined(separator: " / "))")
+            // Quoted + oneLine'd — profiled examples are user content that
+            // must not masquerade as prompt structure.
+            let quoted = style.fewShotExamples.prefix(3).map { "「\(AIService.oneLine($0))」" }
+            parts.append("真实例句: \(quoted.joined(separator: " / "))")
         }
         return parts.joined(separator: "。")
     }

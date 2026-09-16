@@ -42,7 +42,7 @@ struct ContactIdentityIndex {
             guard !trimmed.isEmpty else { return nil }
             // A wxid/alias is not a human-readable name — it is the very
             // thing we are trying to avoid showing.
-            guard !trimmed.contains("@chatroom") else { return nil }
+            guard !MessageHelpers.isGroupChat(trimmed) else { return nil }
             guard !trimmed.hasPrefix("wxid_") else { return nil }
             return trimmed
         }
@@ -71,7 +71,7 @@ struct ContactIdentityIndex {
             let username = record.username.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !username.isEmpty else { continue }
 
-            let fallback = username.contains("@chatroom") ? Self.unnamedGroupPlaceholder : username
+            let fallback = MessageHelpers.isGroupChat(username) ? Self.unnamedGroupPlaceholder : username
             let display = record.remark.trimmedNonEmpty
                 ?? record.nickName.trimmedNonEmpty
                 ?? fallback
@@ -163,7 +163,7 @@ struct ContactIdentityIndex {
     static func isRawChatIdentifier(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        if trimmed.contains("@chatroom") || trimmed.contains("@openim") || trimmed.contains("@im.chatroom") {
+        if MessageHelpers.isMultiPartyChat(trimmed) {
             return true
         }
         return trimmed.hasPrefix("wxid_")

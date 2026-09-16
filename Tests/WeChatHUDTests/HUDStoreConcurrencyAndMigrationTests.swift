@@ -216,3 +216,77 @@ final class HUDStoreConcurrencyAndMigrationTests: XCTestCase {
         XCTAssertTrue(names.contains("idx_review_todos_status_created"))
     }
 }
+
+// MARK: - Round-2 regression coverage
+
+extension HUDStoreConcurrencyAndMigrationTests {
+
+    /// `close()` must finalize cached statements and close the connection in
+    /// one serial-queue section — and `open()` must produce a usable store
+    /// again afterwards (the old code could leave the statement cache
+    //  pointing at a finalized connection).
+    func testCloseThenOpenYieldsAWorkingStore() throws {
+        let path = NSTemporaryDirectory() + "hud_reopen_\(UUID().uuidString).sqlite3"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        try store.setSetting("roundtrip", value: "one")
+        XCTAssertEqual(store.getSetting("roundtrip"), "one")
+        store.close()
+        // Re-open must not inherit a tombstoned connection or stale cache.
+        try store.open()
+        defer { store.close() }
+        XCTAssertEqual(store.getSetting("roundtrip"), "one")
+        try store.setSetting("roundtrip", value: "two")
+        XCTAssertEqual(store.getSetting("roundtrip"), "two")
+    }
+
+    /// Commitment analysis is claimed with a bounded attempt count: a mark
+    /// survives failure (dedup), but the row allows up to `maxAttempts`
+    /// claims before permanently suppressing — so a transient AI failure
+    /// retries instead of silently dropping the commitment forever.
+    func testCommitmentAnalysisClaimIsBoundedNotOneShot() throws {
+        let path = NSTemporaryDirectory() + "hud_claim_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        // First three claims are granted (attempts 1..3); the fourth is denied.
+        XCTAssertTrue(store.markCommitmentAnalyzedIfNew(msgUID: "uid-x", maxAttempts: 3))
+        XCTAssertTrue(store.markCommitmentAnalyzedIfNew(msgUID: "uid-x", maxAttempts: 3))
+        XCTAssertTrue(store.markCommitmentAnalyzedIfNew(msgUID: "uid-x", maxAttempts: 3))
+        XCTAssertFalse(store.markCommitmentAnalyzedIfNew(msgUID: "uid-x", maxAttempts: 3))
+        // A different uid is independent.
+        XCTAssertTrue(store.markCommitmentAnalyzedIfNew(msgUID: "uid-y", maxAttempts: 3))
+    }
+
+    /// A poison row in the classification queue must be quarantined — a
+    /// permanently-undecodable row must not wedge every newer message.
+    func testClassificationQueuePoisonRowIsQuarantined() throws {
+        let path = NSTemporaryDirectory() + "hud_poison_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        // Insert a malformed payload directly so decoding cannot succeed.
+        try store.exec(
+            "INSERT INTO classification_queue(msg_uid, payload, source_timestamp) VALUES(?, ?, ?)",
+            params: ["poison-1", "not-a-json-payload{{{", "1"]
+        )
+        let healthy = MessageInfo(
+            id: "m1", localId: 1, chatUsername: "c", chatName: "c",
+            senderUsername: "p", senderName: "p", text: "ok",
+            baseType: 1, subType: 0, createTime: 1
+        )
+        try store.enqueueClassificationMessages([healthy])
+        let pending = store.pendingClassificationMessages(limit: 10)
+        XCTAssertEqual(pending.map(\.id), ["m1"],
+                       "the healthy row must survive; the poison row is quarantined")
+        // The poison row is gone — it cannot re-block the next drain.
+        XCTAssertEqual(store.classificationQueueCount(), 1)
+    }
+}

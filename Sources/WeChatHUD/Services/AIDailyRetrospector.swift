@@ -130,7 +130,7 @@ actor AIDailyRetrospector {
         if asks.isEmpty { return "无" }
         let now = Date()
         return asks.enumerated().map { (i, ask) in
-            var line = "\(i + 1). [\(ask.senderName)] \(ask.summary) - work"
+            var line = "\(i + 1). [\(AIService.oneLine(ask.senderName))] \(AIService.oneLine(ask.summary)) - work"
             if includeAge {
                 let age = Int(now.timeIntervalSince(ask.createdAt))
                 let ageStr: String

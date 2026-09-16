@@ -51,14 +51,35 @@ struct InboxRowView: View {
                 // timestamp/chevron they replace instead of pushing the
                 // whole row left — in-flow placement re-laid-out the row
                 // on every hover and read as a flicker.
-                if hovered || showSnoozeMenu {
-                    hoverButtons
-                        .padding(.leading, 8)
-                        .background(CompanionPalette.island, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .padding(.top, 4)
-                        .padding(.trailing, IslandMetrics.rowInset)
-                        .transition(.opacity)
+                //
+                // The buttons stay MOUNTED when not hovered — conditionally
+                // removing them drops them from the accessibility tree, so a
+                // VoiceOver user (no pointer to hover with) could never
+                // reach 稍后提醒 / 标为已处理. Opacity keeps them invisible;
+                // hit-testing stays off so they can't eat phantom clicks.
+                hoverButtons
+                    .padding(.leading, 8)
+                    .background(CompanionPalette.island, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(.top, 4)
+                    .padding(.trailing, IslandMetrics.rowInset)
+                    .opacity(hovered || showSnoozeMenu ? 1 : 0)
+                    .allowsHitTesting(hovered || showSnoozeMenu)
+            }
+            .overlay {
+                // Dedicated VoiceOver expand/collapse control: invisible and
+                // never pointer-hit, but a real Button in the AX tree —
+                // an .accessibilityAction on the row container is dropped
+                // because .contain makes the row itself a non-element.
+                Button(panelState.expandedInboxItemID == item.id ? "收起详情" : "展开详情") {
+                    withMotion(CompanionMotion.rowExpand()) {
+                        panelState.expandedInboxItemID =
+                            panelState.expandedInboxItemID == item.id ? nil : item.id
+                    }
                 }
+                .opacity(0)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(false)
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -70,6 +91,7 @@ struct InboxRowView: View {
                     }
                 }
             }
+            .accessibilityElement(children: .contain)
             .contextMenu {
                 contextMenuContent
             }
@@ -121,6 +143,11 @@ struct InboxRowView: View {
             panelState.setSnoozeMenuExpanded(open)
         }
         .onDisappear {
+            // The deferred close must die with the row — a pending work
+            // item firing after unmount calls setSnoozeMenuExpanded(false),
+            // which can unlatch a snooze menu another surface just opened.
+            snoozeHoverClose?.cancel()
+            snoozeHoverClose = nil
             if showSnoozeMenu {
                 showSnoozeMenu = false
                 panelState.setSnoozeMenuExpanded(false)
@@ -391,6 +418,7 @@ struct InboxRowView: View {
             }
             .buttonStyle(CompanionPressStyle())
             .help(item.actionRequired ? "标为已处理" : "隐藏这条更新")
+            .accessibilityLabel(item.actionRequired ? "标为已处理" : "隐藏这条更新")
         }
     }
 
@@ -465,16 +493,17 @@ struct IslandSnoozeMenu: View {
                             .islandMeta()
                             .foregroundStyle(IslandInk.tertiary)
                     }
-                    .padding(.horizontal, IslandMetrics.rowInset)
+                    .padding(.horizontal, IslandMetrics.rowInset - 4)
                     .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandRowButtonStyle(cornerRadius: 7))
                 .accessibilityLabel(choice.label)
                 .accessibilityHint(choice.whenLabel)
                 .accessibilityIdentifier("companion.snooze.\(choice.label)")
             }
         }
+        .padding(4)
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("稍后提醒时间")
@@ -504,7 +533,7 @@ struct SnoozePopoverContent: View {
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandRowButtonStyle())
         .accessibilityLabel(name)
         .accessibilityHint(label)
     }

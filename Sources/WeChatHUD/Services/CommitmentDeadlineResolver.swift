@@ -29,6 +29,13 @@ enum CommitmentDeadlineResolver {
         // Keep the model's extracted value and human-facing label independent.
         // A source message can mention another person's date, so it is only a
         // fallback after both structured fields fail to provide a clear signal.
+        // "none" is the model explicitly declining a deadline — falling
+        // through to the free-form label or source text would fabricate one
+        // it said didn't exist. `vague_soon`/`inherit` still try the label:
+        // vague means "a deadline exists but fuzzy", and the label carries
+        // the human rendering the model chose.
+        let extractedNorm = extracted.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if extractedNorm == "none" { return nil }
         switch resolveField(extracted, messageDate: messageDate, calendar: calendar) {
         case .resolved(let date): return date
         case .invalid: return nil

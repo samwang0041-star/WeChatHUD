@@ -124,9 +124,31 @@ struct MessageInfo: Identifiable, Codable {
     let createTime: Int      // unix timestamp
     /// App message subtype from parseAppMsg (0 for non-appmsg).
     var appType: Int = 0
+    /// `<sysmsg>` kind for baseType-10000 rows ("revokemsg", …). Optional so
+    /// classification-queue payloads written by older builds still decode.
+    var sysKind: String?
 
     var isAtMention: Bool { text.contains("@") }
     var relativeTime: String { Self.formatRelative(createTime) }
+
+    /// The "message/message_N.db" shard embedded in `id`
+    /// ("<relPath>/<table>/<localId>"). Empty for ids not built by the reader.
+    var shardRelPath: String {
+        let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count >= 3 else { return "" }
+        return parts.dropLast(2).joined(separator: "/")
+    }
+
+    /// Shard-independent identity: WCDB checkpointing can move a row between
+    /// message_N.db files, which changes `id` (the relPath differs) while
+    /// the message itself is identical. Queue dedup and cross-shard merge
+    /// use this so a moved row can't be processed twice. `createTime` must
+    /// be in the key — a contact sending "好的" twice is two messages, not
+    /// one; without it the second copy is silently dropped while the first
+    /// still sits in a queue.
+    var contentKey: String {
+        "\(chatUsername)|\(createTime)|\(baseType)|\(subType)|\(senderUsername)|\(text)"
+    }
 
     init(
         id: String,
@@ -139,7 +161,8 @@ struct MessageInfo: Identifiable, Codable {
         baseType: Int,
         subType: Int,
         createTime: Int,
-        appType: Int = 0
+        appType: Int = 0,
+        sysKind: String? = nil
     ) {
         self.id = id
         self.localId = localId
@@ -152,6 +175,7 @@ struct MessageInfo: Identifiable, Codable {
         self.subType = subType
         self.createTime = createTime
         self.appType = appType
+        self.sysKind = sysKind
     }
 
     static func formatRelative(_ ts: Int) -> String {
@@ -1382,6 +1406,9 @@ struct RecalledMessage: Identifiable {
     let aiShouldNotify: Bool?
     let aiNotifyLevel: NotifyLevel?
     let aiAnalyzedAt: Date?
+    /// How many times analysis was attempted — a permanently-failing
+    /// analyzer must not re-run on every scan forever.
+    var aiAttempts: Int = 0
     let createdAt: Date
 }
 
@@ -1556,7 +1583,9 @@ enum DiscussionLiveWindow {
     }
 
     static func contains(_ item: Commitment, cutoff: Int) -> Bool {
-        if item.status == .pending || item.status == .overdue { return true }
+        // Pending/overdue commitments used to be unconditionally live —
+        // a phantom row nagged on a 24h cooldown forever. Bound them to the
+        // same cutoff: still-live if created/due/updated inside the window.
         if Int(item.createdAt.timeIntervalSince1970) >= cutoff { return true }
         if let due = item.deadlineAt, Int(due.timeIntervalSince1970) >= cutoff { return true }
         if Int(item.updatedAt.timeIntervalSince1970) >= cutoff { return true }
@@ -1828,6 +1857,10 @@ struct AutopilotLogEntry: Identifiable {
     let aiReasoning: String?
     let sentAt: Date?
     let createdAt: Date
+    /// The PendingSend UUID this log row twins with — the shared key that
+    /// replaces (chat, replyText) matching, which collapses identical
+    /// replies. NULL for rows written before the column existed.
+    var queueId: String? = nil
 
     func replacingReply(_ reply: String) -> AutopilotLogEntry {
         AutopilotLogEntry(
@@ -1845,7 +1878,8 @@ struct AutopilotLogEntry: Identifiable {
             action: action,
             aiReasoning: aiReasoning,
             sentAt: sentAt,
-            createdAt: createdAt
+            createdAt: createdAt,
+            queueId: queueId
         )
     }
 }
@@ -2039,7 +2073,10 @@ struct AutopilotConfig: Codable {
         // everything the model produced).
         confidenceThreshold = SafeNumber.clamped(
             value(.confidenceThreshold, fallback.confidenceThreshold), to: 0...1)
-        maxRepliesPerHour = value(.maxRepliesPerHour, fallback.maxRepliesPerHour)
+        // Same corrupted-negative hazard as maxSendsPerSession below: <= 0
+        // reads as unlimited, so a negative stored value lifts the hourly cap.
+        let storedHourly: Int = value(.maxRepliesPerHour, fallback.maxRepliesPerHour)
+        maxRepliesPerHour = storedHourly < 0 ? fallback.maxRepliesPerHour : storedHourly
         handleGroupAt = value(.handleGroupAt, fallback.handleGroupAt)
         vipAutoNotify = value(.vipAutoNotify, fallback.vipAutoNotify)
         vipBusyTemplate = value(.vipBusyTemplate, fallback.vipBusyTemplate)

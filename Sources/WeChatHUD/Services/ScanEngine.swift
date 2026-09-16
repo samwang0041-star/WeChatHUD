@@ -120,7 +120,14 @@ enum ScanEngine {
                     // burst (peer sends 6 within the window) pushed your last
                     // outbound out of view and alerts fired while you were
                     // literally typing in that chat.
-                    let fetchLimit = session.isGroup ? min(session.unreadCount, 30) : 20
+                    // Groups fetch with headroom: unreadCount counts INBOUND
+                    // rows, but the fetch window mixes in self rows — a lively
+                    // group where you replied mid-burst would otherwise fetch
+                    // fewer than `unreadCount` inbound rows and drop the
+                    // oldest unread from the feed.
+                    let fetchLimit = session.isGroup
+                        ? min(max(session.unreadCount * 2, 20), 60)
+                        : 20
                     return WeChatReader.MessageBatchRequest(
                         chatUsername: session.username,
                         limit: fetchLimit
@@ -260,9 +267,13 @@ enum ScanEngine {
             let sessionMap = Self.sessionLookup(sessions)
 
             for entry in whitelist {
-                let isFirstWhitelistScan = store.getWhitelistCursor(username: entry.id) == nil
+                let storedCursor = store.getWhitelistCursor(username: entry.id)
+                let isFirstWhitelistScan = storedCursor == nil
                 let messages: [MessageInfo]
+                var currentCursor = (0, 0)
+                var baseline = (lastCreateTime: 0, lastLocalId: 0)
                 var backlogComplete = true
+                var frontierToPersist: (lastCreateTime: Int, lastLocalId: Int)? = nil
                 do {
                     let unreadHint = sessionMap[entry.id]?.unreadCount ?? 0
                     let fetchLimit = Self.whitelistFetchLimit(
@@ -281,96 +292,162 @@ enum ScanEngine {
                         sinceLocalId: nil
                     )
                     // backlogComplete (declared above) tracks whether this scan
-                    // saw every unread message, so advancing the watermark below
-                    // is lossless. False means the scan-wide page budget ran out
-                    // first: the chat keeps its watermark and retries next scan
-                    // (a delay, never a silent drop).
-                    backlogComplete = true
-                    if unreadHint > page.count, !page.isEmpty {
-                        if backlogPageBudget <= 0 {
-                            backlogComplete = false
-                        } else {
-                            var seen = Set(page.map(\.id))
-                            // Inclusive anchor: the SQL bound keeps the anchor
-                            // row and the seen-filter drops the echo. Subtracting
-                            // 1 (the old code) assumes localIds are globally
-                            // ordered, but they restart per shard file — a tied
-                            // row in another shard with the same (createTime,
-                            // localId) would fall below the anchor and never be
-                            // fetched again.
-                            var anchor = page.last.map { ($0.createTime, $0.localId) }
-                            var lastFetchWasFull = true
-                            while page.count < unreadHint, backlogPageBudget > 0, let cursor = anchor {
-                                backlogPageBudget -= 1
-                                let older = try await readerActor.getMessages(
-                                    chatUsername: entry.id,
-                                    limit: fetchLimit,
-                                    sinceLocalId: nil,
-                                    afterCursor: nil,
-                                    beforeCursor: cursor
-                                )
-                                lastFetchWasFull = older.count >= fetchLimit
-                                let fresh = older.filter { seen.insert($0.id).inserted }
-                                if fresh.isEmpty {
-                                    // Older shards/pages are exhausted; stop
-                                    // instead of re-reading the same page forever.
-                                    break
-                                }
-                                page.append(contentsOf: fresh)
-                                anchor = fresh.last.map { ($0.createTime, $0.localId) }
-                            }
-                            // A short last fetch proves the shards are exhausted
-                            // (a merged page is short only when every matching
-                            // row fit). A full last fetch with the budget spent
-                            // may still hide older rows.
-                            backlogComplete = page.count >= unreadHint || !lastFetchWasFull
+                    // saw every unread message AND closed the gap to the
+                    // persisted baseline, so advancing the watermark below is
+                    // lossless. False means the walk is still in flight: the
+                    // chat keeps its watermark and the walk resumes from a
+                    // persisted frontier next scan (a delay, never a silent
+                    // drop — and fetched rows are still enqueued below).
+                    //
+                    // `unreadHint` counts *inbound* unread rows from session.db,
+                    // while `page` mixes inbound and self-sent rows — comparing
+                    // the hint against `page.count` lets self messages pad the
+                    // page and can stop the walk with unread inbound rows still
+                    // beyond the cursor. Count inbound rows instead.
+                    func isInbound(_ msg: MessageInfo) -> Bool {
+                        !MessageHelpers.isFromSelf(
+                            msg, chatUsername: entry.id,
+                            myUsername: myUname, myDisplayName: myDisplayName,
+                            mySelfNames: selfNames
+                        )
+                    }
+                    var inboundInPage = page.reduce(0) { $0 + (isInbound($1) ? 1 : 0) }
+                    // Same message reappearing under a different id after a
+                    // cross-shard WCDB move is dropped by the content key.
+                    var seen = Set(page.map(\.id))
+                    var seenContent = Set(page.map(\.contentKey))
+                    var pagesThisChat = 1
+                    var lastFetchWasFull = true
+
+                    // For an established cursor the walk's target is the
+                    // persisted baseline — the gap between the page bottom and
+                    // the baseline is unread-by-WeChat-but-unscanned history
+                    // (read on the phone between scans) that used to be
+                    // skipped forever. A persisted frontier resumes an
+                    // earlier scan's interrupted walk instead of restarting
+                    // at the page bottom every scan. First scans have no
+                    // baseline; their walk exists only to cover the unread
+                    // backlog before seeding.
+                    let basePos = storedCursor.map { ($0.lastCreateTime, $0.lastLocalId) }
+                    var anchor = (storedCursor != nil
+                        ? store.getBackfillCursor(username: entry.id)
+                        : nil) ?? page.last.map { ($0.createTime, $0.localId) }
+
+                    func exceedsBaseline(_ c: (Int, Int)) -> Bool {
+                        guard let b = basePos else { return false }
+                        return c.0 > b.0 || (c.0 == b.0 && c.1 > b.1)
+                    }
+
+                    while (inboundInPage < unreadHint
+                           || (anchor.map { exceedsBaseline($0) } ?? false)),
+                          backlogPageBudget > 0,
+                          pagesThisChat < Self.maxBackfillPagesPerChat,
+                          let cursor = anchor {
+                        backlogPageBudget -= 1
+                        pagesThisChat += 1
+                        let older = try await readerActor.getMessages(
+                            chatUsername: entry.id,
+                            limit: fetchLimit,
+                            sinceLocalId: nil,
+                            afterCursor: nil,
+                            beforeCursor: cursor
+                        )
+                        lastFetchWasFull = older.count >= fetchLimit
+                        let fresh = older.filter {
+                            seen.insert($0.id).inserted
+                                && seenContent.insert($0.contentKey).inserted
+                        }
+                        if fresh.isEmpty {
+                            // Older shards/pages are exhausted; stop
+                            // instead of re-reading the same page forever.
+                            break
+                        }
+                        inboundInPage += fresh.reduce(0) { $0 + (isInbound($1) ? 1 : 0) }
+                        page.append(contentsOf: fresh)
+                        anchor = fresh.last.map { ($0.createTime, $0.localId) }
+                        if !(anchor.map { exceedsBaseline($0) } ?? false) {
+                            // Reached (or passed) the persisted baseline.
+                            break
                         }
                     }
+                    // Gap closed when there is no baseline to reach, the walk
+                    // reached it, or the shards are exhausted (a short final
+                    // page proves no deeper rows exist). A full last fetch
+                    // with budget spent may still hide older rows.
+                    let gapClosed = basePos == nil
+                        || !(anchor.map { exceedsBaseline($0) } ?? false)
+                        || !lastFetchWasFull
+                    backlogComplete = (inboundInPage >= unreadHint || !lastFetchWasFull)
+                        && gapClosed
+                    if !backlogComplete, let a = anchor { frontierToPersist = a }
                     messages = page
+                    currentCursor = page.first.map { ($0.createTime, $0.localId) } ?? (0, 0)
+
+                    // Resolve the baseline for "what's new since last scan".
+                    // If no baseline is stored (first scan for this chat —
+                    // typically right after the user adds it to the
+                    // whitelist), seed it to cover the existing unread
+                    // backlog. Otherwise adding a new whitelist entry while
+                    // there are unread messages would silently swallow
+                    // them: we'd seed to the newest message time and none
+                    // of the backlog would pass the `> baseline` filter.
+                    // For a first scan this runs AFTER the walk so the seed
+                    // sees the full unread coverage, not just page one.
+                    if let existing = storedCursor {
+                        baseline = (existing.lastCreateTime, existing.lastLocalId)
+                    } else if sessions.isEmpty {
+                        // Unread counts come from session.db. An empty list is a
+                        // locked/failed read, not "no unread". Do not persist a
+                        // newest-message cursor that would swallow the backlog.
+                        baseline = currentCursor
+                    } else {
+                        let unreadCount = sessionMap[entry.id]?.unreadCount ?? 0
+                        let seed: (lastCreateTime: Int, lastLocalId: Int)
+                        if unreadCount > 0 && !messages.isEmpty {
+                            // Messages are newest-first. Unread rows are inbound
+                            // (you cannot have an unread message you sent), so the
+                            // N-th unread is the N-th *inbound* row — indexing the
+                            // mixed-direction list by `unreadCount - 1` lands early
+                            // whenever self-sent rows sit among the newest N, and
+                            // the seed then drops the oldest unread messages.
+                            let inbound = messages.filter {
+                                !MessageHelpers.isFromSelf(
+                                    $0, chatUsername: entry.id,
+                                    myUsername: myUname, myDisplayName: myDisplayName,
+                                    mySelfNames: selfNames
+                                )
+                            }
+                            let lastUnreadIdx = min(unreadCount, inbound.count) - 1
+                            if lastUnreadIdx >= 0 {
+                                let oldestUnread = inbound[lastUnreadIdx]
+                                seed = (oldestUnread.createTime, max(0, oldestUnread.localId - 1))
+                            } else {
+                                // Unread reported but no inbound row fetched: keep
+                                // everything new rather than swallowing the backlog.
+                                seed = (0, 0)
+                            }
+                        } else if currentCursor.0 > 0 {
+                            seed = currentCursor
+                        } else {
+                            seed = (Int(Date().timeIntervalSince1970), 0)
+                        }
+                        baseline = seed
+                    }
                 } catch { continue }
 
-                let currentCursor = messages.first.map { ($0.createTime, $0.localId) } ?? (0, 0)
-
-                // Resolve the baseline for "what's new since last scan".
-                // If no baseline is stored (first scan for this chat —
-                // typically right after the user adds it to the
-                // whitelist), seed it to cover the existing unread
-                // backlog. Otherwise adding a new whitelist entry while
-                // there are unread messages would silently swallow
-                // them: we'd seed to the newest message time and none
-                // of the backlog would pass the `> baseline` filter.
-                let baseline: (lastCreateTime: Int, lastLocalId: Int)
-                if let existing = store.getWhitelistCursor(username: entry.id) {
-                    baseline = existing
-                } else if sessions.isEmpty {
-                    // Unread counts come from session.db. An empty list is a
-                    // locked/failed read, not "no unread". Do not persist a
-                    // newest-message cursor that would swallow the backlog.
-                    baseline = currentCursor
-                } else {
-                    let unreadCount = sessionMap[entry.id]?.unreadCount ?? 0
-                    let seed: (lastCreateTime: Int, lastLocalId: Int)
-                    if unreadCount > 0 && !messages.isEmpty {
-                        // Messages are newest-first. The N unread ones
-                        // sit at indices 0..<unreadCount (capped to
-                        // what we actually fetched). Seed just before
-                        // the OLDEST unread — messages[N-1] — so the
-                        // `> baseline` filter picks up exactly those N,
-                        // not N+1 (including the first *read* message).
-                        let lastUnreadIdx = min(unreadCount, messages.count) - 1
-                        let oldestUnread = messages[lastUnreadIdx]
-                        seed = (oldestUnread.createTime, max(0, oldestUnread.localId - 1))
-                    } else if currentCursor.0 > 0 {
-                        seed = currentCursor
-                    } else {
-                        seed = (Int(Date().timeIntervalSince1970), 0)
-                    }
-                    baseline = seed
-                }
-
+                // localId orders rows only within one shard. A row written at
+                // the same second into a DIFFERENT message_N.db (a mid-write
+                // WCDB checkpoint move, or shard rotation between scans) is
+                // not "seen" just because its localId is small — admit it and
+                // let the durable content_key dedup absorb the replay.
+                // Empty shard = pre-migration cursor → the shard is unknown;
+                // admitting on a mismatch would replay every same-second row.
+                let baselineShard = storedCursor?.lastShard ?? ""
                 let newMessages = messages.filter {
-                    $0.createTime > baseline.lastCreateTime
-                        || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                    if $0.createTime > baseline.lastCreateTime { return true }
+                    guard $0.createTime == baseline.lastCreateTime else { return false }
+                    if $0.localId > baseline.lastLocalId { return true }
+                    return !baselineShard.isEmpty && $0.shardRelPath != baselineShard
                 }
 
                 // Smart interruption suppression. `latestSelfTime` is the
@@ -405,6 +482,22 @@ enum ScanEngine {
                 discussionMessages.reserveCapacity(newMessages.count)
 
                 for msg in newMessages {
+                    // sysmsg rows are rendered events, not conversation
+                    // content — they must not feed classification,
+                    // autopilot, discussion extraction, or the commitment
+                    // tracker. revokemsg rows additionally drive the recall
+                    // pipeline (insert is OR IGNORE → re-scan idempotent).
+                    if msg.sysKind == "revokemsg" {
+                        Self.recordRecall(
+                            msg, chatUsername: entry.id,
+                            candidates: messages, contactMap: contactMap,
+                            store: store,
+                            myUsername: myUname, myDisplayName: myDisplayName,
+                            mySelfNames: selfNames
+                        )
+                        continue
+                    }
+                    if msg.sysKind != nil { continue }
                     // Collect self messages for commitment tracking BEFORE skipping
                     if MessageHelpers.isFromSelf(msg, chatUsername: entry.id, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) {
                         let recipientName = reader.displayName(for: entry.id)
@@ -430,7 +523,7 @@ enum ScanEngine {
                     }
                     let isAt = MessageHelpers.isAtMe(msg.text, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
                     let kind: HUDNotificationKind
-                    if !msg.chatUsername.contains("@chatroom") {
+                    if !MessageHelpers.isMultiPartyChat(msg.chatUsername) {
                         kind = .privateChat
                     } else if isAt {
                         kind = .groupAt
@@ -505,7 +598,13 @@ enum ScanEngine {
                         atMutedGroups: admissionRules.config.atMutedGroups
                     )
                     let alreadyAnswered = latestSelfTime > msg.createTime
-                    let suppressPopup = alreadyAnswered || isLiveExchange
+                    // A permanently-silenced chat (silencedAt = now+10yr)
+                    // must not pop banners on every new message — the inbox
+                    // row hides it, but the banner path used to ignore the
+                    // mute entirely. Snoozed chats keep bannering: snooze is
+                    // a "hide the row" affordance, not a mute.
+                    let isSilenced = (chatActions[msg.chatUsername]?.silencedAt ?? 0) > nowEpoch
+                    let suppressPopup = alreadyAnswered || isLiveExchange || isSilenced
                     if decision.isAdmitted,
                        shouldPresent,
                        bannerAllowed,
@@ -539,7 +638,7 @@ enum ScanEngine {
                             senderUsername: msg.senderUsername,
                             senderName: msg.senderName,
                             text: msg.text,
-                            isGroup: msg.chatUsername.contains("@chatroom"),
+                            isGroup: MessageHelpers.isMultiPartyChat(msg.chatUsername),
                             isAtMention: isAt,
                             attentionLevel: level,
                             contactRole: contact?.role ?? .acquaintance,
@@ -605,15 +704,15 @@ enum ScanEngine {
 
                 if currentCursor.0 > baseline.lastCreateTime
                     || (currentCursor.0 == baseline.lastCreateTime && currentCursor.1 > baseline.lastLocalId) {
-                    // The backfill above ran out of scan-wide page budget with
-                    // the backlog uncovered. Advancing the watermark to the
-                    // newest fetched message would orphan everything between
-                    // the old watermark and this page — the exact loss the
-                    // backfill exists to prevent. Leave the watermark so the
-                    // next scan retries this chat once earlier chats drain.
-                    if !backlogComplete {
-                        continue
-                    }
+                    // An incomplete backlog walk used to `continue` here —
+                    // leaving the watermark meant the SAME chat could consume
+                    // the shared page budget on every scan while the newest
+                    // rows it already fetched were never enqueued. Now the
+                    // fetched rows are always enqueued (durable dedup makes
+                    // the re-scan idempotent); only the watermark is held,
+                    // and the walk resumes from a persisted frontier so a
+                    // multi-page gap converges over scans instead of
+                    // restarting at the page bottom forever.
                     do {
                         try store.withTransaction {
                             // Discussion extraction includes both sides of the
@@ -630,11 +729,21 @@ enum ScanEngine {
                                     try store.enqueueAutopilotInbound(inbound)
                                 }
                             }
-                            try store.setWhitelistCursor(
-                                username: entry.id,
-                                lastCreateTime: currentCursor.0,
-                                lastLocalId: currentCursor.1
-                            )
+                            if backlogComplete {
+                                try store.setWhitelistCursor(
+                                    username: entry.id,
+                                    lastCreateTime: currentCursor.0,
+                                    lastLocalId: currentCursor.1,
+                                    lastShard: messages.first?.shardRelPath ?? ""
+                                )
+                                try store.clearBackfillCursor(username: entry.id)
+                            } else if let frontier = frontierToPersist {
+                                try store.setBackfillCursor(
+                                    username: entry.id,
+                                    lastCreateTime: frontier.lastCreateTime,
+                                    lastLocalId: frontier.lastLocalId
+                                )
+                            }
                         }
                     } catch {
                         // Do not advance the watermark after a queue or cursor
@@ -677,7 +786,7 @@ enum ScanEngine {
             // this loop and nothing in the scan writes contacts, so it observes
             // the same rows the per-message query would have.
             let autopilotSessions = sessions.filter { session in
-                !session.username.contains("@chatroom")
+                !MessageHelpers.isMultiPartyChat(session.username)
                     && !whitelistSet.contains(session.username)
                     && session.unreadCount > 0
             }
@@ -692,13 +801,14 @@ enum ScanEngine {
                 guard let messages = autopilotBatch[session.username] else { continue }
 
                 guard let baseline = store.getAutopilotCursor(username: session.username) else {
-                    let seed = messages.first.map { ($0.createTime, $0.localId) }
-                        ?? (Int(Date().timeIntervalSince1970), 0)
+                    let seed = messages.first.map { ($0.createTime, $0.localId, $0.shardRelPath) }
+                        ?? (Int(Date().timeIntervalSince1970), 0, "")
                     do {
                         try store.setAutopilotCursor(
                             username: session.username,
                             lastCreateTime: seed.0,
-                            lastLocalId: seed.1
+                            lastLocalId: seed.1,
+                            lastShard: seed.2
                         )
                     } catch {
                         print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
@@ -706,13 +816,23 @@ enum ScanEngine {
                     continue
                 }
 
+                // Same shard rule as the whitelist pass: a same-second row
+                // in a different message_N.db isn't covered by the localId
+                // comparison — admit it; the inbound queue's content_key
+                // dedup absorbs the replay. An empty baseline shard means
+                // "unknown" (pre-migration cursor) — admitting on a shard
+                // mismatch would re-queue every same-second row forever.
+                let baselineShard = baseline.lastShard
                 let newMessages = messages.filter {
-                    $0.createTime > baseline.lastCreateTime
-                        || ($0.createTime == baseline.lastCreateTime && $0.localId > baseline.lastLocalId)
+                    if $0.createTime > baseline.lastCreateTime { return true }
+                    guard $0.createTime == baseline.lastCreateTime else { return false }
+                    if $0.localId > baseline.lastLocalId { return true }
+                    return !baselineShard.isEmpty && $0.shardRelPath != baselineShard
                 }
                 var autopilotMessagesToQueue: [AutopilotService.InboundMessage] = []
                 autopilotMessagesToQueue.reserveCapacity(newMessages.count)
                 for msg in newMessages {
+                    if msg.sysKind != nil { continue }
                     if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) { continue }
                     // Indexed against the scan-start contact snapshot; the
                     // previous per-message `store.getContact` was a SQL
@@ -751,10 +871,15 @@ enum ScanEngine {
                     autopilotInbound.append(inbound)
                 }
 
-                // Update baseline
-                if let newest = newMessages.first,
-                   newest.createTime > baseline.lastCreateTime
-                   || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId) {
+                // Update baseline. A window whose only new rows are
+                // same-second cross-shard rows still must enqueue them — the
+                // transaction can't be gated on the cursor advancing — but
+                // the cursor itself only moves on a strict (time, localId)
+                // win so a lower-localId row never drags the watermark back.
+                if let newest = newMessages.first {
+                    let cursorAdvances =
+                        newest.createTime > baseline.lastCreateTime
+                        || (newest.createTime == baseline.lastCreateTime && newest.localId > baseline.lastLocalId)
                     do {
                         try store.withTransaction {
                             if autopilotActive {
@@ -762,11 +887,14 @@ enum ScanEngine {
                                     try store.enqueueAutopilotInbound(inbound)
                                 }
                             }
-                            try store.setAutopilotCursor(
-                                username: session.username,
-                                lastCreateTime: newest.createTime,
-                                lastLocalId: newest.localId
-                            )
+                            if cursorAdvances {
+                                try store.setAutopilotCursor(
+                                    username: session.username,
+                                    lastCreateTime: newest.createTime,
+                                    lastLocalId: newest.localId,
+                                    lastShard: newest.shardRelPath
+                                )
+                            }
                         }
                     } catch {
                         print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
@@ -812,6 +940,12 @@ enum ScanEngine {
     /// cannot stretch the scan past its interval.
     static let backlogPageBudgetPerScan = 6
 
+    /// Pages one chat may consume per scan (the initial fetch counts as one).
+    /// Without a per-chat cap, a single deep backlog eats the whole
+    /// `backlogPageBudgetPerScan` on every scan and later whitelist entries
+    /// starve forever.
+    static let maxBackfillPagesPerChat = 3
+
     /// Page size for a whitelist chat.
     ///
     /// Both the first scan and every later scan must cover the recorded unread
@@ -831,6 +965,110 @@ enum ScanEngine {
     /// live exchange. Inside the window, inbound replies don't re-pop the
     /// banner — you're literally in that conversation.
     static let activeConversationWindow: Int = 120
+
+    /// Record a recalled-message event. `recall` is the type-10000 revokemsg
+    /// row (its rendered text is the replacemsg payload "「X」撤回了一条消息");
+    /// the original message is looked up in the freshly-fetched window by
+    /// sender name within a 10-minute horizon.
+    static func recordRecall(
+        _ recall: MessageInfo,
+        chatUsername: String,
+        candidates: [MessageInfo],
+        contactMap: [String: ContactEntry],
+        store: HUDStore,
+        myUsername: String,
+        myDisplayName: String,
+        mySelfNames: Set<String>
+    ) {
+        let (recaller, recalledOwner) = recallerName(from: recall.text)
+        guard !recaller.isEmpty else { return }
+        // "你撤回了一条消息" — my own recall.
+        let recallerIsSelf = recaller == "你"
+            || (!myUsername.isEmpty && recaller == myUsername)
+            || (!myDisplayName.isEmpty && recaller == myDisplayName)
+            || mySelfNames.contains(recaller)
+        // "X 撤回了 Y 的一条消息" — an admin recalled member Y's message:
+        // the original row belongs to Y, not to the actor X. Attribution
+        // follows the owner so the record doesn't pin Y's content on X.
+        let owner = recalledOwner ?? recaller
+        let ownerIsSelf = recalledOwner.map {
+            $0 == "你" || (!myUsername.isEmpty && $0 == myUsername)
+                || (!myDisplayName.isEmpty && $0 == myDisplayName)
+                || mySelfNames.contains($0)
+        } ?? recallerIsSelf
+        // The original row is the message owner's newest message at-or-
+        // before the recall time (within a 10-minute horizon).
+        let original = candidates.first(where: {
+            $0.id != recall.id
+                && $0.sysKind == nil
+                && $0.createTime <= recall.createTime
+                && $0.createTime >= recall.createTime - 600
+                && (ownerIsSelf
+                    ? MessageHelpers.isFromSelf($0, chatUsername: chatUsername,
+                                                myUsername: myUsername,
+                                                myDisplayName: myDisplayName,
+                                                mySelfNames: mySelfNames)
+                    : ($0.senderName == owner || $0.senderUsername == owner))
+        })
+        let senderUsername = original?.senderUsername ?? owner
+        let contact = contactMap[senderUsername]
+        // The original's derived artifacts die with it — a withdrawn
+        // commitment must not keep nagging, a recalled ask must not anchor.
+        if let originalID = original?.id {
+            store.tombstoneForRecall(originalMsgUID: originalID)
+        }
+        do {
+            try store.insertRecalledMessage(
+                msgUID: recall.id,
+                senderUsername: senderUsername,
+                senderName: original?.senderName ?? owner,
+                senderLevel: contact?.attentionLevel ?? .stranger,
+                senderRole: contact?.role ?? .acquaintance,
+                chatUsername: chatUsername,
+                chatName: recall.chatName,
+                chatType: MessageHelpers.isMultiPartyChat(chatUsername) ? .group : .privateChat,
+                originalText: original?.text ?? "",
+                sentAt: original?.createTime ?? recall.createTime,
+                recalledAt: recall.createTime
+            )
+        } catch {
+            // A failed recall insert must not stall the scan — the row is
+            // re-admitted on the next scan until the watermark passes it.
+            print("[WCHUD] recall record failed; will retry on next scan")
+        }
+    }
+
+    /// Extract the actor name from a recall replacemsg payload. WeChat
+    /// formats: `"X" 撤回了一条消息`, `「X」撤回了一条消息`,
+    /// `X 撤回了 Y 的一条消息` (an admin recalled member Y's message — the
+    /// owner is Y, which is what attribution must follow).
+    /// Returns (actor, recalledMessageOwner?).
+    static func recallerName(from text: String) -> (actor: String, owner: String?) {
+        guard let r = text.range(of: "撤回") else { return ("", nil) }
+        var name = String(text[..<r.lowerBound])
+        name = name.trimmingCharacters(
+            in: CharacterSet(charactersIn: " \t\"“”‘’「」『』")
+        )
+        // Owner: text between "撤回了" and "的一条消息" — present only in the
+        // admin-recall form `X 撤回了"Y"的一条消息` (sometimes 成员"Y"). The
+        // self-recall form `撤回了一条消息` has no 的 and no owner — a bare-"的"
+        // fallback here misread `一条消息` itself as a name.
+        var owner: String? = nil
+        if let ofRange = text.range(of: "撤回了"),
+           let ownerEnd = text.range(of: "的一条消息", range: ofRange.upperBound..<text.endIndex) {
+            var mid = String(text[ofRange.upperBound..<ownerEnd.lowerBound])
+            mid = mid.trimmingCharacters(
+                in: CharacterSet(charactersIn: " \t\"“”‘’「」『』")
+            )
+            if mid.hasPrefix("成员") {
+                mid = String(mid.dropFirst(2)).trimmingCharacters(
+                    in: CharacterSet(charactersIn: " \t\"“”‘’「」『』")
+                )
+            }
+            if !mid.isEmpty { owner = mid }
+        }
+        return (name, owner)
+    }
 
     static func shouldEnqueueAutopilotInbound(isFirstWhitelistScan: Bool) -> Bool {
         !isFirstWhitelistScan
@@ -942,13 +1180,14 @@ enum ScanEngine {
         senderUsername: String,
         vipPersonUsernames: Set<String>
     ) -> Bool {
-        guard entryID.contains("@chatroom") else { return false }
+        guard MessageHelpers.isMultiPartyChat(entryID) else { return false }
         guard entryLevel != .vip else { return false }
         return vipPersonUsernames.contains(senderUsername)
     }
 
     /// Strip leading sender name from snippet to avoid "亮🌸: 亮🌸让你..." duplication.
-    private static func deduplicateSenderInSnippet(
+    /// Internal (not private) so the mention-boundary rules are testable.
+    static func deduplicateSenderInSnippet(
         _ text: String,
         senderName: String,
         myUsername: String = "",
@@ -965,7 +1204,12 @@ enum ScanEngine {
         // a broadcast, "@你" for a personal mention — precisely because the
         // token itself is gone by the time the banner renders.
         while snippet.hasPrefix("@") {
-            guard let space = snippet.firstIndex(where: { $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "　" }) else { break }
+            // U+2005 (FOUR-PER-EM SPACE) is the terminator WeChat actually
+            // emits after a group mention — the old separator set missed it,
+            // so "@我 hello" kept its token on the banner.
+            guard let space = snippet.firstIndex(where: {
+                $0 == " " || $0 == "\n" || $0 == "\t" || $0 == "　" || $0 == "\u{2005}"
+            }) else { break }
             let token = String(snippet[snippet.index(after: snippet.startIndex)..<space])
             let isMe = token == "所有人" || token.lowercased() == "all"
                 || token == myUsername || (!myDisplayName.isEmpty && token == myDisplayName)
@@ -975,8 +1219,10 @@ enum ScanEngine {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard !senderName.isEmpty else { return snippet }
-        // Check if text starts with "senderName" followed by common separators
-        for sep in ["：", ":", " ", ""] {
+        // Check if text starts with "senderName" followed by a separator.
+        // An empty separator would strip "张三…" from a body that merely
+        // starts with the sender's name, not their prefix.
+        for sep in ["：", ":", " "] {
             let prefix = senderName + sep
             if snippet.hasPrefix(prefix) {
                 return String(snippet.dropFirst(prefix.count).prefix(80))

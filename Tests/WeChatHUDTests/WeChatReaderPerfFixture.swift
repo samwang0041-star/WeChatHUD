@@ -259,8 +259,14 @@ final class WeChatReaderPerfFixture {
                 }
             }
             guard status == CCCryptorStatus(kCCSuccess) else { throw FixtureError("AES failure") }
+            let pageNo = UInt32(start / 4096 + 1)
+            var bodyWithIV = cipher
+            bodyWithIV.append(iv)
+            let mac = WeChatFixtureEncrypt.pageMAC(
+                key: key, dbSalt: Data(repeating: 0x11, count: 16),
+                bodyWithIV: bodyWithIV, pageNumber: pageNo)
             if first { output += Data(repeating: 0x11, count: 16) }
-            output += cipher + iv + Data(count: 64)
+            output += cipher + iv + mac
         }
         try output.write(to: encrypted, options: .atomic)
     }

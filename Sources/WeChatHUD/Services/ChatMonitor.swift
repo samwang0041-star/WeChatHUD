@@ -402,6 +402,16 @@ final class ChatMonitor: ObservableObject {
     private var terminateObserver: NSObjectProtocol?
     private var activateObserver: NSObjectProtocol?
     private var deactivateObserver: NSObjectProtocol?
+    private var willOpenWeChatObserver: NSObjectProtocol?
+    /// Set when our own automation asked for WeChat. Autopilot sends activate
+    /// WeChat themselves — without this marker the activation observer pauses
+    /// the queue on every send, and nothing ever un-pauses it (WeChat stays
+    /// frontmost), so autopilot could send exactly once per app switch.
+    private var lastAutomationActivationAt = Date.distantPast
+    /// (chatUsername|messageID) keys whose banner already popped — prevents
+    /// the same message re-interrupting when it's re-admitted by a stuck
+    /// cursor or a shard move.
+    private var recentlyPresentedBannerKeys: Set<String> = []
 
     nonisolated static let urgentKeywords = ["紧急", "尽快", "ASAP", "马上", "立即", "截止", "deadline"]
 
@@ -445,6 +455,7 @@ final class ChatMonitor: ObservableObject {
         if let obs = terminateObserver { center.removeObserver(obs) }
         if let obs = activateObserver { center.removeObserver(obs) }
         if let obs = deactivateObserver { center.removeObserver(obs) }
+        if let obs = willOpenWeChatObserver { center.removeObserver(obs) }
     }
 
     // MARK: - Lifecycle
@@ -706,7 +717,7 @@ final class ChatMonitor: ObservableObject {
                     isTarget: msg.id == notification.messageID
                 )
             }
-            let chatType: ChatType = notification.chatUsername.contains("@chatroom") ? .group : .privateChat
+            let chatType: ChatType = MessageHelpers.isGroupChat(notification.chatUsername) ? .group : .privateChat
             let contextWindow = ContextWindow(
                 messages: annotated,
                 chatType: chatType,
@@ -957,7 +968,7 @@ final class ChatMonitor: ObservableObject {
     /// Add an unread item's chat into the tracked source list. Private
     /// chats default to VIP; groups default to plain whitelist/watch.
     func addUnreadToWhitelist(_ item: UnreadItem) {
-        let isGroup = item.chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(item.chatUsername)
         try? store.addToWhitelist(
             username: item.chatUsername,
             displayName: item.chatName,
@@ -1049,7 +1060,11 @@ final class ChatMonitor: ObservableObject {
     private func recomputeStatsFromItems() {
         let pr = unreadItems.filter { $0.kind == .privateChat }.count
         let at = unreadItems.filter { $0.kind == .groupAt }.count
-        stats.unreadCount = pr + at
+        // The scan's totalUnread also counts group-member messages — the
+        // recompute must match or every inbox action silently drops them
+        // from stats until the next scan.
+        let gm = unreadItems.filter { $0.kind == .groupMessage }.count
+        stats.unreadCount = pr + at + gm
         stats.atMentionCount = at
         stats.vipCount = recentNotifications.filter(\.isVIP).count
         stats.replyDebtCount = replyDebtItems.count
@@ -1149,6 +1164,21 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
+        willOpenWeChatObserver = center.addObserver(
+            forName: .hudWillOpenWeChat,
+            object: nil,
+            queue: .main
+        ) { [weak self] notif in
+            // Only automation-driven opens stamp the suppression timestamp.
+            // A user-initiated open must not — swallowing its activation
+            // means autopilot keeps sending while the user is in WeChat,
+            // and nothing re-fires the missed pause.
+            guard (notif.userInfo?["automation"] as? Bool) ?? true else { return }
+            Task { @MainActor [weak self] in
+                self?.lastAutomationActivationAt = Date()
+            }
+        }
+
         activateObserver = center.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil,
@@ -1159,6 +1189,13 @@ final class ChatMonitor: ObservableObject {
                   Self.wechatBundleIDs.contains(bid) else { return }
             Task { @MainActor [weak self] in
                 guard let self, self.autopilotActive else { return }
+                // An activation our own send path just requested is not the
+                // user returning to WeChat — pausing here wedges the queue
+                // permanently, because nothing re-activates the user's
+                // previous app after the send.
+                if Date().timeIntervalSince(self.lastAutomationActivationAt) < 8 {
+                    return
+                }
                 await self.autopilotService?.onUserBecameActive()
                 if let service = self.autopilotService {
                     self.autopilotPaused = await service.isPaused
@@ -1325,7 +1362,19 @@ final class ChatMonitor: ObservableObject {
         replyDebtItems = o.replyDebtItems
         recentNotifications = o.recentNotifications
         if let latest = o.latestPreview {
-            latestNotification = latest
+            // The same message can be re-admitted scan after scan — cursor
+            // persistence failure leaves the watermark behind, and a WCDB
+            // checkpoint moving the newest row re-admits it under a new
+            // msg_uid. Without a presented-key dedup the identical banner
+            // re-pops every scan interval until a newer message arrives.
+            let key = "\(latest.chatUsername)|\(latest.messageID)"
+            if !recentlyPresentedBannerKeys.contains(key) {
+                recentlyPresentedBannerKeys.insert(key)
+                if recentlyPresentedBannerKeys.count > 64 {
+                    recentlyPresentedBannerKeys = Set(recentlyPresentedBannerKeys.suffix(32))
+                }
+                latestNotification = latest
+            }
         }
         // Build unified inbox from scan results
         rebuildInbox()
@@ -1523,6 +1572,11 @@ final class ChatMonitor: ObservableObject {
                 discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
             }
             _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
+            // Commitments get the longer catalog window — a real pending
+            // obligation shouldn't expire as fast as a discussion item.
+            _ = try? store.archiveStalePendingCommitments(
+                cutoff: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.catalogDays)
+            )
         }
         let next = store.loadDiscussionItems(status: .pending, relevantSince: cutoff)
         if next != discussionItems { discussionItems = next }
@@ -1652,7 +1706,7 @@ final class ChatMonitor: ObservableObject {
                                          firstPreview: String, count: Int,
                                          latestTime: Int)] = [:]
         for trace in outcome.vipTraceMessages {
-            guard trace.chatUsername.contains("@chatroom"),
+            guard MessageHelpers.isGroupChat(trace.chatUsername),
                   !vipGroupUsernames.contains(trace.chatUsername) else { continue }
             // The user is mid-exchange in this group — the VIP's message is
             // visible in the thread they're already reading. Skipping the
@@ -1733,7 +1787,16 @@ final class ChatMonitor: ObservableObject {
                 self?.canonicalDisplayName(for: username)
             }
             Task {
-                for item in outcome.selfOutgoingMessages {
+                // Bot-authored replies are the app's wording, not the user's
+                // — they must not produce commitments attributed to the user
+                // or serve as fulfillment evidence.
+                let autopilotSent = await autopilotService?.autopilotSentMsgUIDs() ?? []
+                for item in outcome.selfOutgoingMessages
+                where !autopilotSent.contains(item.msg.id) {
+                    // A chat whose watermark is held mid-backfill re-surfaces
+                    // the same self messages on every scan; the durable mark
+                    // keeps the AI analysis strictly once-per-message.
+                    guard storeRef.markCommitmentAnalyzedIfNew(msgUID: item.msg.id) else { continue }
                     let contact = storeRef.getContact(username: item.chatUsername)
                     let role = contact?.role ?? .acquaintance
 
@@ -1747,7 +1810,7 @@ final class ChatMonitor: ObservableObject {
                         target: item.msg,
                         role: .commitmentTracker,
                         allMessages: contextMsgs,
-                        chatType: item.chatUsername.contains("@chatroom") ? .group : .privateChat,
+                        chatType: MessageHelpers.isGroupChat(item.chatUsername) ? .group : .privateChat,
                         contactLookup: contactLookup
                     )
 
@@ -1814,13 +1877,16 @@ final class ChatMonitor: ObservableObject {
             }
         }
 
-        // 5. Analyze unanalyzed recalled messages (async)
-        let unanalyzed = recalledMessages.filter { $0.aiReason == nil }
+        // 5. Analyze unanalyzed recalled messages (async). A permanently
+        // failing analyzer used to re-run on every scan forever (one AI call
+        // per scan per stuck row); cap attempts at 3.
+        let unanalyzed = recalledMessages.filter { $0.aiReason == nil && $0.aiAttempts < 3 }
         if !unanalyzed.isEmpty {
             let analyzer = recallAnalyzer
             let readerActor = WeChatReaderActor(reader)
             Task {
                 for recalled in unanalyzed {
+                    try? storeRef.markRecallAnalysisAttempted(msgUID: recalled.msgUID)
                     // Context must straddle the recall, not trail the chat.
                     //
                     // This used to pass the chat's newest 10 messages, which
@@ -1895,6 +1961,10 @@ final class ChatMonitor: ObservableObject {
             let storeForFulfillment = store
             Task { @MainActor [weak self] in
                 var changed = false
+                // Bot-authored replies must not count as fulfillment
+                // evidence — the app "confirming" its own commitment is a
+                // self-sealing loop.
+                let autopilotSent = await self?.autopilotService?.autopilotSentMsgUIDs() ?? []
                 for c in pendingCommitments {
                     // Fetch recent messages in that chat, filter to
                     // the user's own outbound messages AFTER the
@@ -1908,6 +1978,7 @@ final class ChatMonitor: ObservableObject {
                     let mySelfNames = await readerActor.mySelfNames()
                     let subsequent = allMsgs.filter { msg in
                         msg.createTime > commitEpoch &&
+                        !autopilotSent.contains(msg.id) &&
                         MessageHelpers.isFromSelf(
                             msg, chatUsername: c.chatUsername,
                             myUsername: myUname,
@@ -2146,7 +2217,7 @@ final class ChatMonitor: ObservableObject {
         return await relationshipInferrer.infer(
             contactUsername: contactUsername,
             contactName: contactName,
-            isGroup: contactUsername.contains("@chatroom"),
+            isGroup: MessageHelpers.isGroupChat(contactUsername),
             messages: msgs,
             myUsername: myUname,
             myDisplayName: await readerActor.displayName(for: myUname),
@@ -2546,6 +2617,11 @@ final class ChatMonitor: ObservableObject {
             try store.snoozeChat(chatUsername: item.chatUsername, until: untilEpoch)
             snoozedInbox[item.chatUsername] = Date(timeIntervalSince1970: TimeInterval(untilEpoch))
             silencedInbox.remove(item.chatUsername)
+            // The snoozeChat upsert clears silenced_at on disk — the dismiss
+            // watermark dies with it, so the in-memory copy must go too.
+            // Keeping it meant a dismissed item stayed handled in-session
+            // but resurfaced as active after a restart.
+            dismissedInbox.removeValue(forKey: item.chatUsername)
             inboxActionError = nil
             rebuildInbox()
             return true
@@ -3327,9 +3403,13 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Approve a pending autopilot item and send it.
-    func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String) async -> Bool {
+    func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String,
+                              createdAt: Date? = nil) async -> Bool {
         guard let service = await ensureAutopilotReadyForSend() else { return false }
-        let success = await service.approvePending(logId: logId, reply: reply, chatName: chatName, chatUsername: chatUsername)
+        let success = await service.approvePending(
+            logId: logId, reply: reply, chatName: chatName,
+            chatUsername: chatUsername, createdAt: createdAt
+        )
         // I1 fix: refresh counters from DB session instead of manual adjustment
         refreshAutopilotSessionState()
         await refreshAutopilotLiveState()
@@ -3337,12 +3417,16 @@ final class ChatMonitor: ObservableObject {
     }
 
     /// Reject a pending autopilot item.
-    func rejectAutopilotItem(logId: Int64) {
+    func rejectAutopilotItem(logId: Int64, chatUsername: String? = nil, replyText: String? = nil) {
         Task { @MainActor in
             if let service = autopilotService {
-                await service.rejectPending(logId: logId)
+                await service.rejectPending(logId: logId, chatUsername: chatUsername, replyText: replyText)
             } else {
-                try? store.updateAutopilotLogAction(id: logId, action: .skipped)
+                if store.resolveAutopilotLogSkipped(id: logId), let chatUsername, let replyText {
+                    try? store.deletePendingSendForLog(
+                        logId: logId, chatUsername: chatUsername, replyText: replyText
+                    )
+                }
             }
             refreshAutopilotSessionState()
         }
@@ -3350,10 +3434,25 @@ final class ChatMonitor: ObservableObject {
 
     func syncAutopilotPendingQueue() async {
         await refreshAutopilotLiveState()
+        // Cancel/reject paths decrement the actor's sessionPending without
+        // touching the published badge counter — re-read it so the "N
+        // 待确认" badge doesn't over-count after a cancel.
+        refreshAutopilotSessionState()
     }
 
-    func saveAutopilotDraft(logId: Int64, reply: String) throws {
+    func saveAutopilotDraft(logId: Int64, reply: String) async throws {
         try store.updateAutopilotLogReply(id: logId, reply: reply)
+        // Re-key the queue twin by the shared queue_id — the display list
+        // can't be trusted for the chat (row may sit outside the 50-row
+        // window or be stale), so read it from the log row itself. The
+        // in-memory sync is AWAITED: a fire-and-forget Task leaves a window
+        // where a queue drain sends the OLD text while DB + log show the
+        // new draft.
+        if let qidString = store.autopilotLogQueueId(id: logId),
+           let queueUUID = UUID(uuidString: qidString) {
+            try? store.updatePendingSendReply(id: queueUUID, newReply: reply)
+            await autopilotService?.syncQueueReply(id: queueUUID, newReply: reply)
+        }
         if let index = autopilotLog.firstIndex(where: { $0.id == logId }) {
             autopilotLog[index] = autopilotLog[index].replacingReply(reply)
         }

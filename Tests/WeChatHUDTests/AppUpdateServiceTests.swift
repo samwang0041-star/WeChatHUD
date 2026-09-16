@@ -237,6 +237,8 @@ final class AppUpdateServiceTests: XCTestCase {
             // The synthetic bundle is not signed; the signature policy itself is
             // covered by AppUpdateSignatureTests. What this test pins is that the
             // install path *asks* about the extracted bundle.
+            signatureVerifier: { _, _ in },
+            bundleCheck: { _ in },
             signatureTeamIdentifier: { url in verifiedPaths.append(url); return "TEAM123" },
             runningTeamIdentifier: { "TEAM123" }
         )
@@ -265,7 +267,10 @@ final class AppUpdateServiceTests: XCTestCase {
 
         let installed = try await service.install(offer, destination: current)
         XCTAssertEqual(installed.standardizedFileURL.path, current.standardizedFileURL.path)
-        XCTAssertEqual(verifiedPaths.paths.count, 1, "the extracted bundle must be signature-checked")
+        // Signature is checked twice: the extracted bundle in the temp dir
+        // AND the installed copy post-move (the swap window between verify
+        // and replace lets a same-UID process swap the verified bundle).
+        XCTAssertEqual(verifiedPaths.paths.count, 2)
         XCTAssertEqual(verifiedPaths.paths.first?.lastPathComponent, "WeChatHUD.app")
         // Public releases download from the browser URL with no credential.
         XCTAssertEqual(client.requests[0].url?.absoluteString, "https://github.com/samwang0041-star/WeChatHUD/releases/download/v1.3.0/WeChatHUD-1.3.0-macOS14-arm64.zip")
@@ -339,6 +344,84 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(markerPlist?["CFBundleShortVersionString"] as? String, "1.2.0")
     }
 
+    /// If the post-move signature re-verify fails (a same-UID process swapped
+    /// the bundle between verify and move), install must roll back: the
+    /// tampered bundle cannot stay at the destination and the last-known-good
+    /// backup must be restored — otherwise detection becomes a completed
+    /// compromise plus data loss.
+    func testPostMoveSignatureFailureRestoresBackup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("update-rollback-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let incoming = try makeFakeApp(
+            at: root.appendingPathComponent("incoming/WeChatHUD.app"),
+            identifier: AppUpdateService.productionIdentifier,
+            version: "1.3.0"
+        )
+        let current = try makeFakeApp(
+            at: root.appendingPathComponent("Applications/WeChatHUD.app"),
+            identifier: AppUpdateService.productionIdentifier,
+            version: "1.2.0"
+        )
+        let zip = root.appendingPathComponent("WeChatHUD-1.3.0-macOS14-arm64.zip")
+        let zipProcess = Process()
+        zipProcess.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        zipProcess.arguments = ["-c", "-k", "--keepParent", incoming.path, zip.path]
+        try zipProcess.run()
+        zipProcess.waitUntilExit()
+        let zipData = try Data(contentsOf: zip)
+        let client = MockUpdateClient(responses: [
+            MockUpdateClient.response(status: 200, body: zipData, url: "https://github.com/x/y/z.zip")
+        ])
+        let verifiedPaths = LockedPaths()
+        let service = AppUpdateService(
+            http: client,
+            downloadHTTP: client,
+            currentVersion: AppVersion("1.2.0")!,
+            currentBundleIdentifier: AppUpdateService.productionIdentifier,
+            currentBundleURL: current,
+            allowsNonApplicationDestination: true,
+            // First call verifies the extracted bundle (pass); the post-move
+            // re-verify sees the swapped bundle and fails.
+            signatureVerifier: { url, _ in
+                verifiedPaths.append(url)
+                if verifiedPaths.paths.count > 1 { throw AppUpdateError.signatureMismatch }
+            },
+            bundleCheck: { _ in },
+            signatureTeamIdentifier: { _ in "TEAM123" },
+            runningTeamIdentifier: { "TEAM123" }
+        )
+        let offer = AppUpdateOffer(
+            version: AppVersion("1.3.0")!,
+            tagName: "v1.3.0",
+            htmlURL: URL(string: "https://github.com/x/y")!,
+            notes: "",
+            asset: GitHubReleaseAsset(
+                id: 1,
+                name: "WeChatHUD-1.3.0-macOS14-arm64.zip",
+                browserDownloadURL: URL(string: "https://github.com/x/y/z.zip")!,
+                apiURL: nil,
+                size: zipData.count,
+                state: "uploaded"
+            ),
+            checksumAsset: nil
+        )
+        do {
+            _ = try await service.install(offer, destination: current)
+            XCTFail("Expected post-move signature failure")
+        } catch let error as AppUpdateError {
+            XCTAssertEqual(error, .signatureMismatch)
+        }
+        // The original bundle must be restored, not left replaced.
+        let restored = NSDictionary(contentsOf: current.appendingPathComponent("Contents/Info.plist"))
+        XCTAssertEqual(restored?["CFBundleShortVersionString"] as? String, "1.2.0",
+                       "the last-known-good copy must be restored after a post-move verify failure")
+        // No backup left behind on failure OR success paths.
+        let backup = current.deletingLastPathComponent()
+            .appendingPathComponent(".\(current.lastPathComponent).update-backup")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
+    }
+
     func testDeviceSettingsKeepsUpdateKey() {
         XCTAssertTrue(DeviceSettingsStore.sharedKeys.contains("update"))
     }
@@ -381,6 +464,8 @@ final class AppUpdateServiceTests: XCTestCase {
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: current,
             allowsNonApplicationDestination: true,
+            signatureVerifier: { _, _ in },
+            bundleCheck: { _ in },
             signatureTeamIdentifier: { _ in "TEAM123" },
             runningTeamIdentifier: { "TEAM123" }
         )
@@ -403,6 +488,42 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(installed.standardizedFileURL.path, current.standardizedFileURL.path)
         XCTAssertEqual(downloadClient.requests.count, 1, "the download must use the redirect-following client")
         XCTAssertTrue(checkClient.requests.isEmpty, "the check client must not see download traffic")
+    }
+
+    func testValidateAssetNameRejectsTraversalAndSeparators() throws {
+        XCTAssertNoThrow(try AppUpdateService.validateAssetName("WeChatHUD-1.3.0.zip"))
+        for bad in ["../evil", "..", ".", "a/b", "a\\b", "evil;rm -rf", ""] {
+            XCTAssertThrowsError(try AppUpdateService.validateAssetName(bad), bad)
+        }
+    }
+
+    func testInstallRejectsDowngradeOrSameVersionOffer() async throws {
+        // A persisted/forged offer can carry an older version — install must
+        // refuse before touching the network or the disk.
+        let client = MockUpdateClient(responses: [])
+        let service = AppUpdateService(
+            http: client,
+            currentVersion: AppVersion("1.3.0")!,
+            allowsNonApplicationDestination: true
+        )
+        let offer = AppUpdateOffer(
+            version: AppVersion("1.2.0")!,
+            tagName: "v1.2.0",
+            htmlURL: URL(string: "https://github.com/x/y")!,
+            notes: "",
+            asset: GitHubReleaseAsset(
+                id: 1, name: "z.zip",
+                browserDownloadURL: URL(string: "https://github.com/x/z.zip")!,
+                apiURL: nil, size: 4, state: "uploaded"
+            ),
+            checksumAsset: nil
+        )
+        do {
+            _ = try await service.install(offer)
+            XCTFail("a downgrade offer must not install")
+        } catch {
+            XCTAssertTrue(client.requests.isEmpty, "downgrade must fail before any download")
+        }
     }
 
     func testTagFromReleasePagePrefersHighestVersion() {
@@ -488,6 +609,12 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertEqual(saved?.pendingOffer?.version, AppVersion("1.3.0"))
 
         let restored = AppUpdateController()
+        // Mirror production: the running build knows its version, so the
+        // restore-time downgrade guard can engage.
+        restored.serviceOverride = AppUpdateService(
+            http: client,
+            currentVersion: AppVersion("1.2.0")!
+        )
         restored.bind(store: store)
         XCTAssertEqual(restored.offer?.version, AppVersion("1.3.0"))
         XCTAssertEqual(restored.phase, .available)

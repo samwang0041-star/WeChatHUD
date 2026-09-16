@@ -25,13 +25,23 @@ final class WALReplayTests: XCTestCase {
         return (a, b)
     }
 
-    private func wal(_ frames: [(page: UInt32, commit: UInt32)], big: Bool = false) -> Data {
+    private func wal(_ frames: [(page: UInt32, commit: UInt32)], big: Bool = false, macKey: Data? = nil) -> Data {
         var data = word(big ? 0x377f0683 : 0x377f0682) + word(3_007_000) + word(UInt32(pageSize)) + word(0) + word(11) + word(22)
         var sum = checksum(data, (0, 0), big: big)
         data += word(sum.0) + word(sum.1)
         for frame in frames {
             let prefix = word(frame.page) + word(frame.commit)
-            let page = Data(repeating: UInt8(truncatingIfNeeded: frame.page), count: pageSize)
+            var page = Data(repeating: UInt8(truncatingIfNeeded: frame.page), count: pageSize)
+            if frame.page == 1, let macKey {
+                // applyWAL MAC-verifies page-1 frames — a repeating-byte
+                // fixture page must carry a real MAC or the check (correctly)
+                // fails. Salt sits inline at bytes 0..<16 for page 1.
+                var bodyWithIV = page.subdata(in: 16..<4032)
+                let mac = WeChatFixtureEncrypt.pageMAC(
+                    key: macKey, dbSalt: page.prefix(16),
+                    bodyWithIV: bodyWithIV, pageNumber: 1)
+                page.replaceSubrange(4032..<4096, with: mac)
+            }
             sum = checksum(prefix + page, sum, big: big)
             data += prefix + word(11) + word(22) + word(sum.0) + word(sum.1) + page
         }
@@ -95,7 +105,7 @@ final class WALReplayTests: XCTestCase {
         XCTAssertEqual(grown.count, pageSize * 2)
         let expected = try WeChatDecryptor.decryptPage(Data(repeating: 2, count: pageSize), key: key, isFirstPage: false)
         XCTAssertEqual(Data(grown.suffix(pageSize)), expected)
-        try wal([(1, 1)]).write(to: source)
+        try wal([(1, 1)], macKey: key).write(to: source)
         try WeChatDecryptor.applyWAL(dbPath: database.path, walPath: source.path, key: key)
         XCTAssertEqual(try Data(contentsOf: database).count, pageSize)
     }

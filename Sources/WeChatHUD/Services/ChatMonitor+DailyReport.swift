@@ -330,7 +330,7 @@ enum DailyReportCompletion {
             chatName: chatUsername,
             senderName: "",
             preview: "",
-            isGroup: chatUsername.contains("@chatroom"),
+            isGroup: MessageHelpers.isGroupChat(chatUsername),
             timestamp: timestamp,
             actionRequired: true,
             priority: .p2,

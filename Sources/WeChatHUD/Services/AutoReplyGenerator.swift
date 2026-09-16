@@ -142,9 +142,13 @@ actor AutoReplyGenerator {
             return nil
         }
 
+        // Quoted + oneLine'd: a profiled example containing newlines or
+        // instruction-looking text must not masquerade as prompt structure.
         let fewShotText = input.fewShotExamples.isEmpty
             ? "（暂无历史记录）"
-            : input.fewShotExamples.enumerated().map { "  \($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+            : input.fewShotExamples.enumerated().map {
+                "  \($0.offset + 1). 「\(AIService.oneLine($0.element))」"
+            }.joined(separator: "\n")
 
         let phrasesText = input.frequentPhrases.isEmpty
             ? "（暂无）"
@@ -152,7 +156,7 @@ actor AutoReplyGenerator {
 
         let pairsText = input.messagePairs.isEmpty
             ? "（暂无）"
-            : input.messagePairs.enumerated().map { "  \($0.offset + 1). 对方：\($0.element.question) → 用户：\($0.element.answer)" }.joined(separator: "\n")
+            : input.messagePairs.enumerated().map { "  \($0.offset + 1). 对方：\(AIService.oneLine($0.element.question)) → 用户：\(AIService.oneLine($0.element.answer))" }.joined(separator: "\n")
 
         let memoryText = input.conversationMemory ?? "（暂无记忆）"
         let ledgerText = Self.formatLedger(input.sessionLedger)
@@ -289,10 +293,10 @@ actor AutoReplyGenerator {
             let time = fmt.string(from: e.timestamp)
             let peer = e.peerLastMessage.flatMap { text -> String in
                 let snippet = text.count > 50 ? String(text.prefix(50)) + "…" : text
-                return "对方: \"\(snippet)\""
+                return "对方: \"\(AIService.oneLine(snippet))\""
             }
             let prefix = peer.map { "[\(time) \($0)]" } ?? "[\(time)]"
-            return "\(prefix) → 你回:「\(e.outgoingText)」"
+            return "\(prefix) → 你回:「\(AIService.oneLine(e.outgoingText))」"
         }.joined(separator: "\n")
     }
 }

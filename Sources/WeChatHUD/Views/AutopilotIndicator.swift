@@ -22,7 +22,7 @@ struct AutopilotIndicator: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandIconButtonStyle())
         .help(tooltip)
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
             AutopilotPopoverView(close: { showPopover = false })
@@ -174,7 +174,7 @@ struct AutopilotPopoverView: View {
             .background(Color.green.opacity(starting ? 0.45 : 0.8))
             .cornerRadius(5)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
         .disabled(starting)
         .accessibilityLabel(starting ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
         .help(starting ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
@@ -269,7 +269,7 @@ struct AutopilotPopoverView: View {
             .background((paused ? Color.green : Color.yellow).opacity(0.15))
             .cornerRadius(4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
     }
 
     private var stopButton: some View {
@@ -290,7 +290,7 @@ struct AutopilotPopoverView: View {
             .background(Color.red.opacity(0.15))
             .cornerRadius(4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
     }
 
     // MARK: - Footer links
@@ -306,7 +306,7 @@ struct AutopilotPopoverView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
 
             Text("·")
                 .font(.system(size: 10))
@@ -320,7 +320,7 @@ struct AutopilotPopoverView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .help("在浮窗面板里打开待确认回复，不弹出设置窗口")
             .accessibilityHint("在浮窗面板里打开待确认回复")
 
@@ -339,7 +339,7 @@ struct AutopilotPopoverView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
 
             Spacer()
         }

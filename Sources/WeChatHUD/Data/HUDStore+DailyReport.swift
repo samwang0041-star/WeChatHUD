@@ -109,18 +109,24 @@ extension HUDStore {
                 snoozed_until = excluded.snoozed_until,
                 updated_at = excluded.updated_at
         """
-        let params: [String] = [
+        // nil binds NULL — '' would store TEXT in INTEGER-affinity columns
+        // and corrupt every NULL/0 predicate that reads them.
+        let params: [String?] = [
             state.dateKey,
             state.itemID,
             state.state.rawValue,
-            state.completedAt.map { String(Int($0.timeIntervalSince1970)) } ?? "",
-            state.dismissedAt.map { String(Int($0.timeIntervalSince1970)) } ?? "",
-            state.snoozedUntil.map { String(Int($0.timeIntervalSince1970)) } ?? "",
+            state.completedAt.map { String(Int($0.timeIntervalSince1970)) },
+            state.dismissedAt.map { String(Int($0.timeIntervalSince1970)) },
+            state.snoozedUntil.map { String(Int($0.timeIntervalSince1970)) },
             String(Int(state.updatedAt.timeIntervalSince1970))
         ]
         _ = executeUpdate(sql) { stmt in
             for (i, p) in params.enumerated() {
-                sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+                if let p {
+                    sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
+                } else {
+                    sqlite3_bind_null(stmt, Int32(i + 1))
+                }
             }
         }
     }

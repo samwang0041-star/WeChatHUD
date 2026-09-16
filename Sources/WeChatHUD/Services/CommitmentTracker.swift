@@ -168,7 +168,7 @@ actor CommitmentTracker {
         // the message's own calendar day. Relative wording was the only anchor
         // before, which left every weekday deadline unresolvable.
         let contextText = contextMessages.map {
-            "[\(MessageInfo.formatAbsoluteForPrompt($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
+            "[\(MessageInfo.formatAbsoluteForPrompt($0.createTime))] \(AIService.oneLine($0.senderName)): \(AIService.oneLine(AIService.sanitizeForAI($0.text)))"
         }.joined(separator: "\n")
 
         let prompt = template
@@ -277,7 +277,9 @@ actor CommitmentTracker {
                 content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                 commitTo: commitTo,
                 deadlineExtracted: json["deadline_extracted"] as? String ?? "none",
-                confidence: json["confidence"] as? Double ?? 0.0,
+                // JSONSerialization accepts 1e400 → +inf; confidence feeds
+                // `>= 0.72` thresholds, so saturate it.
+                confidence: SafeNumber.clamped((json["confidence"] as? Double) ?? 0.0, to: 0.0...1.0),
                 sourceText: json["source_text"] as? String ?? "",
                 contextText: json["context_summary"] as? String ?? "",
                 captureReason: json["capture_reason"] as? String ?? "",
@@ -292,7 +294,7 @@ actor CommitmentTracker {
             content: "",
             commitTo: "",
             deadlineExtracted: "none",
-            confidence: json["confidence"] as? Double ?? 0.0,
+            confidence: SafeNumber.clamped((json["confidence"] as? Double) ?? 0.0, to: 0.0...1.0),
             sourceText: "",
             contextText: "",
             captureReason: json["capture_reason"] as? String ?? "",

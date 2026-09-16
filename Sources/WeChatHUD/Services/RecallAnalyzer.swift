@@ -46,7 +46,7 @@ actor RecallAnalyzer {
         } else {
             contextText = context.map { msg in
                 let ts = MessageInfo.formatRelative(msg.createTime)
-                return "[\(ts)] \(msg.senderName): \(AIService.sanitizeForAI(msg.text))"
+                return "[\(ts)] \(AIService.oneLine(msg.senderName)): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))"
             }.joined(separator: "\n")
         }
 

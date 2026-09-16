@@ -138,6 +138,75 @@ final class MessageHelpersTests: XCTestCase {
         XCTAssertFalse(MessageHelpers.isFromSelf(msg, chatUsername: "peer", myUsername: "wxid_me"))
     }
 
+    // MARK: - isFromSelf nickname collision (R5)
+
+    private func makeNamedMsg(
+        chatUsername: String,
+        senderUsername: String,
+        senderName: String
+    ) -> MessageInfo {
+        MessageInfo(
+            id: "m1", chatUsername: chatUsername, chatName: "Chat",
+            senderUsername: senderUsername, senderName: senderName,
+            text: "hi", baseType: 1, subType: 0, createTime: 1700000000
+        )
+    }
+
+    func testIsFromSelfResolvedPeerNicknameCollisionIsNotSelf() {
+        // A peer whose contact nickname equals the user's must not classify
+        // as self — the resolved wxid means senderName is THEIR nickname, not
+        // a name2id hint.
+        let msg = makeNamedMsg(
+            chatUsername: "room@chatroom",
+            senderUsername: "wxid_peer9",
+            senderName: "我的昵称"
+        )
+        XCTAssertFalse(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me",
+            mySelfNames: ["我的昵称"]
+        ))
+    }
+
+    func testIsFromSelfUnresolvedHintStillMatches() {
+        // The unresolved-hint path the alias set exists for: senderUsername
+        // is the raw nickname (no id shape) → the alias match still fires.
+        let msg = makeNamedMsg(
+            chatUsername: "room@chatroom",
+            senderUsername: "我的昵称",
+            senderName: "我的昵称"
+        )
+        XCTAssertTrue(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me",
+            mySelfNames: ["我的昵称"]
+        ))
+    }
+
+    func testIsFromSelfResolvedPeerDisplayNameCollisionInGroup() {
+        // myDisplayName matching a resolved peer's senderName is the same
+        // collision — gated the same way.
+        let msg = makeNamedMsg(
+            chatUsername: "room@chatroom",
+            senderUsername: "wxid_peer9",
+            senderName: "我的名字"
+        )
+        XCTAssertFalse(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me",
+            myDisplayName: "我的名字"
+        ))
+    }
+
+    func testIsFromSelfUnresolvedDisplayNameHintInGroup() {
+        let msg = makeNamedMsg(
+            chatUsername: "room@chatroom",
+            senderUsername: "我的名字",
+            senderName: "我的名字"
+        )
+        XCTAssertTrue(MessageHelpers.isFromSelf(
+            msg, chatUsername: "room@chatroom", myUsername: "wxid_me",
+            myDisplayName: "我的名字"
+        ))
+    }
+
     // WeChatReader learns group-chat nicknames as self-aliases when
     // name2id lookup fails and realSenderId==0. Callers that don't
     // forward `mySelfNames` used to mis-classify these as "from peer".

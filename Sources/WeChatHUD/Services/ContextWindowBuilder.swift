@@ -109,7 +109,7 @@ struct ContextWindow {
                 roleTag = ""
             }
             let marker = msg.isTarget ? " ← 目标消息" : ""
-            return "[\(time)] \(roleTag)\(msg.senderName): \(AIService.sanitizeForAI(msg.text))\(marker)"
+            return "[\(time)] \(roleTag)\(AIService.oneLine(msg.senderName)): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))\(marker)"
         }.joined(separator: "\n")
     }
 }

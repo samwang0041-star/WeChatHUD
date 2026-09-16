@@ -301,7 +301,10 @@ struct NotificationBannerView: View {
             Color.clear
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // The card is a control, so a press must register: pressed deepens
+        // the wash one step. Hover is left to `hoverWash` — this layer is
+        // full-bleed and a second wash would paint past its inset silhouette.
+        .buttonStyle(IslandRowButtonStyle(cornerRadius: 14, paintsHover: false))
         .accessibilityLabel(content.openLabel)
         .help(content.openLabel)
     }
@@ -320,7 +323,7 @@ struct NotificationBannerView: View {
                         .islandRowTitle()
                         .foregroundStyle(IslandInk.primary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandRowButtonStyle())
                 .accessibilityLabel("返回通知")
                 Spacer()
                 closeButton

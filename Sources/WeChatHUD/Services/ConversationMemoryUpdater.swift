@@ -85,7 +85,7 @@ actor ConversationMemoryUpdater {
         let oldSummary = oldMemory?.summary ?? ""
 
         let msgText = messages.prefix(20).map {
-            "\($0.senderName): \(AIService.sanitizeForAI($0.text))"
+            "\(AIService.oneLine($0.senderName)): \(AIService.oneLine(AIService.sanitizeForAI($0.text)))"
         }.joined(separator: "\n")
 
         let oldShared = oldMemory?.sharedContext ?? []
@@ -109,16 +109,26 @@ actor ConversationMemoryUpdater {
               let data = jsonText.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
+        // Model output lands back in prompts verbatim ({conversation_memory},
+        // proactive {reason}, insight {memory}) — a field carrying newlines or
+        // a huge blob seeds persistent second-order injection. Cap count AND
+        // per-item size, and collapse to one line at ingest.
+        func cap(_ items: [String], _ maxItems: Int, _ maxChars: Int = 160) -> [String] {
+            Array(items.prefix(maxItems)).map {
+                AIService.oneLine(String($0.prefix(maxChars)))
+            }.filter { !$0.isEmpty }
+        }
+
         let memory = ConversationMemory(
             chatUsername: chatUsername,
-            summary: json["summary"] as? String ?? oldSummary,
-            keyTopics: Array((json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? []).prefix(10)),
-            pendingItems: Array((json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? []).prefix(5)),
-            sharedContext: Array((json["shared_context"] as? [String] ?? oldShared).prefix(5)),
-            communicationNotes: Array((json["communication_notes"] as? [String] ?? oldComm).prefix(5)),
-            moodTrend: json["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "",
-            conversationPhase: json["conversation_phase"] as? String ?? oldMemory?.conversationPhase ?? "",
-            stance: json["stance"] as? String ?? oldMemory?.stance ?? "",
+            summary: AIService.oneLine(String((json["summary"] as? String ?? oldSummary).prefix(500))),
+            keyTopics: cap(json["key_topics"] as? [String] ?? oldMemory?.keyTopics ?? [], 10),
+            pendingItems: cap(json["pending_items"] as? [String] ?? oldMemory?.pendingItems ?? [], 5),
+            sharedContext: cap(json["shared_context"] as? [String] ?? oldShared, 5),
+            communicationNotes: cap(json["communication_notes"] as? [String] ?? oldComm, 5),
+            moodTrend: AIService.oneLine(String((json["mood_trend"] as? String ?? oldMemory?.moodTrend ?? "").prefix(80))),
+            conversationPhase: AIService.oneLine(String((json["conversation_phase"] as? String ?? oldMemory?.conversationPhase ?? "").prefix(80))),
+            stance: AIService.oneLine(String((json["stance"] as? String ?? oldMemory?.stance ?? "").prefix(80))),
             messageCount7d: messages.count,
             lastUpdated: Date()
         )

@@ -88,10 +88,11 @@ final class ReaderHandleReuseTests: XCTestCase {
         XCTAssertEqual(try reader.getMessages(chatUsername: "alpha", limit: 10).map(\.text), ["a2", "a1"])
     }
 
-    /// A positive mapping records which DB holds a chat's table. Rewriting that
-    /// DB does not move the table out of it, so the mapping must survive —
-    /// dropping every mapping on each WeChat write forced a full O(N_dbs)
-    /// re-probe of the whole whitelist on every scan.
+    /// A positive mapping records which DB holds a chat's table. Rewriting a
+    /// shard does not move a table out of it, so the mapping survives — but a
+    /// rewrite CAN add a table to a shard that lacked it, so a changed shard
+    /// is re-probed once (on its already-reopened handle) rather than the
+    /// whole whitelist re-probing every shard on every WeChat write.
     func testRefreshingOneMessageDBKeepsKnownTableLocations() throws {
         let reader = try makeSUT(plan: [
             EncryptedFixture.messageDB0: ["alpha": ["a1"]],
@@ -109,9 +110,16 @@ final class ReaderHandleReuseTests: XCTestCase {
         XCTAssertTrue(try reader.refreshIfChanged(relPath: EncryptedFixture.messageDB0))
 
         XCTAssertEqual(try reader.getMessages(chatUsername: "beta", limit: 10).count, 1)
+        // The refresh invalidates message_0's handle, and beta's positive
+        // mapping must re-probe the *changed* shard once — a rewrite can add
+        // beta's table to a shard that lacked it at prime time (WeChat creates
+        // Msg_ tables lazily). That re-probe reuses the one re-opened handle,
+        // so the cost is +1 open per changed shard, not a schema re-parse per
+        // chat. message_1's handle must stay untouched.
         XCTAssertEqual(
-            reader.readHandleOpenCount, opensAfterPriming,
-            "beta lives in message_1.db; refreshing message_0.db must not force a re-probe"
+            reader.readHandleOpenCount, opensAfterPriming + 1,
+            "beta may re-probe the changed shard once (lazy table creation), " +
+            "but must not re-open message_1.db"
         )
     }
 
@@ -341,8 +349,14 @@ private final class EncryptedFixture {
                 }
             }
             XCTAssertEqual(status, CCCryptorStatus(kCCSuccess))
+            let pageNo = UInt32(start / 4096 + 1)
+            var bodyWithIV = cipher
+            bodyWithIV.append(iv)
+            let mac = WeChatFixtureEncrypt.pageMAC(
+                key: key, dbSalt: Data(repeating: 0x11, count: 16),
+                bodyWithIV: bodyWithIV, pageNumber: pageNo)
             if first { output += Data(repeating: 0x11, count: 16) }
-            output += cipher + iv + Data(count: 64)
+            output += cipher + iv + mac
         }
         try output.write(to: encrypted, options: .atomic)
     }

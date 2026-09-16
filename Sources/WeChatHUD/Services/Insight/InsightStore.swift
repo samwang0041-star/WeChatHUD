@@ -190,7 +190,7 @@ final class InsightStore: ObservableObject {
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {
         for entry in store.getWhitelist() {
             let name = entry.displayName
-            guard name.contains("@chatroom") || name.hasPrefix("wxid_") else { continue }
+            guard MessageHelpers.isGroupChat(name) || name.hasPrefix("wxid_") else { continue }
             let resolved = reader.displayName(for: entry.id)
             guard resolved != entry.id && resolved != name else { continue }
             try? store.addToWhitelist(

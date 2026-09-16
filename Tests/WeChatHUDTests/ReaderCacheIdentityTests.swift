@@ -14,7 +14,10 @@ final class ReaderCacheIdentityTests: XCTestCase {
         let normal = WeChatReader(dbDir: "/tmp/diagnostic-alias-test", cacheStrategy: .memory,
                                   persistLearnedAliases: true, userDefaults: defaults)
         normal.learnSelfAlias("persisted-alias")
-        XCTAssertEqual(defaults.stringArray(forKey: "wchud.learnedSelfAliases." + WeChatReader.accountCacheIdentity("/tmp/diagnostic-alias-test")), ["persisted-alias"])
+        let saved = defaults.dictionary(
+            forKey: "wchud.learnedSelfAliases." + WeChatReader.accountCacheIdentity("/tmp/diagnostic-alias-test"))
+        XCTAssertNotNil(saved?["persisted-alias"] as? Double,
+                        "aliases persist as a name→learnedAt dictionary")
     }
     func testAllCacheStrategiesSeparateAccounts() {
         for strategy in CacheStrategy.allCases {

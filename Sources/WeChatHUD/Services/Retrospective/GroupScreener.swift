@@ -218,7 +218,7 @@ actor GroupScreener {
             guard let index else { continue }
             let item = remaining.remove(at: index)
             let decisionRaw = (item["decision"] as? String) ?? "exclude"
-            let conf = (item["confidence"] as? Double) ?? 0.5
+            let conf = SafeNumber.clamped((item["confidence"] as? Double) ?? 0.5, to: 0.0...1.0)
             let decision = ScopeDecision(rawValue: decisionRaw) ?? .askEachTime
             out.append((c, decision, conf))
         }

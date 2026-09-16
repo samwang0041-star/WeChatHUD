@@ -153,21 +153,19 @@ final class WeChatDecryptorTests: XCTestCase {
         let iv2 = Data(repeating: 0x22, count: 16)
 
         // Page 1: salt(16) + ciphertext(4000) + IV(16) + HMAC(64)
+        let dbSalt = Data(count: 16)
         let plain1 = Data(repeating: 0x41, count: 4000)
         let cipher1 = try aesEncrypt(plaintext: plain1, key: key, iv: iv1)
-
-        var page1 = Data(count: 16)  // salt
-        page1.append(cipher1)
-        page1.append(iv1)
-        page1.append(Data(count: 64))
+        let page1 = WeChatFixtureEncrypt.page(
+            key: key, dbSalt: dbSalt, cipher: cipher1, iv: iv1, pageNumber: 1
+        )
 
         // Page 2: ciphertext(4016) + IV(16) + HMAC(64)
         let plain2 = Data(repeating: 0x42, count: 4016)
         let cipher2 = try aesEncrypt(plaintext: plain2, key: key, iv: iv2)
-
-        var page2 = cipher2
-        page2.append(iv2)
-        page2.append(Data(count: 64))
+        let page2 = WeChatFixtureEncrypt.page(
+            key: key, dbSalt: dbSalt, cipher: cipher2, iv: iv2, pageNumber: 2
+        )
 
         var encDB = page1
         encDB.append(page2)

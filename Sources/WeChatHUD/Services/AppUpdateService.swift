@@ -145,6 +145,13 @@ struct AppUpdateService {
     var fileManager: FileManager
     /// Tests install into temp folders. Production only replaces /Applications.
     var allowsNonApplicationDestination: Bool
+    /// Verifies the downloaded app is Apple-anchored and signed under the
+    /// running build's Team ID. Injectable so tests can run without a
+    /// Developer ID-signed fixture; the real implementation is the default.
+    var signatureVerifier: @Sendable (URL, String) throws -> Void
+    /// Runs the extracted bundle's own `bundle-check` — catches a signed but
+    /// broken release before it replaces a working app. Injectable for tests.
+    var bundleCheck: @Sendable (URL) throws -> Void
     /// Returns the downloaded app's Team ID, throwing when it is not validly
     /// signed. Injectable so the download/replace tests can run without a
     /// Developer ID-signed fixture; the real implementation is the default.
@@ -164,6 +171,8 @@ struct AppUpdateService {
         },
         fileManager: FileManager = .default,
         allowsNonApplicationDestination: Bool = false,
+        signatureVerifier: (@Sendable (URL, String) throws -> Void)? = nil,
+        bundleCheck: (@Sendable (URL) throws -> Void)? = nil,
         signatureTeamIdentifier: @escaping @Sendable (URL) throws -> String? = { url in
             try AppUpdateSignature.teamIdentifier(ofAppAt: url)
         },
@@ -182,6 +191,12 @@ struct AppUpdateService {
         self.unzip = unzip
         self.fileManager = fileManager
         self.allowsNonApplicationDestination = allowsNonApplicationDestination
+        self.signatureVerifier = signatureVerifier ?? { url, expectedTeam in
+            try AppUpdateSignature.verifyAnchoredSignature(ofAppAt: url, expectedTeam: expectedTeam)
+        }
+        self.bundleCheck = bundleCheck ?? { url in
+            try AppUpdateService.runBundleCheck(on: url)
+        }
         self.signatureTeamIdentifier = signatureTeamIdentifier
         self.runningTeamIdentifier = runningTeamIdentifier
     }
@@ -442,6 +457,11 @@ struct AppUpdateService {
         if PreviewRuntime.isEnabled || currentBundleIdentifier == Self.previewIdentifier {
             throw AppUpdateError.previewMode
         }
+        // A persisted/stale offer can target an older build — refuse
+        // downgrades at install time, not just at offer creation.
+        guard offer.version > currentVersion else {
+            throw AppUpdateError.bundleIdentityMismatch
+        }
         let dest = (destination ?? currentBundleURL).standardizedFileURL
         try Self.validateDestination(
             dest,
@@ -449,6 +469,12 @@ struct AppUpdateService {
             allowNonApplicationDestination: allowsNonApplicationDestination
         )
 
+        // Asset names become path components — a forged offer (persisted
+        // config is user-writable) could carry `../` traversal.
+        try Self.validateAssetName(offer.asset.name)
+        if let checksum = offer.checksumAsset {
+            try Self.validateAssetName(checksum.name)
+        }
         guard GitHubReleaseFeed.downloadURL(for: offer.asset) != nil else {
             throw AppUpdateError.invalidDownloadURL
         }
@@ -476,9 +502,76 @@ struct AppUpdateService {
         let incoming = try findApp(in: extract)
         try verifyIncomingApp(incoming, expectedVersion: offer.version)
         try verifyIncomingSignature(of: incoming)
+        // A validly-signed but broken release (missing dylib/prompt resource)
+        // installs fine and then crashes on launch — run the bundle's own
+        // self-check before replacing the working app.
+        try bundleCheck(incoming)
 
-        try replace(destination: dest, with: incoming)
+        // Keep the backup through the post-move verify: a same-UID process
+        // that swapped the bundle in the verify→move window must not end up
+        // installed with the good copy already deleted.
+        let backup = dest.deletingLastPathComponent()
+            .appendingPathComponent(".\(dest.lastPathComponent).update-backup")
+        try replace(destination: dest, with: incoming, keepBackup: true)
+        do {
+            // The window between verify-in-tempdir and move lets a same-UID
+            // process swap the bundle — re-verify the installed copy.
+            try verifyIncomingSignature(of: dest)
+        } catch {
+            // Tampered bundle — restore the last-known-good copy. If the
+            // bad bundle can't even be deleted, quarantine it aside so the
+            // failed-signature app is never what launches next.
+            do {
+                try fileManager.removeItem(at: dest)
+            } catch {
+                print("[WCHUD] update rollback: cannot remove tampered bundle: \(error.localizedDescription)")
+                try? relocate(dest, to: work.appendingPathComponent("quarantined-\(UUID().uuidString).app"))
+            }
+            do {
+                try relocate(backup, to: dest)
+                // The backup sat in the install dir through the same swap
+                // window — verify the restored copy too.
+                try verifyIncomingSignature(of: dest)
+            } catch {
+                print("[WCHUD] update rollback: backup restore/verify failed: \(error.localizedDescription)")
+            }
+            throw error
+        }
+        try? fileManager.removeItem(at: backup)
         return dest.standardizedFileURL
+    }
+
+    /// Run the extracted bundle's own `bundle-check` subcommand — it verifies
+    /// the packaged prompts and bundled dylibs actually load. Non-zero exit
+    /// means the release is signed but broken.
+    static func runBundleCheck(on app: URL) throws {
+        let binary = app.appendingPathComponent("Contents/MacOS/WeChatHUD")
+        guard fileExists(binary) else { throw AppUpdateError.invalidArchive }
+        let process = Process()
+        process.executableURL = binary
+        process.arguments = ["bundle-check"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw AppUpdateError.invalidArchive
+        }
+    }
+
+    private static func fileExists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    /// Asset filenames must be plain single components — `appendingPathComponent`
+    /// does not reject `..`, and a persisted offer is user-writable config.
+    static func validateAssetName(_ name: String) throws {
+        guard !name.isEmpty,
+              name == URL(fileURLWithPath: name).lastPathComponent,
+              name != ".", name != "..",
+              name.allSatisfy({ $0.isLetter || $0.isNumber || "._+ -".contains($0) }) else {
+            throw AppUpdateError.invalidArchive
+        }
     }
 
     static func validateDestination(
@@ -550,6 +643,11 @@ struct AppUpdateService {
                   (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
                 continue
             }
+            // A symlinked .app passes the plist and signature checks against
+            // the TARGET but moves the link into place — dead install.
+            if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+                continue
+            }
             enumerator?.skipDescendants()
             candidates.append(url)
         }
@@ -597,13 +695,18 @@ struct AppUpdateService {
         guard let runningTeam = runningTeamIdentifier() else {
             throw AppUpdateError.signingIdentityUnavailable
         }
+        // A bare TeamID string compare is forgeable — TeamIdentifier is the
+        // leaf certificate's subject.OU, which a self-signed cert can carry
+        // with any value. The real check anchors the chain to Apple AND pins
+        // the leaf's OU to our Team ID.
+        try signatureVerifier(app, runningTeam)
         let incomingTeam = try signatureTeamIdentifier(app)
         guard incomingTeam == runningTeam else {
             throw AppUpdateError.signatureMismatch
         }
     }
 
-    func replace(destination dest: URL, with incoming: URL) throws {
+    func replace(destination dest: URL, with incoming: URL, keepBackup: Bool = false) throws {
         let parent = dest.deletingLastPathComponent()
         let backup = parent.appendingPathComponent(".\(dest.lastPathComponent).update-backup")
         if fileManager.fileExists(atPath: backup.path) {
@@ -617,7 +720,7 @@ struct AppUpdateService {
                 didMoveOriginal = true
             }
             try relocate(incoming, to: dest)
-            if fileManager.fileExists(atPath: backup.path) {
+            if !keepBackup, fileManager.fileExists(atPath: backup.path) {
                 try? fileManager.removeItem(at: backup)
             }
         } catch {
@@ -699,6 +802,36 @@ enum AppUpdateSignature {
         }
         guard let team = teamIdentifier(of: staticCode), !team.isEmpty else { return nil }
         return team
+    }
+
+    /// Verify `app` chains to Apple AND its leaf certificate's Team ID equals
+    /// `expectedTeam`. The plain validity check plus a TeamID string compare
+    /// is forgeable — `TeamIdentifier` is the leaf's subject.OU, which a
+    /// self-signed cert can carry with any value; `anchor apple generic`
+    /// requires a real Apple-issued Developer ID chain the OU sits inside.
+    static func verifyAnchoredSignature(ofAppAt url: URL, expectedTeam: String) throws {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else {
+            throw AppUpdateError.unsignedArchive
+        }
+        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
+        // Team IDs are [A-Z0-9]{10}; validate before interpolating into the
+        // requirement string so a malformed value can't inject requirement
+        // syntax.
+        guard expectedTeam.allSatisfy({ $0.isLetter || $0.isNumber }),
+              !expectedTeam.isEmpty else {
+            throw AppUpdateError.signatureMismatch
+        }
+        var requirement: SecRequirement?
+        let reqText = "anchor apple generic and certificate leaf[subject.OU] = \"\(expectedTeam)\""
+        guard SecRequirementCreateWithString(reqText as CFString, [], &requirement) == errSecSuccess,
+              let requirement else {
+            throw AppUpdateError.unsignedArchive
+        }
+        guard SecStaticCodeCheckValidity(staticCode, flags, requirement) == errSecSuccess else {
+            throw AppUpdateError.signatureMismatch
+        }
     }
 
     private static func teamIdentifier(of code: SecStaticCode) -> String? {

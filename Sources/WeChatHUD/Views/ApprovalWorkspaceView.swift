@@ -250,7 +250,7 @@ struct ApprovalWorkspaceView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(selected.chatName).workspaceTitle()
-                        Text("收件人 \(selected.senderName) · \(selected.chatUsername.contains("@chatroom") ? "群聊" : "私聊")")
+                        Text("收件人 \(selected.senderName) · \(MessageHelpers.isGroupChat(selected.chatUsername) ? "群聊" : "私聊")")
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
@@ -304,17 +304,23 @@ struct ApprovalWorkspaceView: View {
                             .tint(SettingsView.Tab.autopilotDashboard.accentColor)
                            .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                        Button("保存修改") {
-                            do {
-                                try monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
-                                receipt = "已保存草稿"
-                            } catch {
-                                receipt = "草稿没有保存，请重试。"
+                            Task {
+                                do {
+                                    try await monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
+                                    receipt = "已保存草稿"
+                                } catch {
+                                    receipt = "草稿没有保存，请重试。"
+                                }
                             }
                         }
                         .buttonStyle(.bordered)
                         Button("取消本条") {
-                            monitor.rejectAutopilotItem(logId: selected.id)
-                            receipt = "已取消本条，现有草稿仍保留。"
+                            monitor.rejectAutopilotItem(
+                                logId: selected.id,
+                                chatUsername: selected.chatUsername,
+                                replyText: selected.generatedReply
+                            )
+                            receipt = "已取消本条，对应的待发草稿已一并移除。"
                         }
                         .buttonStyle(.bordered)
                     }
@@ -348,7 +354,8 @@ struct ApprovalWorkspaceView: View {
             logId: selected.id,
             reply: editedReply,
             chatName: selected.chatName,
-            chatUsername: selected.chatUsername
+            chatUsername: selected.chatUsername,
+            createdAt: selected.createdAt
         )
         receipt = ok
             ? CompanionProductCopy.sendSuccess(name: selected.chatName)

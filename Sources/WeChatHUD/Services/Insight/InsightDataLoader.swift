@@ -54,7 +54,7 @@ final class InsightDataLoader {
 
         for (chatUsername, bulk) in bulkStats {
             let session = sessionMap[chatUsername]
-            let isGroup = session?.isGroup ?? chatUsername.contains("@chatroom")
+            let isGroup = session?.isGroup ?? MessageHelpers.isGroupChat(chatUsername)
             let isWhitelisted = whitelistIds.contains(chatUsername)
             let entry = whitelistMap[chatUsername]
             let name = entry?.displayName ?? reader.displayName(for: chatUsername)
@@ -183,7 +183,7 @@ final class InsightDataLoader {
 
         for (chatUsername, bulk) in bulkStats {
             let session = sessionMap[chatUsername]
-            let isGroup = session?.isGroup ?? chatUsername.contains("@chatroom")
+            let isGroup = session?.isGroup ?? MessageHelpers.isGroupChat(chatUsername)
             let isWhitelisted = whitelistIds.contains(chatUsername)
             let entry = whitelistMap[chatUsername]
             let name: String

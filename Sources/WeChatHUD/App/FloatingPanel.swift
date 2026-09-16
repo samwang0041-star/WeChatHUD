@@ -1116,6 +1116,10 @@ enum IslandFrameTiming {
     }
 
     private static func persist() {
+        // Writes to $TMPDIR on every completed frame animation — gate it to
+        // the same debug flag as the readout it serves instead of doing
+        // disk I/O per animation in production.
+        guard AnimationDebugger.isEnabled else { return }
         let payload: [String: Any] = [
             "instant": lastWasInstant,
             "duration": lastDuration,

@@ -152,6 +152,9 @@ final class WeChatKeyPreparationService: ObservableObject {
         }
 
         let outputURL = URL(fileURLWithPath: (workDir as NSString).appendingPathComponent("all_keys.json"))
+        // The C extractor's dump holds every DB key in plaintext — it is an
+        // intermediate, not a store: read it, then remove it either way.
+        defer { try? fm.removeItem(at: outputURL) }
         guard let data = fm.contents(atPath: outputURL.path),
               let raw = try? JSONDecoder().decode(RawKeysPayload.self, from: data),
               !raw.keys.isEmpty else {

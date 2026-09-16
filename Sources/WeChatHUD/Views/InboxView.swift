@@ -124,7 +124,7 @@ struct InboxView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslandRowButtonStyle())
                     }
 
                     let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
@@ -140,7 +140,7 @@ struct InboxView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslandRowButtonStyle())
                     }
 
                     // Undo bar
@@ -256,7 +256,7 @@ struct InboxView: View {
                         panelState.pendingSettingsTab = "system"
                         panelState.showDetail()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(IslandRowButtonStyle())
                     .foregroundStyle(CompanionPalette.islandMint)
                     .help(CompanionInteractionCopy.needWeChatRunning)
                 }
@@ -285,7 +285,7 @@ struct InboxView: View {
                     .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .help("查看待办")
             .accessibilityLabel("查看待办")
 
@@ -299,7 +299,7 @@ struct InboxView: View {
                     .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .help(CompanionProductCopy.openCompanion)
             .accessibilityLabel(CompanionProductCopy.openCompanion)
 
@@ -394,7 +394,7 @@ struct InboxView: View {
                         .font(.system(size: 11))
                         .foregroundColor(IslandInk.tertiary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandIconButtonStyle())
                 .help(CompanionProductCopy.openCompanion)
                 .accessibilityLabel(CompanionProductCopy.openCompanion)
             }
@@ -438,7 +438,7 @@ struct InboxView: View {
                 undoTimer = nil
             }
             .islandMicro()
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .foregroundColor(CompanionPalette.islandMint)
             .accessibilityLabel("撤销")
         }
@@ -473,7 +473,7 @@ struct InboxView: View {
                 .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
 
             if showHandled {
                 ForEach(monitor.handledItems) { item in
@@ -506,8 +506,10 @@ struct InboxView: View {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(IslandInk.tertiary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("恢复这条消息")
         }
         .padding(.horizontal, IslandMetrics.sectionInset)
@@ -658,8 +660,10 @@ private struct IslandTaskPreview: View {
                     panelState.islandSurface = .inbox
                 } label: {
                     Image(systemName: "chevron.left")
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandIconButtonStyle())
                 .islandRowTitle()
                 .foregroundStyle(IslandInk.primary)
                 .accessibilityLabel("返回收件箱")
@@ -674,8 +678,10 @@ private struct IslandTaskPreview: View {
                     openWorkspace()
                 } label: {
                     Image(systemName: "arrow.up.forward.square")
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandIconButtonStyle())
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("打开待办")
             }
@@ -691,7 +697,7 @@ private struct IslandTaskPreview: View {
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(scope == value ? CompanionPalette.jade : IslandInk.hover, in: Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
             }
@@ -717,14 +723,14 @@ private struct IslandTaskPreview: View {
                             self.receipt = nil
                         }
                         .foregroundStyle(CompanionPalette.islandMint)
-                        .buttonStyle(.plain)
+                        .buttonStyle(IslandRowButtonStyle())
                     }
                 }
                 .padding(8)
                 .background(CompanionPalette.jade.opacity(0.85), in: Capsule())
             }
             Button("查看全部待办") { openWorkspace() }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandRowButtonStyle())
                 .islandButton()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .frame(maxWidth: .infinity)
@@ -744,10 +750,30 @@ private struct IslandTaskPreview: View {
             }
             expandedID = itemsCache.items(surfacedDiscussionItems, scope: scope, query: "", history: false).first?.id
         }
-        .sheet(item: $sourceItem) { item in
+        .sheet(item: $sourceItem, onDismiss: {
+            // onDismiss is owned by the presentation machinery and survives
+            // view teardown — a plain onChange could die with the view and
+            // wedge islandTextInputActive on forever.
+            panelState.islandTextInputActive = false
+        }) { item in
             DiscussionSourceView(item: item, onClose: { sourceItem = nil })
                 .environmentObject(monitor)
                 .environmentObject(reader)
+        }
+        // The sheet hosts text/controls — the island must accept keyboard
+        // input for its cancel-action and focus to work (same latch the
+        // rename sheet uses).
+        .onChange(of: sourceItem != nil) { _, open in
+            if open { panelState.islandTextInputActive = true }
+        }
+        .onDisappear {
+            // Backstop: if this surface unmounts with ITS sheet still up,
+            // don't leave the island latched into key-input mode. Only
+            // clear when this view's sheet was the writer — another
+            // surface's open sheet must keep its latch.
+            if sourceItem != nil {
+                panelState.islandTextInputActive = false
+            }
         }
     }
 
@@ -758,8 +784,10 @@ private struct IslandTaskPreview: View {
                 Button { complete(item) } label: {
                     Image(systemName: item.status == .done ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(CompanionPalette.islandMint)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandIconButtonStyle())
                 .accessibilityLabel("标记完成")
                 Button {
                     withMotion(CompanionMotion.rowExpand()) {
@@ -774,7 +802,7 @@ private struct IslandTaskPreview: View {
                             .multilineTextAlignment(.leading)
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandRowButtonStyle())
                 Spacer()
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -862,7 +890,7 @@ struct IslandFirstLaunchView: View {
                 panelState.islandSurface = .inbox
                 panelState.collapse()
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .islandMeta()
             .foregroundStyle(IslandInk.tertiary)
             .frame(maxWidth: .infinity)

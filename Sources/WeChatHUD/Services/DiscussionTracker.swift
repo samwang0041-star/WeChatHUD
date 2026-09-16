@@ -164,7 +164,7 @@ actor DiscussionTracker {
             cursor.map { $0.precedes(SourceCursor(message)) } ?? true
         }
         let admissionRules = AdmissionRules.load(store: store)
-        let isGroup = chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let fresh = unfiltered.filter { msg in
             if MessageHelpers.isFromSelf(
                 msg, chatUsername: chatUsername,
@@ -230,9 +230,9 @@ actor DiscussionTracker {
                 myUsername: myUsername, myDisplayName: myDisplayName,
                 mySelfNames: mySelfNames
             )
-            let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : msg.senderName)
+            let speaker = isSelf ? "我" : (msg.senderName.isEmpty ? "对方" : AIService.oneLine(msg.senderName))
             let ts = MessageInfo.formatAbsoluteForPrompt(msg.createTime)
-            transcript.append("[\(idx + 1)] [\(ts)] \(speaker): \(AIService.sanitizeForAI(msg.text))")
+            transcript.append("[\(idx + 1)] [\(ts)] \(speaker): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))")
             previousTime = msg.createTime
         }
         let lines = transcript.joined(separator: "\n")
@@ -371,8 +371,12 @@ actor DiscussionTracker {
         for row in arr {
             guard let kindStr = row["kind"] as? String,
                   let kind = DiscussionItemKind(rawValue: kindStr),
-                  let content = row["content"] as? String,
-                  !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let rawContent = row["content"] as? String else { dropped += 1; continue }
+            // oneLine + cap: this text is stored and re-injected into later
+            // extraction prompts — raw multi-line content is a persistent
+            // second-order injection channel.
+            let content = String(AIService.oneLine(rawContent).prefix(120))
+            guard !content.isEmpty,
                   // v3 emits `executor` (who acts) + `msg` (source line
                   // number); `owner` from older outputs is a fallback. One
                   // malformed row must not sink the whole batch — drop it
@@ -385,9 +389,12 @@ actor DiscussionTracker {
             let msgIndex = Self.sourceIndex(row["msg"], count: messages.count)
             let source = msgIndex.map { messages[$0] } ?? fallback
             let sourceDate = Date(timeIntervalSince1970: Double(source?.createTime ?? 0))
-            let detail = row["detail"] as? String
+            // Stored content is re-injected into every later extraction prompt
+            // (`knownList`) — cap + oneLine it or a crafted row becomes
+            // persistent second-order prompt injection.
+            let detail = (row["detail"] as? String).map { AIService.oneLine($0) }
             let deadline = Self.resolveDue(row, sourceDate: sourceDate)
-            let confidence = (row["confidence"] as? Double) ?? 0.6
+            let confidence = SafeNumber.clamped((row["confidence"] as? Double) ?? 0.6, to: 0.0...1.0)
             let corrected = Self.correctInvertedSelfInquiry(
                 kind: kind, owner: owner, source: source, isSelf: isSelf
             )

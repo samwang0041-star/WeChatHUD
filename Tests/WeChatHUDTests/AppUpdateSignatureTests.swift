@@ -54,12 +54,16 @@ final class AppUpdateSignatureTests: XCTestCase {
     private func service(
         for app: URL,
         signatureTeamIdentifier: @escaping @Sendable (URL) throws -> String?,
-        runningTeamIdentifier: @escaping @Sendable () -> String?
+        runningTeamIdentifier: @escaping @Sendable () -> String?,
+        signatureVerifier: (@Sendable (URL, String) throws -> Void)? = nil
     ) -> AppUpdateService {
         AppUpdateService(
             currentVersion: AppVersion("1.2.0")!,
             currentBundleIdentifier: AppUpdateService.productionIdentifier,
             currentBundleURL: app,
+            // Policy tests stub the anchored check — the real one needs a
+            // Developer ID-signed fixture no unit test can fabricate.
+            signatureVerifier: signatureVerifier ?? { _, _ in },
             signatureTeamIdentifier: signatureTeamIdentifier,
             runningTeamIdentifier: runningTeamIdentifier
         )
@@ -168,5 +172,52 @@ final class AppUpdateSignatureTests: XCTestCase {
         )
 
         XCTAssertNoThrow(try subject.verifyIncomingSignature(of: app))
+    }
+
+    // MARK: - Anchored requirement (R5 — OU-spoof hole)
+
+    /// The bare TeamID string compare was forgeable: TeamIdentifier is the
+    /// leaf certificate's subject.OU, which a self-signed cert can carry with
+    /// ANY value. The real verifier requires an Apple-anchored chain plus
+    /// leaf[subject.OU] == our team. An ad-hoc (self-signed) signature proves
+    /// the anchor is actually enforced — before the fix it passed the plain
+    /// validity check and only lacked a real Team ID.
+    func testAnchoredVerifierRejectsAdHocSignedApp() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeFakeApp(at: root.appendingPathComponent("WeChatHUD.app"))
+        guard try codesign(["--force", "--sign", "-", app.path]) == 0 else {
+            throw XCTSkip("codesign is unavailable in this environment")
+        }
+
+        // Ad-hoc is internally valid — the nil-requirement check passes it.
+        XCTAssertNoThrow(try AppUpdateSignature.teamIdentifier(ofAppAt: app))
+        // …but it can never satisfy an Apple-anchored + TeamID requirement.
+        XCTAssertThrowsError(
+            try AppUpdateSignature.verifyAnchoredSignature(ofAppAt: app, expectedTeam: "TEAM123")
+        ) { error in
+            XCTAssertEqual(error as? AppUpdateError, .signatureMismatch)
+        }
+    }
+
+    func testAnchoredVerifierRejectsUnsignedApp() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeFakeApp(at: root.appendingPathComponent("WeChatHUD.app"))
+
+        XCTAssertThrowsError(
+            try AppUpdateSignature.verifyAnchoredSignature(ofAppAt: app, expectedTeam: "TEAM123")
+        )
+    }
+
+    func testAnchoredVerifierRejectsMalformedTeamString() throws {
+        // A team string that could inject requirement syntax must not reach
+        // SecRequirementCreateWithString.
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeFakeApp(at: root.appendingPathComponent("WeChatHUD.app"))
+        XCTAssertThrowsError(
+            try AppUpdateSignature.verifyAnchoredSignature(ofAppAt: app, expectedTeam: #"BAD" OR true"#)
+        )
     }
 }

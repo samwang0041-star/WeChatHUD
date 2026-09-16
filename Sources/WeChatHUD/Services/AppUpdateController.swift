@@ -49,8 +49,24 @@ final class AppUpdateController: ObservableObject {
             return
         }
         if let pending = config.pendingOffer {
-            offer = pending
-            phase = .available
+            // A persisted offer is user-writable config — only restore it if
+            // it would still pass the install-time guards (forward version,
+            // clean asset names). Otherwise drop it.
+            let namesClean = (try? AppUpdateService.validateAssetName(pending.asset.name)) != nil
+                && (pending.checksumAsset.map {
+                    (try? AppUpdateService.validateAssetName($0.name)) != nil
+                } ?? true)
+            // makeService can fail (e.g. undeterminable running version) —
+            // keep the offer in that case: install() re-runs every guard.
+            let service = serviceOverride ?? (try? makeService())
+            let versionOK = service.map { pending.version > $0.currentVersion } ?? true
+            if versionOK, namesClean {
+                offer = pending
+                phase = .available
+            } else {
+                config.pendingOffer = nil
+                saveConfig()
+            }
         }
     }
 
@@ -94,7 +110,10 @@ final class AppUpdateController: ObservableObject {
             if operation == .checking { operation = .idle }
         }
         do {
-            let result = try await makeService().check(repository: config.repository)
+            // The repository is not user-configurable — persisting it lets a
+            // tampered settings file redirect the whole update channel. Use
+            // the compiled-in default regardless of the stored value.
+            let result = try await makeService().check(repository: AppUpdateConfig.defaultRepository)
             unpublishedVersion = result.unpublishedInstaller
             if let next = result.offer {
                 offer = next

@@ -91,7 +91,7 @@ struct GroupContextBriefingCard: View {
                             .font(.system(size: 10, weight: .semibold))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandRowButtonStyle())
                 .islandMeta()
                 .foregroundStyle(CompanionPalette.islandMint)
             }
@@ -129,7 +129,7 @@ struct GroupContextBriefingCard: View {
             Button(BriefingRetryAction.label) {
                 BriefingRetryAction.perform(monitor, notification: notification)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .islandButton()
             .foregroundStyle(CompanionPalette.islandMint)
             .accessibilityHint("重新向 AI 要一次这段群聊上下文")
@@ -150,7 +150,7 @@ struct GroupContextBriefingCard: View {
                     .padding(.vertical, 7)
                     .background(CompanionPalette.jade, in: Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
 
             Button {
                 // onChange below is the single place that syncs panelState —
@@ -164,7 +164,7 @@ struct GroupContextBriefingCard: View {
                     .padding(.vertical, 7)
                     .background(showSnooze ? CompanionPalette.jade : IslandInk.chip, in: Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityHint("打开稍后提醒时间")
             .onChange(of: showSnooze) { _, isOpen in
                 panelState.setSnoozeMenuExpanded(isOpen)

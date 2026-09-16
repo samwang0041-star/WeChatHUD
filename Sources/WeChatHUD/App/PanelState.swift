@@ -214,7 +214,16 @@ final class PanelState: ObservableObject {
     /// `popoverOpen` so closing a snooze menu cannot drop this latch.
     @Published var autopilotPopoverOpen: Bool = false
     /// Rename sheet (or similar) needs the island to accept typing.
-    @Published var islandTextInputActive: Bool = false
+    @Published var islandTextInputActive: Bool = false {
+        didSet {
+            // Same backstop as popoverOpen/menuTrackingOpen: exits are
+            // suppressed while the latch is up, so when it drops the
+            // collapse decision must re-run — otherwise the island stays
+            // expanded with the cursor already outside.
+            guard oldValue != islandTextInputActive, !islandTextInputActive else { return }
+            scheduleExitCollapseAfterTransientSurfaceClosed()
+        }
+    }
     /// In-window CompanionDialog is open; sidebar Tab must not leave the dialog.
     @Published var modalDialogOpen: Bool = false
 
@@ -279,12 +288,17 @@ final class PanelState: ObservableObject {
     func showToast(_ message: String, duration: TimeInterval = 4) {
         toastTimer?.invalidate()
         toastMessage = message
-        toastTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+        // .common so the toast still expires while a menu is tracking —
+        // default-mode timers freeze under event-tracking and a held-open
+        // menu would pin the toast on screen indefinitely.
+        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.toastMessage = nil
                 self?.toastTimer = nil
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        toastTimer = timer
     }
 
     /// Exit debounce: the window resize animation sweeps the frame past

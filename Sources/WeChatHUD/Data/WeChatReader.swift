@@ -122,6 +122,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     private var decryptedCache: [String: String] = [:] // relative path → decrypted file path
     private var mainMtimes: [String: Date] = [:]     // relative path → last-seen enc DB mtime
     private var walMtimes: [String: Date] = [:]      // relative path → last-seen WAL mtime
+    private var mainSizes: [String: Int64] = [:]     // relative path → last-seen enc DB size
+    private var walSizes: [String: Int64] = [:]      // relative path → last-seen WAL size
     private var contactsMtime: Date?                 // last-seen contact.db mtime
     private var keysMtime: Date?                     // last-seen all_keys.json mtime
     /// Cache: chatUsername → every message DB that contains its `Msg_` table.
@@ -133,6 +135,18 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// is the negative cache (scanned, nothing found). Cleared when keys are
     /// reloaded, which is also when the set of DBs can change.
     private var chatShardCache: [String: [String]] = [:]
+
+    /// Content generation per message shard, bumped by `refreshIfChanged`
+    /// every time that shard's decrypted snapshot is rewritten. A positive
+    /// `chatShardCache` entry alone cannot tell whether a shard that lacked
+    /// the chat's table at probe time has since gained it — WeChat creates
+    /// `Msg_` tables lazily inside an already-keyed file, and the key list
+    /// does not change. `chatShardCacheGen` snapshots the generations seen
+    /// when a mapping was built; a later probe re-checks only the shards whose
+    /// generation moved (or that were never probed), instead of trusting the
+    /// stale mapping or re-probing the world on every write.
+    private var messageShardGen: [String: Int] = [:]
+    private var chatShardCacheGen: [String: [String: Int]] = [:]
 
     /// Reusable read-only handles, keyed by decrypted file path.
     ///
@@ -177,14 +191,27 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         self.cacheDir = cacheStrategy == .memory ? accountDirectory + "/" + UUID().uuidString : accountDirectory
         self.manifestPath = "\(self.cacheDir)/manifest.json"
         SecureFileManager.ensureDirectory(at: cacheDir)
+        // The decrypted message corpus must not ride into Time Machine or
+        // Spotlight — exclude the cache root once at setup.
+        var exclusion = URL(fileURLWithPath: cacheDir)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? exclusion.setResourceValues(values)
         if cacheStrategy == .persistent {
             loadManifest()
         }
         // Hydrate learned group-chat self-aliases from last run so the
         // first scan after a restart already knows "我" vs "李雷" and
         // the AI summarizer doesn't mis-attribute the user's own
-        // messages on day one.
-        if let saved = aliasDefaults.stringArray(forKey: learnedAliasesKey) {
+        // messages on day one. Aliases expire: a nickname I stopped
+        // using (or never owned — a mislearned hint) must not mark a
+        // member's messages as mine forever.
+        let now = Date().timeIntervalSince1970
+        if let saved = aliasDefaults.dictionary(forKey: learnedAliasesKey) as? [String: Double] {
+            self.mySelfNames = Set(saved.filter { now - $0.value < Self.learnedAliasTTL }.keys)
+        } else if let saved = aliasDefaults.stringArray(forKey: learnedAliasesKey) {
+            // Legacy array format predates expiry — accept once, it
+            // rewrites into the dated form on the next learnSelfAlias.
             self.mySelfNames = Set(saved)
         }
     }
@@ -210,6 +237,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         cacheDir(for: strategy) + "/" + accountCacheIdentity(databaseRoot)
     }
 
+    /// How long a learned self-alias stays valid. Group nicknames change;
+    /// an alias learned months ago can collide with a member who later
+    /// took that name, so learned names decay instead of living forever.
+    static let learnedAliasTTL: TimeInterval = 90 * 24 * 3600
+
     /// Persist the current `mySelfNames` set to UserDefaults so it
     /// survives relaunches. Called after `getMessages` learns a new
     /// alias from a realSenderId==0 + hint pair.
@@ -217,14 +249,39 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         guard !alias.isEmpty else { return }
         mySelfNames.insert(alias)
         guard persistLearnedAliases else { return }
-        aliasDefaults.set(Array(mySelfNames), forKey: learnedAliasesKey)
+        // Merge over whatever is stored so aliases learned in a prior
+        // run keep their original timestamps.
+        var saved = aliasDefaults.dictionary(forKey: learnedAliasesKey) as? [String: Double] ?? [:]
+        for name in mySelfNames where saved[name] == nil {
+            saved[name] = Date().timeIntervalSince1970
+        }
+        saved[alias] = Date().timeIntervalSince1970
+        // Never persist a name older than the TTL — a stale entry
+        // dropped by hydration shouldn't linger in storage forever.
+        let now = Date().timeIntervalSince1970
+        saved = saved.filter { now - $0.value < Self.learnedAliasTTL }
+        aliasDefaults.set(saved, forKey: learnedAliasesKey)
+    }
+
+    /// Drop a learned alias that a group member demonstrably shares.
+    /// Keeping it would let `isFromSelf` turn that member's messages into
+    /// ours everywhere; losing self-attribution is the safe failure mode.
+    func forgetSelfAlias(_ alias: String) {
+        guard mySelfNames.remove(alias) != nil else { return }
+        guard persistLearnedAliases else { return }
+        var saved = aliasDefaults.dictionary(forKey: learnedAliasesKey) as? [String: Double] ?? [:]
+        saved.removeValue(forKey: alias)
+        aliasDefaults.set(saved, forKey: learnedAliasesKey)
     }
 
     static func cacheDir(for strategy: CacheStrategy) -> String {
         let home = NSHomeDirectory()
         switch strategy {
         case .persistent: return "\(home)/.wechat-hud/cache"
-        case .temporary:  return "/tmp/wechat_hud_cache"
+        // Shared /tmp is world-writable — a local attacker pre-creating the
+        // predictable directory owns it (can unlink/replace snapshots).
+        // NSTemporaryDirectory is per-user.
+        case .temporary:  return NSTemporaryDirectory() + "wechat_hud_cache"
         case .memory:
             return NSTemporaryDirectory() + "wechat_hud_ephemeral_\(getpid())"
         }
@@ -315,6 +372,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             }
             // Changed key material invalidates both discovery and decrypted snapshots.
             chatShardCache.removeAll()
+            chatShardCacheGen.removeAll()
+            messageShardGen.removeAll()
             guard let data = fm.contents(atPath: keysPath) else {
                 throw ReaderError.keyLoadFailed("Cannot read \(keysPath)")
             }
@@ -326,6 +385,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 decryptedCache.removeAll()
                 mainMtimes.removeAll()
                 walMtimes.removeAll()
+                mainSizes.removeAll()
+                walSizes.removeAll()
                 contactsMtime = nil
             }
             keys.removeAll(keepingCapacity: true)
@@ -410,17 +471,29 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     func refreshIfChanged(relPath: String) throws -> Bool {
         try lock.withLock {
             let normalized = relPath.replacingOccurrences(of: "\\", with: "/")
+            // A crafted key file can carry `..`/absolute paths that would
+            // steer decryption outside dbDir into our cache — reject them.
+            guard !normalized.hasPrefix("/"),
+                  !normalized.split(separator: "/").contains("..") else { return false }
             let encPath = "\(dbDir)/\(normalized)"
             let walPath = encPath + "-wal"
             let fm = FileManager.default
 
             guard fm.fileExists(atPath: encPath) else { return false }
 
-            let mainMtime = (try? fm.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
-            let walMtime = (try? fm.attributesOfItem(atPath: walPath)[.modificationDate]) as? Date
+            let mainAttrs = try? fm.attributesOfItem(atPath: encPath)
+            let walAttrs = try? fm.attributesOfItem(atPath: walPath)
+            let mainMtime = mainAttrs?[.modificationDate] as? Date
+            let walMtime = walAttrs?[.modificationDate] as? Date
+            // mtime alone misses `cp -p`/restored/cloned replacements —
+            // include size in the fingerprint.
+            let mainSize = (mainAttrs?[.size] as? NSNumber)?.int64Value
+            let walSize = (walAttrs?[.size] as? NSNumber)?.int64Value
 
             let mainChanged = mainMtime != mainMtimes[normalized]
+                || mainSize != mainSizes[normalized]
             let walChanged = walMtime != walMtimes[normalized]
+                || walSize != walSizes[normalized]
 
             if !mainChanged && !walChanged {
                 return false  // common case — nothing moved
@@ -439,9 +512,16 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             let decPath = try getDecryptedDB(relativePath: normalized)
 
             // Still apply WAL — catches the case where WAL has newer frames than
-            // the last checkpoint (rare but possible on rapid writes).
+            // the last checkpoint (rare but possible on rapid writes). A WAL
+            // apply failure must not fail the whole refresh: the main decrypt
+            // already produced a usable snapshot, and skipping the mtime record
+            // re-decrypts the main DB on every cycle.
             if fm.fileExists(atPath: walPath), let key = findKey(for: normalized) {
-                try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
+                do {
+                    try WeChatDecryptor.applyWAL(dbPath: decPath, walPath: walPath, key: key)
+                } catch {
+                    print("[WCHUD] WAL apply failed for \(normalized): \(error)")
+                }
             }
 
             // Both the re-decrypt and the WAL apply rewrite the file in place,
@@ -462,9 +542,15 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 // (WeChat rotating in a new message_N.db) arrives with the key
                 // file that describes it, and `loadKeys` clears the whole cache.
                 chatShardCache = chatShardCache.filter { !$0.value.isEmpty }
+                // Bump the shard's content generation so positive mappings get
+                // their uncached shards re-probed on next read — a rewrite can
+                // *add* this chat's table to a shard the probe skipped.
+                messageShardGen[normalized, default: 0] += 1
             }
             mainMtimes[normalized] = mainMtime
             walMtimes[normalized] = walMtime
+            mainSizes[normalized] = mainSize
+            walSizes[normalized] = walSize
             // Persisting the manifest is a full JSON serialization + atomic
             // write per changed DB. Record the change instead and let the
             // debounced flush below collapse a burst of refreshes into one
@@ -480,6 +566,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     func getDecryptedDB(relativePath: String) throws -> String {
         try lock.withLock {
             let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
+            // Reject `..`/absolute relPaths — a crafted key file could steer
+            // decryption outside dbDir into our cache (see refreshIfChanged).
+            guard !normalized.hasPrefix("/"),
+                  !normalized.split(separator: "/").contains("..") else {
+                throw ReaderError.dbNotFound(normalized)
+            }
 
             if let cached = decryptedCache[normalized], FileManager.default.fileExists(atPath: cached) {
                 return cached
@@ -734,7 +826,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         while sqlite3_step(stmt) == SQLITE_ROW {
             let room = columnText(stmt, 0)
-            guard room.contains("@chatroom") else { continue }
+            guard MessageHelpers.isGroupChat(room) else { continue }
             // Only nameless groups need the fallback; named groups keep
             // whatever WeChat itself shows.
             if let known = knownNames[room], known != ContactIdentityIndex.unnamedGroupPlaceholder { continue }
@@ -776,7 +868,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if let display = contactIdentityIndex.displayName(for: username) {
                 return display
             }
-            if username.contains("@chatroom") {
+            if MessageHelpers.isGroupChat(username) {
                 // WeChat has no name for this room. Fall back to who is in it
                 // rather than the raw id, which means nothing to the user.
                 if let members = groupMemberNamesCache[username],
@@ -859,74 +951,94 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// Read `session/session.db` → `SessionTable`. Returns one row per
     /// chat; callers typically filter on `unreadCount > 0`.
     func getSessions() throws -> [SessionInfo] {
-        let rel = "session/session.db"
-        sessionQueryCount += 1
-        guard keys[rel] != nil else { return [] }
-        _ = try? refreshIfChanged(relPath: rel)
-        let decPath = try getDecryptedDB(relativePath: rel)
-        // Reuse the cached handle: a throwaway connection re-parsed session.db's
-        // whole schema on every scan, twice per scan here.
-        lock.lock()
-        defer { lock.unlock() }
-        let db = try acquireReadonly(path: decPath)
+        // The key/index check and the counter used to run before the lock —
+        // a concurrent `loadKeys` (FSEvents reload during a scan) could swap
+        // `keys` mid-read. The lock is recursive, so the inner calls that
+        // re-acquire it (`refreshIfChanged`, `getDecryptedDB`) are safe.
+        try lock.withLock {
+            let rel = "session/session.db"
+            sessionQueryCount += 1
+            guard keys[rel] != nil else { return [] }
+            _ = try? refreshIfChanged(relPath: rel)
+            let decPath = try getDecryptedDB(relativePath: rel)
+            // Reuse the cached handle: a throwaway connection re-parsed
+            // session.db's whole schema on every scan, twice per scan here.
+            let db = try acquireReadonly(path: decPath)
 
-        var stmt: OpaquePointer?
-        let sql = "SELECT username, unread_count, last_timestamp FROM SessionTable"
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            throw ReaderError.sqlError("Cannot query SessionTable: \(String(cString: sqlite3_errmsg(db)))")
-        }
-        defer { sqlite3_finalize(stmt) }
+            var stmt: OpaquePointer?
+            let sql = "SELECT username, unread_count, last_timestamp FROM SessionTable"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                throw ReaderError.sqlError("Cannot query SessionTable: \(String(cString: sqlite3_errmsg(db)))")
+            }
+            defer { sqlite3_finalize(stmt) }
 
-        var results: [SessionInfo] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            let username = columnText(stmt, 0)
-            let unread = Int(sqlite3_column_int64(stmt, 1))
-            let ts = Int(sqlite3_column_int64(stmt, 2))
-            results.append(SessionInfo(
-                username: username,
-                isGroup: username.contains("@chatroom"),
-                unreadCount: unread,
-                lastTimestamp: ts
-            ))
+            var results: [SessionInfo] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let username = columnText(stmt, 0)
+                let unread = Int(sqlite3_column_int64(stmt, 1))
+                let ts = Int(sqlite3_column_int64(stmt, 2))
+                results.append(SessionInfo(
+                    username: username,
+                    isGroup: MessageHelpers.isGroupChat(username),
+                    unreadCount: unread,
+                    lastTimestamp: ts
+                ))
+            }
+            return results
         }
-        return results
     }
 
     func allContacts() -> [String: String] {
-        contactCache
+        lock.withLock { contactCache }
     }
 
     // MARK: - Message DB Discovery
 
     func findMessageDBs() -> [String] {
-        keys.keys
-            .filter {
+        lock.withLock {
+            let keyed = keys.keys.filter {
                 $0.contains("message/message_") && $0.hasSuffix(".db")
                 && !$0.contains("message_fts") && !$0.contains("message_resource")
             }
-            .sorted()
+            if !keyed.isEmpty { return keyed.sorted() }
+            // Salt-map key files carry no path entries — discover shards by
+            // scanning the message/ directory itself.
+            let messageDir = (dbDir as NSString).appendingPathComponent("message")
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: messageDir)) ?? []
+            return names.compactMap { name -> String? in
+                guard name.hasPrefix("message_"), name.hasSuffix(".db"),
+                      !name.contains("message_fts"), !name.contains("message_resource"),
+                      name != "message.db" else { return nil }
+                return "message/\(name)"
+            }.sorted()
+        }
     }
 
     /// Probe for a chat's `Msg_<md5>` table on an already-open handle.
-    static func msgTableName(chatUsername: String, db: OpaquePointer) -> String? {
+    /// Throws on a prepare/step failure so a corrupt shard is distinguishable
+    /// from "the table is genuinely absent" — a nil return is trustworthy.
+    static func msgTableName(chatUsername: String, db: OpaquePointer) throws -> String? {
         let hash = md5Hex(chatUsername)
         let tableName = "Msg_\(hash)"
 
         var stmt: OpaquePointer?
         let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            return nil
+            throw ReaderError.sqlError("table probe: \(String(cString: sqlite3_errmsg(db)))")
         }
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, tableName, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
 
         let result = sqlite3_step(stmt)
+        guard result == SQLITE_ROW || result == SQLITE_DONE else {
+            throw ReaderError.sqlError("table probe step: \(String(cString: sqlite3_errmsg(db)))")
+        }
         return result == SQLITE_ROW ? tableName : nil
     }
 
     func findMsgTable(chatUsername: String, dbPath: String) throws -> String? {
         try withReadonlyDB(path: dbPath) { db in
-            Self.msgTableName(chatUsername: chatUsername, db: db)
+            try Self.msgTableName(chatUsername: chatUsername, db: db)
         }
     }
 
@@ -973,7 +1085,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         var out: [String: [MessageInfo]] = [:]
         out.reserveCapacity(requests.count)
         for req in requests {
-            out[req.chatUsername] = try getMessagesLocked(
+            // Per-chat isolation: a single chat whose shards all fail
+            // (deleted file still keyed, corrupt handle) must not poison
+            // the batch — callers wrap the whole batch in `try?`, so a
+            // throw here would empty every other chat's results too.
+            out[req.chatUsername] = (try? getMessagesLocked(
                 chatUsername: req.chatUsername,
                 limit: req.limit,
                 sinceLocalId: nil,
@@ -982,7 +1098,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 startTime: req.startTime,
                 endTime: req.endTime,
                 beforeCursor: nil
-            )
+            )) ?? []
         }
         return out
     }
@@ -1013,146 +1129,146 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // returned only the slice that happened to live in whichever DB was
         // probed first, and a day whose messages sat in another shard came back
         // empty.
+        //
+        // Each shard is probed independently and a failure only skips that
+        // shard: a keyed-but-missing or corrupt `message_N.db` used to throw
+        // out of the probe loop, which failed the query for *every* chat —
+        // not just the ones that might live there.
         let dbPaths: [String]
-        if let cached = chatShardCache[chatUsername] {
+        if var cached = chatShardCache[chatUsername] {
+            // Positive mapping. Shards not listed were probed once and lacked
+            // the table — but the probe is only valid for the content that was
+            // there at the time. Re-probe a shard when its generation moved or
+            // when it was never probed (e.g. it failed to decrypt back then).
+            let probedGen = chatShardCacheGen[chatUsername] ?? [:]
+            var gen = probedGen
+            var discovered: [String] = []
+            for relPath in findMessageDBs() where !cached.contains(relPath) {
+                let currentGen = messageShardGen[relPath] ?? 0
+                if let seen = probedGen[relPath], seen == currentGen {
+                    continue  // this exact content was probed: table absent then
+                }
+                if let decPath = try? getDecryptedDB(relativePath: relPath),
+                   let db = try? acquireReadonly(path: decPath) {
+                    // Mark the generation only once the probe actually
+                    // succeeds — a throwing probe means a broken shard, not a
+                    // provably-absent table, and must retry next call.
+                    do {
+                        let probed = try Self.msgTableName(chatUsername: chatUsername, db: db)
+                        gen[relPath] = currentGen
+                        if probed != nil { discovered.append(relPath) }
+                    } catch { /* broken shard — leave gen unmarked */ }
+                }
+            }
+            if !discovered.isEmpty {
+                cached.append(contentsOf: discovered)
+                cached.sort()
+                chatShardCache[chatUsername] = cached
+            }
+            chatShardCacheGen[chatUsername] = gen
             dbPaths = cached
         } else {
             let allDBs = findMessageDBs()
             var found: [String] = []
+            var probedGen: [String: Int] = [:]
+            var firstError: Error?
             for relPath in allDBs {
-                let decPath = try getDecryptedDB(relativePath: relPath)
-                let db = try acquireReadonly(path: decPath)
-                if Self.msgTableName(chatUsername: chatUsername, db: db) != nil {
-                    found.append(relPath)
+                do {
+                    let decPath = try getDecryptedDB(relativePath: relPath)
+                    let db = try acquireReadonly(path: decPath)
+                    let tableName = try Self.msgTableName(chatUsername: chatUsername, db: db)
+                    // Mark the generation only AFTER a successful probe — a
+                    // shard that opened but failed the schema read must stay
+                    // unmarked so the next call re-probes it instead of
+                    // trusting a hole.
+                    probedGen[relPath] = messageShardGen[relPath] ?? 0
+                    if tableName != nil {
+                        found.append(relPath)
+                    }
+                } catch {
+                    if firstError == nil { firstError = error }
                 }
             }
-            chatShardCache[chatUsername] = found
+            if firstError == nil {
+                chatShardCache[chatUsername] = found
+                chatShardCacheGen[chatUsername] = probedGen
+            } else if !found.isEmpty {
+                // Partial probe: the found list is trustworthy (those shards
+                // did hold the table), and shards that failed to decrypt have
+                // no recorded generation, so the positive path above re-probes
+                // them on the next call instead of trusting a hole.
+                chatShardCache[chatUsername] = found
+                chatShardCacheGen[chatUsername] = probedGen
+            }
             dbPaths = found
+            if dbPaths.isEmpty, let firstError {
+                // Every shard failed — surface the real error rather than
+                // reporting "no messages" for a chat we could not even read.
+                throw firstError
+            }
         }
 
         var foundTable = false
+        var queriedShards = 0
+        var lastShardError: Error?
         for relPath in dbPaths {
-            let decPath = try getDecryptedDB(relativePath: relPath)
-            // One handle serves both the table probe and the query, and stays
-            // cached for later calls. This method already holds `lock`, so the
-            // handle cannot be invalidated mid-query.
-            let db = try acquireReadonly(path: decPath)
-            guard let tableName = Self.msgTableName(chatUsername: chatUsername, db: db) else {
-                continue
-            }
-            foundTable = true
-
-            var sql = """
-                SELECT local_id, local_type, create_time, real_sender_id,
-                       message_content, WCDB_CT_message_content
-                FROM [\(tableName)]
-            """
-            sql += Self.messageQuerySuffix(limit: effectiveLimit, sinceLocalId: sinceLocalId,
-                                           afterCursor: afterCursor, oldestFirst: oldestFirst,
-                                           startTime: startTime, endTime: endTime,
-                                           beforeCursor: beforeCursor)
-
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-                throw ReaderError.sqlError("Cannot query messages: \(String(cString: sqlite3_errmsg(db)))")
-            }
-            defer { sqlite3_finalize(stmt) }
-
-            let name2id = loadName2Id(db: db)
-            let isGroup = chatUsername.contains("@chatroom")
-            let chatName = displayName(for: chatUsername)
-
-            var stepResult = sqlite3_step(stmt)
-            while stepResult == SQLITE_ROW {
-                let localId = Int(sqlite3_column_int64(stmt, 0))
-                let localType = Int(sqlite3_column_int64(stmt, 1))
-                let createTime = Int(sqlite3_column_int64(stmt, 2))
-                let realSenderId = Int(sqlite3_column_int64(stmt, 3))
-                let baseType = localType & 0xFFFFFFFF
-                let subType = localType >> 32
-
-                let contentRaw: Data?
-                if let blob = sqlite3_column_blob(stmt, 4) {
-                    let len = sqlite3_column_bytes(stmt, 4)
-                    contentRaw = Data(bytes: blob, count: Int(len))
-                } else {
-                    contentRaw = nil
+            do {
+                let decPath = try getDecryptedDB(relativePath: relPath)
+                // One handle serves both the table probe and the query, and stays
+                // cached for later calls. This method already holds `lock`, so the
+                // handle cannot be invalidated mid-query.
+                let db = try acquireReadonly(path: decPath)
+                guard let tableName = try? Self.msgTableName(chatUsername: chatUsername, db: db) else {
+                    continue
                 }
-                let ct = Int(sqlite3_column_int(stmt, 5))
-                let contentStr = WeChatParser.decodeContent(contentRaw, ct: ct)
-                let parsed = WeChatParser.renderMessage(content: contentStr, baseType: baseType, isGroup: isGroup)
-
-                var senderUsername = name2id[realSenderId] ?? parsed.senderHint
-                let me = myUsername()
-
-                // Any known self-identity marker (wxid, short ID,
-                // contact.db display name, or a previously-learned
-                // group nickname) that shows up as senderUsername
-                // gets promoted to the canonical wxid immediately.
-                // This catches the case where WeChat's Name2Id stores
-                // the user's OWN row with value = group nickname —
-                // without this, the nickname stayed as the sender
-                // and the AI summarizer couldn't tell it was the
-                // user talking.
-                if !senderUsername.isEmpty {
-                    if senderUsername == me || mySelfNames.contains(senderUsername) {
-                        senderUsername = me
-                    } else if let canonical = canonicalContactUsername(for: senderUsername) {
-                        senderUsername = canonical
-                    }
-                }
-
-                // In group chats where the lookup yielded nothing
-                // (name2id hit nothing), we try additional heuristics:
-                //   1. `parsed.senderHint` is already a known self
-                //      alias → promote.
-                //   2. `realSenderId == 0` — WeChat stores 0 for the
-                //      user's own messages in Name2Id-indexed group
-                //      tables. Learn the hint so future lookups are
-                //      fast, and persist it so a restart doesn't
-                //      reset the knowledge.
-                if isGroup && name2id[realSenderId] == nil {
-                    let hint = parsed.senderHint
-                    if mySelfNames.contains(hint) {
-                        senderUsername = me
-                    } else if let canonical = canonicalContactUsername(for: hint) {
-                        senderUsername = canonical
-                    } else if realSenderId == 0 && !hint.isEmpty {
-                        learnSelfAlias(hint)
-                        senderUsername = me
-                    }
-                }
-                let senderName = displayName(for: senderUsername)
-
-                let uid = "\(relPath)/\(tableName)/\(localId)"
-                guard seenIDs.insert(uid).inserted else { continue }
-                // Cross-shard dedup: while WCDB checkpoints pages into the main
-                // file, the same row is visible in two shards — with different
-                // `relPath`s, so the uid above cannot catch it. The content key
-                // does: two rows that agree on everything user-visible are the
-                // same message, not a collision (per-shard localIds restart per
-                // file, so the key must include content, not just ids).
-                let contentKey = "\(createTime)-\(localId)-\(baseType)-\(subType)-\(senderUsername)-\(parsed.text)"
-                guard seenIDs.insert(contentKey).inserted else { continue }
-                let msg = MessageInfo(
-                    id: uid,
-                    localId: localId,
-                    chatUsername: chatUsername,
-                    chatName: chatName,
-                    senderUsername: senderUsername,
-                    senderName: senderName,
-                    text: parsed.text,
-                    baseType: baseType,
-                    subType: subType,
-                    createTime: createTime,
-                    appType: parsed.appType
+                foundTable = true
+                // Rows from a shard are only merged when its query completes:
+                // a mid-step error would otherwise leak a partial slice that
+                // looks like the shard's whole answer.
+                let rows = try collectShardRows(
+                    db: db, tableName: tableName, relPath: relPath,
+                    chatUsername: chatUsername, effectiveLimit: effectiveLimit,
+                    sinceLocalId: sinceLocalId, afterCursor: afterCursor,
+                    oldestFirst: oldestFirst, startTime: startTime,
+                    endTime: endTime, beforeCursor: beforeCursor
                 )
-                results.append(msg)
-                stepResult = sqlite3_step(stmt)
+                queriedShards += 1
+                for msg in rows {
+                    guard seenIDs.insert(msg.id).inserted else { continue }
+                    // Cross-shard dedup: while WCDB checkpoints pages into the
+                    // main file, the same row is visible in two shards — with
+                    // different relPaths, so the uid above cannot catch it. The
+                    // content key does: two rows that agree on everything
+                    // user-visible are the same message, not a collision
+                    // (per-shard localIds restart per file, so the key must
+                    // include content, not just ids).
+                    let contentKey = "\(msg.createTime)-\(msg.localId)-\(msg.baseType)-\(msg.subType)-\(msg.senderUsername)-\(msg.text)"
+                    guard seenIDs.insert(contentKey).inserted else { continue }
+                    results.append(msg)
+                }
+            } catch {
+                lastShardError = error
             }
-            guard stepResult == SQLITE_DONE else {
-                throw ReaderError.sqlError("Message query interrupted: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        if queriedShards == 0, let lastShardError {
+            // Every mapped shard threw — possibly because the mapping is
+            // stale (shard deleted/rotated while still keyed). A full
+            // re-probe self-heals that case; only surface the error when a
+            // fresh probe truly cannot read anything.
+            if usedCachedMapping {
+                chatShardCache.removeValue(forKey: chatUsername)
+                return try getMessagesLocked(
+                    chatUsername: chatUsername,
+                    limit: limit,
+                    sinceLocalId: sinceLocalId,
+                    afterCursor: afterCursor,
+                    oldestFirst: oldestFirst,
+                    startTime: startTime,
+                    endTime: endTime,
+                    beforeCursor: beforeCursor
+                )
             }
+            throw lastShardError
         }
 
         // Cache miss: the cached shards no longer hold this table (WeChat moved
@@ -1186,6 +1302,161 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             return oldestFirst ? lhs.localId < rhs.localId : lhs.localId > rhs.localId
         }
         return results.count > effectiveLimit ? Array(results.prefix(effectiveLimit)) : results
+    }
+
+    /// Query one shard's `Msg_` table for this chat. Runs inside
+    /// `getMessagesLocked` (lock held). Throws on any sqlite failure so the
+    /// caller can discard the whole shard slice — a mid-step abort would
+    /// otherwise merge a partial page indistinguishable from the full answer.
+    private func collectShardRows(
+        db: OpaquePointer,
+        tableName: String,
+        relPath: String,
+        chatUsername: String,
+        effectiveLimit: Int,
+        sinceLocalId: Int?,
+        afterCursor: (lastCreateTime: Int, lastLocalId: Int)?,
+        oldestFirst: Bool,
+        startTime: Int?,
+        endTime: Int?,
+        beforeCursor: (lastCreateTime: Int, lastLocalId: Int)?
+    ) throws -> [MessageInfo] {
+        var sql = """
+            SELECT local_id, local_type, create_time, real_sender_id,
+                   message_content, WCDB_CT_message_content
+            FROM [\(tableName)]
+        """
+        sql += Self.messageQuerySuffix(limit: effectiveLimit, sinceLocalId: sinceLocalId,
+                                       afterCursor: afterCursor, oldestFirst: oldestFirst,
+                                       startTime: startTime, endTime: endTime,
+                                       beforeCursor: beforeCursor)
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw ReaderError.sqlError("Cannot query messages: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        let name2id = loadName2Id(db: db)
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
+        let chatName = displayName(for: chatUsername)
+        // name2id value → claimant count. A group nickname claimed by two
+        // different member ids is ambiguous — promoting rows via that alias
+        // would turn the other member's messages into "self" (dropped from
+        // unread, fed to commitment tracking as our own words).
+        var aliasClaimants: [String: Int] = [:]
+        if isGroup {
+            for value in name2id.values { aliasClaimants[value, default: 0] += 1 }
+        }
+
+        var rows: [MessageInfo] = []
+        var stepResult = sqlite3_step(stmt)
+        while stepResult == SQLITE_ROW {
+            let localId = Int(sqlite3_column_int64(stmt, 0))
+            let localType = Int(sqlite3_column_int64(stmt, 1))
+            let createTime = Int(sqlite3_column_int64(stmt, 2))
+            let realSenderId = Int(sqlite3_column_int64(stmt, 3))
+            let baseType = localType & 0xFFFFFFFF
+            let subType = localType >> 32
+
+            let contentRaw: Data?
+            if let blob = sqlite3_column_blob(stmt, 4) {
+                let len = sqlite3_column_bytes(stmt, 4)
+                contentRaw = Data(bytes: blob, count: Int(len))
+            } else {
+                contentRaw = nil
+            }
+            let ct = Int(sqlite3_column_int(stmt, 5))
+            let contentStr = WeChatParser.decodeContent(contentRaw, ct: ct)
+            let parsed = WeChatParser.renderMessage(content: contentStr, baseType: baseType, isGroup: isGroup)
+
+            var senderUsername = name2id[realSenderId] ?? parsed.senderHint
+            let me = myUsername()
+
+            // Any known self-identity marker (wxid, short ID,
+            // contact.db display name, or a previously-learned
+            // group nickname) that shows up as senderUsername
+            // gets promoted to the canonical wxid immediately.
+            // This catches the case where WeChat's Name2Id stores
+            // the user's OWN row with value = group nickname —
+            // without this, the nickname stayed as the sender
+            // and the AI summarizer couldn't tell it was the
+            // user talking.
+            //
+            // Ambiguity guard: when the resolved alias is claimed by more
+            // than one name2id id in this group, at least one claimant is
+            // a different member sharing our nickname — promotion would
+            // silently turn their messages into ours. The alias itself is
+            // poison: evict it so the senderName/name-only checks in
+            // isFromSelf can't misfile either.
+            if !senderUsername.isEmpty && senderUsername != me {
+                let contested = (aliasClaimants[senderUsername] ?? 0) > 1
+                if contested && mySelfNames.contains(senderUsername) {
+                    forgetSelfAlias(senderUsername)
+                }
+                if mySelfNames.contains(senderUsername) && !contested {
+                    senderUsername = me
+                } else if let canonical = canonicalContactUsername(for: senderUsername) {
+                    senderUsername = canonical
+                }
+            }
+
+            // In group chats where the lookup yielded nothing
+            // (name2id hit nothing), we try additional heuristics:
+            //   1. `parsed.senderHint` is a known self alias that NO
+            //      name2id entry claims → promote. A hint already claimed
+            //      by another member's row is their nickname, not ours.
+            //   2. `realSenderId == 0` — WeChat stores 0 for the
+            //      user's own messages in Name2Id-indexed group
+            //      tables. Learn the hint so future lookups are
+            //      fast, and persist it so a restart doesn't
+            //      reset the knowledge. Restricted to real content
+            //      types: system rows (10000) also carry
+            //      realSenderId 0 but their "hint" is parser noise,
+            //      not a nickname.
+            if isGroup && name2id[realSenderId] == nil {
+                let hint = parsed.senderHint
+                // A hint claimed by a member's name2id entry is THEIR
+                // nickname — an alias that collides with it is unsafe and
+                // gets evicted, not promoted.
+                let hintContested = !hint.isEmpty && (aliasClaimants[hint] ?? 0) > 0
+                if hintContested && mySelfNames.contains(hint) {
+                    forgetSelfAlias(hint)
+                }
+                if !hint.isEmpty && mySelfNames.contains(hint)
+                    && !hintContested {
+                    senderUsername = me
+                } else if let canonical = canonicalContactUsername(for: hint) {
+                    senderUsername = canonical
+                } else if realSenderId == 0 && !hint.isEmpty
+                    && (baseType == 1 || baseType == 49) {
+                    learnSelfAlias(hint)
+                    senderUsername = me
+                }
+            }
+            let senderName = displayName(for: senderUsername)
+
+            let uid = "\(relPath)/\(tableName)/\(localId)"
+            rows.append(MessageInfo(
+                id: uid,
+                localId: localId,
+                chatUsername: chatUsername,
+                chatName: chatName,
+                senderUsername: senderUsername,
+                senderName: senderName,
+                text: parsed.text,
+                baseType: baseType,
+                subType: subType,
+                createTime: createTime,
+                appType: parsed.appType,
+                sysKind: parsed.sysKind.isEmpty ? nil : parsed.sysKind
+            ))
+            stepResult = sqlite3_step(stmt)
+        }
+        guard stepResult == SQLITE_DONE else {
+            throw ReaderError.sqlError("Message query interrupted: \(String(cString: sqlite3_errmsg(db)))")
+        }
+        return rows
     }
 
     /// A bounded oldest-first page ensures a scan advances only over messages it read.
@@ -1533,7 +1804,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         // ---- 3. Baseline threshold prune ------------------------------
         let baselineFiltered = totalCounts.filter { username, total in
-            let isGroup = username.contains("@chatroom")
+            let isGroup = MessageHelpers.isGroupChat(username)
             return total >= (isGroup ? 150 : 30)
         }
         guard !baselineFiltered.isEmpty else { return [] }
@@ -1586,7 +1857,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         // ---- 5. Score, dead-chat cut, rank ----------------------------
         let candidates: [ActiveContact] = recentCounts.compactMap { username, recent in
-            let isGroup = username.contains("@chatroom")
+            let isGroup = MessageHelpers.isGroupChat(username)
             let deadFloor = isGroup ? 15 : 5
             guard recent >= deadFloor else { return nil }
             let groupPenalty: Double = isGroup ? 0.35 : 1.0
@@ -1707,24 +1978,37 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 continue
             }
             let walPath = encPath + "-wal"
-            let curEnc = (try? fm.attributesOfItem(atPath: encPath)[.modificationDate]) as? Date
-            let curWal = (try? fm.attributesOfItem(atPath: walPath)[.modificationDate]) as? Date
+            let encAttrs = try? fm.attributesOfItem(atPath: encPath)
+            let walAttrs = try? fm.attributesOfItem(atPath: walPath)
+            let curEnc = encAttrs?[.modificationDate] as? Date
+            let curWal = walAttrs?[.modificationDate] as? Date
+            let curEncSize = (encAttrs?[.size] as? NSNumber)?.int64Value ?? 0
+            let curWalSize = (walAttrs?[.size] as? NSNumber)?.int64Value ?? 0
+            let savedEncSize = (entry["encSize"] as? NSNumber)?.int64Value
+            let savedWalSize = (entry["walSize"] as? NSNumber)?.int64Value
 
-            // Current encryption mtime must match what we cached
-            guard let curEnc = curEnc, curEnc.timeIntervalSince1970 == encMtimeRaw else {
+            // Current encryption mtime+size must match what we cached — a
+            // same-mtime/different-size replacement (`cp -p`, clone restore)
+            // is a different database.
+            guard let curEnc = curEnc, curEnc.timeIntervalSince1970 == encMtimeRaw,
+                  savedEncSize == nil || savedEncSize == curEncSize else {
                 try? fm.removeItem(atPath: cachedPath)
                 continue
             }
 
             decryptedCache[relPath] = cachedPath
             mainMtimes[relPath] = curEnc
+            mainSizes[relPath] = curEncSize
             // WAL may have moved since; we'll detect via refreshIfChanged on first use
-            if let walMtimeRaw = walMtimeRaw, let curWal = curWal, curWal.timeIntervalSince1970 == walMtimeRaw {
+            if let walMtimeRaw = walMtimeRaw, let curWal = curWal,
+               curWal.timeIntervalSince1970 == walMtimeRaw,
+               savedWalSize == nil || savedWalSize == curWalSize {
                 walMtimes[relPath] = curWal
-            } else if let curWal = curWal {
+                walSizes[relPath] = curWalSize
+            } else if curWal != nil {
                 // WAL differs — record current so refreshIfChanged will detect change
                 walMtimes[relPath] = nil
-                _ = curWal
+                walSizes[relPath] = nil
             }
         }
     }
@@ -1774,11 +2058,15 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if let m = mainMtimes[relPath] {
                 entry["encMtime"] = m.timeIntervalSince1970
             }
+            // mtime+size is the change fingerprint — restore must carry both
+            // or every restart re-decrypts the corpus once.
+            entry["encSize"] = mainSizes[relPath] ?? 0
             if let w = walMtimes[relPath] {
                 entry["walMtime"] = w.timeIntervalSince1970
             } else {
                 entry["walMtime"] = 0.0
             }
+            entry["walSize"] = walSizes[relPath] ?? 0
             json[relPath] = entry
         }
         guard let data = try? JSONSerialization.data(withJSONObject: json) else { return false }

@@ -44,12 +44,17 @@ enum KeyboardShortcutPolicy {
     ///   - hasAttachedSheet: whether that window is currently presenting a
     ///     sheet. A sheet owns Escape while it is up, and this monitor runs
     ///     before the sheet's own responder chain sees the key.
+    ///   - hasModalOverlay: an in-window CompanionDialog is open. Those are
+    ///     not sheets, so `hasAttachedSheet` is false — without this flag
+    ///     Escape collapses the whole panel out from under a confirmation
+    ///     dialog that advertises 按 Esc 关闭.
     static func action(
         keyCode: UInt16,
         characters: String?,
         modifiers: NSEvent.ModifierFlags,
         target: Target,
-        hasAttachedSheet: Bool
+        hasAttachedSheet: Bool,
+        hasModalOverlay: Bool = false
     ) -> Action? {
         // ⌘. is the other standard cancel chord. Escape and ⌘. are the pair
         // macOS users have in their fingers; supporting only the first is the
@@ -64,10 +69,10 @@ enum KeyboardShortcutPolicy {
            !modifiers.intersection([.command, .control, .option]).isEmpty {
             return nil
         }
-        // The sheet takes Escape first: closing the window out from under an
-        // open sheet would discard the user's half-finished input without the
-        // confirmation the sheet was asking for.
-        guard !hasAttachedSheet else { return nil }
+        // The sheet/dialog takes Escape first: closing the window out from
+        // under an open dialog would discard the user's half-finished input
+        // without the confirmation the dialog was asking for.
+        guard !hasAttachedSheet, !hasModalOverlay else { return nil }
 
         switch target {
         case .island: return .collapseIsland

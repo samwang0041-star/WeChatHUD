@@ -396,7 +396,7 @@ struct ConversationDetailView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("返回收件箱")
 
-            let isGroup = chatUsername.contains("@chatroom")
+            let isGroup = MessageHelpers.isGroupChat(chatUsername)
                 || store.getWhitelistEntry(username: chatUsername)?.isGroup == true
             Image(systemName: isGroup ? "person.3.fill" : "person.fill")
                 .font(.system(size: 10))

@@ -271,7 +271,7 @@ struct WhitelistScanView: View {
             try store.addToWhitelist(
                 username: entry.username,
                 displayName: entry.displayName,
-                isGroup: entry.username.contains("@chatroom"),
+                isGroup: MessageHelpers.isGroupChat(entry.username),
                 category: .other,
                 attentionLevel: .watch
             )

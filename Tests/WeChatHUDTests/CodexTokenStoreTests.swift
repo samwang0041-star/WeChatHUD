@@ -25,7 +25,8 @@ final class CodexTokenStoreTests: XCTestCase {
         // No network handler — refresh would fail. Test asserts we never refresh.
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         let (access, accountId) = try await store.validToken()
         XCTAssertFalse(access.isEmpty)
@@ -56,7 +57,8 @@ final class CodexTokenStoreTests: XCTestCase {
 
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         let (access, accountId) = try await store.validToken()
         XCTAssertEqual(access, newJWT)
@@ -88,7 +90,8 @@ final class CodexTokenStoreTests: XCTestCase {
 
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         _ = try await store.validToken()
 
@@ -132,7 +135,8 @@ final class CodexTokenStoreTests: XCTestCase {
 
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         // Our own refresh rotates r_file → r_rotated.
         _ = try await store.validToken()
@@ -194,7 +198,8 @@ final class CodexTokenStoreTests: XCTestCase {
 
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
         // Seed the cache with the first-run token.
         _ = try await store.validToken()
@@ -255,7 +260,8 @@ final class CodexTokenStoreTests: XCTestCase {
 
         let store = CodexTokenStore(
             urlSession: CodexTestSupport.mockSession(),
-            envProvider: { ["CODEX_HOME": dir.path] }
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
         )
 
         try await withThrowingTaskGroup(of: Void.self) { group in
@@ -267,6 +273,223 @@ final class CodexTokenStoreTests: XCTestCase {
 
         // Serialized refresh: exactly one network call, even with 8 racers.
         XCTAssertEqual(MockURLProtocol.capturedRequests.count, 1)
+    }
+
+    // MARK: - Rotated-token persistence (R5)
+
+    func testRotatedRefreshTokenPersistsAcrossStoreInstances() async throws {
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: -3600, refreshToken: "r1")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistedURL = dir.appendingPathComponent("persisted-tokens.json")
+
+        let newJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body: [String: Any] = [
+                "access_token": newJWT,
+                "refresh_token": "r2",   // server rotated the refresh token
+                "expires_in": 3600
+            ]
+            return (response, [try JSONSerialization.data(withJSONObject: body)])
+        }
+
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: persistedURL
+        )
+        _ = try await store.validToken()
+
+        // The rotated token must be on disk, owner-only.
+        let attrs = try FileManager.default.attributesOfItem(atPath: persistedURL.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue ?? 0, 0o600)
+        let persisted = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: persistedURL)
+        ) as? [String: Any]
+        XCTAssertEqual(persisted?["refreshToken"] as? String, "r2")
+
+        // A NEW store instance (post-restart) must seed from the persisted
+        // file, not the stale auth.json — no network needed since the
+        // persisted access token is still fresh.
+        MockURLProtocol.handler = { _ in
+            XCTFail("fresh persisted access token must not refresh")
+            return (HTTPURLResponse(url: URL(string: "https://x")!, statusCode: 500, httpVersion: nil, headerFields: nil)!, [Data()])
+        }
+        let store2 = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: persistedURL
+        )
+        let (access, accountId) = try await store2.validToken()
+        XCTAssertEqual(access, newJWT)
+        XCTAssertEqual(accountId, "act_test")
+    }
+
+    /// The restart-with-expired-access path: persisted holds our rotated r2
+    /// but its access token is long dead; auth.json still carries the
+    /// pre-rotation r1. The store must refresh with r2 — adopting r1 was the
+    /// bug (refreshTokenWasRotated was only marked on the fresh-access early
+    /// return, so the stale file token clobbered the live persisted one).
+    func testRestartWithExpiredPersistedAccessRefreshesWithPersistedToken() async throws {
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: -3600, refreshToken: "r1")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistedURL = dir.appendingPathComponent("persisted-tokens.json")
+
+        let expiredJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 - 7200,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        let persisted: [String: Any] = [
+            "accessToken": expiredJWT,
+            // CodexPersistedTokens decodes Date via JSONDecoder's default —
+            // timeIntervalSinceReferenceDate (2001 epoch), not Unix time.
+            "accessExpiresAt": Date(timeIntervalSinceNow: -3600).timeIntervalSinceReferenceDate,
+            "refreshToken": "r2",
+            "accountId": "act_test",
+            "email": "me@example.com"
+        ]
+        try JSONSerialization.data(withJSONObject: persisted)
+            .write(to: persistedURL, options: .atomic)
+
+        var seenRefreshTokens: [String] = []
+        let newJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let body = req.httpBodyString ?? ""
+            if let match = body.range(of: "refresh_token=([^&]+)", options: .regularExpression) {
+                seenRefreshTokens.append(String(body[match].dropFirst("refresh_token=".count)))
+            }
+            if body.contains("refresh_token=r2") {
+                let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                let payload: [String: Any] = [
+                    "access_token": newJWT, "refresh_token": "r3", "expires_in": 3600
+                ]
+                return (response, [try JSONSerialization.data(withJSONObject: payload)])
+            }
+            let response = HTTPURLResponse(url: req.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            return (response, [Data(#"{"error":"invalid_grant"}"#.utf8)])
+        }
+
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: persistedURL
+        )
+        let (access, _) = try await store.validToken()
+        XCTAssertEqual(access, newJWT)
+        XCTAssertTrue(seenRefreshTokens.contains("r2"),
+                      "the persisted rotated token must be tried, got \(seenRefreshTokens)")
+        // r1 is server-dead — it may appear as a fallback candidate only
+        // after r2 fails; it must never be preferred.
+        if let first = seenRefreshTokens.first {
+            XCTAssertEqual(first, "r2", "the stale auth.json token must not be tried first")
+        }
+    }
+
+    func testRefreshAfter401DoesNotReadoptRevokedAccessToken() async throws {
+        // auth.json's access token is locally fresh but server-revoked.
+        // refreshAfter401 must force a REAL refresh — re-adopting it loops
+        // 401 → adopt → 401 until its exp runs out.
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: 3600, refreshToken: "r1")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistedURL = dir.appendingPathComponent("persisted-tokens.json")
+
+        // Seed a store so it holds an access token + a file refresh token.
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: persistedURL
+        )
+        _ = try await store.validToken()   // adopts auth.json's access token
+        let before = MockURLProtocol.capturedRequests.count
+
+        let newJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body: [String: Any] = [
+                "access_token": newJWT,
+                "refresh_token": "r2",
+                "expires_in": 3600
+            ]
+            return (response, [try JSONSerialization.data(withJSONObject: body)])
+        }
+
+        let (access, _) = try await store.refreshAfter401()
+        XCTAssertEqual(access, newJWT,
+                       "401 must force a real refresh, not re-adopt the revoked token")
+        XCTAssertGreaterThan(MockURLProtocol.capturedRequests.count, before,
+                             "a refresh call must have hit the network")
+    }
+
+    func testRefreshResponseWithoutRefreshTokenReusesOld() async throws {
+        // RFC 6749 §6 — the server MAY omit refresh_token; decoding must not
+        // fail and the existing token stays live.
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: -3600, refreshToken: "r1")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let newJWT = CodexTestSupport.makeJWT(payload: [
+            "exp": Date().timeIntervalSince1970 + 3600,
+            "https://api.openai.com/auth": ["chatgpt_account_id": "act_test"]
+        ])
+        MockURLProtocol.handler = { req in
+            let response = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let body: [String: Any] = [
+                "access_token": newJWT,
+                "expires_in": 3600     // no refresh_token field at all
+            ]
+            return (response, [try JSONSerialization.data(withJSONObject: body)])
+        }
+
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
+        )
+        let (access, _) = try await store.validToken()
+        XCTAssertEqual(access, newJWT)
+    }
+
+    func testOAuthErrorBodyIsNotEmbeddedInError() async throws {
+        let dir = try CodexTestSupport.writeAuthJSON(
+            CodexTestSupport.makeAuthJSON(expOffset: -3600, refreshToken: "r1")
+        )
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        MockURLProtocol.handler = { req in
+            let response = HTTPURLResponse(url: req.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            let body = #"{"error":"invalid_grant","error_description":"echoes-r1-secret"}"#
+            return (response, [Data(body.utf8)])
+        }
+
+        let store = CodexTokenStore(
+            urlSession: CodexTestSupport.mockSession(),
+            envProvider: { ["CODEX_HOME": dir.path] },
+            persistedTokensURL: dir.appendingPathComponent("persisted-tokens.json")
+        )
+        do {
+            _ = try await store.validToken()
+            XCTFail("expected refresh failure")
+        } catch {
+            let text = String(describing: error)
+            XCTAssertFalse(text.contains("echoes-r1-secret"),
+                           "OAuth error body must not leak into surfaced errors")
+        }
     }
 }
 

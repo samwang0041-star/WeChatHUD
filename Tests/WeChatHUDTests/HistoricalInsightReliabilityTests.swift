@@ -327,8 +327,14 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
                 guard status == CCCryptorStatus(kCCSuccess) else {
                     throw NSError(domain: "InsightReaderFixture", code: 4)
                 }
-                if first { output += Data(repeating: 0x11, count: 16) }
-                output += cipher + iv + Data(count: 64)
+                let pageNo = UInt32(start / 4096 + 1)
+            var bodyWithIV = cipher
+            bodyWithIV.append(iv)
+            let mac = WeChatFixtureEncrypt.pageMAC(
+                key: key, dbSalt: Data(repeating: 0x11, count: 16),
+                bodyWithIV: bodyWithIV, pageNumber: pageNo)
+            if first { output += Data(repeating: 0x11, count: 16) }
+                output += cipher + iv + mac
             }
             try output.write(to: encrypted, options: .atomic)
         }

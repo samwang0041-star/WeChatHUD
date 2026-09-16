@@ -4,6 +4,36 @@ import Foundation
 /// Extracted from ChatMonitor to keep the coordinator small.
 enum MessageHelpers {
 
+    /// Multi-party chats are not only `xxx@chatroom`: WeChat also uses
+    /// `@openim` (work/open groups) and `@im.chatroom`. Anything that is not
+    /// a plain one-to-one wxid/chat id must take the group safety path —
+    /// the autopilot pass must not auto-send into a group just because the
+    /// id has a different suffix.
+    static func isMultiPartyChat(_ username: String) -> Bool {
+        username.contains("@chatroom")
+            || username.contains("@openim")
+            || username.contains("@im.chatroom")
+    }
+
+    /// True group-chat ids only — `…@chatroom` (personal) and
+    /// `…@im.chatroom` (WeCom). `@openim` is a WeCom *user* id: it belongs
+    /// in the multi-party safety path above (fail closed for autopilot),
+    /// but an `@openim` 1:1 contact must not be labeled a group in
+    /// whitelist attention levels or sender-parse flags.
+    static func isGroupChat(_ username: String) -> Bool {
+        username.contains("@chatroom") || username.contains("@im.chatroom")
+    }
+
+    /// True when a sender key is already a resolved WeChat account id rather
+    /// than a name2id nickname hint. `wxid_…`, anything `…@…`, and `gh_…`
+    /// cover modern accounts; a legacy short id ("alice") can't be told from
+    /// a nickname by shape alone, so identity-sensitive paths treat those as
+    /// unresolved.
+    static func looksLikeWeChatID(_ username: String) -> Bool {
+        username.hasPrefix("wxid_") || username.hasPrefix("gh_")
+            || username.contains("@")
+    }
+
     /// True when a message has semantic text worth sending to an AI
     /// analyzer. WeChat DB rows can contain empty strings, generic
     /// parser fallbacks ("[消息]"), or UI-level failure copy
@@ -132,6 +162,12 @@ enum MessageHelpers {
         mySelfNames: Set<String> = []
     ) -> Bool {
         if !myUsername.isEmpty && msg.senderUsername == myUsername { return true }
+        // When senderUsername is already a resolved account id, senderName
+        // holds the CONTACT's nickname — a peer who happens to share my
+        // nickname must not classify as self (it poisons style profiling,
+        // commitment extraction, fulfillment evidence, and debt suppression
+        // all at once). Name-hint matching only applies to unresolved senders.
+        let senderIsResolvedID = looksLikeWeChatID(msg.senderUsername)
         // Check learned self aliases against BOTH senderUsername and
         // senderName. WeChat's group tables sometimes store the user's
         // own messages with `senderUsername` left as the raw nickname
@@ -140,17 +176,36 @@ enum MessageHelpers {
         // summaries ended up attributing the user's own "收到" to a
         // bystander named the same as their group nickname.
         if !mySelfNames.isEmpty {
+            // senderUsername equality stays ungated: an ID-shaped entry can
+            // only be MY OWN id — peers' wxids never reach mySelfNames (their
+            // rows never carry realSenderId==0, the only learning path), and
+            // `names.insert(me)` puts my wxid in legitimately. Gating it broke
+            // self-classification when myUsername is empty.
             if mySelfNames.contains(msg.senderUsername) { return true }
-            if !msg.senderName.isEmpty && mySelfNames.contains(msg.senderName) { return true }
-        }
-        // Group chat fallback: senderUsername might be a display name instead of wxid
-        if chatUsername.contains("@chatroom") && !myDisplayName.isEmpty {
-            if msg.senderUsername == myDisplayName || msg.senderName == myDisplayName {
+            // The senderName leg is the actual collision vector — a resolved
+            // peer's nickname can equal my alias, so it requires an
+            // unresolved senderUsername.
+            if !senderIsResolvedID, !msg.senderName.isEmpty, mySelfNames.contains(msg.senderName) {
                 return true
             }
         }
-        if !chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty {
+        // Group chat fallback: senderUsername might be a display name instead of wxid
+        if isMultiPartyChat(chatUsername) && !myDisplayName.isEmpty {
+            if msg.senderUsername == myDisplayName { return true }
+            if !senderIsResolvedID, msg.senderName == myDisplayName { return true }
+        }
+        // Multi-party covers @chatroom + @im.chatroom + @openim: the
+        // private-chat fallback below would call every member message
+        // self-sent in a WeCom group (@im.chatroom), and the same-name
+        // fallback above must cover them too.
+        if !isMultiPartyChat(chatUsername) && !msg.senderUsername.isEmpty {
             if msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername {
+                // A peer whose name2id entry stores a legacy short id
+                // ("alice" for chat "alice_b1c2") is still the peer —
+                // without this check every inbound message in that chat
+                // would be classified as self and never surface.
+                if let shortId = WeChatReader.legacyShortUsername(for: chatUsername),
+                   msg.senderUsername == shortId { return false }
                 return true
             }
         }
@@ -168,10 +223,20 @@ enum MessageHelpers {
     ) -> Bool {
         if senderId == 0 { return true }
         if !myUsername.isEmpty && senderKey == myUsername { return true }
+        // An ID-shaped senderKey matching selfNames can only be my own id —
+        // peer wxids never enter selfNames (only realSenderId==0 hints are
+        // learned, which are my messages). Only name-shaped collisions need
+        // no gate at all here.
         if !senderKey.isEmpty && selfNames.contains(senderKey) { return true }
-        if !myDisplayName.isEmpty && senderKey == myDisplayName { return true }
-        if chatUsername.contains("@chatroom") { return false }
-        if !senderKey.isEmpty && senderKey != chatUsername { return true }
+        if !looksLikeWeChatID(senderKey), !myDisplayName.isEmpty && senderKey == myDisplayName { return true }
+        if isMultiPartyChat(chatUsername) { return false }
+        if !senderKey.isEmpty && senderKey != chatUsername {
+            // Same legacy-short-id carve-out as isFromSelf: the peer's
+            // sender key can be "alice" while the chat is "alice_b1c2".
+            if let shortId = WeChatReader.legacyShortUsername(for: chatUsername),
+               senderKey == shortId { return false }
+            return true
+        }
         return false
     }
 
@@ -221,20 +286,29 @@ enum MessageHelpers {
 
     /// Parse relative deadline strings like "+30m", "+2h", "+1d", "+1w"
     /// into an absolute Date. Returns nil for invalid input.
+    ///
+    /// The value is model output: `Double("+1e400")` parses to +inf, and a
+    /// huge finite number overflows `Int(Date.timeIntervalSince1970)`
+    /// downstream — an *uncatchable* trap that re-fires on every queue
+    /// drain because the poisoned row is never acked. Same guard the
+    /// commitment resolver already carries: finite, positive, and the
+    /// result stays under a sane horizon (~400 days).
     static func resolveDeadline(_ relative: String, relativeTo anchor: Date = Date()) -> Date? {
         let cleaned = relative.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard cleaned.hasPrefix("+"), cleaned.count >= 3 else { return nil }
         let numStr = String(cleaned.dropFirst().dropLast())
-        guard let num = Double(numStr), num > 0 else { return nil }
+        guard let num = Double(numStr), num.isFinite, num > 0 else { return nil }
         let unit = cleaned.last
-        let seconds: TimeInterval
+        let scale: TimeInterval
         switch unit {
-        case "m": seconds = num * 60
-        case "h": seconds = num * 3600
-        case "d": seconds = num * 86400
-        case "w": seconds = num * 604800
+        case "m": scale = 60
+        case "h": scale = 3600
+        case "d": scale = 86400
+        case "w": scale = 604800
         default: return nil
         }
+        let seconds = num * scale
+        guard seconds.isFinite, seconds <= 400 * 86400 else { return nil }
         return anchor.addingTimeInterval(seconds)
     }
 

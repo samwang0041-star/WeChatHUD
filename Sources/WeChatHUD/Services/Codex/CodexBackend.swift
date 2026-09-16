@@ -139,9 +139,11 @@ actor CodexBackend {
     /// and `response.failed` / `error` (throw). Other events ignored.
     private func parseSSE(bytes: URLSession.AsyncBytes) async throws -> String {
         var output = ""
+        var completedPayload: [String: Any]?
+        var sawTerminal = false
         for try await line in bytes.lines {
             guard let payload = sseDataPayload(line) else { continue }
-            if payload == "[DONE]" { break }
+            if payload == "[DONE]" { sawTerminal = true; break }
 
             guard let data = payload.data(using: .utf8),
                   let parsed = try? JSONSerialization.jsonObject(with: data),
@@ -155,7 +157,12 @@ actor CodexBackend {
                     output.append(delta)
                 }
             case "response.completed", "response.done", "response.incomplete":
-                return output
+                sawTerminal = true
+                completedPayload = obj["response"] as? [String: Any]
+                // A terminal event ends the stream — fall through to return.
+                return output.isEmpty
+                    ? Self.completedText(from: completedPayload) ?? output
+                    : output
             case "response.failed":
                 let msg = ((obj["response"] as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
                 throw CodexError.responseFailed(msg ?? "response failed")
@@ -166,7 +173,26 @@ actor CodexBackend {
                 continue
             }
         }
-        return output
+        // Clean EOF without a terminal event means the stream was cut
+        // mid-response — returning partial text as success would ship a
+        // truncated answer presented as complete.
+        guard sawTerminal else {
+            throw CodexError.invalidResponse("stream ended before completion")
+        }
+        return output.isEmpty ? Self.completedText(from: nil) ?? output : output
+    }
+
+    /// Extract text from a `response.completed` payload when the stream
+    /// carried no deltas (e.g. a non-streamed/cached response).
+    private nonisolated static func completedText(from response: [String: Any]?) -> String? {
+        guard let output = response?["output"] as? [[String: Any]] else { return nil }
+        for item in output {
+            guard let content = item["content"] as? [[String: Any]] else { continue }
+            for part in content {
+                if let text = part["text"] as? String, !text.isEmpty { return text }
+            }
+        }
+        return nil
     }
 
     /// Extract the payload from an SSE `data: ...` line. Returns nil for

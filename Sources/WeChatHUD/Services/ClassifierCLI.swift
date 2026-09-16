@@ -666,7 +666,7 @@ enum ClassifierCLI {
             .filter { !($0.text == "null" || $0.text == "(null)") }
             .map { (sender: $0.senderName, body: $0.text) }
 
-        let isGroup = chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let contactName = msgs.first?.chatName ?? chatUsername
 
         let categorizer = AIWhitelistCategorizer(store: store, aiService: AIService(config: store.loadAIConfig()))

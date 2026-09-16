@@ -82,9 +82,9 @@ actor VIPAggregator {
         let activityByGroup = byGroup.map { (chatName, groupTraces) -> String in
             let lines = groupTraces.map { t -> String in
                 let ts = formatTime(t.msgTime)
-                return "  [\(ts)] \(AIService.sanitizeForAI(t.rawText))"
+                return "  [\(ts)] \(AIService.oneLine(AIService.sanitizeForAI(t.rawText)))"
             }.joined(separator: "\n")
-            return "【\(chatName)】\n\(lines)"
+            return "【\(AIService.oneLine(chatName))】\n\(lines)"
         }.joined(separator: "\n\n")
 
         // Detect user mentions

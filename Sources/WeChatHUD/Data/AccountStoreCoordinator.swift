@@ -157,6 +157,13 @@ struct AccountStoreCoordinator {
         }
         try device.initializeIfNeeded(legacySettings: initialSettings,
                                       legacyAccountRoot: legacy == nil ? nil : validOriginal)
+        // Copied shared keys stay behind in the legacy settings table —
+        // some (like a pre-migration settings.ai) carry a plaintext API key
+        // that the device store now shadows, so migration code can never see
+        // or scrub it. Delete the legacy copies once the move succeeded.
+        if !initialSettings.isEmpty, let legacy {
+            for key in initialSettings.keys { try? legacy.deleteSetting(key) }
+        }
         let sync = device.get("sync").flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(SyncConfig.self, from: $0) } ?? SyncConfig()
         let root = Self.selectedRoot(configuredPath: sync.wechatDBPath, candidates: databaseCandidates)

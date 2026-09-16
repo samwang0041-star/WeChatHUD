@@ -30,9 +30,7 @@ actor AutopilotService {
     /// Insertion-ordered list for FIFO eviction of processedMsgUIDs.
     private var processedMsgOrder: [String] = []
 
-    /// Per-chat rate limit tracker: chatUsername → [sentTimestamps].
-    private var sendTimestamps: [String: [Date]] = [:]
-    /// Global send timestamps for overall rate limiting.
+    /// Global send timestamps for hourly rate limiting.
     private var globalSendTimestamps: [Date] = []
 
     /// VIP contacts already notified this session — no duplicate "busy" messages.
@@ -191,10 +189,20 @@ actor AutopilotService {
         // group reply that was queued as sendable. The @chatroom suffix is
         // server-controlled, so re-hold those rows here, once.
         for i in pendingSendQueue.indices where pendingSendQueue[i].manualOnlyReason == nil
-            && pendingSendQueue[i].chatUsername.contains("@chatroom") {
+            && MessageHelpers.isMultiPartyChat(pendingSendQueue[i].chatUsername) {
             pendingSendQueue[i].manualOnlyReason = "群聊需人工确认（会话恢复时补挂）"
             try? store.upsertPendingSend(pendingSendQueue[i], sessionId: id)
+            // The log twin must follow — it was written '.sent' at enqueue
+            // (send never happened), so flip it to pending or the approval
+            // list never shows this item and the audit claims it went out.
+            // Count only real flips — a missing/'skipped' twin isn't pending.
+            sessionPending += (try? store.markAutopilotLogPending(
+                queueId: pendingSendQueue[i].id,
+                chatUsername: pendingSendQueue[i].chatUsername,
+                replyText: pendingSendQueue[i].replyText
+            )) ?? 0
         }
+        persistSessionCounts()
         sessionStats = SessionStats(
             totalSent: sessionSent,
             totalPending: sessionPending,
@@ -231,20 +239,19 @@ actor AutopilotService {
         if discardedCount > 0 {
             print("[WCHUD] Autopilot: discarding \(discardedCount) buffered messages on stop")
         }
-        // Log discarded pending sends
+        // Resolve every queued item's log twin — a skipped-by-stop queue row
+        // must not leave a 'pending' (or never-sent '.sent') log row
+        // approvable after the session ended. The twin flip IS the audit;
+        // no synthetic .skipped rows are inserted (they'd render as
+        // duplicates beside the resolved twin).
+        var pendingConsumed = 0
         for item in pendingSendQueue {
-            let logEntry = AutopilotLogEntry(
-                id: 0, sessionId: id,
-                chatUsername: item.chatUsername, chatName: item.chatName,
-                senderUsername: "", senderName: item.senderName,
-                triggerMsgUID: "queue-\(item.id)", triggerText: "",
-                generatedReply: item.replyText, confidence: item.confidence,
-                riskLevel: item.risk, action: .skipped,
-                aiReasoning: "托管停止时取消",
-                sentAt: nil, createdAt: Date()
-            )
-            try? store.insertAutopilotLog(logEntry)
+            pendingConsumed += (try? store.markAutopilotLogSkipped(
+                queueId: item.id,
+                chatUsername: item.chatUsername, replyText: item.replyText
+            )) ?? 0
         }
+        sessionPending = max(0, sessionPending - pendingConsumed)
         batchBuffer.removeAll()
         batchTimers.removeAll()
         batchStartTimes.removeAll()
@@ -404,7 +411,12 @@ actor AutopilotService {
         // Phase 2: Process ALL batches whose window has expired (both new and old).
         var batchEntries: [AutopilotLogEntry] = []
         let now = Date()
-        var sent = 0, pending = 0, skipped = immediateEntries.count
+        // Force-pending media rows are action='pending' — they await a human
+        // and must count toward sessionPending, not skipped, or the approval
+        // badge under-counts and their approve decrements an unraised counter.
+        var sent = 0
+        var pending = immediateEntries.filter { $0.action == .pending }.count
+        var skipped = immediateEntries.count - pending
 
         let allExpired = isPaused ? [] : batchTimers.filter { now >= $0.value }.map(\.key)
         for chatUsername in allExpired {
@@ -415,12 +427,25 @@ actor AutopilotService {
 
             let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
             if entry.action == .skipped, entry.aiReasoning?.contains("已暂停") == true {
-                batchBuffer[chatUsername] = batch
+                // Re-queue AHEAD of anything appended while the batch was
+                // in flight — replacing would drop the newer messages.
+                batchBuffer[chatUsername] = batch + (batchBuffer[chatUsername] ?? [])
                 if let savedTimer { batchTimers[chatUsername] = savedTimer }
                 if let savedStart { batchStartTimes[chatUsername] = savedStart }
                 continue
             }
-            do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+            do {
+                try store.insertAutopilotLog(entry)
+            } catch {
+                print("[WCHUD] Autopilot: log insert failed: \(error)")
+                // The queue twin was enqueued inside processBatch — without
+                // its log row it has no audit/approval surface at all. Drop
+                // it rather than leave an untracked sendable row.
+                if let qid = entry.queueId, let uuid = UUID(uuidString: qid) {
+                    pendingSendQueue.removeAll { $0.id == uuid }
+                    try? store.deletePendingSend(id: uuid)
+                }
+            }
             batchEntries.append(entry)
             ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
 
@@ -452,13 +477,68 @@ actor AutopilotService {
     }
 
     /// Approve a pending item and send it (through the serial send queue).
-    func approvePending(logId: Int64, reply: String, chatName: String, chatUsername: String) async -> Bool {
-        let success = await serialSend(chatName: chatName, chatUsername: chatUsername, text: reply)
+    /// The same reply also lives in `autopilot_pending_sends` — resolving
+    /// only the log row left a live "立即发送" button that re-sent the text.
+    ///
+    /// Approval goes through the SAME guard chain as a queue send: a days-old
+    /// pending row must not bypass the staleness check, rate limit, session
+    /// cap, or pause state just because a human tapped a button.
+    func approvePending(logId: Int64, reply: String, chatName: String, chatUsername: String,
+                        createdAt: Date? = nil) async -> Bool {
+        guard !isPaused, sessionId != nil else {
+            print("[WCHUD] Autopilot: approval blocked — paused or no session")
+            return false
+        }
+        let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
+            print("[WCHUD] Autopilot: approval blocked — session cap reached")
+            return false
+        }
+        // Re-validate the row is still pending — a stale UI snapshot can
+        // re-approve a row already rejected/sent/canceled, which would send
+        // the rejected reply (and double-decrement sessionPending).
+        let savedReply = store.autopilotLogPendingReply(id: logId)
+        guard savedReply != nil else {
+            print("[WCHUD] Autopilot: approval blocked — log row no longer pending")
+            return false
+        }
+        if let createdAt {
+            let probe = PendingSend(
+                chatUsername: chatUsername, chatName: chatName, senderName: "",
+                replyText: reply, confidence: 0, risk: .low, reasoning: "",
+                styleScore: 0, scheduledSendTime: createdAt, createdAt: createdAt
+            )
+            if let stale = await stalePendingSendReason(probe) {
+                print("[WCHUD] Autopilot: approval blocked — \(stale)")
+                return false
+            }
+        }
+        let success = await serialSendWithRateLimit(
+            chatName: chatName, chatUsername: chatUsername, text: reply, config: config,
+            typingDelay: Self.estimateTypingDelay(for: reply)
+        )
         if success {
-            try? store.markAutopilotLogSent(id: logId)
+            // Atomically record the send + report whether a 'pending' row was
+            // consumed — a reject racing this send already flipped it and
+            // counted the decrement.
+            let consumed = store.resolveAutopilotLogSent(id: logId)
+            // The queue twin holds the SAVED draft text — `reply` may carry
+            // an unsaved edit. Legacy matching must use the stored reply or
+            // the twin survives and later auto-sends the superseded text.
+            try? store.deletePendingSendForLog(
+                logId: logId, chatUsername: chatUsername,
+                replyText: savedReply ?? reply
+            )
+            if let qid = store.autopilotLogQueueId(id: logId), let uuid = UUID(uuidString: qid) {
+                pendingSendQueue.removeAll { $0.id == uuid }
+            } else if let idx = pendingSendQueue.firstIndex(where: {
+                $0.chatUsername == chatUsername && $0.replyText == (savedReply ?? reply)
+            }) {
+                pendingSendQueue.remove(at: idx)
+            }
             // I3 fix: update actor's internal counters to stay in sync
             sessionSent += 1
-            sessionPending = max(0, sessionPending - 1)
+            if consumed { sessionPending = max(0, sessionPending - 1) }
             if let sid = sessionId {
                 try? store.updateAutopilotSessionCounts(
                     id: sid, handled: sessionHandled, pending: sessionPending, sent: sessionSent
@@ -468,9 +548,28 @@ actor AutopilotService {
         return success
     }
 
-    /// Reject a pending item (mark as skipped).
-    func rejectPending(logId: Int64) {
-        try? store.updateAutopilotLogAction(id: logId, action: .skipped)
+    /// Reject a pending item (mark as skipped) and drop its pending_sends
+    /// twin — a rejected draft must not stay sendable through the queue row.
+    func rejectPending(logId: Int64, chatUsername: String? = nil, replyText: String? = nil) {
+        // Idempotent AND race-safe: the flip only fires on a still-pending
+        // row, so a double-tap or a reject landing during an in-flight
+        // approve (whose send already completed) cannot re-resolve it.
+        let consumed = store.resolveAutopilotLogSkipped(id: logId)
+        if consumed, let chatUsername, let replyText {
+            try? store.deletePendingSendForLog(
+                logId: logId, chatUsername: chatUsername, replyText: replyText
+            )
+            if let qid = store.autopilotLogQueueId(id: logId), let uuid = UUID(uuidString: qid) {
+                pendingSendQueue.removeAll { $0.id == uuid }
+            } else {
+                // Legacy twin (no queue_id) — in-memory copy matched by text.
+                pendingSendQueue.removeAll { $0.chatUsername == chatUsername && $0.replyText == replyText }
+            }
+        }
+        if consumed {
+            sessionPending = max(0, sessionPending - 1)
+            persistSessionCounts()
+        }
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.
@@ -595,7 +694,7 @@ actor AutopilotService {
             contextText = window.serialize()
         } else {
             contextText = allMessages.prefix(10).map {
-                "[\(MessageInfo.formatRelative($0.createTime))] \($0.senderName): \(AIService.sanitizeForAI($0.text))"
+                "[\(MessageInfo.formatRelative($0.createTime))] \(AIService.oneLine($0.senderName)): \(AIService.oneLine(AIService.sanitizeForAI($0.text)))"
             }.joined(separator: "\n")
         }
 
@@ -805,6 +904,18 @@ actor AutopilotService {
             )
         }
 
+        // The model can return a reply with no `action` at all — `finalAction`
+        // then defaults to .skipped, and without this guard the text still
+        // reached the send queue (and could auto-send with no hold reason).
+        // Only an affirmative send/stall decision may produce a PendingSend.
+        guard finalAction == .sent || finalAction == .stall else {
+            return makeLogEntry(
+                sessionId: sessionId, msg: representative, action: .skipped,
+                reply: nil, confidence: decision.confidence, risk: risk,
+                reasoning: "AI未明确发送意图 (action=\(decision.action ?? "nil"))，不进入发送队列: \(decision.reasoning)"
+            )
+        }
+
         // --- Simulate human reply delay ---
         let timing = await styleProfiler.getTimingProfile(chatUsername: representative.chatUsername)
         let urgency = MessageUrgency.detect(from: combinedText)
@@ -883,7 +994,8 @@ actor AutopilotService {
             sessionId: sessionId, msg: representative,
             action: finalAction,
             reply: replyText, confidence: decision.confidence, risk: risk,
-            reasoning: reasoningWithScore
+            reasoning: reasoningWithScore,
+            queueId: pendingItem.id.uuidString
         )
     }
 
@@ -897,10 +1009,14 @@ actor AutopilotService {
         // stranger in WeChat search, and the title check would then accept that
         // stranger as the recipient. Only names WeChat itself knows are safe.
         _ = fallback
+        // `stored` must stay empty: `contacts.display_name` is a HUD-side
+        // cache that a user rename (chat_aliases → propagateChatName) can
+        // overwrite — that value is NOT a name WeChat search would accept,
+        // but it could collide with a same-named stranger who IS real.
         return WeChatOpenSearch.names(
             liveRemark: reader.weChatRemark(for: username),
             liveNick: reader.weChatNickName(for: username),
-            stored: [store.getContact(username: username)?.displayName].compactMap { $0 },
+            stored: [],
             username: username
         )
     }
@@ -945,16 +1061,24 @@ actor AutopilotService {
             )
             if uiResult.succeeded {
                 // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
-                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for DB to flush
-                let (ok, outgoingMsgUID) = await verifySend(
-                    chatUsername: chatUsername,
-                    expectedText: text,
-                    startedAt: startedAt,
-                    previousOutgoingMsgUID: verificationBaseline?.id
-                )
-                if !ok {
-                    lastSendFailureMessage = "发送后未在微信数据库中确认"
-                    print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
+                // WeChat's WCDB flush can exceed 500ms under load — one shot
+                // read turned a slow flush into a false "unverified", which
+                // flips the item to manual and invites a duplicate resend.
+                var ok = false
+                var outgoingMsgUID: String? = nil
+                for attempt in 0..<3 {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    let (verified, uid) = await verifySend(
+                        chatUsername: chatUsername,
+                        expectedText: text,
+                        startedAt: startedAt,
+                        previousOutgoingMsgUID: verificationBaseline?.id
+                    )
+                    if verified { ok = true; outgoingMsgUID = uid; break }
+                    if attempt == 2 {
+                        lastSendFailureMessage = "发送后未在微信数据库中确认"
+                        print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
+                    }
                 }
                 // I6 fix: track the actual outgoing message UID, not the trigger UID
                 if let uid = outgoingMsgUID {
@@ -994,19 +1118,14 @@ actor AutopilotService {
         let now = Date()
         let oneHourAgo = now.addingTimeInterval(-3600)
 
-        // C2 fix: global rate limit check
+        // C2 fix: global rate limit check. `<= 0` means unlimited —
+        // consistent with maxSendsPerSession, and 0 must not block every
+        // send (0 >= 0 is always true).
         globalSendTimestamps = globalSendTimestamps.filter { $0 > oneHourAgo }
-        if globalSendTimestamps.count >= config.maxRepliesPerHour {
+        if config.maxRepliesPerHour > 0 && globalSendTimestamps.count >= config.maxRepliesPerHour {
             print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(globalSendTimestamps.count)/h)")
             lastSendFailureMessage = "已达到每小时自动回复上限"
             return false
-        }
-
-        // Per-chat cleanup
-        sendTimestamps[chatUsername] = (sendTimestamps[chatUsername] ?? [])
-            .filter { $0 > oneHourAgo }
-        if sendTimestamps[chatUsername]?.isEmpty == true {
-            sendTimestamps.removeValue(forKey: chatUsername)
         }
 
         let success = await serialSend(
@@ -1018,7 +1137,6 @@ actor AutopilotService {
             topic: topic
         )
         if success {
-            sendTimestamps[chatUsername, default: []].append(now)
             globalSendTimestamps.append(now)
         }
         return success
@@ -1064,7 +1182,7 @@ actor AutopilotService {
         let myUname = reader.myUsername()
 
         return (!myUname.isEmpty && msg.senderUsername == myUname)
-            || (!chatUsername.contains("@chatroom") && !msg.senderUsername.isEmpty
+            || (!MessageHelpers.isMultiPartyChat(chatUsername) && !msg.senderUsername.isEmpty
                 && msg.senderUsername != chatUsername && msg.senderUsername != msg.chatUsername)
     }
 
@@ -1099,18 +1217,18 @@ actor AutopilotService {
         guard let item = pendingSendQueue.first(where: { $0.id == id }) else { return }
         pendingSendQueue.removeAll { $0.id == id }
         try? store.deletePendingSend(id: id)
-        // Fix 2: record cancellation in audit log
-        let logEntry = AutopilotLogEntry(
-            id: 0, sessionId: sessionId ?? 0,
-            chatUsername: item.chatUsername, chatName: item.chatName,
-            senderUsername: "", senderName: item.senderName,
-            triggerMsgUID: "queue-\(item.id)", triggerText: "",
-            generatedReply: item.replyText, confidence: item.confidence,
-            riskLevel: item.risk, action: .skipped,
-            aiReasoning: "用户手动取消",
-            sentAt: nil, createdAt: Date()
-        )
-        try? store.insertAutopilotLog(logEntry)
+        // Resolve the pending log twin too — without this the approval UI
+        // keeps a live 确认发送 button for the reply the user just canceled.
+        // Only a flipped pending row decrements: an auto-item's twin was
+        // never counted as pending.
+        let flipped = (try? store.markAutopilotLogSkipped(
+            queueId: item.id,
+            chatUsername: item.chatUsername, replyText: item.replyText
+        )) ?? 0
+        if flipped > 0 {
+            sessionPending = max(0, sessionPending - 1)
+        }
+        persistSessionCounts()
     }
 
     enum ManualSendOutcome: Equatable {
@@ -1150,11 +1268,31 @@ actor AutopilotService {
         }
         guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
         var item = pendingSendQueue.remove(at: idx)
+        let originalText = item.replyText
         item.replyText = newText
         if let sid = sessionId {
             try? store.upsertPendingSend(item, sessionId: sid)
         }
-        return await executeSend(item: item, config: config)
+        let outcome = await executeSend(item: item, config: config)
+        // executeSend resolves the log twin by queueId — text no longer
+        // matters, so an edited reply can't orphan its twin. On a blocked
+        // outcome the queue row now carries newText while the log still has
+        // the original — sync it so a later approve can't send the
+        // superseded draft.
+        _ = originalText
+        if outcome != .sent {
+            try? store.updateAutopilotLogReplyForQueue(queueId: item.id, reply: newText)
+        }
+        return outcome
+    }
+
+    /// Keep the in-memory queue twin's text in step with an edited draft —
+    /// keyed by the item's UUID, so an identical sibling reply can't be
+    /// re-keyed by mistake.
+    func syncQueueReply(id: UUID, newReply: String) {
+        for i in pendingSendQueue.indices where pendingSendQueue[i].id == id {
+            pendingSendQueue[i].replyText = newReply
+        }
     }
 
     func testingEnqueue(_ item: PendingSend) {
@@ -1193,9 +1331,18 @@ actor AutopilotService {
         let now = Date()
         let expired = pendingSendQueue.filter { Self.isEligibleForAutomaticSend($0, now: now) }
         for item in expired {
-            pendingSendQueue.removeAll { $0.id == item.id }
+            let removed = pendingSendQueue.firstIndex(where: { $0.id == item.id })
+                .map { pendingSendQueue.remove(at: $0) }
+            // The item may have been canceled mid-loop during a prior item's
+            // await — actor reentrancy means cancelPendingSend can already
+            // have deleted it. Only send when it was actually still queued.
+            guard removed != nil else { continue }
             let outcome = await executeSend(item: item, config: config)
             if case .blocked = outcome,
+               // Re-queue for a pause — not for a stop: a nil session means
+               // stop() already cleared every row, and re-appending would
+               // leave a zombie in-memory item with no DB twin.
+               sessionId != nil,
                !pendingSendQueue.contains(where: { $0.id == item.id }) {
                 pendingSendQueue.append(item)
             }
@@ -1204,7 +1351,12 @@ actor AutopilotService {
 
     /// Execute a send from the queue.
     private func executeSend(item: PendingSend, config: AutopilotConfig) async -> ManualSendOutcome {
-        guard !isPaused, sessionId != nil else {
+        // Re-append only on a PAUSE mid-session — when sessionId is nil,
+        // stop() already cleared the queue and deleted the DB rows, so
+        // re-appending would leave a memory-only ghost (and the send itself
+        // must not run after a stop).
+        guard sessionId != nil else { return .blocked("自动驾驶会话已结束") }
+        guard !isPaused else {
             pendingSendQueue.append(item)
             return .blocked("自动驾驶暂停或会话未启动")
         }
@@ -1216,6 +1368,16 @@ actor AutopilotService {
             if let sid = sessionId {
                 try? store.upsertPendingSend(retained, sessionId: sid)
             }
+            // Converted to manual-only — it now awaits a human: the pending
+            // count must include it and its log twin must become 'pending'
+            // so the approval UI shows it and a later approve can unwind it.
+            if item.manualOnlyReason == nil {
+                sessionPending += (try? store.markAutopilotLogPending(
+                    queueId: item.id,
+                    chatUsername: item.chatUsername, replyText: item.replyText
+                )) ?? 0
+                persistSessionCounts()
+            }
             return .blocked("已达到本次会话发送上限")
         }
         if let staleReason = await stalePendingSendReason(item) {
@@ -1224,6 +1386,13 @@ actor AutopilotService {
             pendingSendQueue.append(retained)
             if let sid = sessionId {
                 try? store.upsertPendingSend(retained, sessionId: sid)
+            }
+            if item.manualOnlyReason == nil {
+                sessionPending += (try? store.markAutopilotLogPending(
+                    queueId: item.id,
+                    chatUsername: item.chatUsername, replyText: item.replyText
+                )) ?? 0
+                persistSessionCounts()
             }
             return .blocked(staleReason)
         }
@@ -1235,8 +1404,21 @@ actor AutopilotService {
         )
         if success {
             try? store.deletePendingSend(id: item.id)
+            // Resolve the pending autopilot_log twin in the same step —
+            // otherwise the approval list keeps offering this reply and a
+            // later "确认发送" pushes it a second time. sessionPending only
+            // counts items awaiting a human — an auto-sent item whose log
+            // twin was already .sent never incremented it, so decrement
+            // only when a pending row actually flipped.
+            let flipped = (try? store.markAutopilotLogSent(
+                queueId: item.id,
+                chatUsername: item.chatUsername, replyText: item.replyText
+            )) ?? 0
             sessionStats.totalSent += 1
             sessionSent += 1
+            if flipped > 0 {
+                sessionPending = max(0, sessionPending - 1)
+            }
             persistSessionCounts()
             // Refresh memory after send
             await refreshMemoryAfterSend(chatUsername: item.chatUsername, chatName: item.chatName)
@@ -1249,9 +1431,27 @@ actor AutopilotService {
             retained.autoSendAttempts += 1
             retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
         }
+        // A stop() mid-flight cleared the session — re-appending now would
+        // leave an in-memory zombie plus a 'pending' log row that can never
+        // be approved. Likewise a reject mid-flight resolved the twin to
+        // 'skipped' — a rejected draft must not resurrect for retry.
+        guard sessionId != nil,
+              store.autopilotLogTwinOpen(queueId: item.id) else {
+            return .blocked(busy ? failureReason : "\(failureReason)")
+        }
         pendingSendQueue.append(retained)
         if let sid = sessionId {
             try? store.upsertPendingSend(retained, sessionId: sid)
+        }
+        if !busy && item.manualOnlyReason == nil {
+            // A failed send becomes human-required — same manual-only
+            // conversion accounting as the cap/stale paths above. An item
+            // that was already manual-only is already counted.
+            sessionPending += (try? store.markAutopilotLogPending(
+                queueId: item.id,
+                chatUsername: item.chatUsername, replyText: item.replyText
+            )) ?? 0
+            persistSessionCounts()
         }
         return .blocked(busy ? failureReason : "\(failureReason)，已转为人工确认")
     }
@@ -1448,6 +1648,11 @@ actor AutopilotService {
                 sentAt: nil, createdAt: Date()
             )
             try? store.insertAutopilotLog(logEntry)
+            // The row is 'pending' — it awaits a human, so it must count
+            // toward sessionPending or the approval badge under-counts and
+            // its eventual approve decrements a counter it never raised.
+            sessionPending += 1
+            persistSessionCounts()
             // stdout lands in the system log. A proactive draft plus the
             // contact's display name is exactly the private content the log
             // should not carry, so only the shape of the event is logged.
@@ -1802,7 +2007,8 @@ actor AutopilotService {
         reply: String?,
         confidence: Double,
         risk: AutopilotRisk,
-        reasoning: String
+        reasoning: String,
+        queueId: String? = nil
     ) -> AutopilotLogEntry {
         AutopilotLogEntry(
             id: 0,
@@ -1818,8 +2024,13 @@ actor AutopilotService {
             riskLevel: risk,
             action: action,
             aiReasoning: reasoning,
-            sentAt: action == .sent || action == .stall || action == .vipNotified ? Date() : nil,
-            createdAt: Date()
+            // sentAt stays nil at write time — this row is recorded when the
+            // reply is QUEUED, not when it leaves. A failed/canceled send
+            // must not carry a sent timestamp; markAutopilotLogSent stamps
+            // sent_at only on verified success.
+            sentAt: nil,
+            createdAt: Date(),
+            queueId: queueId
         )
     }
 }

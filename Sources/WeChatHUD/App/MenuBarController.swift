@@ -106,13 +106,17 @@ final class MenuBarController: NSObject, ObservableObject {
             }
         }
         spinIndex = 0
-        spinTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self, weak button] _ in
+        // .common so the spinner keeps animating while the status menu is
+        // tracking (default-mode timers pause under event-tracking).
+        let timer = Timer(timeInterval: 0.12, repeats: true) { [weak self, weak button] _ in
             Task { @MainActor [weak self, weak button] in
                 guard let self, let button else { return }
                 self.spinIndex = (self.spinIndex + 1) % self.spinFrames.count
                 button.image = self.spinFrames[self.spinIndex]
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        spinTimer = timer
     }
 
     private static func rotated(_ image: NSImage, byDegrees degrees: Double) -> NSImage {

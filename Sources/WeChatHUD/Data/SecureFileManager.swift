@@ -13,8 +13,15 @@ enum SecureFileManager {
         var isDirectory: ObjCBool = false
         if fm.fileExists(atPath: path, isDirectory: &isDirectory) {
             if !isDirectory.boolValue { return false }
-            try? fm.setAttributes([.posixPermissions: NSNumber(value: directoryPermissions)], ofItemAtPath: path)
-            return true
+            // Tighten-and-verify: if the chmod fails (e.g. an attacker-owned
+            // directory squatting a predictable name), fail closed rather than
+            // trusting a path we cannot secure.
+            do {
+                try fm.setAttributes([.posixPermissions: NSNumber(value: directoryPermissions)], ofItemAtPath: path)
+            } catch {
+                return false
+            }
+            return posixMode(at: path) == directoryPermissions
         }
         do {
             try fm.createDirectory(

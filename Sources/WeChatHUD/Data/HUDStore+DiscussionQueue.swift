@@ -25,36 +25,68 @@ extension HUDStore {
                 let payload = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
                 // Plain INSERT preserves trigger aborts. OR IGNORE would also
                 // swallow the explicit failure this queue needs for rollback.
+                // content_key covers the same message re-appearing under a
+                // different msg_uid after a cross-shard move.
                 try exec(
-                    "INSERT INTO discussion_queue(msg_uid,chat_username,payload,source_timestamp,local_id) SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM discussion_queue WHERE msg_uid=?)",
-                    params: [message.id, message.chatUsername, payload, String(message.createTime), String(message.localId), message.id]
+                    "INSERT INTO discussion_queue(msg_uid,chat_username,payload,source_timestamp,local_id,content_key) SELECT ?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM discussion_queue WHERE msg_uid=? OR content_key=?)",
+                    params: [message.id, message.chatUsername, payload, String(message.createTime), String(message.localId), message.contentKey, message.id, message.contentKey]
                 )
             }
         }
     }
     /// Deliberately do NOT filter retry_after in SQL: a failed oldest message
     /// must block newer rows, rather than allowing a later watermark past it.
+    /// A row whose payload can never decode (schema drift, truncated write)
+    /// is quarantined — deleted and logged — instead of throwing, which used
+    /// to stall the whole chat's queue forever: consumers swallow the error
+    /// and the poisoned row is never completed or deferred.
     func pendingDiscussionMessages(chatUsername: String, limit: Int = 40) throws -> [QueuedDiscussionMessage] {
         try ensureDiscussionQueue()
         let capped = String(max(1, min(limit, 200)))
-        return try queryAllThrowing(
-            "SELECT payload,attempts,retry_after FROM discussion_queue WHERE chat_username=? ORDER BY source_timestamp,local_id,msg_uid LIMIT ?",
+        var poisoned: [String] = []
+        let rows = try queryAllThrowing(
+            "SELECT msg_uid,payload,attempts,retry_after FROM discussion_queue WHERE chat_username=? ORDER BY source_timestamp,local_id,msg_uid LIMIT ?",
             bind: { stmt in
                 sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
                 sqlite3_bind_text(stmt, 2, capped, -1, Self.sqliteTransient)
             },
             decode: { stmt in
-                let payload = Self.textColumn(stmt, 0)
-                guard let message = try? JSONDecoder().decode(MessageInfo.self, from: Data(payload.utf8)) else {
-                    throw HUDStoreError.sqlError("Invalid queued discussion message")
+                let uid = Self.textColumn(stmt, 0)
+                let payload = Self.textColumn(stmt, 1)
+                // Decoding alone isn't enough — a payload naming a different
+                // uid is still poison: the queue key is the stored uid and a
+                // complete-by-decoded-id delete would never match this row.
+                guard let message = try? JSONDecoder().decode(MessageInfo.self, from: Data(payload.utf8)),
+                      message.id == uid else {
+                    poisoned.append(uid)
+                    return QueuedDiscussionMessage(
+                        message: MessageInfo(
+                            id: uid, chatUsername: chatUsername, chatName: "",
+                            senderUsername: "", senderName: "", text: "",
+                            baseType: -1, subType: 0, createTime: 0
+                        ),
+                        attempts: 0,
+                        retryAfter: 0
+                    )
                 }
                 return QueuedDiscussionMessage(
                     message: message,
-                    attempts: Int(sqlite3_column_int(stmt, 1)),
-                    retryAfter: sqlite3_column_double(stmt, 2)
+                    attempts: Int(sqlite3_column_int(stmt, 2)),
+                    retryAfter: sqlite3_column_double(stmt, 3)
                 )
             }
         )
+        if !poisoned.isEmpty {
+            print("[WCHUD] discussion queue: dropped \(poisoned.count) undecodable rows")
+            let nonEmpty = poisoned.filter { !$0.isEmpty }
+            if !nonEmpty.isEmpty { try completeDiscussionMessages(nonEmpty) }
+            // textColumn maps NULL → "" and `WHERE msg_uid=''` never matches
+            // NULL — quarantine NULL-uid rows explicitly.
+            if poisoned.contains("") {
+                try exec("DELETE FROM discussion_queue WHERE msg_uid IS NULL OR msg_uid=''")
+            }
+        }
+        return rows.filter { $0.message.baseType != -1 }
     }
 
     func discussionQueueChats() throws -> [String] {
@@ -87,11 +119,21 @@ extension HUDStore {
         for id in ids { try exec("DELETE FROM discussion_queue WHERE msg_uid=?", params: [id]) }
     }
 
+    /// Rows that keep failing after the attempt bound are dead-lettered —
+    /// without it a deterministically-failing row head-of-line-blocks every
+    /// newer item for that chat and burns an AI call every backoff cycle.
+    private static let discussionDeadLetterAttempts = 5
+
     func deferDiscussionMessages(_ ids: [String], until: TimeInterval) throws {
         for id in ids {
             try exec(
                 "UPDATE discussion_queue SET attempts=attempts+1,retry_after=? WHERE msg_uid=?",
                 params: [String(until), id]
+            )
+            // Dead-letter: drop the row once it has retried past the bound.
+            try exec(
+                "DELETE FROM discussion_queue WHERE msg_uid=? AND attempts>=?",
+                params: [id, String(Self.discussionDeadLetterAttempts)]
             )
         }
     }
@@ -114,5 +156,9 @@ extension HUDStore {
             )
             """)
         try exec("CREATE INDEX IF NOT EXISTS discussion_queue_chat_order ON discussion_queue(chat_username,source_timestamp,local_id,msg_uid)")
+        // Same message reappearing under a different msg_uid after a
+        // cross-shard move must not enqueue twice.
+        _ = try? exec("ALTER TABLE discussion_queue ADD COLUMN content_key TEXT NOT NULL DEFAULT ''")
+        _ = try? exec("CREATE INDEX IF NOT EXISTS idx_discussion_content_key ON discussion_queue(content_key)")
     }
 }

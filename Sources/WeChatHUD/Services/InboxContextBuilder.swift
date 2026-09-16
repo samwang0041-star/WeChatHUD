@@ -68,7 +68,7 @@ enum InboxContextBuilder {
             )) ?? []
         }
 
-        let isGroup = chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let mentionedMe = MessageHelpers.isAtMe(
             text,
             myUsername: myUsername,
@@ -128,7 +128,7 @@ enum InboxContextBuilder {
             )) ?? []
         }
 
-        let isGroup = chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let mentionedMe = MessageHelpers.isAtMe(
             text,
             myUsername: myUsername,
@@ -264,7 +264,7 @@ enum InboxContextBuilder {
             .filter { $0.chatUsername == chatUsername }
 
         // Group context
-        let isGroup = chatUsername.contains("@chatroom")
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let mentionedMe = MessageHelpers.isAtMe(
             text,
             myUsername: myUsername,
@@ -347,8 +347,8 @@ enum InboxContextBuilder {
             )
             let speaker = isSelf
                 ? "我"
-                : (msg.senderName.isEmpty ? "对方" : msg.senderName)
-            return "\(speaker): \(AIService.sanitizeForAI(msg.text))"
+                : (msg.senderName.isEmpty ? "对方" : AIService.oneLine(msg.senderName))
+            return "\(speaker): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))"
         }
         let taggedTranscript = transcriptLines.joined(separator: "\n")
 

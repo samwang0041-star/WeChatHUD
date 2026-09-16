@@ -42,10 +42,10 @@ extension ChatMonitor {
             // next to fully named rows). The placeholder keeps the row
             // honest about not knowing the name yet; callers that show it
             // alongside real names do not have to special-case it.
-            if ContactIdentityIndex.isRawChatIdentifier(chatUsername), !chatUsername.contains("@chatroom") {
+            if ContactIdentityIndex.isRawChatIdentifier(chatUsername), !MessageHelpers.isGroupChat(chatUsername) {
                 return ContactIdentityIndex.unnamedContactPlaceholder
             }
-            return chatUsername.contains("@chatroom")
+            return MessageHelpers.isGroupChat(chatUsername)
                 ? ContactIdentityIndex.unnamedGroupPlaceholder
                 : chatUsername
         }
@@ -60,13 +60,20 @@ extension ChatMonitor {
     func weChatSearchNames(for chatUsername: String) -> [String] {
         _ = try? reader.refreshContactsIfChanged()
         displayNameCache.removeValue(forKey: chatUsername)
+        // propagateChatName writes a user-chosen alias INTO contacts and
+        // whitelist display_name, so a "stored" name can be a HUD-only
+        // label. The alias specifically must not reach WeChat search —
+        // it can match a same-named stranger. Other stored names came
+        // from WeChat itself and remain valid fallbacks.
+        let alias = store.chatAlias(for: chatUsername)
+        let stored = [
+            store.getContact(username: chatUsername)?.displayName,
+            store.getWhitelistEntry(username: chatUsername)?.displayName
+        ].compactMap { $0 }.filter { $0 != alias }
         return WeChatOpenSearch.names(
             liveRemark: reader.weChatRemark(for: chatUsername),
             liveNick: reader.weChatNickName(for: chatUsername),
-            stored: [
-                store.getContact(username: chatUsername)?.displayName,
-                store.getWhitelistEntry(username: chatUsername)?.displayName
-            ].compactMap { $0 },
+            stored: stored,
             username: chatUsername
         )
     }
@@ -159,9 +166,13 @@ extension ChatMonitor {
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return 0 }
         let previousName = store.chatAlias(for: chatUsername) ?? reader.displayName(for: chatUsername)
-        try store.setChatAlias(username: chatUsername, displayName: trimmed, previousName: previousName)
+        // setChatAlias now writes the alias AND propagates in one
+        // transaction — a second propagate here only rewrote the same rows.
+        let changed = try store.setChatAlias(
+            username: chatUsername, displayName: trimmed, previousName: previousName
+        )
         refreshNamesAfterRename()
-        return store.propagateChatName(username: chatUsername, displayName: trimmed)
+        return changed
     }
 
     /// Drop a user-chosen name and fall back to WeChat's own label.

@@ -93,4 +93,66 @@ final class WeChatShardMergeTests: XCTestCase {
             "the negative result must be reused, not re-probed"
         )
     }
+
+    /// WeChat creates a `Msg_` table lazily inside an already-keyed shard. A
+    /// positive shard mapping probed while the table was absent must not hide
+    /// the messages that appear there later.
+    func testTableCreatedLaterInExistingShardJoinsTheMerge() throws {
+        let fixture = try SyntheticShardedScanFixture(chatUsername: chat, optionalShards: [
+            0: [.init(localId: 1, createTime: 2_000, senderId: 1, text: "旧消息")],
+            1: nil   // keyed shard exists but carries no Msg_ table yet
+        ])
+        defer { fixture.cleanup() }
+
+        XCTAssertEqual(
+            try fixture.reader.getMessages(chatUsername: chat, limit: 10).map(\.text),
+            ["旧消息"],
+            "first query caches the positive mapping [message_0]"
+        )
+
+        // WeChat lazily creates the chat's table inside the keyed shard 1.
+        try fixture.rewriteShard(1, rows: [
+            .init(localId: 1, createTime: 3_000, senderId: 1, text: "新消息")
+        ])
+        _ = try fixture.reader.refreshIfChanged(relPath: "message/message_1.db")
+
+        XCTAssertEqual(
+            try fixture.reader.getMessages(chatUsername: chat, limit: 10).map(\.createTime),
+            [3_000, 2_000],
+            "a table appearing in a previously-probed shard must be discovered"
+        )
+    }
+
+    /// A shard listed in the key manifest whose file is absent used to throw
+    /// out of the probe loop, failing the query for every chat — including
+    /// ones fully readable in healthy shards.
+    func testMissingKeyedShardDoesNotFailOtherShards() throws {
+        let fixture = try SyntheticShardedScanFixture(chatUsername: chat, shards: [
+            0: [.init(localId: 1, createTime: 2_000, senderId: 1, text: "可读消息")]
+        ])
+        defer { fixture.cleanup() }
+        try fixture.addKeyForMissingShard(9)
+
+        XCTAssertEqual(
+            try fixture.reader.getMessages(chatUsername: chat, limit: 10).map(\.text),
+            ["可读消息"],
+            "a keyed-but-missing shard must be skipped, not propagated"
+        )
+    }
+
+    /// Same for a shard whose bytes do not decrypt to a readable database.
+    func testCorruptShardDoesNotFailOtherShards() throws {
+        let fixture = try SyntheticShardedScanFixture(chatUsername: chat, shards: [
+            0: [.init(localId: 1, createTime: 2_000, senderId: 1, text: "可读消息")],
+            2: [.init(localId: 1, createTime: 1_000, senderId: 1, text: "会被破坏")]
+        ])
+        defer { fixture.cleanup() }
+        try fixture.corruptShard(2)
+
+        XCTAssertEqual(
+            try fixture.reader.getMessages(chatUsername: chat, limit: 10).map(\.text),
+            ["可读消息"],
+            "an unreadable shard must not hide the healthy shard's rows"
+        )
+    }
 }

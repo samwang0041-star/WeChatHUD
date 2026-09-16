@@ -72,7 +72,7 @@ actor RetrospectiveAnalyzer {
             let senderCode = await redactor.codenameFor(username: msg.senderUsername, displayName: msg.senderName)
             let redactedText = await redactor.redactText(msg.text)
             let isoTs = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: TimeInterval(msg.createTime)))
-            lines.append("[\(msg.id)] [\(isoTs)] \(senderCode): \(redactedText)")
+            lines.append("[\(msg.id)] [\(isoTs)] \(senderCode): \(AIService.oneLine(redactedText))")
         }
         let messagesStr = lines.joined(separator: "\n")
 

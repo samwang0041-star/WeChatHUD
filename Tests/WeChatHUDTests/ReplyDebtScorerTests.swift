@@ -81,6 +81,28 @@ final class ReplyDebtScorerTests: XCTestCase {
         XCTAssertEqual(item?.contextNotification?.timestamp, Date(timeIntervalSince1970: 500))
     }
 
+    /// A future-dated create_time (clock-skewed sender) must not pin the
+    /// unsubstantive debt at the top of the list — the sibling buildItem
+    /// already clamps to now; this path missed it.
+    func testUnsubstantiveReplyFutureInboundIsClampedToNow() {
+        let item = ReplyDebtScorer.build(
+            seeds: [
+                makeSeed(
+                    unreadCount: 1,
+                    latestInbound: 660 + 3600,   // future-dated
+                    latestInboundText: "明天什么时候签？请确认最终日期。",
+                    latestOutbound: 660 + 3600 + 60,  // ack strictly after
+                    now: 660
+                )
+            ],
+            config: ReplyDebtConfig()
+        ).first
+
+        XCTAssertEqual(item?.reasons.first?.code, .unsubstantiveReply)
+        XCTAssertEqual(item?.timestamp, Date(timeIntervalSince1970: 660),
+                       "a future-dated inbound must not produce a future debt timestamp")
+    }
+
     func testLatestOutboundClearsDebt() {
         let items = ReplyDebtScorer.build(
             seeds: [

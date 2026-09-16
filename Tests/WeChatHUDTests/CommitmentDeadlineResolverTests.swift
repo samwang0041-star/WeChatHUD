@@ -232,6 +232,29 @@ final class CommitmentDeadlineResolverTests: XCTestCase {
         }
     }
 
+    func testExtractedNoneDoesNotFabricateFromLabelOrSource() {
+        // "none" is the model explicitly declining a deadline — the free-form
+        // label/sourceText must not resurrect one it said didn't exist.
+        XCTAssertNil(CommitmentDeadlineResolver.resolve(
+            extracted: "none", label: "本周五前",
+            sourceText: "我明天休假，回头聊",
+            messageDate: messageDate, calendar: calendar
+        ))
+        XCTAssertNil(CommitmentDeadlineResolver.resolve(
+            extracted: "NONE", label: "明天17:00",
+            messageDate: messageDate, calendar: calendar
+        ))
+    }
+
+    func testVagueSoonStillResolvesViaLabel() {
+        // vague_soon means "a deadline exists but fuzzy" — the label carries
+        // the human rendering; it may still resolve.
+        XCTAssertNotNil(CommitmentDeadlineResolver.resolve(
+            extracted: "vague_soon", label: "本周五前",
+            messageDate: messageDate, calendar: calendar
+        ))
+    }
+
     func testLastWeekWeekdayIsNotTreatedAsUpcoming() {
         // A deadline in the past must not silently become next week's.
         let deadline = CommitmentDeadlineResolver.resolve(

@@ -25,7 +25,7 @@ actor ChatMonitorScopeProvider: ScopeCandidatesProvider {
             guard !inRange.isEmpty else { continue }
             let myCount = inRange.filter { $0.senderUsername == myUname }.count
             // WhitelistEntry.id is the chatUsername; group rooms end in "@chatroom"
-            let isGroup = entry.id.hasSuffix("@chatroom")
+            let isGroup = MessageHelpers.isGroupChat(entry.id)
             out.append(ScopeCandidate(
                 chatUsername: entry.id,
                 chatName: entry.displayName,

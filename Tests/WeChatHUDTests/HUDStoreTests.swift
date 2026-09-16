@@ -968,6 +968,215 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertTrue(store.loadPendingSends(sessionId: sessionId).isEmpty)
     }
 
+    /// Two identical replies in the same chat ("好的") each have their own
+    /// queue twin — resolving one must never touch the other. This is the
+    /// collision the queue_id shared key fixes: the old (chat, replyText)
+    /// text match would flip BOTH rows and delete BOTH queue rows, marking
+    /// B as sent although nothing went out.
+    func testAutopilotTwinResolutionIsQueueIdKeyed() throws {
+        let sessionId = try store.startAutopilotSession()
+        let qA = UUID()
+        let qB = UUID()
+
+        func logRow(_ qid: UUID, trigger: String) -> AutopilotLogEntry {
+            AutopilotLogEntry(
+                id: 0, sessionId: sessionId,
+                chatUsername: "wxid_dup", chatName: "Dup",
+                senderUsername: "wxid_sender", senderName: "Sender",
+                triggerMsgUID: trigger, triggerText: "在吗",
+                generatedReply: "好的", confidence: 0.9,
+                riskLevel: .low, action: .pending,
+                aiReasoning: nil, sentAt: nil, createdAt: Date(),
+                queueId: qid.uuidString
+            )
+        }
+        func queueRow(_ qid: UUID) -> PendingSend {
+            PendingSend(
+                id: qid, chatUsername: "wxid_dup", chatName: "Dup",
+                senderName: "Sender", replyText: "好的", confidence: 0.9,
+                risk: .low, reasoning: "", styleScore: 0,
+                scheduledSendTime: Date().addingTimeInterval(30),
+                createdAt: Date()
+            )
+        }
+
+        try store.insertAutopilotLog(logRow(qA, trigger: "mA"))
+        try store.insertAutopilotLog(logRow(qB, trigger: "mB"))
+        try store.upsertPendingSend(queueRow(qA), sessionId: sessionId)
+        try store.upsertPendingSend(queueRow(qB), sessionId: sessionId)
+
+        // Resolve A by queue_id — B must survive as pending.
+        let flipped = try store.markAutopilotLogSent(
+            queueId: qA, chatUsername: "wxid_dup", replyText: "好的"
+        )
+        XCTAssertEqual(flipped, 1)
+        let stillPending = store.loadPendingAutopilotItems(sessionId: sessionId)
+        XCTAssertEqual(stillPending.count, 1)
+        XCTAssertEqual(stillPending[0].triggerMsgUID, "mB")
+
+        // Log → queue direction: deleting A's twin must leave B's queue row.
+        let logA = store.loadAutopilotLog(sessionId: sessionId)
+            .first { $0.triggerMsgUID == "mA" }!
+        try store.deletePendingSendForLog(
+            logId: logA.id, chatUsername: "wxid_dup", replyText: "好的"
+        )
+        let remaining = store.loadPendingSends(sessionId: sessionId)
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].id, qB)
+    }
+
+    /// A racing reject must not stomp an in-flight approve whose send
+    /// completed — and neither side may double-count sessionPending.
+    func testAutopilotRejectAfterSentIsIdempotent() throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_race", chatName: "Race",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "mR", triggerText: "hi",
+            generatedReply: "收到", confidence: 0.9,
+            riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        let logId = store.loadAutopilotLog(sessionId: sessionId)[0].id
+
+        // Approve-path send completes first.
+        XCTAssertTrue(store.resolveAutopilotLogSent(id: logId))
+        // Reject lands late — must not flip a sent row, must not count.
+        XCTAssertFalse(store.resolveAutopilotLogSkipped(id: logId))
+        // Double-send resolution doesn't recount either.
+        XCTAssertFalse(store.resolveAutopilotLogSent(id: logId))
+
+        let row = store.loadAutopilotLog(sessionId: sessionId)[0]
+        XCTAssertEqual(row.action, .sent)
+        XCTAssertNotNil(row.sentAt)
+    }
+
+    /// A claimed queue_id must never fall back into the text match — a
+    /// same-text LEGACY row (queue_id NULL) must survive resolution of the
+    /// new-format twin.
+    func testAutopilotNewFormatRowDoesNotTouchLegacyTwin() throws {
+        let sessionId = try store.startAutopilotSession()
+        let qid = UUID()
+
+        // Legacy row: identical chat+text, no queue_id.
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_dup", chatName: "Dup",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "legacy", triggerText: "在吗",
+            generatedReply: "好的", confidence: 0.9,
+            riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        // New-format row: same text, queue_id claimed.
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_dup", chatName: "Dup",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "new", triggerText: "在吗",
+            generatedReply: "好的", confidence: 0.9,
+            riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: qid.uuidString
+        ))
+
+        _ = try store.markAutopilotLogSent(
+            queueId: qid, chatUsername: "wxid_dup", replyText: "好的"
+        )
+        let rows = store.loadAutopilotLog(sessionId: sessionId)
+        let legacy = rows.first { $0.triggerMsgUID == "legacy" }!
+        let new = rows.first { $0.triggerMsgUID == "new" }!
+        XCTAssertEqual(new.action, .sent)
+        // The legacy row was NOT flipped by the claimed-id resolution.
+        XCTAssertEqual(legacy.action, .pending)
+    }
+
+    /// '.stall' twins are unverified send claims — a verified send stamps
+    /// sent_at on them, skip flips them to skipped, and the pending
+    /// conversion pulls them back to pending.
+    func testAutopilotStallTwinLifecycle() throws {
+        let sessionId = try store.startAutopilotSession()
+        let qid = UUID()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_stall", chatName: "Stall",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "mS", triggerText: "hi",
+            generatedReply: "好的", confidence: 0.9,
+            riskLevel: .low, action: .stall,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: qid.uuidString
+        ))
+
+        // Stall → sent stamps the claim.
+        _ = try store.markAutopilotLogSent(
+            queueId: qid, chatUsername: "wxid_stall", replyText: "好的"
+        )
+        var row = store.loadAutopilotLog(sessionId: sessionId)[0]
+        XCTAssertEqual(row.action, .sent)
+        XCTAssertNotNil(row.sentAt)
+
+        // Sent is terminal — pending conversion must not reopen it.
+        _ = try store.markAutopilotLogPending(
+            queueId: qid, chatUsername: "wxid_stall", replyText: "好的"
+        )
+        row = store.loadAutopilotLog(sessionId: sessionId)[0]
+        XCTAssertEqual(row.action, .sent)
+    }
+
+    func testAutopilotStallToPendingOnRequeue() throws {
+        let sessionId = try store.startAutopilotSession()
+        let qid = UUID()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_stall2", chatName: "Stall2",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "mS2", triggerText: "hi",
+            generatedReply: "好的", confidence: 0.9,
+            riskLevel: .low, action: .stall,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: qid.uuidString
+        ))
+        XCTAssertTrue(store.autopilotLogTwinOpen(queueId: qid))
+        let flipped = try store.markAutopilotLogPending(
+            queueId: qid, chatUsername: "wxid_stall2", replyText: "好的"
+        )
+        XCTAssertEqual(flipped, 1)
+        XCTAssertEqual(store.loadAutopilotLog(sessionId: sessionId)[0].action, .pending)
+        XCTAssertTrue(store.autopilotLogTwinOpen(queueId: qid))
+        // Skip resolves it — no longer open.
+        _ = try store.markAutopilotLogSkipped(
+            queueId: qid, chatUsername: "wxid_stall2", replyText: "好的"
+        )
+        XCTAssertEqual(store.loadAutopilotLog(sessionId: sessionId)[0].action, .skipped)
+        XCTAssertFalse(store.autopilotLogTwinOpen(queueId: qid))
+    }
+
+    /// Legacy sent-claim stamping is bounded to ONE row — a same-text legacy
+    /// sibling must not inherit the sent stamp.
+    func testAutopilotLegacySentStampIsSingleRowBounded() throws {
+        let sessionId = try store.startAutopilotSession()
+        for trigger in ["lA", "lB"] {
+            try store.insertAutopilotLog(AutopilotLogEntry(
+                id: 0, sessionId: sessionId,
+                chatUsername: "wxid_dup2", chatName: "Dup2",
+                senderUsername: "s", senderName: "S",
+                triggerMsgUID: trigger, triggerText: "在吗",
+                generatedReply: "好的", confidence: 0.9,
+                riskLevel: .low, action: .sent,
+                aiReasoning: nil, sentAt: nil, createdAt: Date()
+            ))
+        }
+        let qid = UUID() // a queue id no row claims → legacy fallback path
+        _ = try store.markAutopilotLogSent(
+            queueId: qid, chatUsername: "wxid_dup2", replyText: "好的"
+        )
+        let rows = store.loadAutopilotLog(sessionId: sessionId)
+        let stamped = rows.filter { $0.sentAt != nil }
+        XCTAssertEqual(stamped.count, 1, "only ONE legacy same-text row may be stamped")
+    }
+
     func testAutopilotInboundQueueRoundTripAndAck() throws {
         let msg = AutopilotService.InboundMessage(
             msgUID: "msg-inbound-1",

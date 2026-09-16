@@ -310,7 +310,7 @@ struct ReplyDraftsView: View {
         if let entry = store.getWhitelistEntry(username: draft.chatUsername) {
             return entry.isGroup
         }
-        return draft.chatUsername.contains("@chatroom")
+        return MessageHelpers.isGroupChat(draft.chatUsername)
     }
 
     private func counterpartQuote(for draft: Draft) -> String {

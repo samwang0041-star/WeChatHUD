@@ -66,9 +66,9 @@ actor AIInboxSummarizer {
         let contextStr = context.taggedTranscript
 
         let userPrompt = template
-            .replacingOccurrences(of: "{sender_name}", with: context.triggerMessage.senderName)
+            .replacingOccurrences(of: "{sender_name}", with: AIService.oneLine(context.triggerMessage.senderName))
             .replacingOccurrences(of: "{sender_role}", with: context.senderRole.rawValue)
-            .replacingOccurrences(of: "{chat_name}", with: context.triggerMessage.chatName)
+            .replacingOccurrences(of: "{chat_name}", with: AIService.oneLine(context.triggerMessage.chatName))
             .replacingOccurrences(of: "{chat_kind}", with: context.isGroupChat ? "群聊" : "私聊")
             .replacingOccurrences(of: "{message_body}", with: renderMessageBody(context))
             .replacingOccurrences(of: "{context_messages}", with: AIService.sanitizeForAI(contextStr))

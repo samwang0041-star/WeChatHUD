@@ -52,6 +52,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
     private var wechatYieldRestoreWorkItem: DispatchWorkItem?
+    /// Standalone toast window — the island's compositor mask clips anything
+    /// painted inside the panel, so a toast in the ~312×34 compact island
+    /// could never be seen. This floats just below the island instead.
+    private var toastWindow: NSPanel?
     private var relaunchWaitTask: Task<Void, Never>?
     /// The onboarding window is owned here instead of being looked up by
     /// title, so dismissal always targets exactly this window and a second
@@ -310,9 +314,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .extended:
                     self.panel.allowsBecomeKey = false
                     self.panel.setSurface(.island)
+                    self.releaseActivationIfIdle()
                 case .compact, .peek, .notification:
                     self.panel.allowsBecomeKey = false
                     self.panel.setSurface(.island)
+                    self.releaseActivationIfIdle()
+                }
+                // A state change moves the island — re-anchor a toast still
+                // on screen. Once now (frame still animating) and once after
+                // the spring settles (~0.4s) when visibleIslandFrame is final.
+                self.syncToastWindow()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    MainActor.assumeIsolated { self?.syncToastWindow() }
                 }
             }
             .store(in: &cancellables)
@@ -446,6 +459,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             forName: .hudShowOnboarding, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.showOnboarding() }
+        }
+
+        // Standalone windows (Settings, onboarding, retrospective) activate
+        // the app on open; when the last one closes nothing released that
+        // activation — the app stayed active with no key window, so typed
+        // keys died and ⌘Q hit WeChatHUD. Release on every window close,
+        // deferred one turn so the closing window is already out of
+        // `NSApp.windows` when we re-check.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.releaseActivationIfIdle() }
+            }
         }
 
         // Start the monitor (includes initial scan + WeChat process observer).
@@ -639,16 +666,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             .store(in: &cancellables)
 
+        panelState.$toastMessage
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.syncToastWindow() }
+            }
+            .store(in: &cancellables)
+
         panelState.$islandTextInputActive
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] active in
+            .sink { [weak self] _ in
                 guard let self else { return }
-                if active {
+                // Read the CURRENT value, not the delivered one: a true→false
+                // pair queued in one runloop turn would otherwise run
+                // makeKeyAndOrderFront on an already-collapsed panel. Re-reading
+                // makes both deliveries converge on the latest state.
+                if self.panelState.islandTextInputActive {
                     self.panel.allowsBecomeKey = true
                     NSApp.activate(ignoringOtherApps: true)
                     self.panel.makeKeyAndOrderFront(nil)
                 } else if self.panelState.currentState != .detail {
                     self.panel.allowsBecomeKey = false
+                    self.releaseActivationIfIdle()
                 }
             }
             .store(in: &cancellables)
@@ -786,9 +825,64 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Show/hide the standalone toast window to match `toastMessage`.
+    /// Held while the panel is ordered out (WeChat automation) — a toast
+    /// popping over WeChat mid-send would be worse than a delayed one.
+    @MainActor
+    private func syncToastWindow() {
+        guard let message = panelState.toastMessage, panel.isVisible else {
+            toastWindow?.orderOut(nil)
+            return
+        }
+        if toastWindow == nil { toastWindow = makeToastPanel() }
+        guard let toastWindow else { return }
+
+        let host = NSHostingView(
+            rootView: IslandToastContent(message: message)
+                .environmentObject(panelState)
+                .environmentObject(monitor)
+        )
+        toastWindow.contentView = host
+        let fitting = host.fittingSize
+        let size = NSSize(
+            width: min(400, max(160, fitting.width)),
+            height: max(30, fitting.height)
+        )
+        // Hang just below the island's painted rect — already in SCREEN
+        // coordinates (containsMouse compares it directly against
+        // NSEvent.mouseLocation). Fall back to below the panel frame when
+        // no island is painted.
+        let islandScreen = panel.visibleIslandFrame ?? panel.frame
+        let origin = NSPoint(
+            x: islandScreen.midX - size.width / 2,
+            y: islandScreen.minY - 6 - size.height
+        )
+        toastWindow.setFrame(NSRect(origin: origin, size: size), display: true)
+        toastWindow.orderFrontRegardless()
+    }
+
+    private func makeToastPanel() -> NSPanel {
+        let p = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        p.isFloatingPanel = true
+        p.level = .popUpMenu
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.isReleasedWhenClosed = false
+        return p
+    }
+
     @MainActor
     private func temporarilyHideHUDForWeChatAutomation() {
         panelState.collapseAndYield(duration: 4)
+        toastWindow?.orderOut(nil)
         panel.orderOut(nil)
 
         wechatYieldRestoreWorkItem?.cancel()
@@ -806,8 +900,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wechatYieldRestoreWorkItem?.cancel()
         wechatYieldRestoreWorkItem = nil
         guard panel != nil, !panel.isVisible else { return }
+        // A toast posted while the panel was ordered out never painted; its
+        // 4s timer kept running, so re-arm it before showing the island.
+        if let pending = panelState.toastMessage {
+            panelState.showToast(pending)
+        }
         panel.orderFrontRegardless()
         panel.positionAtTop()
+        syncToastWindow()
     }
 
     private func updateMenuBarIcon() {
@@ -900,16 +1000,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// that is still mid-event; one main-queue hop lets the event finish.
     private func closeOnboardingWindow() {
         guard let window = onboardingWindow else { return }
-        onboardingWindow = nil
+        // Keep the reference until close() actually runs — between nil-ing
+        // and the queued close, a reposted .hudShowOnboarding would stack a
+        // second onboarding window while the first is still tearing down.
+        // windowWillClose clears the reference itself during close().
         DispatchQueue.main.async {
             window.close()
+            // Completing onboarding continues into the detail/settings
+            // surface. (windowWillClose cannot own this — an early ✕-close
+            // must NOT open settings, only the completion path may.)
+            MainActor.assumeIsolated { [weak self] in
+                self?.panelState.showDetail()
+            }
         }
     }
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === onboardingWindow else { return }
         onboardingWindow = nil
-        panelState.showDetail()
     }
 
     /// Handle keyboard shortcuts. Returns true if the event was consumed.
@@ -937,7 +1045,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             characters: event.charactersIgnoringModifiers,
             modifiers: event.modifierFlags,
             target: target,
-            hasAttachedSheet: event.window?.attachedSheet != nil
+            hasAttachedSheet: event.window?.attachedSheet != nil,
+            // CompanionDialog lives inside the island panel — only gate
+            // cancel for events targeting THAT window. A dialog open in the
+            // island must not kill Escape in Settings (and vice versa).
+            hasModalOverlay: panelState.modalDialogOpen && event.window === panel
         ) {
         case .collapseIsland:
             panelState.collapse()
@@ -947,6 +1059,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         case nil:
             return false
+        }
+    }
+
+    /// Activation grabbed for `.detail`/text input must be released on the
+    /// way out — `resignKey()` alone leaves WeChatHUD the active app with no
+    /// key window, so typed keys die and ⌘Q hits the HUD instead of the
+    /// user's app. Deactivate only when no other HUD window can take key
+    /// (Settings/Insight/Retrospective stay foreground while open).
+    @MainActor
+    private func releaseActivationIfIdle() {
+        guard NSApp.isActive else { return }
+        // The panel is excluded EXCEPT when it's legitimately key-capable:
+        // in .detail / text-input the island holds activation on purpose, so
+        // a secondary window closing (onboarding, a sheet) must not rip
+        // activation away from it.
+        let anotherWindowCanTakeKey = NSApp.windows.contains { window in
+            window.isVisible && window.canBecomeKey
+                && (window !== panel || panel.allowsBecomeKey)
+        }
+        if !anotherWindowCanTakeKey {
+            NSApp.deactivate()
         }
     }
 
