@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.5.8-0B5960?style=for-the-badge" alt="下载 1.5.8"></a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest"><img src="https://img.shields.io/badge/下载-1.6.0-0B5960?style=for-the-badge" alt="下载 1.6.0"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-66D4B7?style=for-the-badge" alt="macOS 14+">
   <img src="https://img.shields.io/badge/芯片-Apple%20Silicon-074E55?style=for-the-badge" alt="Apple Silicon">
   <img src="https://img.shields.io/badge/签名-Developer%20ID%20已公证-6E56CF?style=for-the-badge" alt="已签名并公证">
@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.5.8-macOS14-arm64.zip"><strong>下载安装包</strong></a>
+  <a href="https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.6.0-macOS14-arm64.zip"><strong>下载安装包</strong></a>
   ·
   <a href="docs/user-guide.md">使用指南</a>
   ·
@@ -172,7 +172,7 @@ VIP 超时未回、承诺到期、连续消息、P0 待回——四条规则引�
 
 ## 三分钟上手
 
-1. **下载** [`WeChatHUD-1.5.8-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.5.8-macOS14-arm64.zip)，解压拖进「应用程序」——已签名并公证，双击即开。
+1. **下载** [`WeChatHUD-1.6.0-macOS14-arm64.zip`](https://github.com/samwang0041-star/WeChatHUD/releases/latest/download/WeChatHUD-1.6.0-macOS14-arm64.zip)，解压拖进「应用程序」——已签名并公证，双击即开。
 2. **先登录微信**，再点「连接微信」。系统授权窗口点「允许读取」即可，不用自己找文件夹。
 3. **选一个要关注的人或群**——从一个开始就够了。
 
@@ -232,6 +232,6 @@ open ".build/WeChatHUD Preview.app"
 ---
 
 <p align="center">
-  <sub>当前正式版 <strong>1.5.8</strong> · 源码与安装包同仓 · 应用内可检查更新</sub><br>
+  <sub>当前正式版 <strong>1.6.0</strong> · 源码与安装包同仓 · 应用内可检查更新</sub><br>
   <sub>用之前建议先读一遍 <a href="docs/user-guide.md">使用指南</a></sub>
 </p>

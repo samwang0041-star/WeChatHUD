@@ -15,34 +15,30 @@ struct CompanionSetupCard: View {
     let navigate: (SettingsView.Tab) -> Void
 
     @State private var candidates: [String] = []
-    @State private var refreshID = 0
+    @State private var readiness: OnboardingReadiness?
     @State private var aiSetupExpanded = false
 
-    private var readiness: OnboardingReadiness {
-        _ = refreshID
-        return OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: candidates)
-    }
-
-    private var connected: Bool { readiness.hasSuccessfulSync }
-    private var databaseReadable: Bool { readiness.directoryReady && readiness.keyFileReadable }
-    private var aiConfigured: Bool { readiness.aiConfigurationValid }
-    private var aiConnectionTested: Bool { readiness.aiConnectionTested }
-    private var hasScope: Bool { readiness.trackedConversationCount > 0 }
-
-    private var allReady: Bool {
-        connected && aiConfigured && aiConnectionTested && hasScope
-    }
-
     var body: some View {
-        Group {
-        if refreshID > 0 && !PreviewRuntime.isEnabled && !allReady {
+        // Readiness is assembled once per relevant event (rescan/recompute) and
+        // cached in @State — the same pattern AssistantTodayView uses — so the
+        // body reads flags off the cache instead of re-running evaluate (several
+        // SQLite reads + file stats) on every property access. `readiness != nil`
+        // is the "has computed at least once" gate that refreshID used to be.
+        let connected = readiness?.hasSuccessfulSync ?? false
+        let databaseReadable = readiness.map { $0.directoryReady && $0.keyFileReadable } ?? false
+        let aiConfigured = readiness?.aiConfigurationValid ?? false
+        let aiConnectionTested = readiness?.aiConnectionTested ?? false
+        let hasScope = (readiness?.trackedConversationCount ?? 0) > 0
+        let allReady = connected && aiConfigured && aiConnectionTested && hasScope
+        return Group {
+        if readiness != nil && !PreviewRuntime.isEnabled && !allReady {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     Label(FirstLaunchGuide.setupCardTitle, systemImage: "sparkles").font(.headline)
                     Spacer()
                     Button("使用指南") { navigate(.guide) }.buttonStyle(.link)
                 }
-                healthStrip
+                healthStrip(databaseReadable: databaseReadable, connected: connected, aiConnectionTested: aiConnectionTested)
                 Text(FirstLaunchGuide.setupCardSubtitle)
                     .font(.callout).foregroundStyle(.secondary)
                 if !connected {
@@ -67,18 +63,18 @@ struct CompanionSetupCard: View {
         }
         }
         .onAppear { rescan() }
-        // Config / evidence changes don't move directories, so a cheap re-read
-        // (refreshID bump) is enough; becoming active may mean WeChat was just
-        // logged in, so that one re-scans the candidate directories.
-        .onReceive(NotificationCenter.default.publisher(for: .hudAIConfigDidChange)) { _ in refreshID += 1 }
-        .onReceive(NotificationCenter.default.publisher(for: .hudAIConnectionEvidenceDidChange).receive(on: RunLoop.main)) { _ in refreshID += 1 }
+        // Config / evidence changes don't move directories, so re-evaluating
+        // against the cached candidates is enough; becoming active may mean
+        // WeChat was just logged in, so that one re-scans the directories.
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConfigDidChange)) { _ in recomputeReadiness() }
+        .onReceive(NotificationCenter.default.publisher(for: .hudAIConnectionEvidenceDidChange).receive(on: RunLoop.main)) { _ in recomputeReadiness() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in rescan() }
     }
 
     /// One-glance consolidation of the three setup dependencies, so the user
     /// can see at a glance which leg is still missing instead of reading the
     /// step list and inferring it.
-    private var healthStrip: some View {
+    private func healthStrip(databaseReadable: Bool, connected: Bool, aiConnectionTested: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Label("一键体检", systemImage: "stethoscope")
@@ -152,8 +148,13 @@ struct CompanionSetupCard: View {
     }
 
     private func rescan() {
-        candidates = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
-        refreshID += 1
+        let scanned = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
+        candidates = scanned
+        readiness = OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: scanned)
+    }
+
+    private func recomputeReadiness() {
+        readiness = OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: candidates)
     }
 
     private func step(_ title: String, detail: String, icon: String, tab: SettingsView.Tab) -> some View {

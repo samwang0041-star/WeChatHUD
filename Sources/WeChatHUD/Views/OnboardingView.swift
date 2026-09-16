@@ -12,7 +12,7 @@ struct OnboardingView: View {
     @State private var step = 0
     @State private var candidates: [String] = []
     @State private var saveError: String?
-    @State private var refreshID = 0
+    @State private var readiness: OnboardingReadiness?
 
     init(onOpenSettings: ((String) -> Void)? = nil, onComplete: @escaping () -> Void) {
         self.onOpenSettings = onOpenSettings
@@ -110,7 +110,7 @@ struct OnboardingView: View {
                 // looked like one more control among several.
                 .buttonStyle(CompanionGlowButtonStyle(tint: CompanionPalette.jade))
                 .keyboardShortcut(.defaultAction)
-                .disabled(step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled)
+                .disabled(step == 0 && !(readiness?.hasSuccessfulSync ?? false) && !PreviewRuntime.isEnabled)
             }
             .controlSize(.regular)
             .padding(20)
@@ -132,20 +132,15 @@ struct OnboardingView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
     }
 
-    private var readiness: OnboardingReadiness {
-        _ = refreshID
-        return OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: candidates)
-    }
-
     private var primaryCTA: String {
         FirstLaunchGuide.primaryCTA(forStep: step)
     }
 
     private var footerHint: String? {
-        if step == 0 && !readiness.hasSuccessfulSync && !PreviewRuntime.isEnabled {
+        if step == 0 && !(readiness?.hasSuccessfulSync ?? false) && !PreviewRuntime.isEnabled {
             return "连上微信后才能继续"
         }
-        if step == 1 && readiness.trackedConversationCount == 0 {
+        if step == 1 && (readiness?.trackedConversationCount ?? 0) == 0 {
             return FirstLaunchGuide.contactsSkipHint
         }
         return nil
@@ -260,8 +255,9 @@ struct OnboardingView: View {
 
 
     private func refresh() {
-        candidates = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
-        refreshID += 1
+        let scanned = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
+        candidates = scanned
+        readiness = OnboardingReadiness.evaluate(monitor: monitor, store: store, candidates: scanned)
     }
 
     private func perform(_ action: OnboardingReadinessAction) {

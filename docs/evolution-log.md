@@ -769,3 +769,32 @@ session ts，故 ≥ 是对的）。驱逐跑在 recentLimit 截断之前，已�
   FirstLaunchGuide / Companion* 共 38 条相关用例全绿；evaluate 为既有已测组件
   （SyncConnectionDiagnosis.evaluate / AISettingsValidation / AIConnectionEvidenceStore）
   的薄封装，未另加重型夹具测试。debug 构建零警告。
+
+## 2026-09-16 — 1.6.0：就绪状态从「每帧重算」收口到「每事件一次」
+
+### 背景
+
+1.5.8 发布后的对抗性质检发现：上一轮收口把 `candidates`（目录扫盘）缓存进了 `@State`，
+却把 `readiness` 本身留成计算属性 —— `OnboardingReadiness.evaluate` 内含数次 SQLite 读
+（sync 配置 / AI 配置 / 连接证据 / 白名单）+ 文件 stat，而 CompanionSetupCard 的 body 里
+connected / databaseReadable / aiConfigured / aiConnectionTested / hasScope / allReady 六个
+派生属性各访问它一次，等于每帧重算 6 遍（向导 3 遍）。日志原话「工厂不在 body 每帧扫盘」
+只兑现了一半。
+
+### 修法
+
+- 对齐 AssistantTodayView 既有且已验证的模式：`@State readiness: OnboardingReadiness?`，
+  evaluate 只在事件回调里跑一次写入缓存，body 仅从缓存派生布尔。
+- CompanionSetupCard：`rescan()`（onAppear / 激活 / 「重新检测」——重扫目录后 evaluate）与
+  `recomputeReadiness()`（AI 配置/证据变更——目录没动，用缓存 candidates 直接 evaluate）分流，
+  保留原先「配置事件不重扫盘」的廉价路径；`refreshID > 0` 的「至少算过一次」门改为 `readiness != nil`。
+- OnboardingView：所有事件本就走 `refresh()`，改为在 refresh 内 evaluate 写缓存；
+  `disabled` / `footerHint` 读 `readiness?` 并对 nil 取保守默认（未连接 / 0 关注）。
+- 行为不变：可见性、步骤显隐、一键体检三灯、CTA 禁用条件全部等价，只是 evaluate 调用次数
+  从每帧 6/3 次降到每事件 1 次。
+
+### Tests
+
+- 全量 1768 XCTest（15 跳过 / 0 失败）+ 70 swift-testing 全绿；release 构建零警告。
+- OnboardingStepContractTests 源码扫描（向导 body 仍只路由两页、不含 featureOverview/aiSetup）
+  与 ChromeMotionHygieneTests（卡片仍走 withMotion）均通过，证明重构未碰契约。
