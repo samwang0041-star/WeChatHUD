@@ -91,6 +91,31 @@ enum GroupContextSourceLoader {
         return kept
     }
 
+    /// The run of `messages` that belongs to the newest message's conversation,
+    /// oldest-first.
+    ///
+    /// The sibling of `conversationHistory(_:leadingTo:maxGap:)` for the one
+    /// caller that has no named source: an on-demand analysis of “这个群现在在
+    /// 聊什么” is anchored on the newest message, and anything more than
+    /// `maxGap` behind that message is a *different* conversation. Age alone is
+    /// not enough to say that — a 48-hour cap still calls two days of unrelated
+    /// exchanges one discussion. Measured on a followed group: its newest 50
+    /// messages spanned 42 hours and four separate exchanges, and
+    /// `group_analysis_v1` was asked to summarise them as one situation.
+    ///
+    /// Order does not matter on the way in (`getMessages` is newest-first by
+    /// default and the analysis path reverses it); the result is oldest-first
+    /// for prompt rendering.
+    static func currentConversation(
+        _ messages: [MessageInfo],
+        maxGap: Int = maxConversationGapSeconds
+    ) -> [MessageInfo] {
+        let ordered = messages.sorted(by: order)
+        guard let newest = ordered.last else { return [] }
+        return conversationHistory(Array(ordered.dropLast()), leadingTo: newest, maxGap: maxGap)
+            + [newest]
+    }
+
     static func newestFirst(_ messages: [MessageInfo]) -> [MessageInfo] {
         messages.sorted {
             if $0.createTime != $1.createTime { return $0.createTime > $1.createTime }

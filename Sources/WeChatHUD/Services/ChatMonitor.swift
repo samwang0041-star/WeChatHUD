@@ -322,7 +322,18 @@ final class ChatMonitor: ObservableObject {
     /// Cache: chatUsername + msgTimestamp → AI summary string
     private var summaryCache: [String: String] = [:]
     private var summaryInFlight: Set<String> = []
-    private let inboxSummaryAnalysisType = "inbox_row_summary_v3"
+    /// Cache namespace for the one-line inbox summary.
+    ///
+    /// v4: the group branch of `cacheAndUpdateInboxSummary` stores the
+    /// *analysis's* one-liner, and that analysis now summarises a conversation
+    /// instead of a two-day pile. Rows written by the old window would keep
+    /// showing the topic it invented (the line under a group's name in the
+    /// inbox) for the whole 72-hour TTL, so the namespace has to move with it.
+    ///
+    /// Internal rather than private so the tests that seed and read this cache
+    /// name the constant instead of repeating the literal — a literal there
+    /// makes a version bump silently turn those tests into no-ops.
+    let inboxSummaryAnalysisType = "inbox_row_summary_v4"
     private var contactInferenceTask: Task<Void, Never>?
 
     /// Pre-generated expand-panel data — analysis + reply suggestions

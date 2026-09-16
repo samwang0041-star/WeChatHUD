@@ -881,9 +881,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @MainActor
     private func temporarilyHideHUDForWeChatAutomation() {
-        panelState.collapseAndYield(duration: 4)
-        toastWindow?.orderOut(nil)
+        // Order out BEFORE collapsing.
+        //
+        // `collapseAndYield` swaps the state to `.compact`, and the state sink
+        // answers that with a frame spring. A spring on an ordered-out panel
+        // cannot tick (see `FloatingPanel.canDisplayFrameAnimation`), so
+        // starting it first froze the run at the *expanded* rect and left that
+        // rect in the compositor mask. Coming back four seconds later,
+        // `positionAtTop` re-anchored the same oversized island and the panel
+        // painted as a black plate the size of its grow-only stage — with the
+        // inbox still inside it, which is exactly what the bug report shows.
+        // Hidden first, the collapse lands instantly and the mask is already
+        // the compact pill before WeChat takes focus.
         panel.orderOut(nil)
+        toastWindow?.orderOut(nil)
+        panelState.collapseAndYield(duration: 4)
 
         wechatYieldRestoreWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -905,9 +917,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let pending = panelState.toastMessage {
             panelState.showToast(pending)
         }
+        // The island has to be the one the CURRENT state owns before the window
+        // is on screen again. The frame the panel carries is the grow-only
+        // stage; what the user sees is a compositor mask inside it, and a
+        // hide/show cycle must re-derive that mask from the state rather than
+        // trust whatever rect it was holding when the window went away.
+        settleIslandForCurrentState()
         panel.orderFrontRegardless()
         panel.positionAtTop()
         syncToastWindow()
+    }
+
+    /// Land the panel on the island its current state owns, with no motion.
+    ///
+    /// Only for the order-back-in path: the panel is still hidden when this
+    /// runs, so nothing is animated by snapping and nothing is visible until
+    /// `orderFrontRegardless` a line later.
+    @MainActor
+    private func settleIslandForCurrentState() {
+        switch panelState.currentState {
+        case .compact, .peek, .notification, .detail:
+            // Notch geometry (compact/peek) or a static estimate
+            // (notification/detail) fully determines these — no SwiftUI
+            // measurement is needed for the window to be right.
+            let (width, height) = panelSize(for: panelState.currentState)
+            panel.setFrameInstantly(height: height, width: width)
+        case .extended:
+            // Measurement-driven: reuse the last real inbox size when there is
+            // one. Without one the island is left for the next SwiftUI report,
+            // which `invalidateMeasuredSize` on the transition has already
+            // primed to arrive.
+            let cached = panelState.lastExtendedSize
+            guard IslandMeasurement.isUsableCachedSize(cached) else { return }
+            panel.setFrameInstantly(height: cached.height, width: cached.width)
+        }
     }
 
     private func updateMenuBarIcon() {

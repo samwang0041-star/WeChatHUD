@@ -487,6 +487,24 @@ class FloatingPanel: NSPanel {
     /// timer fallback).
     var isFrameAnimationRunning: Bool { animationDisplayLink != nil || animationTimer != nil }
 
+    /// Whether a frame spring started right now could actually be stepped.
+    ///
+    /// `contentView.displayLink(target:selector:)` hands back a link that only
+    /// fires while the view is on a display it can still draw into. An
+    /// ordered-out panel therefore freezes any run started just before the
+    /// order-out at its *start* rect: no tick ever advances `visibleFrame`
+    /// toward the target, and the compositor mask keeps revealing that stale
+    /// rect. Ordering the panel back in (the WeChat hand-off orders us out for
+    /// the length of the jump, then back in) re-anchors the same oversized
+    /// island, and the window reads as a full-size black plate over the
+    /// desktop — the shape of the "clicked 在微信中打开 and the panel went
+    /// black" report.
+    ///
+    /// A run nobody can see is not worth starting, so anything undisplayable
+    /// lands on its target frame instead. The mask ends up on the island the
+    /// state actually owns, which is what the next order-in needs.
+    var canDisplayFrameAnimation: Bool { isVisible }
+
     private func cancelFrameAnimation(notify: Bool = true) {
         guard isFrameAnimationRunning else { return }
         animationTimer?.invalidate()
@@ -535,7 +553,13 @@ class FloatingPanel: NSPanel {
         AnimationDebugger.logStart(from: fromVisible, to: target, caller: caller,
                                    duration: AnimationDebugger.isEnabled ? AnimationDebugger.slowDuration : 0)
 
-        if CompanionMotion.reduceMotion || fromVisible == target {
+        if IslandMeasurement.landsWithoutMotion(
+            reduceMotion: CompanionMotion.reduceMotion,
+            isDisplayable: canDisplayFrameAnimation,
+            from: fromVisible.size,
+            to: target.size
+        ) {
+            AnimationDebugger.logLazyEvent("landInstantly caller=\(caller) displayable=\(self.canDisplayFrameAnimation)")
             cancelFrameAnimation(notify: false)
             IslandFrameTiming.recordInstant()
             let cover = growStage(toCover: target)

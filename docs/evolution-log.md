@@ -2,6 +2,17 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-16 — 1.5.7：修好"在微信中打开"后的黑板，群简报只讲当前这一次对话
+
+### [Engineer] 隐藏面板起不了的 frame spring 会冻成一块黑板；群分析窗口从 48 小时收紧到一次连续对话
+
+- **黑板 bug**：点「在微信中打开」会把浮窗 orderOut 让位给微信。此时 `collapseAndYield` 把状态切到 compact，状态 sink 回了一个 frame spring——但 display link 在窗口 orderOut 后不再 fire，spring 永远走不完，冻在展开时的大 rect 上，compositor mask 留着这块旧矩形；4 秒后恢复显示，`positionAtTop` 又把同一个超大岛重新贴顶，面板就画成一块和只增不减的 stage 一样大的黑板，收件箱还在里面。
+  - 修正三处配合：① 让位时先 orderOut 再 collapse；② 新增 `canDisplayFrameAnimation` / `IslandMeasurement.landsWithoutMotion`，隐藏时直接瞬落到目标帧而不是起一个没人看得见的 spring；③ 恢复显示前用 `settleIslandForCurrentState` 按当前状态重新落 mask，不信任窗口离开时 holding 的旧 rect。
+- **群简报窗口过宽**：非 @ 路径原先取最新 50 条 + 48 小时上限，把跨 1.8 天的好几场对话糅成"现在在聊什么"，一两天前的话题被当成当前话题。
+  - 修正：新增 `GroupContextSourceLoader.currentConversation`，复用既有 6 小时会话边界锚定最新消息；48 小时上限保留为静群的外层兜底（整窗都陈旧时仍出"暂无可读内容"）。prompt 规则 12 同步放宽为"当前这一次对话"。
+  - 缓存命名空间随之移动（`inbox_row_summary_v3→v4`、`action_panel_group_v5→v6`），否则旧窗口写下的摘要会在 72 小时 TTL 内继续显示它编出来的话题。
+- 验证：全量 1759 个 XCTest + 70 个 Swift Testing 测试全绿（15 项 opt-in live/无库门禁跳过）；release 构建零警告；新增 `IslandFrameVisibilityTests`、`GroupAnalysisWindowContinuityTests` 钉住两处行为。
+
 ## 2026-09-16 — 1.5.6：发行包补回 Apple 公证，公开版本号与公证产物对齐
 
 ### [Engineer] 1.5.1–1.5.5 的公开包只有签名没有公证，Gatekeeper 直接拒绝；本版把公证链路补回并重新发行

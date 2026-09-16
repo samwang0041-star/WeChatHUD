@@ -16,23 +16,36 @@ extension ChatMonitor {
     /// The flag is not a licence to skip age checking on arbitrary input: the
     /// guarantee it asserts lives in the loader's contiguity bound, which
     /// `GroupContextSourceLoaderTests` pins.
+    ///
+    /// The un-anchored branch has to answer “这个群现在在聊什么” from a plain
+    /// newest-50 read, and age alone was never enough to answer it: the 48-hour
+    /// cap still fused a day and a half of separate exchanges into one
+    /// situation, so a two-day-old topic was summarised as the current one. The
+    /// window is now the *conversation* the newest message belongs to, using
+    /// the same session boundary the rest of the app uses — the 48-hour cap
+    /// stays as the outer bound for a group that has gone quiet.
     static func filterGroupAnalysisMessages(
         _ messages: [MessageInfo],
         sourceAnchored: Bool,
         now: Date = Date()
     ) -> [MessageInfo] {
-        messages.filter {
-            (sourceAnchored || Date(timeIntervalSince1970: Double($0.createTime)) >= now.addingTimeInterval(-48 * 3600))
-                && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
+        let readable = messages.filter {
+            MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
         }
+        guard !sourceAnchored else { return readable }
+        let recent = readable.filter {
+            Date(timeIntervalSince1970: Double($0.createTime)) >= now.addingTimeInterval(-48 * 3600)
+        }
+        return GroupContextSourceLoader.currentConversation(recent)
     }
 
     // MARK: - On-demand chat analysis
 
     func analyzeGroupChat(item: InboxItem) async -> (ChatAnalyzer.GroupAnalysis?, String?) {
-        // v5: the context window is bounded to the @'s own conversation
-        // (see `GroupContextSourceLoader.maxConversationGapSeconds`) and
-        // `group_analysis_v1` states the same rule.
+        // v6: every group window is bounded to a conversation — the @ path by
+        // `GroupContextSourceLoader`, the plain path by
+        // `filterGroupAnalysisMessages` — and `group_analysis_v1` states the
+        // same rule.
         //
         // The version has to move or the fix would not reach anyone: the cache
         // is keyed by `item.generationKey`, which identifies the *message*, not
@@ -41,7 +54,11 @@ extension ChatMonitor {
         // 72-hour TTL below — so a user looking at the same @ would still see
         // last week's topic mixed in. `GroupContextBriefingService` does the
         // same thing for the same reason (`context_window_v2`).
-        let analysisType = "action_panel_group_v5"
+        //
+        // v5 only moved the @ path. Summaries built from the plain newest-50
+        // window still fused several days of chatter, so the version has to
+        // move again for those rows to be recomputed.
+        let analysisType = "action_panel_group_v6"
         let readerActor = WeChatReaderActor(reader)
         let messages: [MessageInfo]
         let sourceAnchored: Bool

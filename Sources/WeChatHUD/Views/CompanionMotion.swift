@@ -297,6 +297,30 @@ enum IslandMeasurement {
         )
     }
 
+    /// Whether a frame change should land in one step instead of starting a
+    /// frame spring.
+    ///
+    /// Three cases, and the third is the one that produced the "clicked
+    /// 在微信中打开 and the panel went black" report:
+    ///
+    /// - Reduce Motion is on: the user asked for no motion.
+    /// - There is nothing to travel: the island is already there.
+    /// - The panel cannot be drawn right now. `FloatingPanel` drives its spring
+    ///   from a display link taken off its content view, and a link does not
+    ///   fire while the window is ordered out. A run started on a hidden panel
+    ///   therefore never advances: `visibleFrame` stays at the rect it started
+    ///   from, the compositor mask keeps revealing that rect, and ordering the
+    ///   panel back in re-anchors the same oversized island over the desktop.
+    ///   A change nobody can see is landed on its target instead.
+    static func landsWithoutMotion(
+        reduceMotion: Bool,
+        isDisplayable: Bool,
+        from: CGSize,
+        to: CGSize
+    ) -> Bool {
+        reduceMotion || !isDisplayable || from == to
+    }
+
     /// What the AppDelegate measurement sink should do with a reported size.
     ///
     /// Peek is a same-height width morph: snapping it would call

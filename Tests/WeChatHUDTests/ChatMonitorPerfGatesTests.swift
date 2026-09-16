@@ -129,7 +129,7 @@ final class ChatMonitorPerfGatesTests: XCTestCase {
         // so the cached summary must not be attached to this row.
         try store.writeAnalysisCache(
             chatUsername: item.chatUsername,
-            analysisType: "inbox_row_summary_v3",
+            analysisType: monitor.inboxSummaryAnalysisType,
             inputHash: item.generationKey,
             result: "陈旧摘要",
             ttlHours: 72
@@ -150,7 +150,7 @@ final class ChatMonitorPerfGatesTests: XCTestCase {
         let item = actionItem(chat: "synthetic-peer", timestamp: Date(timeIntervalSince1970: 1_700_000_000))
         try store.writeAnalysisCache(
             chatUsername: item.chatUsername,
-            analysisType: "inbox_row_summary_v3",
+            analysisType: monitor.inboxSummaryAnalysisType,
             inputHash: item.generationKey,
             result: "缓存摘要",
             ttlHours: 72
