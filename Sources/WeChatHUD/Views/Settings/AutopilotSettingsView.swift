@@ -19,9 +19,12 @@ enum AutopilotSettingsCopy {
     static let confidenceTitle = "自动发送把握程度"
     static let confidenceHint = "达到这个门槛才会尝试自动发送，仍受发送限制约束。"
     static let perHourTitle = "每小时最多"
-    static let perHourHint = "每小时发送上限。"
-    static let sessionTitle = "本次整理最多"
-    static let sessionHint = "本次整理期间最多自动发送的条数。"
+    /// The window is rolling (`now - 3600` in `serialSendWithRateLimit`), not a
+    /// clock hour, so "超了就等下一个小时" described a reset that does not
+    /// happen. And the counter is shared: `executeSend` — a reply the user
+    /// approved by hand in 待确认回复 — goes through the same limiter, which the
+    /// old wording hid from someone with 自动发出去 switched off.
+    static let perHourHint = "所有对话加起来一小时内最多发这么多条，自动发出和你确认后才发的都算。"
 
     static let alwaysManualTitle = "哪些一定交给你"
     static let alwaysManualRule = "群聊、转账、红包、小程序不会自动发送。其他敏感内容需人工确认。"
@@ -94,7 +97,9 @@ struct AutopilotSettingsView: View {
                     .font(.system(size: 13, weight: .medium))
             }
 
-            SettingsSection("自动回复") {
+            // The page header already reads 自动回复; a section repeating it
+            // says nothing. This group is about how far the automation goes.
+            SettingsSection("发到什么程度") {
                 SettingsToggleRow(
                     AutopilotSettingsCopy.autoSendTitle,
                     subtitle: autoSendEnabled ? AutopilotSettingsCopy.autoSendOn : AutopilotSettingsCopy.autoSendOff,
@@ -134,7 +139,7 @@ struct AutopilotSettingsView: View {
                 SettingsRowDivider()
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("自动发送把握程度")
+                        Text(AutopilotSettingsCopy.confidenceTitle)
                             .font(.system(size: 13))
                         Spacer()
                         Text("\(Int(confidenceThreshold * 100))%")
@@ -143,27 +148,22 @@ struct AutopilotSettingsView: View {
                     }
                     Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
                         .tint(CompanionPalette.jade)
-                        .accessibilityLabel("自动发送把握程度")
+                        .accessibilityLabel(AutopilotSettingsCopy.confidenceTitle)
                         .onChange(of: confidenceThreshold) { save() }
-                    Text("达到这个门槛才会尝试自动发送，仍受发送限制约束。")
+                    Text(AutopilotSettingsCopy.confidenceHint)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                SettingsRow("每小时最多", subtitle: "每小时发送上限。") {
-                    Picker("每小时最多", selection: $maxRepliesPerHour) {
+                SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
+                    Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
                         ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(width: 80)
                     .onChange(of: maxRepliesPerHour) { save() }
-                }
-                SettingsRowDivider()
-                SettingsRow("本次整理最多", subtitle: "本次整理期间最多自动发送的条数。") {
-                    Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
-                        .foregroundStyle(.secondary)
                 }
                 SettingsRowDivider()
                 // The batch window lives in the main section: it is part of
@@ -181,7 +181,7 @@ struct AutopilotSettingsView: View {
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
                 SettingsRowDivider()
-                DisclosureGroup("不自动回复的人") {
+                DisclosureGroup(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
                     exclusionSection
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
@@ -233,8 +233,8 @@ struct AutopilotSettingsView: View {
                                 autoSendEnabled = true
                                 save()
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -259,7 +259,9 @@ struct AutopilotSettingsView: View {
     // MARK: - Exclusion
 
     private var exclusionSection: some View {
-        SettingsSection(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
+        // Headerless: the disclosure label above already carries this exact
+        // string and its count.
+        SettingsSection(nil) {
             if excludedContacts.isEmpty {
                 Text(AutopilotSettingsCopy.excludedEmpty)
                     .font(.system(size: 11))
@@ -313,9 +315,16 @@ struct AutopilotSettingsView: View {
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        SettingsSection("高级") {
-            Text(AutopilotSettingsCopy.groupRule)
-                .font(.callout).foregroundStyle(.secondary).padding(14)
+        // No header: the disclosure this sits inside is already labelled
+        // 高级设置, and the group-chat rule it used to open with is printed
+        // verbatim as that toggle's own subtitle two rows up.
+        SettingsSection(nil) {
+            // A fixed guardrail, not a knob. In the main section it looked
+            // like a picker that had failed to draw.
+            SettingsRow("单次整理上限", subtitle: "一次整理最多自动发出这么多条，防止跑飞。") {
+                Text(safetyConfig.maxSendsPerSession > 0 ? "\(safetyConfig.maxSendsPerSession) 条" : "未设置上限")
+                    .foregroundStyle(.secondary)
+            }
             SettingsRowDivider()
             SettingsRow(
                 "微信发送键",

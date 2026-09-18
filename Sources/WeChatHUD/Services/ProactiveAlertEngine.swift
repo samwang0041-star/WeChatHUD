@@ -105,8 +105,8 @@ final class ProactiveAlertEngine {
         // Rule 1: VIP message overdue — with escalation tiers.
         var newTiers: [String: VIPAlertTier] = [:]
         for item in alertable where item.isVIP {
-            let overdueMinutes = Int(evaluationNow.timeIntervalSince(item.timestamp) / 60)
-            let tier = VIPAlertTier.compute(overdueMinutes: overdueMinutes)
+            let waitingMinutes = Int(evaluationNow.timeIntervalSince(item.timestamp) / 60)
+            let tier = VIPAlertTier.compute(waitingMinutes: waitingMinutes)
             guard tier != .none else { continue }
             newTiers[item.chatUsername] = tier
 
@@ -156,9 +156,13 @@ final class ProactiveAlertEngine {
         }
         for (key, count) in senderCounts where count >= 3 {
             let displayName = displayNames[key] ?? key
+            // 「连续」 promised back-to-back messages. This bucket is every
+            // unanswered alertable item from that sender, across chats and with
+            // no adjacency check, so three replies-old messages qualify too.
+            // What is actually true — and what the alert is for — is the count.
             pushAlert(
-                title: "连续消息",
-                body: "\(displayName) 连续发了 \(count) 条消息",
+                title: "多条未回",
+                body: "\(displayName) 有 \(count) 条消息还没回",
                 identifier: "burst-\(key)"
             )
         }
@@ -166,8 +170,17 @@ final class ProactiveAlertEngine {
         // Rule 4: High-priority reply debt. The scorer already clears
         // debt once you reply; `activeConversations` additionally covers
         // the "you're mid-exchange right now" case the scorer can't see.
-        if let p0 = replyDebtItems.first, p0.priority == .p0,
-           !activeConversations.contains(p0.chatUsername) {
+        //
+        // `replyDebtItems` is sorted by priority, so this used to read the
+        // first element and ask whether it was P0 — which meant the whole rule
+        // went silent whenever that one chat happened to be one you were
+        // actively typing in, even with other P0 debt sitting right behind it.
+        // Pick the first P0 that is *not* an active conversation instead, and
+        // still push at most one per evaluation so the budget-free path cannot
+        // fan out.
+        if let p0 = replyDebtItems.first(where: {
+            $0.priority == .p0 && !activeConversations.contains($0.chatUsername)
+        }) {
             let minutes = Int(evaluationNow.timeIntervalSince(p0.timestamp) / 60)
             if minutes > 30 {
                 pushAlert(
@@ -232,7 +245,9 @@ final class ProactiveAlertEngine {
             title = "VIP 等你 2 小时了"
             body = "\(item.senderName): \(item.preview)"
         case .t4:
-            title = "VIP 等你超过 4 小时"
+            // The tier fires at exactly 240 minutes, so 超过 was off by the
+            // boundary; keep the same shape as the 2 小时 tier.
+            title = "VIP 等你 4 小时了"
             body = "\(item.senderName) 的消息一直没回 — 要不要处理一下？"
         case .none:
             return

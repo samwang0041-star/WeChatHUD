@@ -16,9 +16,9 @@ enum InboxBuilder {
         notifications: [HUDNotification],
         dismissed: [String: Int64],
         snoozed: [String: Date] = [:],
-        silenced: Set<String> = []
+        silenced: Set<String> = [],
+        now: Date = Date()
     ) -> BuildResult {
-        let now = Date()
         var seen = Set<String>()
         var actionItems: [InboxItem] = []
         var infoItems: [InboxItem] = []
@@ -28,11 +28,13 @@ enum InboxBuilder {
         for debt in replyDebtItems {
             seen.insert(debt.chatUsername)
 
-            // Compute overdue status
-            let suggestedMinutes = debt.suggestedReplyMinutes ?? 0
+            // Overdue status. Same `>=` and same window the scorer used, so
+            // the 超时 badge can never disagree with the 超时 reason listed
+            // on this same row.
+            let windowMinutes = debt.overdueThresholdMinutes
             let minutesSinceMessage = now.timeIntervalSince(debt.timestamp) / 60.0
-            let isOverdue = suggestedMinutes > 0 && Int(minutesSinceMessage) > suggestedMinutes
-            let overdueMinutes = isOverdue ? Int(minutesSinceMessage) - suggestedMinutes : 0
+            let isOverdue = minutesSinceMessage >= Double(windowMinutes)
+            let overdueMinutes = isOverdue ? Int(minutesSinceMessage) - windowMinutes : 0
 
             var item = InboxItem(
                 id: debt.chatUsername,
@@ -50,7 +52,7 @@ enum InboxBuilder {
                 isAtMention: debt.isAtMention,
                 askType: .none,
                 reasons: debt.reasons,
-                suggestedReplyMinutes: suggestedMinutes,
+                overdueThresholdMinutes: windowMinutes,
                 status: .active,
                 dismissedAtMsgId: nil,
                 isOverdue: isOverdue,
@@ -126,7 +128,7 @@ enum InboxBuilder {
                 isAtMention: notif.isAtMention,
                 askType: .none,
                 reasons: [],
-                suggestedReplyMinutes: 0,
+                overdueThresholdMinutes: 0,
                 status: .active,
                 dismissedAtMsgId: nil,
                 contextNotification: notif

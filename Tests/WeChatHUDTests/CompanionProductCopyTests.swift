@@ -18,9 +18,9 @@ final class CompanionProductCopyTests: XCTestCase {
         for tab in SettingsView.Tab.allCases {
             for word in CompanionProductCopy.forbiddenChrome {
                 XCTAssertFalse(tab.label.contains(word), "\(tab.rawValue) label leaked \(word)")
-                XCTAssertFalse(tab.subtitle.contains(word), "\(tab.rawValue) subtitle leaked \(word)")
+                XCTAssertFalse(tab.subtitle?.contains(word) ?? false, "\(tab.rawValue) subtitle leaked \(word)")
             }
-            XCTAssertFalse(tab.subtitle.isEmpty)
+            XCTAssertFalse(tab.subtitle?.isEmpty ?? false)
         }
         XCTAssertEqual(SettingsView.Tab.today.label, "今天")
         XCTAssertEqual(SettingsView.Tab.tasks.label, "待办")
@@ -33,6 +33,9 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(SettingsView.Tab.autopilotDashboard.label, "待确认回复")
         XCTAssertEqual(SettingsView.Tab.guide.label, "怎么用")
         XCTAssertEqual(SettingsView.Tab.dailyReport.subtitle, "做过和剩下的")
+        // The commitments page keeps its one explanatory line in the page body;
+        // the header gloss said the title over again.
+        XCTAssertNil(SettingsView.Tab.commitments.subtitle)
         XCTAssertEqual(SettingsView.Tab.aiService.subtitle, "摘要用哪家")
         XCTAssertEqual(SettingsView.Tab.autopilot.subtitle, "怎么自动回")
         XCTAssertEqual(AttentionLevel.whitelist.label, "关注")
@@ -55,7 +58,6 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(choices[0].whenLabel, "今天 11:30")
         XCTAssertEqual(choices[1].whenLabel, "今天 12:00")
         XCTAssertEqual(choices[2].whenLabel, "明天 09:00")
-        XCTAssertTrue(CompanionProductCopy.compactHoverHint.contains("移入查看"))
     }
 
     /// The banner shares the panel's relative vocabulary ("12 分钟前" /

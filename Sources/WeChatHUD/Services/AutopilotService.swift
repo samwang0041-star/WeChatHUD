@@ -1124,7 +1124,7 @@ actor AutopilotService {
         globalSendTimestamps = globalSendTimestamps.filter { $0 > oneHourAgo }
         if config.maxRepliesPerHour > 0 && globalSendTimestamps.count >= config.maxRepliesPerHour {
             print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(globalSendTimestamps.count)/h)")
-            lastSendFailureMessage = "已达到每小时自动回复上限"
+            lastSendFailureMessage = "已达到每小时发送上限"
             return false
         }
 
@@ -1862,7 +1862,7 @@ actor AutopilotService {
         if style.usesEmoji { parts.append("经常用 emoji") }
         // Typing rhythm
         switch style.typingRhythm {
-        case .multiMessage: parts.append("习惯分多条发消息")
+        case .multiMessage(let burstSize): parts.append("习惯分多条发消息（一次约 \(burstSize) 条）")
         case .mixed: parts.append("有时分多条发")
         case .singleMessage: break
         }

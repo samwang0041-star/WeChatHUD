@@ -12,7 +12,7 @@
 JSON schema:
 {
   "headline": "一句话概括今天这个聊天的核心动态",
-  "topics": [{"name":"具体话题名(2-4字)","message_count":0,"participant_count":0,"summary":"讨论摘要","status":"已决/讨论中/搁置/信息同步","my_involvement":"我的参与,null如果没参与","cross_chats":["也在讨论的群"]}],
+  "topics": [{"name":"具体话题名(2-4字)","message_count":0,"participant_count":0,"summary":"讨论摘要","status":"已决/讨论中/搁置/信息同步","my_involvement":"我的参与,null如果没参与"}],
   "decisions": ["明确的决策"],
   "action_items": [{"what":"事项","who":"责任人","deadline":"如有,null如果没有"}],
   "mentions_me": 0,

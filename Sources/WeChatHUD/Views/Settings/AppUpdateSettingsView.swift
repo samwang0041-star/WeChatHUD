@@ -27,8 +27,8 @@ struct AppUpdateSettingsView: View {
                 SettingsRowDivider()
                 SettingsRow("安装新版本", subtitle: installSubtitle, icon: "square.and.arrow.down", iconColor: .orange) {
                     Button("下载并安装") { showInstallConfirm = true }
-                        .buttonStyle(.borderedProminent)
                         .tint(CompanionPalette.jade)
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                         .disabled(isBusy || PreviewRuntime.isEnabled)
                 }

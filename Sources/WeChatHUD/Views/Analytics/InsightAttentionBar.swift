@@ -44,7 +44,7 @@ struct InsightAttentionBar: View {
                     if hasOverdueCommits {
                         actionCountRow(
                             icon: "checkmark.circle.trianglebadge.exclamationmark",
-                            text: "\(overview.overdueCommitments) 条承诺已过期",
+                            text: "\(overview.overdueCommitments) 条承诺已到期",
                             color: .red
                         )
                     }

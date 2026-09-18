@@ -84,8 +84,8 @@ struct CommitmentTabView: View {
                                 showBatchClearConfirm = false
                                 batchClear()
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(SettingsView.Tab.commitments.accentColor)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -114,30 +114,25 @@ struct CommitmentTabView: View {
             // narrowest category there is (extraction applies a 0.72 gate and
             // only keeps explicit commitments). Without this line the two
             // pages look like they disagree about what was promised.
-            Text("这里只记你明确答应过的事 — 不受「待办」页的保留档位影响。")
+            Text("这里只记你明确答应过的事，所以不受「待办」页保留档位的影响。")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 CompanionFilterPill(title: "进行中 \(activeCount)", selected: filter == .active, tint: SettingsView.Tab.commitments.accentColor) { filter = .active }
-                CompanionFilterPill(title: "已超期 \(overdueCount)", selected: filter == .overdue, tint: SettingsView.Tab.commitments.accentColor) { filter = .overdue }
+                // The overdue notice used to be a second control in this same
+                // row — 「有 1 项到期了，去查看」, whose action was literally
+                // `filter = .overdue`, the same thing the pill two slots to its
+                // left already did. One control now: the pill carries the count
+                // and turns amber when there is something overdue.
+                CompanionFilterPill(title: "已到期 \(overdueCount)", selected: filter == .overdue,
+                                    tint: overdueCount > 0 ? .orange : SettingsView.Tab.commitments.accentColor) { filter = .overdue }
                 CompanionFilterPill(title: "已完成", selected: filter == .fulfilled, tint: SettingsView.Tab.commitments.accentColor) { filter = .fulfilled }
                 CompanionFilterPill(title: "全部", selected: filter == .all, tint: SettingsView.Tab.commitments.accentColor) { filter = .all }
                 Spacer()
                 if (filter == .active || filter == .overdue) && !filteredCommitments.isEmpty {
                     CompanionBatchClearButton(help: "将当前承诺全部标记为已完成") {
                         showBatchClearConfirm = true
-                    }
-                }
-                if overdueCount > 0 {
-                    // Same contract as the batch button: keep the sentence
-                    // while there is room, fall back to the count alone when
-                    // there is not. It used to truncate to 「有 1 项已超期…」
-                    // once 一键清空 joined the row, and a half-sentence in a
-                    // warning control is worse than a short one.
-                    ViewThatFits(in: .horizontal) {
-                        overdueButton("有 \(overdueCount) 项已超期，去查看")
-                        overdueButton("\(overdueCount) 项超期")
                     }
                 }
             }
@@ -190,24 +185,14 @@ struct CommitmentTabView: View {
         }
     }
 
-    /// The overdue notice, in the label length the row can afford.
-    private func overdueButton(_ title: String) -> some View {
-        Button {
-            filter = .overdue
-        } label: {
-            Label(title, systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-        }
-        .buttonStyle(.bordered)
-        .tint(.orange)
-        .controlSize(.small)
-        .accessibilityLabel("有 \(overdueCount) 项已超期，去查看")
-    }
 
     private func card(_ commitment: Commitment) -> some View {
         let expanded = expandedID == commitment.id
         let isActive = commitment.status == .pending || commitment.status == .overdue
+        // The group header says 已到期 once at the top of a section; scroll past
+        // it and the row is the only thing left. The deadline is what slipped, so
+        // it is the thing that carries the warning colour.
+        let isLate = isActive && CommitmentPresentation.isOverdue(commitment)
         return VStack(alignment: .leading, spacing: 12) {
             Button {
                 withMotion(CompanionMotion.rowExpand()) {
@@ -224,7 +209,7 @@ struct CommitmentTabView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(CommitmentPresentation.deadlineText(for: commitment))
                                 .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(isLate ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                             Text(commitment.content.isEmpty ? "未命名承诺" : commitment.content)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(.primary)
@@ -259,8 +244,8 @@ struct CommitmentTabView: View {
                            } label: {
                                Text("标记完成")
                            }
+                           .tint(SettingsView.Tab.commitments.accentColor)
                            .buttonStyle(.borderedProminent)
-                            .tint(SettingsView.Tab.commitments.accentColor)
                            Button("取消承诺") { pendingCancel = commitment }
                                .buttonStyle(.bordered)
                             Spacer()
@@ -284,9 +269,16 @@ struct CommitmentTabView: View {
         .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(expanded ? CompanionPalette.jade.opacity(0.45) : CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
+                .strokeBorder(edgeColor(expanded: expanded, late: isLate), lineWidth: CompanionAccessibility.cardEdgeWidth)
         )
         .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
+    }
+
+    /// A jade ring around a promise that has already slipped reads as "done",
+    /// which is the opposite of why the card is open.
+    private func edgeColor(expanded: Bool, late: Bool) -> Color {
+        guard expanded else { return CompanionPalette.border }
+        return (late ? Color.orange : CompanionPalette.jade).opacity(0.45)
     }
 
     private func contextBlock(_ label: String, _ text: String) -> some View {
@@ -410,7 +402,7 @@ enum CommitmentPresentation {
 
     enum Filter: String, CaseIterable {
         case active = "进行中"
-        case overdue = "已超期"
+        case overdue = "已到期"
         case fulfilled = "已完成"
         case all = "全部"
     }
@@ -464,6 +456,16 @@ enum CommitmentPresentation {
         return date.formatted(.dateTime.month().day().hour().minute())
     }
 
+    /// A deadline with its tense already decided: past reads 已到期, future
+    /// reads 截止 <absolute time>.
+    ///
+    /// `MessageInfo.formatRelative` must never be handed a deadline — it is
+    /// past-only, and a negative diff falls straight through to 刚刚, so every
+    /// future date rendered as 截止 刚刚.
+    static func deadlineCaption(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        date < now ? "已到期" : "截止 \(timeLabel(date, now: now, calendar: calendar))"
+    }
+
     static func deadlineText(for commitment: Commitment, now: Date = Date(), calendar: Calendar = .current) -> String {
         if let date = commitment.deadlineAt {
             return timeLabel(date, now: now, calendar: calendar)
@@ -474,9 +476,9 @@ enum CommitmentPresentation {
     static func emptyTitle(for filter: Filter) -> String {
         switch filter {
         case .active: return "没有进行中的承诺"
-        case .overdue: return "没有已超期的承诺"
+        case .overdue: return "没有已到期的承诺"
         case .fulfilled: return "近两周没有已完成的承诺"
-        case .all: return "没有正在跟进的承诺"
+        case .all: return "还没有记下的承诺"
         }
     }
 
@@ -493,7 +495,7 @@ enum CommitmentPresentation {
 
     static func sectionTitle(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
         guard let date else { return "无期限" }
-        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已过期" }
+        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已到期" }
         if calendar.isDate(date, inSameDayAs: now) {
             return "今天 " + date.formatted(.dateTime.month().day().weekday(.wide))
         }
@@ -511,7 +513,7 @@ enum CommitmentPresentation {
     }
 
     private static func sectionRank(_ title: String) -> Int {
-        if title == "已过期" { return 0 }
+        if title == "已到期" { return 0 }
         if title.hasPrefix("今天") { return 1 }
         if title == "明天" { return 2 }
         if title == "之后" { return 4 }

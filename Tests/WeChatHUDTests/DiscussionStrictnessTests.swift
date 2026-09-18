@@ -146,7 +146,16 @@ final class DiscussionStrictnessTests: XCTestCase {
     }
 
     func testLabelsAndReceiptWordingAreStable() {
-        XCTAssertEqual(DiscussionStrictness.allCases.map(\.label), ["全部都记", "只留要做的", "只留压在我身上的"])
+        XCTAssertEqual(DiscussionStrictness.allCases.map(\.label), ["全记", "只记要做的", "只记要紧的"])
+        // This row is about what the assistant records; the pills two rows
+        // below are about who owns the task. They used to share words
+        // (全部都记 vs 全部, 只留要做的 vs 我要做), which made one dimension read
+        // as a mislabelled copy of the other. 记 in every label is the seam.
+        for level in DiscussionStrictness.allCases {
+            XCTAssertTrue(level.label.contains("记"), level.label)
+            XCTAssertFalse(DiscussionScope.allCases.map(\.rawValue).contains(level.label),
+                           "\(level.label) duplicates a scope pill")
+        }
         XCTAssertEqual(DiscussionWorkspaceView.receiptLabel(hidden: 413, mine: 0), "已收起 413 条 · 展开")
         XCTAssertEqual(
             DiscussionWorkspaceView.receiptLabel(hidden: 629, mine: 140),

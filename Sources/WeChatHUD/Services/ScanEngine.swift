@@ -599,9 +599,14 @@ enum ScanEngine {
                     // speaking here, is worth interrupting for even without an
                     // @. A group muted for @s still reaches the inbox; it just
                     // does not pop up.
+                    //
+                    // `isAt` deliberately stays out of this: an @ has its own
+                    // switch on the 提醒方式 page, and OR-ing it in here meant
+                    // turning that switch off did nothing as long as 重点关注
+                    // was on — two controls, one behavior, no way to opt out.
                     let isWatchedMember = admissionRules.watchedMembers[entry.id]?
                         .contains(msg.senderUsername) == true
-                    let worthInterrupting = isAt || isCrossGroupVIP || isWatchedMember
+                    let worthInterrupting = isCrossGroupVIP || isWatchedMember
                     let shouldPresent = notificationConfig.shouldPresent(notif.presentationSemanticState)
                         || (worthInterrupting && notificationConfig.important)
                     let decision = admissionRules.decide(

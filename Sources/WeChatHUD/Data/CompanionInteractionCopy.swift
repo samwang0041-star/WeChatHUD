@@ -57,6 +57,18 @@ enum CompanionInteractionCopy {
     static let missedRepliesFailed = "刚才没读完聊天。点时间再试一次，或先检查微信连接。"
     static let missedRepliesNeedConnection = "先连上微信，才能按时间找出还没回的消息。"
 
+    /// What the walk did *not* cover. The empty page is a claim about "nothing
+    /// left unanswered", so a truncated or partially failed scan has to say so
+    /// in the same breath — otherwise silence reads as a clean bill of health.
+    static func missedRepliesUnread(_ count: Int) -> String { "另有 \(count) 个对话没读到" }
+    static let missedRepliesGroupsUnreadable = "群会话列表没读到"
+    static func missedRepliesIncomplete(_ holes: String) -> String {
+        "\(holes)，这里可能不全。"
+    }
+    /// Empty-page headlines: the all-clear one only when the scan was complete.
+    static let missedRepliesAllClear = "没有遗漏"
+    static let missedRepliesPartial = "没查全"
+
     /// Row-level hover promise in the message list: what opening this row
     /// actually gives you.
     static let openConversationHint = "展开这条，看原文、AI 解读和可以回的话"

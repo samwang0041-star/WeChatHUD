@@ -51,6 +51,7 @@ Sources/WeChatHUD/
     ├── InboxRowView.swift         — 收件箱行 (展开露出 ActionPanel)
     ├── CommitmentTabView.swift   — 承诺管理 (完成/取消操作)
     ├── ConversationDetailView.swift — 对话分析工作台
+    ├── Analytics/                  — 洞察页：ChatInsightView(侧栏+单对话) 与 InsightOverviewDashboard(总览：雷达/关系/指标折叠区)。总览挂在侧栏「总览」行；`--preview-insight-overview` 让它带着 `computeGlobalOverview` 的真数字直接渲染，可截图验收
     ├── DailyReportTabView.swift  — 日报/周报 (带切换)
     └── NotificationBannerView.swift — 通知横幅 (带操作按钮)
 ```
@@ -65,11 +66,10 @@ Sources/WeChatHUD/
 - **三态 + 详情**：compact(36px) → extended(tabs) → notification(banner) → detail(500px)
 - **Autopilot 安全**：full-auto 方向 — 默认关闭 + 置信度阈值(0.8) + 敏感词拦截 + 媒体衰减(0.7x) + 金融类强制 pending + 会话发送上限(50)
 - **StyleProfiler**：学习用户写作风格，让 AI 回复建议匹配个人习惯
-- **Smart Digest**：离开 30 分钟后返回自动提示"你错过了什么"
 - **7 日趋势图**：VIP Profile 中的消息活跃度迷你柱状图
 - **对话记忆**：每个白名单对话维护滚动摘要，AI 增量更新
-- **主动提醒**：4 规则引擎 (VIP超时/承诺到期/连续消息/P0待回)
-- **跨对话关联**：检测多个对话中的共同关键词
+- **主动提醒**：4 规则引擎 (VIP 等待升档 / 承诺到期 / 多条未回 / P0 待回)。VIP 升档按「对方已等待时长」走 30m/1h/2h/4h+ 四档，1h 档只有视觉提示不发系统通知
+- **跨对话关联**：全局简报的 `cross_topics` 把同一话题在多个对话里的说法（含冲突）列进洞察雷达；单对话分析看不到别的对话，因此不做该推断
 - **AI 学习循环**：用户反馈驱动回复建议持续优化
 - **数据导出**：Markdown 报告导出到桌面
 - **首次引导**：2 页 onboarding 向导（连接微信 / 选择关注）；AI 不进向导，连上微信后由常驻 CompanionSetupCard 引导（可内联展开配置+测试），并有「一键体检」合并展示数据库/微信/AI 三处状态

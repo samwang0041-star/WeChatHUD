@@ -68,6 +68,7 @@ struct DiscussionSourceView: View {
                     Label("在微信中查看", systemImage: "arrow.up.right")
                         .frame(maxWidth: .infinity)
                 }
+                .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent)
                 Button("更正归属") { onCorrect?() }
                     .buttonStyle(.bordered)

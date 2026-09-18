@@ -34,7 +34,7 @@ final class AIDailyReportGeneratorTests: XCTestCase {
         XCTAssertTrue(prompt.contains("AC:"))
         XCTAssertTrue(prompt.contains("[待办][Team Chat] 跟进方案A实施"))
         XCTAssertTrue(prompt.contains("R:"))
-        XCTAssertTrue(prompt.contains("承诺「交付报告」已超期"))
+        XCTAssertTrue(prompt.contains("承诺「交付报告」已到期"))
     }
 
     func testFormatPromptEmptyData() {
@@ -402,7 +402,7 @@ final class AIDailyReportGeneratorTests: XCTestCase {
             risks: [
                 DailyReportRisk(
                     type: .overdueCommitment,
-                    description: "承诺「交付报告」已超期",
+                    description: "承诺「交付报告」已到期",
                     severity: .high,
                     sourceChatName: "Boss",
                     sourceChatUsername: "wxid_boss"

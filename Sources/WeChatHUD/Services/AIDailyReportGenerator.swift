@@ -120,7 +120,7 @@ actor AIDailyReportGenerator {
             - 提取高亮: {highlight_count}
             - 待办事项: {pending_todo_count}
             - 待处理请求: {pending_ask_count}
-            - 待履行承诺: {pending_commitment_count}（超期: {overdue_commitment_count}）
+            - 待履行承诺: {pending_commitment_count}（已到期: {overdue_commitment_count}）
             - 回复债务: {reply_debt_count}
             - 撤回消息: {recalled_count}
 

@@ -239,9 +239,27 @@ enum InboxContextBuilder {
         } else {
             attentionLevel = .stranger
         }
-        let replyWindow = contactEntry?.replyWindowMinutes ?? 120
+        let isGroup = MessageHelpers.isGroupChat(chatUsername)
+        let mentionedMe = MessageHelpers.isAtMe(
+            text,
+            myUsername: myUsername,
+            myDisplayName: myDisplayName,
+            mySelfNames: mySelfNames
+        )
 
-        // Overdue
+        // Overdue — the same window the debt scorer uses, from the same
+        // function. `replyWindowMinutes == 0` is this project's "not set"
+        // marker (three of the eleven roles default to 0), so it has to fall
+        // back to the tier rather than act as a zero-second threshold, which
+        // is what made an acquaintance's row carry a permanent 超时 badge.
+        let debtConfig = store.getSettingJSON("replyDebt", as: ReplyDebtConfig.self) ?? ReplyDebtConfig()
+        let replyWindow = ReplyDebtConfig.overdueWindow(
+            contactWindowMinutes: contactEntry?.replyWindowMinutes ?? 0,
+            isGroup: isGroup,
+            isAtMention: mentionedMe,
+            isVIP: attentionLevel == .vip,
+            config: debtConfig
+        )
         let ageMinutes = Int(Date().timeIntervalSince(
             Date(timeIntervalSince1970: Double(triggerMessage.createTime))
         ) / 60)
@@ -263,14 +281,8 @@ enum InboxContextBuilder {
         let commitments = store.loadCommitments(status: .pending)
             .filter { $0.chatUsername == chatUsername }
 
-        // Group context
-        let isGroup = MessageHelpers.isGroupChat(chatUsername)
-        let mentionedMe = MessageHelpers.isAtMe(
-            text,
-            myUsername: myUsername,
-            myDisplayName: myDisplayName,
-            mySelfNames: mySelfNames
-        )
+        // Group context (`isGroup` / `mentionedMe` resolved above, with the
+        // overdue window that needs the same two answers)
         let groupContext: [MessageInfo]?
         if isGroup && mentionedMe {
             let allRecent: [MessageInfo]

@@ -17,3 +17,13 @@ classify_real_*.json
 .agent-checkpoints/
 .superpowers/
 .claude/
+
+# Pixel-QA evidence is the app rendering the operator's *real* WeChat
+# conversations — contact names and message bodies, at 2x, in PNG. 197 MB /
+# 683 shots as of 2026-09-18. Keep them on disk for diffing rounds; never
+# commit them to this public repo. Already-tracked shots under
+# docs/qa/2026-09-08/design/ are unaffected (tracked files ignore .gitignore),
+# and `git add -f` stays the escape hatch for a shot verified to be synthetic.
+docs/qa/**/*-pixel/
+docs/qa/**/*.png
+docs/qa/**/*.jpg

@@ -37,11 +37,15 @@ enum DiscussionStrictness: String, Codable, CaseIterable, Sendable {
         self = DiscussionStrictness(rawValue: raw) ?? .default
     }
 
+    /// All three say 记: this row is about what the assistant writes down, not
+    /// about who owns a task — the owner pills below say 全部 / 我要做 and the
+    /// old labels reused them. 只留压在我身上的 also over-claimed: `admits`
+    /// keeps what the other side owes too.
     var label: String {
         switch self {
-        case .everything: return "全部都记"
-        case .actionable: return "只留要做的"
-        case .pressing: return "只留压在我身上的"
+        case .everything: return "全记"
+        case .actionable: return "只记要做的"
+        case .pressing: return "只记要紧的"
         }
     }
 
@@ -52,7 +56,7 @@ enum DiscussionStrictness: String, Codable, CaseIterable, Sendable {
         case .actionable:
             return "信息点、时间地点这些只算记录的内容收进「信息备忘」，不占待办列表。"
         case .pressing:
-            return "只留你或对方明确要交付的事，以及 7 天内到期的事。最干净，也最容易漏。"
+            return "只记你或对方明确要交付的事，以及 7 天内到期的事。最干净，也最容易漏。"
         }
     }
 

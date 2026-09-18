@@ -37,7 +37,7 @@ final class InboxBuilderTests: XCTestCase {
             isAtMention: isAtMention,
             inboundCountSinceLastOutbound: 1,
             reasons: [],
-            suggestedReplyMinutes: 30,
+            overdueThresholdMinutes: 30,
             contextNotification: contextNotification
         )
     }

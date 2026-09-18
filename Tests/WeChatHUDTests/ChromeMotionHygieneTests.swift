@@ -117,14 +117,22 @@ final class ChromeMotionHygieneTests: XCTestCase {
     }
 
     func testTabSubtitlesStayShortAndConcrete() {
+        // A page may drop the gloss entirely when the only candidate restated
+        // the title (我答应的事 / 已答应的事) — but it may not fill the slot
+        // with a sentence, an exclamation, or something the header can't fit.
         for tab in SettingsView.Tab.allCases {
-            XCTAssertFalse(tab.subtitle.isEmpty, tab.rawValue)
+            guard let subtitle = tab.subtitle else { continue }
+            XCTAssertFalse(subtitle.isEmpty, tab.rawValue)
             XCTAssertLessThanOrEqual(
-                tab.subtitle.count, 12,
-                "\(tab.rawValue) subtitle is too long: \(tab.subtitle)"
+                subtitle.count, 12,
+                "\(tab.rawValue) subtitle is too long: \(subtitle)"
             )
-            XCTAssertFalse(tab.subtitle.contains("！"))
-            XCTAssertFalse(tab.subtitle.contains("。"))
+            XCTAssertFalse(subtitle.contains("！"))
+            XCTAssertFalse(subtitle.contains("。"))
         }
+        // Two pages carrying the same gloss is how 草稿 and 待确认回复 both
+        // promised 确认后发送 while only one of them sends anything.
+        let glosses = SettingsView.Tab.allCases.compactMap(\.subtitle)
+        XCTAssertEqual(glosses.count, Set(glosses).count, "two pages share a gloss")
     }
 }

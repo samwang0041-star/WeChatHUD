@@ -79,6 +79,7 @@ struct AssistantTodayView: View {
             }
         }
         .onAppear {
+            if PreviewRuntime.opensTodayMissedReplies { showMissed = true }
             refreshReadiness()
             if monitor.missedReplies.isEmpty && !monitor.missedReplyLoading {
                 let bounds = missedWindow.bounds(customStart: missedCustomStart, customEnd: missedCustomEnd)
@@ -323,13 +324,15 @@ struct AssistantTodayView: View {
         }
     }
 
-    private func quickLink(_ title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func quickLink(_ title: String, subtitle: String?, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon).foregroundStyle(CompanionPalette.accent).frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    if let subtitle {
+                        Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
@@ -411,7 +414,10 @@ struct AssistantTodayView: View {
     }
 
     @ViewBuilder private var todayScopePills: some View {
-        filterPill("需要回复", count: needsReply.count, selected: !showUpdates && !showMissed) {
+        // Three glyphs each, like the two jump pills beside them. The row is a
+        // single visual unit only while the labels are the same length; at
+        // 4/3/3/3 the first chip was measurably wider than its neighbours.
+        filterPill("要回复", count: needsReply.count, selected: !showUpdates && !showMissed) {
             showUpdates = false
             showMissed = false
         }
@@ -489,41 +495,45 @@ struct AssistantTodayView: View {
                 .lineSpacing(4).textSelection(.enabled).lineLimit(expanded ? 6 : 1)
 
             if expanded {
-                if let summary = item.aiSummary, !summary.isEmpty {
-                    HStack(alignment: .top, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jadeInk)
-                            Text(summary).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
+                if item.aiSummary?.isEmpty == false {
+                    // The hero line above *is* this summary. This strip used to
+                    // print it again — the same sentence twice in one card, two
+                    // sizes apart — and then offer the original through two
+                    // controls one line apart (a 「查看原文」 button and a
+                    // 「消息原文」 disclosure). What the card needs here is
+                    // provenance for the line above, plus one way to read what
+                    // the person actually wrote.
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(CompanionPalette.jadeInk)
+                            .frame(width: 5, height: 5)
+                        Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jadeInk)
+                        Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Button(revealedOriginalIDs.contains(item.id) ? "收起原文" : "查看消息原文") {
+                            if revealedOriginalIDs.contains(item.id) {
+                                revealedOriginalIDs.remove(item.id)
+                            } else {
+                                revealedOriginalIDs.insert(item.id)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(CompanionPalette.jadeInk)
                         Spacer(minLength: 8)
-                        Button(revealedOriginalIDs.contains(item.id) ? "原文已展开" : "查看原文") {
-                            revealedOriginalIDs.insert(item.id)
-                        }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(CompanionPalette.jadeInk)
                     }
-                    .padding(12)
-                    .background(CompanionPalette.selectedFill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    DisclosureGroup(isExpanded: Binding(
-                        get: { revealedOriginalIDs.contains(item.id) },
-                        set: { isOn in
-                            if isOn { revealedOriginalIDs.insert(item.id) }
-                            else { revealedOriginalIDs.remove(item.id) }
-                        }
-                    )) {
+                    .padding(.top, 1)
+
+                    if revealedOriginalIDs.contains(item.id) {
                         Text(item.preview).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
-                    } label: {
-                        Text("消息原文")
                     }
                 }
                HStack {
                    Button { panelState.showChatDetail(chatUsername: item.chatUsername, chatName: item.chatName) } label: {
                        Label("理解上下文与回复", systemImage: "text.bubble")
                    }
+                   .tint(CompanionPalette.jade)
                    .buttonStyle(.borderedProminent)
-                    .tint(CompanionPalette.jade)
                    Menu {
                        ForEach(CompanionProductCopy.snoozeChoices()) { choice in
                             Button("\(choice.label)  \(choice.whenLabel)") { snooze(item, until: choice.until) }
@@ -534,7 +544,10 @@ struct AssistantTodayView: View {
                     .help("稍后提醒")
                     .accessibilityLabel("稍后提醒")
                     Spacer()
-                    Button("已处理") { if monitor.dismissInboxItem(item) { dismissed = item } }.buttonStyle(.bordered)
+                    // 「标为已处理」, the same words the inbox row's action uses.
+                    // On its own 「已处理」 reads as a status label, and this is a
+                    // button that changes the status.
+                    Button("标为已处理") { if monitor.dismissInboxItem(item) { dismissed = item } }.buttonStyle(.bordered)
                 }
                 .controlSize(.regular)
             }

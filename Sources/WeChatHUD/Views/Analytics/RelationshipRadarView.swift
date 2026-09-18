@@ -290,7 +290,14 @@ struct RelationshipRadarView: View {
         ContentUnavailableView(
             "还没有跨天关系信号",
             systemImage: "point.3.connected.trianglepath.dotted",
-            description: Text("先在「聊天回顾」里分析至少两天。单天分析不会填态度；雷达也不会自动发消息。")
+            // The toolbar on this very page already says 本机计算 · 不自动发消息;
+            // repeating the reassurance in the empty state spends the one line
+            // that could tell the user what to do next.
+            //
+            // Broken by hand into two lines: `ContentUnavailableView` gives its
+            // description a narrow column, so the prose wrapped to three with
+            // 「态度。」 stranded alone under two full lines.
+            description: Text("先在「聊天回顾」里分析两天以上\n单天分析不会填态度")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -231,6 +231,9 @@ struct InsightRadarSection: View {
             if finding.kind == .recall {
                 return "先看撤回前后的上下文，避免把已改口的信息当成最终结论。"
             }
+            if finding.kind == .crossTopic {
+                return "回之前先在这几个对话里把口径对齐，别只按单边的说法答。"
+            }
             return "我已在本卡片展开来龙去脉；下面的概览模块可继续交叉确认。"
         }
     }
@@ -264,6 +267,7 @@ struct InsightRadarSection: View {
         case .blindSpot: return "eye.trianglebadge.exclamationmark"
         case .relationship: return "person.2.wave.2"
         case .pressure: return "exclamationmark.triangle.fill"
+        case .crossTopic: return "link"
         }
     }
 

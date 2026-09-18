@@ -162,7 +162,7 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
         let vm = DailyReportPresentationPolicy.buildViewModel(from: report)
         let md = DailyReportPresentationPolicy.markdown(for: report, viewModel: vm)
 
-        XCTAssertTrue(md.contains("## 💡 规则整理"))
+        XCTAssertTrue(md.contains("## 💡 本地统计"))
         XCTAssertFalse(md.contains("## 💡 AI 总结"))
     }
 

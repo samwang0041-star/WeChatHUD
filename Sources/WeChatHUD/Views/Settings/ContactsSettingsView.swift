@@ -353,8 +353,8 @@ private struct ContactsListSubView: View {
                 Spacer()
                 Button("取消") { showAddPopover = false }
                 Button(CompanionProductCopy.addFollow) { addSelectedContacts() }
-                    .buttonStyle(.borderedProminent)
                     .tint(CompanionPalette.jade)
+                    .buttonStyle(.borderedProminent)
                     .disabled(selectedAddUsernames.isEmpty)
             }
         }
@@ -479,8 +479,13 @@ private struct ContactsListSubView: View {
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(color.opacity(0.12)).cornerRadius(3)
                 if contact.replyWindowMinutes > 0 {
-                    Text("\(contact.replyWindowMinutes)m")
+                    // Was "120m": an English unit, and a bare number that never
+                    // said 120 minutes of *what*. The detail pane below calls the
+                    // same value 分钟没回算超时.
+                    Text("\(contact.replyWindowMinutes)分")
                         .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                        .help("超过 \(contact.replyWindowMinutes) 分钟没回，这条就标成超时")
+                        .accessibilityLabel("\(contact.replyWindowMinutes) 分钟没回算超时")
                 }
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
@@ -620,8 +625,9 @@ private struct ContactInspectorView: View {
             }
 
             DisclosureGroup("账号信息") {
+                // 类型 lives in 这个对话 below; stating it here too put the
+                // same fact twice in one panel.
                 infoRow("微信 ID", value: contact.username)
-                infoRow("类型", value: (MessageHelpers.isGroupChat(contact.username) || whitelistEntry?.isGroup == true) ? "群聊" : "联系人")
             }
             .font(.system(size: 12, weight: .medium))
         }
@@ -629,20 +635,16 @@ private struct ContactInspectorView: View {
 
     private func trackingSection(_ contact: ContactEntry) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("整理范围", systemImage: "scope")
-            Text("只整理已关注的对话")
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-            // 关注级别 is not repeated here.
-            //
-            // It was a read-only row in this section *and* the editable
-            // segmented control below, under the identical label — the same
-            // fact stated twice in one panel, once in a way the user cannot
-            // act on. The editable control owns the fact; this row was the
-            // echo. 类型 and 提醒时机 have no control elsewhere, so they stay.
+            // Was 「整理范围 / 只整理已关注的对话」: that sentence restates the
+            // global 提醒范围 mode, which the user can change to 全部未读都提醒
+            // on this very page — so it went stale on its own, and 整理范围
+            // never described the two rows under it anyway.
+            sectionTitle("这个对话", systemImage: "info.circle")
+            // One vocabulary for one fact: this row said 私聊 while the
+            // 账号信息 block above called the same thing 联系人.
             infoRow("类型", value: (MessageHelpers.isGroupChat(contact.username) || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
             if contact.replyWindowMinutes > 0 {
-                infoRow("提醒时机", value: "\(contact.replyWindowMinutes) 分钟后提醒")
+                infoRow("多久算超时", value: "\(contact.replyWindowMinutes) 分钟没回算超时")
             }
         }
     }
@@ -691,7 +693,7 @@ private struct ContactInspectorView: View {
                     }
                 }
             } else {
-                Text("还不知道这个人是谁。点右上角后会在后台整理，不影响你继续用。")
+                Text("还不知道这个人是谁。点右边的「重新整理」，会在后台进行，不影响你继续用。")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -969,14 +971,18 @@ struct ContactEditSheet: View {
 
                 Section("回复追踪") {
                     HStack {
-                        Stepper("提醒时机", value: $replyWindow, in: 0...480, step: 15)
-                        Text("\(replyWindow) 分钟")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .frame(width: 60, alignment: .trailing)
-                    }
-                    Text("默认 \(selectedRole.defaultReplyWindowMinutes) 分钟 · 设为 0 不追踪")
-                        .font(.caption).foregroundColor(.secondary)
+                    // 「设为 0 不追踪」 was never true, and after this round's fix
+                    // 0 means "use the default tier". The number never schedules a
+                    // reminder either — it is the age at which a message starts
+                    // counting as 超时, which is what raises its priority.
+                    Stepper("多久算超时", value: $replyWindow, in: 0...480, step: 15)
+                    Text("\(replyWindow) 分钟")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .frame(width: 60, alignment: .trailing)
+                }
+                Text("超过这个时长还没回，这条就标成超时、排得更靠前。0 = 用默认时长。")
+                    .font(.caption).foregroundColor(.secondary)
                 }
 
                 Section("TA 是谁") {

@@ -30,10 +30,17 @@ struct DailyReportCommandCenterView: View {
 
     /// Daily-report actions cache the name they were generated with, so a
     /// rename or a newly recovered group name has to be resolved on display.
+    ///
+    /// A resolution that comes back as the very identifier it was asked about
+    /// is not a name. Preferring it hid "林晓 · 产品同事" behind
+    /// "preview-colleague" on rows that already carried the right name.
     private func resolvedChatName(_ stored: String, username: String?) -> String {
         guard let username, !username.isEmpty else { return stored }
         let resolved = monitor.displayName(for: username)
-        return resolved.isEmpty ? stored : resolved
+        guard !resolved.isEmpty, resolved != username,
+              !ContactIdentityIndex.isUninformativeChatName(resolved)
+        else { return stored }
+        return resolved
     }
 
     var body: some View {
@@ -92,7 +99,9 @@ struct DailyReportCommandCenterView: View {
             divider
 
             if !vm.urgentActions.isEmpty {
-                sectionHeader(icon: "exclamationmark.circle.fill", tint: .red, text: "紧急待处理", count: vm.urgentActions.count)
+                // The bucket is critical *and* high urgency, so a header that
+                // says 紧急 contradicts the 高 chip on the rows under it.
+                sectionHeader(icon: "exclamationmark.circle.fill", tint: .red, text: "优先处理", count: vm.urgentActions.count)
                 ForEach(vm.urgentActions) { action in
                     actionCard(action, isUrgent: true, insight: vm.actionInsights[action.id])
                 }
@@ -267,7 +276,7 @@ struct DailyReportCommandCenterView: View {
                 statLabel("今日处理", value: progress.completedCount, color: CompanionPalette.jadeInk)
                 statLabel("待跟进", value: progress.activeCount, color: .primary)
                 if progress.overdueCount > 0 {
-                    statLabel("超期", value: progress.overdueCount, color: .red)
+                    statLabel("已到期", value: progress.overdueCount, color: .red)
                 }
             }
             Text(DailyReportPresentationPolicy.followUpCaption)
@@ -386,15 +395,21 @@ struct DailyReportCommandCenterView: View {
                     panelState.pendingDiscussionChatUsername = action.sourceChatUsername
                     NotificationCenter.default.post(name: .hudSwitchTab, object: "tasks")
                 }) {
-                    actionButtonLabel(
-                        icon: "checklist",
-                        title: "查看待办",
-                        tint: CompanionPalette.jade,
-                        background: CompanionPalette.selectedFill
-                    )
+                    // A quiet text link, not a second chip. Every row in this
+                    // section carried two same-shaped chips, so the one action
+                    // the row is for (完成) had no more weight than a jump.
+                    HStack(spacing: 3) {
+                        Image(systemName: "checklist")
+                        Text("待办")
+                    }
+                    .font(.system(size: isWorkspace ? 11 : 9))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 3)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("查看待办")
+                .help("到「待办」页看这个对话的事项")
                 .accessibilityLabel("查看待办：\(action.content)")
             }
             .opacity(isHovered ? 1.0 : 0.85)
@@ -582,7 +597,7 @@ struct DailyReportCommandCenterView: View {
                     .font(.system(size: isWorkspace ? 14 : 11))
                     .foregroundColor(.primary)
                 if let name = risk.sourceChatName {
-                    Text(name)
+                    Text(resolvedChatName(name, username: risk.sourceChatUsername))
                         .font(.system(size: isWorkspace ? 12 : 9))
                         .foregroundColor(.secondary)
                 }
@@ -619,7 +634,7 @@ struct DailyReportCommandCenterView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 10))
                     .foregroundColor(.cyan.opacity(0.8))
-                Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "规则整理")
+                Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "本地统计")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.cyan.opacity(0.8))
                 Spacer()
@@ -755,17 +770,24 @@ struct DailyReportCommandCenterView: View {
         }
     }
 
+    /// Relative deadline, in the units the rest of the app uses.
+    ///
+    /// This page used to abbreviate on its own: 「6时前到期」. That is not just
+    /// inconsistent with `ViewHelpers.formatRelative` ("3 小时前") — read as
+    /// Chinese it parses as a clock time first (「6 时」= 6 o'clock, "before
+    /// six"), so the row that meant "overdue by six hours" can be read as "due
+    /// before 6:00". The compact column earns no space worth that ambiguity.
     private func deadlineText(_ date: Date) -> String {
         let diff = date.timeIntervalSince(Date())
         if diff < 0 {
             let past = Int(-diff)
-            if past < 3600  { return "已超期 \(past / 60)分" }
-            if past < 86400 { return "已超期 \(past / 3600)时" }
-            return "已超期 \(past / 86400)天"
+            if past < 3600  { return "\(past / 60) 分钟前到期" }
+            if past < 86400 { return "\(past / 3600) 小时前到期" }
+            return "\(past / 86400) 天前到期"
         }
-        if diff < 3600  { return "\(Int(diff) / 60)分后" }
-        if diff < 86400 { return "\(Int(diff) / 3600)时后" }
-        return "\(Int(diff) / 86400)天后"
+        if diff < 3600  { return "\(Int(diff) / 60) 分钟后" }
+        if diff < 86400 { return "\(Int(diff) / 3600) 小时后" }
+        return "\(Int(diff) / 86400) 天后"
     }
 
     private func deadlineColor(_ date: Date) -> Color {

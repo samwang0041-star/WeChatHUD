@@ -186,9 +186,7 @@ final class PanelState: ObservableObject {
             menuTrackingTimeoutTimer = Timer.scheduledTimer(
                 withTimeInterval: Self.menuTrackingTimeout, repeats: false
             ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.endMenuTrackingIfStale()
-                }
+                MainActor.assumeIsolated { self?.endMenuTrackingIfStale() }
             }
         }
     }
@@ -292,7 +290,7 @@ final class PanelState: ObservableObject {
         // default-mode timers freeze under event-tracking and a held-open
         // menu would pin the toast on screen indefinitely.
         let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.toastMessage = nil
                 self?.toastTimer = nil
             }
@@ -328,7 +326,13 @@ final class PanelState: ObservableObject {
         // tracking ends. Add the timer to `.common` so it fires through
         // tracking loops, same as the hit-test monitor above.
         let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            // `assumeIsolated`, not `Task { @MainActor }`: a timer added to the
+            // main run loop already fires on the main thread, so the task
+            // wrapper only adds a dispatch hop — every island timer below would
+            // land a run-loop turn after its own deadline, and a nested run
+            // loop that is only pumping `.default` sources never drains it at
+            // all (which is how the pointer-exit collapse went unmeasured).
+            MainActor.assumeIsolated {
                 guard let self, self.hoverExpandGeneration == generation else { return }
                 self.hoverExpandTimer = nil
                 guard self.currentState == .peek, self.isMouseInside else { return }
@@ -453,7 +457,7 @@ final class PanelState: ObservableObject {
         let generation = exitGeneration
         let wait = delay ?? (currentState == .peek ? 0.10 : exitDebounce)
         exitDebounceTimer = Timer.scheduledTimer(withTimeInterval: wait, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 guard let self, self.exitGeneration == generation else { return }
                 // Only collapse if the mouse actually stayed outside AND
                 // no popover re-opened during the debounce window.

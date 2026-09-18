@@ -382,7 +382,7 @@ struct InboxRowView: View {
     // MARK: - Priority Dot
 
     private var priorityDot: some View {
-        PriorityPulseDot(color: priorityColor, isUrgent: item.priority == .p0)
+        PriorityPulseDot(color: priorityColor, isUrgent: item.priority == .p0, level: item.priority)
     }
 
     private var priorityColor: Color {
@@ -443,7 +443,42 @@ struct InboxRowView: View {
 private struct PriorityPulseDot: View {
     let color: Color
     let isUrgent: Bool
+    let level: InboxPriority
     @State private var pulseOn = false
+
+    /// The island separates P0 / P1 / P2 by hue alone, which is precisely the
+    /// cue 「不同颜色也能区分」 asks software to stop relying on. Under that
+    /// switch the three levels take three silhouettes in the same 8 pt
+    /// footprint, matching the vocabulary the status glyph already uses
+    /// (`CompanionMaterial` disc / ring / diamond).
+    private enum Silhouette { case disc, ring, diamond }
+
+    private var silhouette: Silhouette {
+        guard CompanionAccessibility.differentiateWithoutColor else { return .disc }
+        switch level {
+        case .p0: return .diamond
+        case .p1: return .ring
+        default: return .disc
+        }
+    }
+
+    @ViewBuilder private var marker: some View {
+        switch silhouette {
+        case .ring:
+            Circle()
+                .strokeBorder(color, lineWidth: 2)
+                .frame(width: 8, height: 8)
+        case .diamond:
+            Rectangle()
+                .fill(color)
+                .frame(width: 6.5, height: 6.5)
+                .rotationEffect(.degrees(45))
+        case .disc:
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+        }
+    }
 
     /// Fixed 14×14 slot for every row, urgent or not.
     ///
@@ -464,9 +499,7 @@ private struct PriorityPulseDot: View {
                     .frame(width: 14, height: 14)
                     .scaleEffect(pulseOn ? 1.0 : 0.57)
             }
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
+            marker
         }
         .frame(width: 14, height: 14)
         .onAppear {

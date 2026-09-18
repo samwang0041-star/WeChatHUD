@@ -60,6 +60,7 @@ struct FirstLaunchAISetupView: View {
 
             HStack(spacing: 10) {
                 Button(isTesting ? "正在测试…" : "测试连接") { testConnection() }
+                    .tint(CompanionPalette.accent)
                     .buttonStyle(.borderedProminent)
                     .disabled(isTesting)
                 if !testResult.isEmpty {

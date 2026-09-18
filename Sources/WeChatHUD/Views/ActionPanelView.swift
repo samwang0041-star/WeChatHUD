@@ -42,37 +42,41 @@ struct ActionPanelView: View {
     @State private var generationKey: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Divider().background(IslandInk.divider)
+        VStack(alignment: .leading, spacing: 10) {
+            // One headline card — condenses everything the old
+            // panel used to scatter across 4-5 separate blocks
+            // (intent + urgency + mood + context + reasoning)
+            // into a single actionable sentence. Detail-hunting
+            // happens in the detail window; the row expansion is
+            // about "tell me in one line what to do" and getting
+            // the user back to the task fast.
+            headlineBlock
 
-            VStack(alignment: .leading, spacing: 10) {
-                // One headline card — condenses everything the old
-                // panel used to scatter across 4-5 separate blocks
-                // (intent + urgency + mood + context + reasoning)
-                // into a single actionable sentence. Detail-hunting
-                // happens in the detail window; the row expansion is
-                // about "tell me in one line what to do" and getting
-                // the user back to the task fast.
-                headlineBlock
+            primaryCTAs
 
-                primaryCTAs
-
-                switch replyState {
-                case .loading:
-                    loadingRow(label: "正在生成回复建议…")
-                case .results(let replies) where !replies.isEmpty:
-                    replySuggestionsView(replies)
-                case .error:
-                    errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
-                default:
-                    EmptyView()
-                }
-
+            switch replyState {
+            case .loading:
+                loadingRow(label: "正在生成回复建议…")
+            case .results(let replies) where !replies.isEmpty:
+                replySuggestionsView(replies)
+            case .error:
+                errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
+            default:
                 EmptyView()
             }
-            .padding(.horizontal, IslandMetrics.rowInset)
-            .padding(.vertical, 10)
-            .background(IslandInk.bar)
+        }
+        .padding(.horizontal, IslandMetrics.rowInset)
+        .padding(.vertical, 10)
+        .background(IslandInk.bar)
+        // This band used to open with the same hairline that separates two
+        // rows, so an expansion read as another message rather than as the
+        // answer to the one above it. A mint rule on the leading edge carries
+        // the same colour the headline text uses and needs no extra height.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(CompanionPalette.islandMint.opacity(0.5))
+                .frame(width: 2)
+                .frame(maxHeight: .infinity)
         }
         .onAppear { prepareForCurrentItem(reset: generationKey != itemGenerationKey) }
         .onChange(of: itemGenerationKey) { _, _ in

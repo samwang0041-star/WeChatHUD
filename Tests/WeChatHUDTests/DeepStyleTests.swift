@@ -6,13 +6,23 @@ final class DeepStyleTests: XCTestCase {
     // MARK: - TypingRhythm
 
     func testTypingRhythmDescriptions() {
-        XCTAssertFalse(StyleProfiler.StyleProfile.TypingRhythm.singleMessage.description.isEmpty)
-        XCTAssertFalse(StyleProfiler.StyleProfile.TypingRhythm.multiMessage.description.isEmpty)
-        XCTAssertFalse(StyleProfiler.StyleProfile.TypingRhythm.mixed.description.isEmpty)
-        // Verify they're distinct
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             StyleProfiler.StyleProfile.TypingRhythm.singleMessage.description,
-            StyleProfiler.StyleProfile.TypingRhythm.multiMessage.description
+            "一条消息说完"
+        )
+        XCTAssertEqual(
+            StyleProfiler.StyleProfile.TypingRhythm.mixed.description,
+            "有时一条说完，有时分几条"
+        )
+        // The burst count is measured, so two different senders get two
+        // different numbers. It used to read "每次表达2-3条连发" for everyone.
+        XCTAssertEqual(
+            StyleProfiler.StyleProfile.TypingRhythm.multiMessage(burstSize: 7).description,
+            "习惯分多条发送（一次连发约 7 条）"
+        )
+        XCTAssertNotEqual(
+            StyleProfiler.StyleProfile.TypingRhythm.multiMessage(burstSize: 2).description,
+            StyleProfiler.StyleProfile.TypingRhythm.multiMessage(burstSize: 9).description
         )
     }
 

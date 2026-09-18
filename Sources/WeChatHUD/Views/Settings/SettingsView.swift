@@ -67,18 +67,24 @@ struct SettingsView: View {
             case .guide: return "questionmark.circle"
             }
         }
-        var subtitle: String {
+        var subtitle: String? {
             switch self {
             case .today: return "待回和待办"
-            case .drafts: return "确认后发送"
+            // Nothing sends from this page — 继续回复 hands the text to WeChat —
+            // so 确认后发送 (the 待确认回复 page's promise) was not kept here.
+            case .drafts: return "改好再去微信发"
             case .tasks: return "谁来做"
-            case .commitments: return "已答应的事"
+            // "已答应的事" under the title "我答应的事" restated the heading, and
+            // the page body already carries the one line that adds something.
+            case .commitments: return nil
             case .insight: return "按天查看"
             case .dailyReport: return "做过和剩下的"
             case .relationshipRadar: return "态度和沉默"
             case .contacts: return "关注的对话"
             case .aiButler: return "分析范围"
-            case .notifications: return "谁弹出、停多久"
+            // The two section headers already say 谁弹出 and 停多久; the gloss
+            // earns its line by drawing the boundary the footnote used to.
+            case .notifications: return "只管顶部浮窗"
             case .aiService: return "摘要用哪家"
             case .autopilot: return "怎么自动回"
             case .autopilotDashboard: return "确认后发送"
@@ -256,8 +262,8 @@ struct SettingsView: View {
                                 cfg.autoSendEnabled = true
                                 try? store.setSettingJSON("autopilot", value: cfg)
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -287,8 +293,10 @@ struct SettingsView: View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(selectedTab.label).workspaceDisplay().minimumScaleFactor(0.7).lineLimit(2)
-                Text(headerSubtitle).workspaceBody().onWashSecondary()
-                    .fixedSize(horizontal: false, vertical: true)
+                if let subtitle = headerSubtitle {
+                    Text(subtitle).workspaceBody().onWashSecondary()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 10)
             if selectedTab == .today {
@@ -299,8 +307,8 @@ struct SettingsView: View {
                 Button { NotificationCenter.default.post(name: .hudAddContact, object: nil) } label: {
                     Label("添加关注", systemImage: "plus")
                 }
-                .buttonStyle(.borderedProminent)
                 .tint(CompanionPalette.accent)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
             }
         }
@@ -328,7 +336,7 @@ struct SettingsView: View {
     /// the body always start on the same edge.
     private var headerWidth: CGFloat { selectedTab.pageWidth }
 
-    private var headerSubtitle: String {
+    private var headerSubtitle: String? {
         if selectedTab == .today, panelState.todayShowsMissedReplies {
             return "指定时间里还没回的私聊和群 @"
         }
@@ -415,6 +423,12 @@ private struct SettingsSidebarSections: View {
             sidebarSection(CompanionProductCopy.sectionReply, [.autopilotDashboard])
             sidebarSection(CompanionProductCopy.sectionSettings, SettingsView.Tab.allCases.filter(\.isSettings))
         }
+        // The window has to give initial key focus to *some* view, and the
+        // default is the first row — so opening 关系雷达 rings 今天, two rows
+        // above the page actually showing. Point the keyboard at the page the
+        // user is on instead: the ring then agrees with the selection, and Tab
+        // continues from where the eye already is.
+        .task { focusedTab = selectedTab }
     }
 
     private func sidebarSection(_ title: String, _ tabs: [SettingsView.Tab]) -> some View {
@@ -692,9 +706,13 @@ private struct WorkspaceStatusBar: View {
 
     private var isSyncing: Bool { if case .syncing = monitor.stats.syncStatus { return true }; return false }
 
+    /// The state half of the footer. Freshness is the right-hand column's job
+    /// (`上次同步 …`), so this must not restate it — the bar used to read
+    /// 「微信已连接 · 刚刚同步 …… 上次同步 2026年9月18日 19:50」, the same fact
+    /// twice in one 30 pt-tall strip, in two time formats.
     private var title: String {
         switch monitor.stats.syncStatus {
-        case .ok: return "微信已连接 · 刚刚同步"
+        case .ok: return "微信已连接"
         case .syncing:
             // Name the object being read and how much of it. "正在读取你关注
             // 的聊天" was true but unmeasurable: it left the user unable to

@@ -104,8 +104,8 @@ struct ApprovalWorkspaceView: View {
                                 showSendConfirm = false
                                 Task { await confirmSend() }
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                             .disabled(isSending)
                         }
                     }
@@ -160,7 +160,12 @@ struct ApprovalWorkspaceView: View {
         ContentUnavailableView(
             filter == .pending ? "还没有待确认的回复" : "这一栏还没有记录",
             systemImage: "bubble.left.and.bubble.right",
-            description: Text("点开始整理后，助理会写成草稿。发不发都由你决定。暂停不会删除现有草稿。")
+            // The 暂停 reassurance belongs to the state where a 暂停 button is on
+            // screen; while nothing is running this page explains a control the
+            // user cannot see.
+            description: Text(monitor.autopilotActive
+                ? "正在整理，写好的草稿会出现在这一栏。暂停不会删除现有草稿。"
+                : "点开始整理后，助理会写成草稿。发不发都由你决定。")
         )
         .frame(maxWidth: .infinity, minHeight: 280)
     }
@@ -300,8 +305,8 @@ struct ApprovalWorkspaceView: View {
                if selected.action == .pending {
                    HStack(spacing: 8) {
                        Button("确认发送") { showSendConfirm = true }
+                           .tint(SettingsView.Tab.autopilotDashboard.accentColor)
                            .buttonStyle(.borderedProminent)
-                            .tint(SettingsView.Tab.autopilotDashboard.accentColor)
                            .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                        Button("保存修改") {
                             Task {
@@ -434,8 +439,8 @@ private struct ApprovalPendingSendRow: View {
                         busy = false
                     }
                 }
-                .buttonStyle(.borderedProminent)
                 .tint(CompanionPalette.jade)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(busy)
             }

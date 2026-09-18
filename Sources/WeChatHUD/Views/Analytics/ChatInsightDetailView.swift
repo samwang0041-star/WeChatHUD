@@ -97,8 +97,8 @@ struct ChatInsightDetailView: View {
                        Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
                    }
                }
+               .tint(SettingsView.Tab.insight.accentColor)
                .buttonStyle(.borderedProminent)
-                .tint(SettingsView.Tab.insight.accentColor)
                .controlSize(.small)
                .disabled(insightCoordinator.chatInsightLoading.contains(chatUsername))
            }
@@ -117,18 +117,17 @@ struct ChatInsightDetailView: View {
                        }
                }
                 Spacer()
-                Button("查看待办") {
-                    panelState.pendingDiscussionChatUsername = chatUsername
-                    panelState.pendingSettingsTab = "tasks"
-                    panelState.showDetail()
+                // Page-level or contextual, not both. 查看待办 lives next to the
+                // 待办 list it opens, so it is not repeated here; 查看原文 only
+                // needs the header on 对话时间线, where the body has no link of
+                // its own (and the empty state tells you to use one).
+                if surface == .timeline {
+                    Button("查看原文") {
+                        panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CompanionPalette.jadeInk)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jadeInk)
-                Button("查看原文") {
-                    panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .padding(.horizontal, 20)
@@ -235,7 +234,10 @@ struct ChatInsightDetailView: View {
                Text(result.headline)
                    .workspaceTitle()
                    .fixedSize(horizontal: false, vertical: true)
-               Label("AI 解读", systemImage: "sparkles")
+               // Not "AI 解读": the block further down labels the day's read
+               // (result.insight) with exactly that word, and two cards on one
+               // screen called AI 解读 showed different fields.
+               Label("行动建议", systemImage: "sparkles")
                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(SettingsView.Tab.insight.accentColor)
                if !result.suggestion.isEmpty {
@@ -254,11 +256,46 @@ struct ChatInsightDetailView: View {
                     Text("正在整理这段聊天…")
                 } else {
                     Image(systemName: "sparkles")
-                    Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "还没有 AI 解读时，先看来源和待办。")
+                    Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "还没有 AI 解读，先看来源和待办。")
                 }
             }
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
+        }
+
+        // The day's read belongs under the headline it expands on. It used to
+        // sit below the activity chart and both 待办 lists — the last thing on
+        // the page for the one paragraph that explains the day.
+        if let result, !result.insight.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                let split = ChatInsightService.splitCoverageNotice(result.insight)
+                if let notice = split.notice {
+                    Text(notice)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Text("AI 解读")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(split.body)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                Button("查看原文") {
+                    panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(SettingsView.Tab.insight.accentColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .companionSurface(padding: 18)
+        } else if msgCount > 0 {
+            Button("查看原文") {
+                panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(SettingsView.Tab.insight.accentColor)
         }
 
         if let hourly = stats?.messagesByHour, hourly.contains(where: { $0 > 0 }) {
@@ -290,8 +327,7 @@ struct ChatInsightDetailView: View {
                         // one screen — in two different hues, mint in the header
                         // and jade here — leaves the eye no ranking to follow;
                         // macOS gives a view one prominent action and styles the
-                        // rest as bordered or plain. It also matches the two
-                        // 查看待办 / 查看原文 links already in the header row.
+                        // rest as bordered or plain.
                         Button("查看待办") {
                             panelState.pendingDiscussionChatUsername = chatUsername
                             panelState.pendingSettingsTab = "tasks"
@@ -325,7 +361,10 @@ struct ChatInsightDetailView: View {
             let aiActions = result.actionItems.map(\.what).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             if !aiWait.isEmpty || !aiActions.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("AI 读到的待办")
+                    // "候选", not a second "待办": the block above this one is
+                    // the authoritative list, and two adjacent lists both named
+                    // 待办 is what the disclaimer below then has to undo.
+                    Text("AI 读到的候选")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.secondary)
                     ForEach(Array((aiActions + aiWait).prefix(5).enumerated()), id: \.offset) { _, text in
@@ -339,37 +378,6 @@ struct ChatInsightDetailView: View {
             }
         }
 
-        if let result, !result.insight.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                let split = ChatInsightService.splitCoverageNotice(result.insight)
-                if let notice = split.notice {
-                    Text(notice)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Text("AI 解读")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Text(split.body)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-               Button("查看原文") {
-                   panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
-               }
-               .buttonStyle(.plain)
-                .foregroundStyle(SettingsView.Tab.insight.accentColor)
-           }
-           .frame(maxWidth: .infinity, alignment: .leading)
-           .companionSurface(padding: 18)
-       } else if msgCount > 0 {
-           Button("查看原文") {
-               panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
-           }
-           .buttonStyle(.plain)
-            .foregroundStyle(SettingsView.Tab.insight.accentColor)
-       }
    }
 
    private var timelineContent: some View {
@@ -599,16 +607,11 @@ struct ChatInsightDetailView: View {
                         .foregroundColor(.blue)
                 }
             }
-            if let cross = topic.crossChats, !cross.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "link")
-                        .font(.system(size: 10))
-                        .foregroundColor(.purple)
-                    Text("也在：\(cross.joined(separator: ", "))")
-                        .font(.system(size: 10))
-                        .foregroundColor(.purple)
-                }
-            }
+            // No 「也在：某群」 chip. The single-chat analysis is handed one
+            // chat's messages and that chat's own memory — no other chat's name
+            // ever reaches it — so anything it listed here was invented or
+            // smuggled in from the summary. Still decoded, because older stored
+            // insights carry the field.
         }
         .padding(12)
         .background(Color.primary.opacity(0.03))

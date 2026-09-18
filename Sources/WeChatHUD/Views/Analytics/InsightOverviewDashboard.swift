@@ -21,8 +21,14 @@ struct InsightOverviewDashboard: View {
                         inlineLoadingBanner
                     }
                     if overview.totalMessages == 0 {
+                        // Telling someone to connect WeChat when they have
+                        // watched chats and just picked an empty range is a
+                        // wrong instruction. The whitelist is the signal.
+                        let hasWatchedChats = !store.getWhitelist().isEmpty
                         ContentUnavailableView("这里还没有可以回顾的聊天", systemImage: "bubble.left.and.text.bubble.right",
-                            description: Text("先连上微信，再选有消息的日期和对话。空着不代表你没有该回或该做的事。"))
+                            description: Text(hasWatchedChats
+                                ? "换一个时间范围或日期再看看。这里空着，不代表你没有该回或该做的事。"
+                                : "先连上微信，再选要关注的对话。空着不代表你没有该回或该做的事。"))
                             .padding(.vertical, 48)
                     } else {
                     InsightRadarSection(
@@ -41,8 +47,8 @@ struct InsightOverviewDashboard: View {
                         onJumpToChat: onSelectChat
                     )
                     InsightHeroSection(
-                        overview: overview,
                         briefing: insightCoordinator.globalBriefing,
+                        generatedAt: insightCoordinator.briefingGeneratedAt,
                         isLoading: insightCoordinator.insightLoading,
                         onGenerate: onRefresh
                     )
@@ -68,13 +74,21 @@ struct InsightOverviewDashboard: View {
     private var overviewHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("今天聊了什么")
+                Text(insightStore.selectedWindow.overviewHeading)
                     .workspaceTitle()
-                Text("\(insightStore.selectedScope.rawValue) · \(insightStore.selectedWindow.rawValue) · \(insightStore.overview?.activeChats ?? 0) 个活跃对话 · \(insightStore.overview?.totalMessages ?? 0) 条消息")
+                // The scope and the window are what the two segmented pickers
+                // to the right of this line *are* — restating them here said
+                // 「所有人 · 今天」 twice within 200pt. Only the counts are new.
+                Text("\(insightStore.overview?.activeChats ?? 0) 个活跃对话 · \(insightStore.overview?.totalMessages ?? 0) 条消息")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
+            // Yield space instead of demanding it. Without this the leading
+            // block hugged its ideal width and pushed the 280pt range picker
+            // past the window's right edge — 「全部」 was cut mid-glyph at the
+            // 900pt minimum width the app itself declares as its floor.
+            .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 6) {
                 HStack(spacing: 6) {
                     Picker("", selection: $insightStore.selectedScope) {
@@ -101,7 +115,14 @@ struct InsightOverviewDashboard: View {
                 .pickerStyle(.segmented)
                 .frame(width: 280)
             }
+            .fixedSize()
         }
+        // The row is inside a vertical ScrollView, so a horizontal overflow is
+        // clipped rather than scrolled, and the row's own ideal width (title +
+        // 280pt picker) is wider than the window at its 900pt floor. Accepting
+        // the proposed width is what makes the leading block yield instead of
+        // pushing 「全部」 off the edge.
+        .frame(maxWidth: .infinity)
     }
 
     private var inlineLoadingBanner: some View {
@@ -218,7 +239,7 @@ struct InsightOverviewDashboard: View {
     }
 
     private func collapsibleMetrics(_ overview: ChatInsightEngine.GlobalOverview) -> some View {
-        collapsibleSection(id: "metrics", title: "趋势指标", icon: "chart.bar.xaxis", summary: "消息 \(overview.totalMessages) · 回复率 \(Int(overview.responseRate * 100))% · 边界分 \(overview.boundaryScore)") {
+        collapsibleSection(id: "metrics", title: "趋势指标", icon: "chart.bar.xaxis", summary: "消息 \(overview.totalMessages) · 回复率 \(Int(overview.responseRate * 100))% · \(overview.boundarySummary)") {
             InsightKPIGrid(overview: overview)
         }
     }
@@ -242,25 +263,41 @@ struct InsightOverviewDashboard: View {
     }
 
     private func collapsibleRelationships(_ o: ChatInsightEngine.GlobalOverview) -> some View {
-        let topTier = o.tierDistribution.first?.tier ?? "—"
-        let topRole = o.roleDistribution.first?.role ?? "—"
-        return collapsibleSection(id: "relationships", title: "关系分布", icon: "person.3", summary: "主要对象 \(topTier) · 最多 \(topRole)") {
+        let topTier = o.tierDistribution.first?.tier
+        let topRole = o.roleDistribution.first?.role
+        // Both fields fell back to an em dash, so the collapsed row read
+        // 「主要对象 — · 最多 —」: two labels, two placeholders, no information.
+        // Say what is missing instead of drawing a dash under a label.
+        let summary = (topTier == nil && topRole == nil)
+            ? "消息还不够分出主次"
+            : "主要对象 \(topTier ?? "—") · 最多 \(topRole ?? "—")"
+        return collapsibleSection(id: "relationships", title: "关系分布", icon: "person.3", summary: summary) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 16) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("层级").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-                        ForEach(o.tierDistribution, id: \.tier) { row in
-                            tinyRow(label: row.tier, count: row.count)
+                // Both tables render their column header before their rows, so
+                // with no distribution data the expanded panel was just
+                // 「层级」 and 「角色」 floating over blank space — the header is
+                // the one part of an empty table that still takes the screen.
+                if !o.tierDistribution.isEmpty || !o.roleDistribution.isEmpty {
+                    HStack(alignment: .top, spacing: 16) {
+                        if !o.tierDistribution.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("层级").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                ForEach(o.tierDistribution, id: \.tier) { row in
+                                    tinyRow(label: row.tier, count: row.count)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        if !o.roleDistribution.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("角色").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                ForEach(o.roleDistribution.prefix(6), id: \.role) { row in
+                                    tinyRow(label: row.role, count: row.count)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("角色").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-                        ForEach(o.roleDistribution.prefix(6), id: \.role) { row in
-                            tinyRow(label: row.role, count: row.count)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
                     Divider()
@@ -295,28 +332,52 @@ struct InsightOverviewDashboard: View {
     private func collapsibleWorkLife(_ o: ChatInsightEngine.GlobalOverview) -> some View {
         let workPct = o.totalMessages > 0 ? Int(Double(o.workMessages) / Double(o.totalMessages) * 100) : 0
         let lifePct = o.totalMessages > 0 ? Int(Double(o.lifeMessages) / Double(o.totalMessages) * 100) : 0
-        return collapsibleSection(id: "work-life", title: "工作 / 生活", icon: "briefcase", summary: "工作 \(workPct)% · 生活 \(lifePct)% · 边界分 \(o.boundaryScore)") {
+        // Same rule as the bars below: a category with nothing in it is not a
+        // percentage worth a slot in the headline.
+        let categorySummary = [
+            o.workMessages > 0 ? "工作 \(workPct)%" : nil,
+            o.lifeMessages > 0 ? "生活 \(lifePct)%" : nil,
+        ].compactMap { $0 }.joined(separator: " · ")
+        return collapsibleSection(id: "work-life", title: "工作 / 生活", icon: "briefcase", summary: "\(categorySummary) · \(o.boundarySummary)") {
             HStack(alignment: .center, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
-                    categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
-                    categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
-                    categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
+                    // A zero row is an empty track and a 「0」: it costs the same
+                    // height as the row that carries all the data and says less.
+                    if o.workMessages > 0 {
+                        categoryBar("工作", count: o.workMessages, total: o.totalMessages, color: .blue)
+                    }
+                    if o.lifeMessages > 0 {
+                        categoryBar("生活", count: o.lifeMessages, total: o.totalMessages, color: .green)
+                    }
+                    if o.otherMessages > 0 {
+                        categoryBar("其他", count: o.otherMessages, total: o.totalMessages, color: .orange)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 VStack(spacing: 6) {
+                    // The ring filled with `boundaryScore` (= 100 − after-hours
+                    // share) while the line under it counted after-hours
+                    // messages: a fuller ring meant *better* next to a number
+                    // where bigger is worse, and the bare "70" in the middle
+                    // could not be checked against anything. Gauge, centre and
+                    // caption now describe one quantity, and the colour
+                    // thresholds keep the same verdicts as before (≤30% green,
+                    // ≤60% orange).
+                    let share = o.workMessages > 0
+                        ? Double(o.workAfterHoursCount) / Double(o.workMessages) : 0
                     ZStack {
                         Circle().stroke(Color.gray.opacity(0.15), lineWidth: 7)
-                        Circle().trim(from: 0, to: Double(o.boundaryScore) / 100)
+                        Circle().trim(from: 0, to: share)
                             .stroke(
-                                o.boundaryScore >= 70 ? Color.green : o.boundaryScore >= 40 ? Color.orange : Color.red,
+                                share <= 0.3 ? Color.green : share <= 0.6 ? Color.orange : Color.red,
                                 style: StrokeStyle(lineWidth: 7, lineCap: .round)
                             )
                             .rotationEffect(.degrees(-90))
-                        Text("\(o.boundaryScore)")
+                        Text("\(Int((share * 100).rounded()))%")
                             .font(.system(size: 15, weight: .bold, design: .rounded))
                     }
                     .frame(width: 56, height: 56)
-                    Text("非工时工作 \(o.workAfterHoursCount)")
+                    Text("\(o.workAfterHoursCount) / \(o.workMessages) 条在下班后")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -340,7 +401,7 @@ struct InsightOverviewDashboard: View {
     }
 
     private func collapsiblePressure(_ o: ChatInsightEngine.GlobalOverview) -> some View {
-        collapsibleSection(id: "pressure", title: "压力信号", icon: "waveform.path.ecg", summary: "待办 \(o.pendingAsks) · 紧急 \(o.urgentAsks) · 撤回 \(o.recalledMessages)") {
+        collapsibleSection(id: "pressure", title: "压力信号", icon: "waveform.path.ecg", summary: "待处理请求 \(o.pendingAsks) · 紧急请求 \(o.urgentAsks) · 撤回消息 \(o.recalledMessages)") {
             HStack(spacing: 16) {
                 pressurePill("待处理请求", count: o.pendingAsks, threshold: 5)
                 pressurePill("紧急请求", count: o.urgentAsks, threshold: 1)
@@ -351,7 +412,11 @@ struct InsightOverviewDashboard: View {
     }
 
     private func collapsibleSection<Content: View>(id: String, title: String, icon: String, summary: String, @ViewBuilder content: () -> Content) -> some View {
-        let expanded = expandedModules.contains(id)
+        // `--preview-expand-modules` opens every section from here rather than
+        // seeding a list of ids: a coverage list goes stale the moment someone
+        // adds a section, and the stale list would quietly leave the new module
+        // — and whatever copy it carries — unphotographed.
+        let expanded = PreviewRuntime.expandsAllOverviewModules || expandedModules.contains(id)
         return VStack(alignment: .leading, spacing: 0) {
             Button(action: {
                 withMotion(CompanionMotion.ease(0.18)) {

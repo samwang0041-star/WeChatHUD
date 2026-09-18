@@ -62,15 +62,21 @@ struct RetrospectiveTabView: View {
 
             Spacer()
 
-            Button {
-                runJob()
-            } label: {
-                Label(isRunning ? "生成中" : "重新生成", systemImage: isRunning ? "hourglass" : "arrow.clockwise")
+            // Only once a run exists. Before that the empty-state card owns the
+            // single "generate" action, and a second prominent button in the
+            // header was both a duplicate control and a false label — there is
+            // nothing to re-generate.
+            if latestRun != nil {
+                Button {
+                    runJob()
+                } label: {
+                    Label(isRunning ? "生成中" : "重新生成", systemImage: isRunning ? "hourglass" : "arrow.clockwise")
+                }
+                .tint(.cyan)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isRunning)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(isRunning)
-            .tint(.cyan)
         }
     }
 
@@ -99,7 +105,9 @@ struct RetrospectiveTabView: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Image(systemName: "chart.line.uptrend.xyaxis")
+            // A rising trend line promised analytics that don't exist yet; this
+            // state is about looking back, not about a chart.
+            Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: WorkspaceType.display, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundColor(.cyan.opacity(0.9))
@@ -108,7 +116,7 @@ struct RetrospectiveTabView: View {
                 Text("还没有回顾结果")
                     .workspaceTitle()
                     .foregroundColor(.white.opacity(0.9))
-                Text("点“重新生成”后，会从上次回顾到现在、你关注的对话里提取重点、待办和风险。第一次使用默认回顾本周。")
+                Text("从上次回顾到现在、你关注的对话里，提取重点、待办和风险。第一次使用默认回顾本周。")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.56))
                     .fixedSize(horizontal: false, vertical: true)
@@ -119,12 +127,15 @@ struct RetrospectiveTabView: View {
             } label: {
                 Label("生成本次回顾", systemImage: "sparkles")
             }
+            .tint(.cyan)
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
-            .tint(.cyan)
         }
         .padding(18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Sizes to its content: with `maxHeight: .infinity` the card filled the
+        // whole window, so ~150pt of copy sat in the top of a 900pt panel and
+        // the rest was an empty bordered box.
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(panelBackground(stroke: .white.opacity(0.12)))
     }
 

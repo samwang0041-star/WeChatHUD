@@ -22,6 +22,7 @@ struct InsightRadarFinding: Identifiable, Equatable {
         case blindSpot
         case relationship
         case pressure
+        case crossTopic
     }
 
     enum Route: Equatable {
@@ -56,6 +57,7 @@ enum InsightRadar {
 
         if let briefing {
             findings.append(contentsOf: briefingFindings(briefing, chatNames: chatNames))
+            findings.append(contentsOf: crossTopicFindings(briefing))
         }
 
         let sortedInsights = chatInsights.sorted {
@@ -101,6 +103,54 @@ enum InsightRadar {
                 actionLabel: chatUsername == nil ? "看处理建议" : "打开对话",
                 chatUsername: chatUsername,
                 route: chatUsername.map(InsightRadarFinding.Route.openChat) ?? .expandExplanation
+            ))
+        }
+
+        return findings
+    }
+
+    /// `cross_topics` is the one thing a per-chat analysis cannot produce —
+    /// a single chat's prompt never sees another chat's messages. The global
+    /// pass is billed for it on every briefing, the header promises it
+    /// ("列出该做的事和跨对话话题"), and until now it was decoded and dropped.
+    ///
+    /// Deliberately not routed to a chat: opening one of several conversations
+    /// would misrepresent a finding that only exists across them.
+    private static func crossTopicFindings(_ briefing: GlobalBriefing) -> [InsightRadarFinding] {
+        var findings: [InsightRadarFinding] = []
+
+        for (idx, topic) in briefing.crossTopics.enumerated() {
+            guard let name = readableTrimmed(topic.name), !name.isEmpty else { continue }
+            let chats = topic.chats
+                .compactMap { readableTrimmed($0) }
+                .filter { isConcreteRadarSource($0) }
+            guard chats.count >= 2 else { continue }
+
+            let conflict = readableTrimmed(topic.conflict ?? "")
+            let summary = readableTrimmed(topic.summary)
+            guard conflict != nil || summary != nil else { continue }
+
+            let listed = Array(chats.prefix(3))
+            let source = listed.joined(separator: "、") + (chats.count > listed.count ? " 等" : "")
+            findings.append(InsightRadarFinding(
+                id: "briefing-cross-\(idx)-\(name)",
+                severity: conflict == nil ? .medium : .high,
+                kind: .crossTopic,
+                // The row's subject is the topic, not one of the chats — the
+                // first chat's name here would read as "this is about A 群".
+                source: name,
+                title: conflict != nil
+                    ? "「\(name)」在 \(chats.count) 个对话里说法不一致"
+                    : "「\(name)」在 \(chats.count) 个对话里都在讨论",
+                // 依据 = 哪几个对话 + 说了什么。The chat list belongs in the
+                // evidence line, not in the expanded 意义 line: it is what the
+                // claim is based on, and a cross-chat topic has no separate
+                // "significance" worth inventing.
+                evidence: "\(source) · \(conflict ?? summary ?? "")",
+                reason: nil,
+                actionLabel: "看建议",
+                chatUsername: nil,
+                route: .expandExplanation
             ))
         }
 
@@ -309,6 +359,13 @@ private extension InsightRadarFinding {
     var priorityGroup: Int {
         switch kind {
         case .waiting, .action, .pressure:
+            return 0
+        // A cross-chat conflict outranks a routine follow-up: two chats
+        // disagreeing about the same fact is the finding you can only get
+        // here. Group 0 lets severity decide; a plain shared topic stays
+        // .medium and still sorts after 「action」 by kind, so it never
+        // crowds out a real ask.
+        case .crossTopic:
             return 0
         case .attitude, .mood, .tone:
             return 1

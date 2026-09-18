@@ -65,7 +65,14 @@ final class IslandFrameSpringTests: XCTestCase {
     /// The spring must still settle, because it integrates its own position
     /// and only *paints* quantized rects.
     func testSettlesWhenEveryPaintedFrameIsQuantized() {
-        var spring = IslandFrameSpring(position: compact, target: expanded, expanding: true)
+        // Aimed the way the panel aims: at the centre of the quantization
+        // cell, not at the goal rect itself. "The stored rect is the goal
+        // rect" is only guaranteed for a run that does that, and tightening
+        // the collapse response moved which side of the goal the residual
+        // sits on.
+        var spring = IslandFrameSpring(position: compact,
+                                       target: FloatingPanel.springTarget(for: expanded),
+                                       expanding: true)
         var painted = spring.frame
         var ticks = 0
         while !spring.hasSettled && ticks < 600 {
@@ -232,13 +239,20 @@ final class IslandFrameSpringTests: XCTestCase {
         XCTAssertLessThan(ticks, 60, "the expansion must arrive on its own, not at the wedge cap")
         XCTAssertEqual(stored, landing, "the run ended on pixels it was not showing")
 
-        // Monotone over the tail: ringing shows up as the painted size going
-        // back and forth across a pixel boundary.
+        // At most one direction reversal over the tail. Ringing is the painted
+        // size going back and forth across a pixel boundary repeatedly; the
+        // single reversal here is the designed pop coming back down, which is
+        // the point of the expand.
         let tail = Array(paintedWidths.suffix(12))
-        for (previous, next) in zip(tail, tail.dropFirst()) {
-            XCTAssertLessThanOrEqual(previous, next,
-                                     "the painted width went \(previous) → \(next) on the way in")
+        var reversals = 0
+        var rising: Bool?
+        for (previous, next) in zip(tail, tail.dropFirst()) where previous != next {
+            let goingUp = next > previous
+            if let rising, rising != goingUp { reversals += 1 }
+            rising = goingUp
         }
+        XCTAssertLessThanOrEqual(reversals, 1,
+                                 "the painted width rang across the pixel grid: \(tail)")
     }
 
     /// Same contract on the way back: the collapse must land on the stored

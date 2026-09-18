@@ -238,7 +238,7 @@ final class IslandInteractionTests: XCTestCase {
             id: "preview-project", chatUsername: "preview-project", chatName: "项目协作群",
             senderName: "林晓", preview: "评审", isGroup: true, timestamp: Date(),
             actionRequired: true, priority: .p1, isVIP: false, isWhitelisted: true,
-            unreadCount: 1, isAtMention: true, askType: .yesNo, reasons: [], suggestedReplyMinutes: 60,
+            unreadCount: 1, isAtMention: true, askType: .yesNo, reasons: [], overdueThresholdMinutes: 60,
             status: .active, aiSummary: nil, moodEmoji: nil
         )
         state.islandSnoozeUndo = (item, Date().addingTimeInterval(1800))

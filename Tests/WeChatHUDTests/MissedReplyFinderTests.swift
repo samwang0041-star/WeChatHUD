@@ -125,6 +125,45 @@ final class MissedReplyFinderTests: XCTestCase {
         XCTAssertTrue(items.contains { $0.id == "bob|b1" })
     }
 
+    /// An ack is not an answer, but "没回" is not the whole truth either: the
+    /// card has to say that something was sent.
+    func testAckOnlyReplyKeepsTheThreadAndSaysSo() {
+        let items = MissedReplyFinder.build(seeds: [
+            seed(
+                username: "alice",
+                range: 100...400,
+                timeline: [
+                    entry("a1", "名单今天能给我吗？", 200),
+                    entry("a2", "收到", 260, fromSelf: true)
+                ]
+            )
+        ])
+        let item = try! XCTUnwrap(items.first)
+        XCTAssertTrue(item.repliedWithAckOnly)
+    }
+
+    func testSilentThreadHasNoAckFlag() {
+        let items = MissedReplyFinder.build(seeds: [
+            seed(username: "alice", range: 100...400, timeline: [entry("a1", "名单今天能给我吗？", 200)])
+        ])
+        XCTAssertEqual(items.first?.repliedWithAckOnly, false)
+    }
+
+    /// An ack sent *before* the question cannot be the answer to it.
+    func testAckEarlierThanTheInboundDoesNotSetTheFlag() {
+        let items = MissedReplyFinder.build(seeds: [
+            seed(
+                username: "alice",
+                range: 100...400,
+                timeline: [
+                    entry("a1", "收到", 150, fromSelf: true),
+                    entry("a2", "名单今天能给我吗？", 200)
+                ]
+            )
+        ])
+        XCTAssertEqual(items.first?.repliedWithAckOnly, false)
+    }
+
     func testSuppressedConversationDoesNotSurface() {
         var closed = seed(
             username: "stranger",

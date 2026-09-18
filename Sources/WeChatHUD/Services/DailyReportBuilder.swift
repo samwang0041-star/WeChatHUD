@@ -202,7 +202,7 @@ struct DailyReportBuilder {
         for c in overdueCommitments {
             risks.append(DailyReportRisk(
                 type: .overdueCommitment,
-                description: "承诺「\(c.content)」已超期",
+                description: "承诺「\(c.content)」已到期",
                 severity: .high,
                 sourceChatName: c.chatName,
                 sourceChatUsername: c.chatUsername
@@ -212,7 +212,7 @@ struct DailyReportBuilder {
         for todo in historical ? [] : runTodos where todo.deadline != nil && todo.deadline! < endOfRange {
             risks.append(DailyReportRisk(
                 type: .overdueTodo,
-                description: "待办「\(todo.content)」已超期",
+                description: "待办「\(todo.content)」已到期",
                 severity: .high,
                 sourceChatName: todo.sourceChatName,
                 sourceChatUsername: todo.sourceChatUsername
@@ -338,7 +338,7 @@ struct DailyReportBuilder {
                 "今天已成功同步的数据中，暂未发现需要处理的微信事项。",
                 "明天先做一次微信巡检，确认是否有新的待回复、请求或承诺。",
                 "\(dateKey) 工作小结\n今日微信侧暂无待处理事项（基于已成功同步的数据）。明日计划：继续巡检重点对话，及时处理新增请求和承诺。\n需要支持：暂无。",
-                "规则整理：基于已成功同步的本地数据，暂无待处理事项。"
+                "本地统计：基于已成功同步的本地数据，暂无待处理事项。"
             )
         }
 
@@ -348,20 +348,12 @@ struct DailyReportBuilder {
         if metrics.pendingAskCount > 0 { facts.append("待处理请求 \(metrics.pendingAskCount) 项") }
         if metrics.pendingTodoCount > 0 { facts.append("回顾待办 \(metrics.pendingTodoCount) 项") }
         if metrics.pendingCommitmentCount > 0 { facts.append("进行中承诺 \(metrics.pendingCommitmentCount) 项") }
-        if metrics.overdueCommitmentCount > 0 { facts.append("超期承诺 \(metrics.overdueCommitmentCount) 项") }
+        if metrics.overdueCommitmentCount > 0 { facts.append("已到期承诺 \(metrics.overdueCommitmentCount) 项") }
         if metrics.highlightCount > 0 { facts.append("今日高亮 \(metrics.highlightCount) 条") }
         if handledAskCount > 0 { facts.append("已处理请求 \(handledAskCount) 项") }
 
         let firstAction = actions.first?.content
         let firstRisk = risks.first?.description
-        var narrative = "今天本地统计显示：" + facts.joined(separator: "，") + "。"
-        if let firstRisk {
-            narrative += " 最高风险：\(firstRisk)。"
-        } else if let firstAction {
-            narrative += " 优先处理：\(firstAction)。"
-        } else if let firstHighlight = highlights.first?.summary {
-            narrative += " 主要进展：\(firstHighlight)。"
-        }
 
         let tomorrowFocus: String
         if let critical = actions.first(where: { $0.urgency == .critical }) {
@@ -372,6 +364,18 @@ struct DailyReportBuilder {
             tomorrowFocus = "先清理未读消息，避免遗漏新的请求和承诺。"
         } else {
             tomorrowFocus = "复查今日高亮，补齐需要沉淀的行动项。"
+        }
+
+        var narrative = "今天本地统计显示：" + facts.joined(separator: "，") + "。"
+        if let firstRisk {
+            narrative += " 最高风险：\(firstRisk)。"
+        } else if let firstAction, !tomorrowFocus.contains(firstAction) {
+            // The summary line and the focus line are rendered one under the
+            // other, and both used to name the same top action — the block
+            // read as the same sentence twice (`r12-dailyReport` pixel pass).
+            narrative += " 优先处理：\(firstAction)。"
+        } else if let firstHighlight = highlights.first?.summary {
+            narrative += " 主要进展：\(firstHighlight)。"
         }
 
         let recordLine = facts.isEmpty
@@ -397,7 +401,7 @@ struct DailyReportBuilder {
             narrative,
             tomorrowFocus,
             wechatDraft,
-            "规则整理：AI 未完成前先展示可读日报。"
+            "本地统计：AI 未完成前先展示可读日报。"
         )
     }
 

@@ -114,6 +114,7 @@ struct InsightSidebarView: View {
     private var chatList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                if searchText.isEmpty { overviewRow }
                 let whitelist = insightStore.filteredWhitelist(store: store, searchText: searchText).filter(matchesFilter)
                 if !whitelist.isEmpty {
                     sidebarSection("关注的对话", icon: "star", count: whitelist.count)
@@ -144,6 +145,42 @@ struct InsightSidebarView: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// Entry point for the overview page. It used to have no route at all:
+    /// `ChatInsightView` auto-selects a chat on appear, so the overview state
+    /// (`selectedChat == nil`) was never reachable after the first render.
+    private var overviewRow: some View {
+        let isSelected = selectedChat == nil
+        return Button(action: { selectedChat = nil }) {
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(CompanionPalette.jade.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 11))
+                        .foregroundColor(CompanionPalette.jadeInk)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("总览")
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .foregroundColor(.primary)
+                    Text("跨对话的提醒和趋势")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
     }
 
     private func sidebarSection(_ title: String, icon: String, count: Int) -> some View {

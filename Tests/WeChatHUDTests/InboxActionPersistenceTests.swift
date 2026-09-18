@@ -14,7 +14,7 @@ final class InboxActionPersistenceTests: XCTestCase {
         let debt = ReplyDebtItem(id: "synthetic-peer", chatUsername: "synthetic-peer", chatName: "合成同事", senderName: "同事",
             preview: "请确认合成测试事项", latestOutboundPreview: nil, timestamp: Date(timeIntervalSince1970: 1700000000),
             priority: .p1, score: 6, unreadCount: 1, isGroup: false, isWhitelisted: true, isVIP: false,
-            isAtMention: false, inboundCountSinceLastOutbound: 1, reasons: [], suggestedReplyMinutes: 30)
+            isAtMention: false, inboundCountSinceLastOutbound: 1, reasons: [], overdueThresholdMinutes: 30)
         monitor.replyDebtItems = [debt]
         let items = InboxBuilder.build(replyDebtItems: [debt], notifications: [], dismissed: [:])
         monitor.inboxItems = items

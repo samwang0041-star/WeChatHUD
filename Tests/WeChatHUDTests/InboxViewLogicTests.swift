@@ -22,7 +22,7 @@ final class InboxViewLogicTests: XCTestCase {
             isAtMention: first.isAtMention,
             askType: first.askType,
             reasons: first.reasons,
-            suggestedReplyMinutes: first.suggestedReplyMinutes,
+            overdueThresholdMinutes: first.overdueThresholdMinutes,
             status: first.status,
             dismissedAtMsgId: first.dismissedAtMsgId
         )
@@ -42,7 +42,7 @@ final class InboxViewLogicTests: XCTestCase {
             isAtMention: first.isAtMention,
             askType: first.askType,
             reasons: first.reasons,
-            suggestedReplyMinutes: first.suggestedReplyMinutes,
+            overdueThresholdMinutes: first.overdueThresholdMinutes,
             status: first.status,
             dismissedAtMsgId: first.dismissedAtMsgId
         )
@@ -75,7 +75,7 @@ final class InboxViewLogicTests: XCTestCase {
             isAtMention: isAtMention,
             askType: .none,
             reasons: reasons,
-            suggestedReplyMinutes: 0,
+            overdueThresholdMinutes: 0,
             status: .active,
             dismissedAtMsgId: nil
         )
@@ -196,7 +196,7 @@ final class InboxViewLogicTests: XCTestCase {
             makeItem(chatUsername: "wxid_2", actionRequired: false)
         ]
 
-        XCTAssertEqual(inboxHeaderState(items), .updates(2))
+        XCTAssertEqual(inboxHeaderState(items), .updates)
     }
 
     func testHeaderPrefersUrgentActionItemsOverPassiveUpdates() {
@@ -205,7 +205,55 @@ final class InboxViewLogicTests: XCTestCase {
             makeItem(chatUsername: "wxid_urgent", actionRequired: true, priority: .p0)
         ]
 
-        XCTAssertEqual(inboxHeaderState(items), .urgent(1))
+        XCTAssertEqual(inboxHeaderState(items), .urgent)
+    }
+
+    /// The number the list header prints is the total the list stands for, not
+    /// the size of the category that won. A panel of one reply-needed row and
+    /// two group @s used to be headed 「待处理 (1)」 over three rows.
+    func testHeaderCountCoversEveryRowTheListShows() {
+        let items = [
+            makeItem(chatUsername: "wxid_p1", actionRequired: true, priority: .p1),
+            makeItem(chatUsername: "room_a@chatroom", actionRequired: true, isGroup: true, isAtMention: true),
+            makeItem(chatUsername: "room_b@chatroom", actionRequired: true, isGroup: true, isAtMention: true)
+        ]
+
+        XCTAssertEqual(inboxHeaderState(items), .replyNeeded)
+        XCTAssertEqual(InboxPresentationPolicy.pendingCount(items), 3)
+        XCTAssertEqual(
+            InboxPresentationPolicy.pendingCount(items),
+            InboxPresentationPolicy.visibleItems(items).count
+        )
+    }
+
+    func testHeaderCountIncludesTheFoldedPassiveTail() {
+        var items = [makeItem(chatUsername: "wxid_p1", actionRequired: true, priority: .p1)]
+        items += (0..<5).map { makeItem(chatUsername: "passive_\($0)", actionRequired: false) }
+
+        let visible = InboxPresentationPolicy.visibleItems(items)
+        XCTAssertLessThan(visible.count, items.count)
+        XCTAssertEqual(
+            InboxPresentationPolicy.pendingCount(items),
+            visible.count + InboxPresentationPolicy.hiddenPassiveUpdateCount(items)
+        )
+    }
+
+    /// A bare @ the user already dealt with is not in the list, so the band may
+    /// not claim the list is about it.
+    func testHandledMentionDoesNotDriveTheBand() {
+        var handled = makeItem(
+            chatUsername: "room@chatroom", actionRequired: true, isGroup: true, isAtMention: true
+        )
+        handled.replied = true
+        let passive = makeItem(chatUsername: "wxid_info", actionRequired: false)
+
+        XCTAssertEqual(handled.messageType, .groupMentionFYI)
+        XCTAssertEqual(inboxHeaderState([handled, passive]), .updates)
+        XCTAssertEqual(InboxPresentationPolicy.pendingCount([handled, passive]), 1)
+    }
+
+    func testIdleHeaderCountsNothing() {
+        XCTAssertEqual(InboxPresentationPolicy.pendingCount([]), 0)
     }
 
     func testHeaderDoesNotTreatBareGroupMentionAsPendingAction() {
@@ -222,7 +270,7 @@ final class InboxViewLogicTests: XCTestCase {
         XCTAssertEqual(items[0].semanticState, .groupMentionFYI)
         // 4b1dc44 header now distinguishes bare @mentions (.mentioned)
         // from passive updates (.updates). Intent unchanged: not an action.
-        XCTAssertEqual(inboxHeaderState(items), .mentioned(1))
+        XCTAssertEqual(inboxHeaderState(items), .mentioned)
     }
 
     func testGroupMentionWithAskEvidenceCountsAsAction() {
@@ -240,7 +288,7 @@ final class InboxViewLogicTests: XCTestCase {
         XCTAssertEqual(items[0].semanticState, .groupActionRequired)
         // .urgent is p0-only since 4b1dc44; p1 action items surface as
         // .replyNeeded. Intent unchanged: still counts as an action.
-        XCTAssertEqual(inboxHeaderState(items), .replyNeeded(1))
+        XCTAssertEqual(inboxHeaderState(items), .replyNeeded)
     }
 
     func testGroupMentionWithOnlyUrgencyStaysFYI() {

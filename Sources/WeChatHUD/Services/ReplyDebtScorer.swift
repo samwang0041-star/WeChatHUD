@@ -301,16 +301,13 @@ enum ReplyDebtScorer {
         }
 
         let ageMinutes = max(0, nowTs - latestInbound.createTime) / 60
-        let overdueMinutes: Int
-        if let contactWindow = seed.contactReplyWindowMinutes, contactWindow > 0 {
-            overdueMinutes = contactWindow
-        } else if seed.session.isGroup && effective.isAtMention {
-            overdueMinutes = config.groupAtOverdueMinutes
-        } else if seed.isVIP {
-            overdueMinutes = config.vipOverdueMinutes
-        } else {
-            overdueMinutes = config.normalOverdueMinutes
-        }
+        let overdueMinutes = ReplyDebtConfig.overdueWindow(
+            contactWindowMinutes: seed.contactReplyWindowMinutes ?? 0,
+            isGroup: seed.session.isGroup,
+            isAtMention: effective.isAtMention,
+            isVIP: seed.isVIP,
+            config: config
+        )
         let isOverdue = ageMinutes >= overdueMinutes
 
         var score = 0
@@ -388,7 +385,7 @@ enum ReplyDebtScorer {
             isAtMention: effective.isAtMention,
             inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
             reasons: reasons,
-            suggestedReplyMinutes: predictReplyWindow(seed: effective, priority: priority),
+            overdueThresholdMinutes: overdueMinutes,
             contextNotification: contextNotification(seed: effective, message: latestInbound)
         )
     }
@@ -466,26 +463,14 @@ enum ReplyDebtScorer {
             isAtMention: seed.isAtMention,
             inboundCountSinceLastOutbound: seed.inboundCountSinceLastOutbound,
             reasons: reasons,
-            suggestedReplyMinutes: predictReplyWindow(seed: seed, priority: priority),
+            overdueThresholdMinutes: ReplyDebtConfig.overdueWindow(
+                contactWindowMinutes: seed.contactReplyWindowMinutes ?? 0,
+                isGroup: seed.session.isGroup,
+                isAtMention: seed.isAtMention,
+                isVIP: seed.isVIP,
+                config: config
+            ),
             contextNotification: contextNotification(seed: seed, message: latestInbound)
         )
-    }
-
-    /// Predict recommended reply window based on contact level + urgency.
-    static func predictReplyWindow(seed: Seed, priority: ReplyDebtPriority) -> Int {
-        // VIP → tight window
-        if seed.isVIP {
-            return priority == .p0 ? 10 : 20
-        }
-        // @mention in group → medium urgency
-        if seed.isAtMention {
-            return 30
-        }
-        // Whitelist private chat
-        if seed.isWhitelisted && !seed.session.isGroup {
-            return priority == .p0 ? 15 : 60
-        }
-        // Default
-        return priority == .p0 ? 30 : 120
     }
 }

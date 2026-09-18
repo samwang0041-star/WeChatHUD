@@ -167,9 +167,9 @@ final class W5CrashAndIdentityHardeningTests: XCTestCase {
         await Task.yield()
 
         XCTAssertEqual(received.count, 1)
-        XCTAssertEqual(received.first?.title, "连续消息")
+        XCTAssertEqual(received.first?.title, "多条未回")
         XCTAssertEqual(received.first?.identifier, "burst-username-a")
-        XCTAssertEqual(received.first?.body, "小王 连续发了 3 条消息")
+        XCTAssertEqual(received.first?.body, "小王 有 3 条消息还没回")
     }
 
     /// System/unread rows arrive without a username; the display name must
@@ -197,7 +197,7 @@ final class W5CrashAndIdentityHardeningTests: XCTestCase {
 
         XCTAssertEqual(received.count, 1)
         XCTAssertEqual(received.first?.identifier, "burst-系统通知")
-        XCTAssertEqual(received.first?.body, "系统通知 连续发了 3 条消息")
+        XCTAssertEqual(received.first?.body, "系统通知 有 3 条消息还没回")
     }
 
     // MARK: - Fixtures

@@ -2,6 +2,40 @@
 
 > 项目自我进化日志，PM 和工程师双方追加
 
+## 2026-09-19 — 1.6.1：21 轮像素级质检收口，岛与洞察页的"看得见但读不清"一次清账
+
+### [Engineer] 逐屏截图过完岛的全部形态 + 18 个工作台页 + 9 个设置分区，修的是"界面承诺 vs 算法"和读不清的灰字
+
+- **岛详情态**（原先完全没有截图通道，从未被看过）：删掉一颗永远点不到的关闭按钮 ——
+  `DetailPanelView` 在同一角落后画了 `xmark.circle.fill`，把 `ConversationDetailView`
+  自己的 `xmark` 完全盖住；11pt 的 `pencil.circle` 在实机上读成 ⊘「禁止」，换成 `pencil`；
+  默认态那行「未发送」在没有任何发送行为时就显示，改成只在有结果时出现。
+- **算法**：`ChatMonitor+ChatNaming` 里，reader 的联系人缓存为空时（切号后、首次刷新前）
+  会把 username 原样回显，旧判据按"形状"认不出这是回显，于是账号 id 盖住了 hud.sqlite3 里
+  已经存好的名字。补 `resolved == chatUsername` 判据 + 两条行为测试（去掉该判据会红）。
+- **洞察总览**：时间范围选择器被 app 自己的 900pt 窗口下限裁掉；滚动区以下的 6 张 KPI 卡
+  此前根本拍不到，拍到后查出四处 —— 空分母照样打分（0 条记录也显示「承诺履约 0%」并刷红）、
+  给改不了的量刷颜色（VIP 占比按高低变色）、派生指数要读者做减法（「边界分 70」）、
+  环-中心数字-说明三处不同量不同向。边界指数还原成 `41 / 96 条在下班后`，
+  VIP 卡去掉判词只讲口径，承诺卡在无分母时显示「—」+「还没有承诺记录」。
+- **只靠颜色的编码**：打开系统「不同颜色也能区分」后，岛的优先级点在实测中 md5 与基线完全
+  相同 —— 那档对岛什么都没做。补形状维度：P0 菱形 / P1 环 / P2 圆片。
+- **按时间回顾窗口**：独立 NSWindow 因标题不匹配 harness 的任何分支，21 轮里零证据。
+  补截图通道后第一次拍到四条评论，本版落三条（重复 CTA 收成一颗、空态卡按内容收 946→796pt、
+  图标从"上升折线"换成"回看"并删掉指向已隐藏按钮的说明书文案）。
+- **质检治具**：新增 `--preview-detail` / `--preview-narrow=<pt>` / `--preview-scroll=<pt>` /
+  `--preview-expand-modules` / `--preview-retrospective`；删掉一个被 `minSize` 钳制成静默
+  no-op 的旧宽度开关（它的截图看起来一直像通过）；`--preview-scroll` 原先会把"根本没动"
+  报成 `achievedOffset: 900`，改为同时输出 `maxOffset` 与 `nothingBelowFold`。
+- **撤回一条误判**：曾记「`increaseContrast` 全仓 0 消费者」。它走 token 层
+  （`cardEdgeWidth` / `borderOpacityScale` / `hairlineWidth`），按符号 grep 必然漏；
+  同屏双跑 `--preview-contrast` 的 md5 分开，开关是活的。真缺口是这一档只管描边、
+  不管次级灰字，已单列待办。
+- 验证：全量 `swift test` 全绿（exit 0；swift-testing 侧 70 项 / 12 套件）；release 构建零警告。
+  像素证据在 `docs/qa/2026-09-18-island-pixel/`（**不入库**：那是真实微信会话的截图，
+  本仓为公开仓库，`.gitignore` 已加规则），过程记录在
+  `docs/qa/2026-09-18-island-motion-and-copy-pass.md`（§60–§89）。
+
 ## 2026-09-16 — 1.5.7：修好"在微信中打开"后的黑板，群简报只讲当前这一次对话
 
 ### [Engineer] 隐藏面板起不了的 frame spring 会冻成一块黑板；群分析窗口从 48 小时收紧到一次连续对话

@@ -247,7 +247,9 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "bubble.left.and.bubble.right",
                 title: "读取聊天",
-                detail: "已连接微信，可读取你的聊天内容，用于识别待办、约定等重要信息。",
+                // It used to open with 已连接微信 even when this very row's own
+                // status chip read 待连接.
+                detail: "读本机的微信记录，只读不改。",
                 status: readingReady ? "已就绪" : "待连接",
                 ready: readingReady
             )
@@ -255,7 +257,8 @@ struct SyncSettingsView: View {
             capabilityRow(
                 icon: "sparkles",
                 title: "AI 整理",
-                detail: "从聊天提取待办和约定。",
+                // The row above no longer spends its line on 待办和约定.
+                detail: "从聊天记录里提取待办和约定。",
                 status: aiTested ? "已就绪" : (aiConfigured ? "已配置" : "尚未设置"),
                 ready: aiReady,
                 actionTitle: aiReady ? nil : "设置 AI"
@@ -605,8 +608,8 @@ struct SyncSettingsView: View {
                     } label: {
                         Label("导出到桌面", systemImage: "square.and.arrow.down")
                     }
-                    .buttonStyle(.borderedProminent)
                     .tint(CompanionPalette.jade)
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                 }
                 .padding(.horizontal, 16)
@@ -758,7 +761,7 @@ struct SyncSettingsView: View {
                                         .font(.system(size: 12))
                                         .foregroundColor(CompanionPalette.jadeInk)
                                 } else if item.status == .pending || item.status == .overdue, let d = item.deadlineAt {
-                                    Text(d < Date() ? "已超期" : "截止 \(MessageInfo.formatRelative(Int(d.timeIntervalSince1970)))")
+                                    Text(CommitmentPresentation.deadlineCaption(d))
                                         .font(.system(size: 12))
                                         .foregroundColor(d < Date() ? .red : .secondary)
                                 }
@@ -878,7 +881,7 @@ struct SyncSettingsView: View {
         switch status {
         case .pending: return "进行中"
         case .fulfilled: return "已完成"
-        case .overdue: return "已超期"
+        case .overdue: return "已到期"
         case .cancelled: return "已取消"
         }
     }

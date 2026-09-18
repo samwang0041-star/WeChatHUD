@@ -340,7 +340,7 @@ enum DailyReportCompletion {
             isAtMention: false,
             askType: .none,
             reasons: [],
-            suggestedReplyMinutes: 0,
+            overdueThresholdMinutes: 0,
             status: .active,
             dismissedAtMsgId: nil
         )

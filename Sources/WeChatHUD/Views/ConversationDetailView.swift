@@ -97,8 +97,8 @@ struct ConversationDetailView: View {
                                 showSendConfirm = false
                                 Task { await sendReply() }
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                             .disabled(isSending)
                         }
                     }
@@ -232,9 +232,15 @@ struct ConversationDetailView: View {
 
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(composerStatusTitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.55))
+                    // 「未发送」 is the default state of every composer, so
+                    // before the user has done anything it reports nothing.
+                    // It earns its line back once a send, copy or failure makes
+                    // "not sent" a fact rather than a starting condition.
+                    if sendSucceeded || sendResult != nil {
+                        Text(composerStatusTitle)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
                     Text(composerStatusDetail)
                         .font(.system(size: 10))
                         .foregroundColor(.white.opacity(0.35))
@@ -411,9 +417,15 @@ struct ConversationDetailView: View {
             // own, offer to name it instead of leaving a placeholder.
             if monitor.hasOnlyFallbackName(chatUsername: chatUsername) {
                 Button(action: { isRenaming = true }) {
-                    Image(systemName: "pencil.circle")
-                        .font(.system(size: 11))
+                    // `pencil.circle` at 11pt collapses into a circle with one
+                    // diagonal stroke, which reads as ⊘ "not allowed" sitting
+                    // next to the chat's name. Uncircled, the pencil stays a
+                    // pencil at this size.
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(.white.opacity(0.55))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("给这个会话起个名字")
@@ -421,15 +433,9 @@ struct ConversationDetailView: View {
             }
 
             Spacer()
-
-            Button(action: { panelState.clearDetail(); panelState.currentState = .extended }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("关闭对话")
-
+            // No trailing close button here: `DetailPanelView` already pins an
+            // `xmark.circle.fill` in this exact corner, and being drawn later it
+            // covered this one completely — a control no click could ever reach.
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

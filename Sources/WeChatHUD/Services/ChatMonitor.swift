@@ -60,6 +60,8 @@ final class ChatMonitor: ObservableObject {
     /// no substantive reply. Independent from the live inbox: silence does
     /// not age these out.
     @Published var missedReplies: [MissedReplyFinder.Item] = []
+    /// What the last missed-reply walk did not cover, so the page can say so.
+    @Published var missedReplyCoverage: MissedReplyFinder.Coverage?
     @Published var missedReplyLoading = false
     @Published var missedReplyError: String?
     var missedReplyTask: Task<Void, Never>?
@@ -1580,7 +1582,7 @@ final class ChatMonitor: ObservableObject {
             lastStaleArchiveSweepAt = now
             let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
             if archived > 0 {
-                discussionArchiveNotice = "已把 \(archived) 件过期未处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+                discussionArchiveNotice = "已把 \(archived) 件很久没处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
             }
             _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
             // Commitments get the longer catalog window — a real pending

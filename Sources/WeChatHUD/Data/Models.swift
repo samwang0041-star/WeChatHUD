@@ -37,15 +37,17 @@ struct HUDStats {
     var lastSyncAt: Date? = nil
 }
 
-/// Escalation tiers for an unanswered VIP message. Computed purely
-/// from how long the item has been overdue — ProactiveAlertEngine
-/// advances the tier on each scan and fires the right signal for
-/// each level:
+/// Escalation tiers for an unanswered VIP message. Computed from how
+/// long the sender has been waiting — i.e. the age of their latest
+/// message, NOT from the 超时 window in `ReplyDebtConfig`: these are fixed
+/// milestones, so changing 「多久算超时」 moves the badges but not the
+/// reminders. ProactiveAlertEngine advances the tier on each scan and
+/// fires the right signal for each level:
 ///
-/// - `.t1` (30m+): one system notification
-/// - `.t2` (60m+): menu-bar "!" badge + compact pill pulse (visual only)
-/// - `.t3` (120m+): second system notification + in-panel toast
-/// - `.t4` (240m+): third notification + persistent "!Nh" in menu bar
+/// - `.t1` (30m waited): one system notification
+/// - `.t2` (1h+): menu-bar "!" badge + compact pill pulse (visual only)
+/// - `.t3` (2h+): second system notification + in-panel toast
+/// - `.t4` (4h+): third notification + persistent "!Nh" in menu bar
 ///
 /// Each tier only fires once per item; resetting requires the user to
 /// act on the item (reply / dismiss / snooze).
@@ -58,16 +60,16 @@ enum VIPAlertTier: Int, Comparable, Codable {
 
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 
-    static func compute(overdueMinutes: Int) -> Self {
-        if overdueMinutes >= 240 { return .t4 }
-        if overdueMinutes >= 120 { return .t3 }
-        if overdueMinutes >= 60  { return .t2 }
-        if overdueMinutes >= 30  { return .t1 }
+    static func compute(waitingMinutes: Int) -> Self {
+        if waitingMinutes >= 240 { return .t4 }
+        if waitingMinutes >= 120 { return .t3 }
+        if waitingMinutes >= 60  { return .t2 }
+        if waitingMinutes >= 30  { return .t1 }
         return .none
     }
 
-    /// Approximate "how long has this been overdue" label — rendered in
-    /// the menu bar and banner so the user knows how urgent it is.
+    /// How long the sender has been waiting — rendered in the menu bar and
+    /// banner so the user knows how urgent it is.
     var agingLabel: String {
         switch self {
         case .none: return ""
@@ -343,8 +345,11 @@ struct ReplyDebtItem: Identifiable {
     let isAtMention: Bool
     let inboundCountSinceLastOutbound: Int
     let reasons: [ReplyDebtReason]
-    /// AI-suggested reply window in minutes. nil = no prediction available.
-    let suggestedReplyMinutes: Int?
+    /// The window `ReplyDebtConfig.overdueWindow` used to decide this item
+    /// is 超时. Published instead of left to be re-derived: every consumer
+    /// that recomputed its own threshold drifted from the `.overdue` reason
+    /// sitting in `reasons` on the very same row.
+    let overdueThresholdMinutes: Int
     /// Exact source retained for context; never substitute another message in this chat.
     var contextNotification: HUDNotification? = nil
 }
@@ -354,6 +359,25 @@ struct ReplyDebtConfig: Codable {
     var normalOverdueMinutes: Int = 120
     var vipOverdueMinutes: Int = 30
     var groupAtOverdueMinutes: Int = 30
+
+    /// The one definition of "how long without a reply counts as 超时".
+    ///
+    /// `contactWindowMinutes == 0` means *not set*, not "overdue instantly":
+    /// three of the eleven contact roles default to 0. Read as a literal
+    /// threshold, `age >= 0` holds for every message and the row wears a
+    /// permanent 超时 badge whose number is just the message's age.
+    static func overdueWindow(
+        contactWindowMinutes: Int,
+        isGroup: Bool,
+        isAtMention: Bool,
+        isVIP: Bool,
+        config: ReplyDebtConfig
+    ) -> Int {
+        if contactWindowMinutes > 0 { return contactWindowMinutes }
+        if isGroup && isAtMention { return config.groupAtOverdueMinutes }
+        if isVIP { return config.vipOverdueMinutes }
+        return config.normalOverdueMinutes
+    }
 }
 
 
@@ -451,7 +475,7 @@ struct HUDNotification: Identifiable, Equatable {
             isAtMention: isAtMention,
             askType: .none,
             reasons: [],
-            suggestedReplyMinutes: 60,
+            overdueThresholdMinutes: 60,
             status: .active,
             dismissedAtMsgId: nil,
             aiSummary: nil,

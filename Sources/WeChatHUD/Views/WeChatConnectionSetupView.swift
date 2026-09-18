@@ -271,13 +271,18 @@ struct WeChatConnectionSetupView: View {
 
             HStack(spacing: 12) {
                 Button(buttonTitle) { performPrimaryAction() }
-                    .buttonStyle(.borderedProminent).tint(CompanionPalette.accent)
+                    .tint(CompanionPalette.accent)
+                    .buttonStyle(.borderedProminent)
                     .controlSize(.large).disabled(applying || syncing || probing || preparationFlowBusy)
                     .accessibilityIdentifier("connection.setup.primary")
                 if PreviewRuntime.isEnabled || (hasConfiguredSelection && !needsAccountSelection) {
                     Button("更换微信账号") { showChangeAccountConfirm = true }
                         .buttonStyle(.link)
                         .disabled(applying || syncing || probing)
+                        // The scope sentence used to be printed here in
+                        // permanent caption text *and* verbatim inside the
+                        // confirm dialog. The dialog is where it is needed.
+                        .help("新账号只读自己的聊天；已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
                         .accessibilityIdentifier("connection.change-account")
                 }
                 Spacer(minLength: 0)
@@ -294,9 +299,6 @@ struct WeChatConnectionSetupView: View {
                     .font(.caption)
                     .foregroundStyle(CompanionPalette.jadeInk)
             }
-            Text("更换账号前先看清范围：新账号只读自己的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .companionAnimation(CompanionMotion.ease(0.18), value: connected)
         .companionDialogBackdrop(showChangeAccountConfirm) {
@@ -318,8 +320,8 @@ struct WeChatConnectionSetupView: View {
                                     authorizeDirectory(changeAccount: true)
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }

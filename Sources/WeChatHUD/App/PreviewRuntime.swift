@@ -9,6 +9,80 @@ enum PreviewRuntime {
     static let directory = NSTemporaryDirectory() + "wechathud-product-preview"
     static var pendingAITestFailure = false
     static var pendingAutoSendConfirm = false
+    /// Holds the 洞察 page on its overview instead of auto-selecting a chat, so
+    /// the overview dashboard can be screenshotted on a repeatable launch.
+    static var opensInsightOverviewByDefault: Bool {
+        isEnabled && CommandLine.arguments.contains("--preview-insight-overview")
+    }
+
+    /// `--preview-expand-modules` opens every disclosure on 洞察总览. Half of
+    /// that page — including the six KPI cards — lives behind a chevron, so a
+    /// viewport-only screenshot tool had never photographed it.
+    static var expandsAllOverviewModules: Bool {
+        isEnabled && CommandLine.arguments.contains("--preview-expand-modules")
+    }
+
+    /// Opens 今日 on its 「没回的」 segment, which is otherwise click-only.
+    static var opensTodayMissedReplies: Bool {
+        isEnabled && CommandLine.arguments.contains("--preview-today-missed")
+    }
+
+    /// A partial walk of the 「没回的」 corpus, so the disclosure line that a
+    /// complete scan can never show is still screenshot-able.
+    static var missedRepliesCoverageOverride: MissedReplyFinder.Coverage? {
+        guard isEnabled, CommandLine.arguments.contains("--preview-missed-partial") else { return nil }
+        return MissedReplyFinder.Coverage(examinedChats: 2, unexaminedChats: 37)
+    }
+
+    /// Day stats for the overview fixture. Fed through the real
+    /// `computeGlobalOverview`, so a screenshot shows the shipped arithmetic
+    /// rather than a hand-typed summary of it.
+    static func previewChatStats() -> [String: ChatStatsData] {
+        func stats(
+            username: String,
+            name: String,
+            isGroup: Bool,
+            category: WhitelistCategory,
+            total: Int,
+            mine: Int,
+            hour: Int,
+            weekday: Int
+        ) -> ChatStatsData {
+            var byHour = [Int](repeating: 0, count: 24)
+            byHour[hour] = total
+            var byWeekday = [Int](repeating: 0, count: 7)
+            byWeekday[weekday] = total
+            return ChatStatsData(
+                chatUsername: username,
+                chatName: name,
+                isGroup: isGroup,
+                category: category,
+                messageCount: total,
+                myMessageCount: mine,
+                participantCount: isGroup ? 8 : 2,
+                messagesByHour: byHour,
+                messagesByWeekday: byWeekday,
+                typeCounts: [1: total - 4, 3: 3, 34: 1],
+                avgResponseTimeSeconds: isGroup ? 2_400 : 480,
+                symmetryRatio: Double(mine) / Double(max(total - mine, 1)),
+                trend7d: 1.2,
+                topSenders: isGroup
+                    ? [(name: "林晓", count: total / 3), (name: "许宁", count: total / 4)]
+                    : [(name: name, count: total - mine)],
+                silentMembers: isGroup ? [(name: "老周", usualDaily: 5, today: 0)] : [],
+                ignoredMessages: isGroup ? [(sender: "广告君", text: "【推广】", time: 0)] : [],
+                selfInitiated: !isGroup,
+                earliestTs: 0,
+                latestTs: 0
+            )
+        }
+        return [
+            "preview-project": stats(username: "preview-project", name: "项目协作群", isGroup: true,
+                                      category: .work, total: 96, mine: 31, hour: 14, weekday: 2),
+            "preview-colleague": stats(username: "preview-colleague", name: "林晓 · 产品同事", isGroup: false,
+                                       category: .work, total: 42, mine: 24, hour: 21, weekday: 3),
+        ]
+    }
     /// Preview-only stand-ins for system accessibility so 验收 7 / 9 can run
     /// without changing the host Mac's settings.
     static var reduceMotionOverride: Bool?
@@ -218,7 +292,7 @@ enum PreviewRuntime {
                 InboxItem(id: fixture.chatUsername, chatUsername: fixture.chatUsername, chatName: fixture.chatName,
                     senderName: fixture.senderName, preview: text, isGroup: true, timestamp: Date(),
                     actionRequired: true, priority: .p1, isVIP: false, isWhitelisted: true,
-                    unreadCount: 1, isAtMention: true, askType: .yesNo, reasons: [], suggestedReplyMinutes: 60,
+                    unreadCount: 1, isAtMention: true, askType: .yesNo, reasons: [], overdueThresholdMinutes: 60,
                     status: .active, aiSummary: fixture.summary, moodEmoji: nil),
                 at: 0)
         }
@@ -277,6 +351,9 @@ enum PreviewRuntime {
                 isAtMention: true,
                 isVIP: false,
                 unrepliedCount: 1,
+                // Demo story: an ack went out, the substance did not. Keeps the
+                // 「未实质回应」 badge screenshot-able.
+                repliedWithAckOnly: true,
                 sourceMessageID: "missed-2",
                 sourceText: "@我 纪要还差你那一段，今天下班前能补上吗？"
             )
@@ -295,7 +372,7 @@ enum PreviewRuntime {
             InboxItem(id: row.0, chatUsername: row.0, chatName: row.1, senderName: "林晓", preview: row.2,
                 isGroup: row.3, timestamp: now.addingTimeInterval(-Double(index + 1) * 300),
                 actionRequired: true, priority: .p1, isVIP: !row.3, isWhitelisted: true,
-                unreadCount: 1, isAtMention: row.3, askType: .yesNo, reasons: [], suggestedReplyMinutes: 60,
+                unreadCount: 1, isAtMention: row.3, askType: .yesNo, reasons: [], overdueThresholdMinutes: 60,
                 status: .active, aiSummary: [
                     "评审前需要你确认：待办是否应同时显示执行人和交代人。",
                     "验收清单已准备好，等你确认后安排联调。",
@@ -406,6 +483,50 @@ enum PreviewRuntime {
         )
         monitor.insightCoordinator.seedPreviewResult(chatUsername: "preview-colleague", result: previewInsight)
         monitor.insightCoordinator.seedPreviewResult(chatUsername: "preview-project", result: previewInsight)
+        // A briefing with cross-chat topics, so the radar rows that can only
+        // come from the global pass can be screenshotted without a live AI
+        // endpoint. The third entry is deliberately not cross-chat and must
+        // not appear.
+        monitor.insightCoordinator.globalBriefing = GlobalBriefing(
+            date: "2026-09-18",
+            actionRequired: [],
+            headline: "同一件事，两个对话给了两个说法",
+            stats: BriefingStats(
+                totalMessages: 128,
+                myMessages: 46,
+                activeGroups: 3,
+                totalGroups: 5,
+                activePrivateChats: 2,
+                workRatio: 0.62
+            ),
+            crossTopics: [
+                CrossTopic(
+                    name: "上线时间",
+                    chats: ["产品群", "研发群", "老板"],
+                    summary: "三个对话都在排这版的时间",
+                    conflict: "产品群说周三上线，老板说周五",
+                    status: "冲突"
+                ),
+                CrossTopic(
+                    name: "报销流程",
+                    chats: ["行政群", "财务小助手"],
+                    summary: "同一条流程被讲了两次，口径一致",
+                    conflict: nil,
+                    status: "进行中"
+                ),
+                CrossTopic(
+                    name: "只在一个人群里出现过的话题",
+                    chats: ["产品群"],
+                    summary: "不该作为跨对话话题出现",
+                    conflict: nil,
+                    status: ""
+                )
+            ],
+            darkSignals: DarkSignals(headline: nil),
+            overallMood: "推进中",
+            blindSpots: [],
+            topSuggestion: "先对齐上线时间"
+        )
     }
 
     @MainActor static func simulateSendSuccess(monitor: ChatMonitor, panelState: PanelState) {
@@ -582,9 +703,19 @@ enum PreviewRuntime {
             panelState.islandSurface = .inbox
             panelState.popoverOpen = false
             panelState.collapse()
+            // Hold the dwell for the whole schedule below. The live 180 ms
+            // promotion fires while the peek spring is still travelling
+            // (~323 ms), so every leg that starts from a hover would silently
+            // contain a second transition — and a leg that contains two
+            // transitions measures neither. `retarget-midflight` below is the
+            // one leg that wants that overlap, and it drives it on purpose.
+            CompanionMotion.hoverExpandDelayProvider = { 30 }
             leg("settle-compact", {}, settle: 0.5, expect: "compact")
 
-            leg("hover-in-compact-peek", { panelState.mouseEntered() }, settle: 0.9, expect: "peek")
+            leg("hover-in-compact-peek", {
+                panelState.popoverOpen = true
+                panelState.mouseEntered()
+            }, settle: 0.9, expect: "peek")
             // popoverOpen latches the panel open with no real cursor under it.
             leg("peek-extended", {
                 panelState.popoverOpen = true
@@ -601,14 +732,36 @@ enum PreviewRuntime {
                 panelState.collapse()
             }, settle: 1.2, expect: "extended")
 
-            // Hold the peek. The dwell timer promotes peek → extended after
-            // ~180 ms, so a hover-out measured after a hover-in would actually
-            // collapse *from extended* and the peek-exit path would never be
-            // exercised. Pushing the dwell out of the way keeps the panel in
-            // peek for the duration of the two legs below, which is the state
-            // a real cursor produces when it crosses the pill without stopping.
-            CompanionMotion.hoverExpandDelayProvider = { 30 }
-            leg("hover-in-second", { panelState.mouseEntered() }, settle: 0.9, expect: "peek")
+            // The transition a real hover actually produces: the dwell promotes
+            // to the inbox while the peek spring is still travelling, so the
+            // frame spring has to retarget mid-flight rather than start clean.
+            // Every other leg here measures a spring from rest; a hitch that
+            // only exists on a retarget would be invisible to them, and this is
+            // the path a cursor takes whenever it stops on the pill for a beat.
+            leg("retarget-midflight", {
+                // Timers, not `DispatchQueue.main.asyncAfter`: `leg` polls with
+                // a nested `RunLoop.run(mode: .default, before:)`, which drains
+                // run-loop sources but not the main queue — an `asyncAfter`
+                // scheduled from inside a leg never runs until the whole
+                // schedule is over, and the leg records the absence of a
+                // transition as a transition with zero frames.
+                Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { _ in
+                    MainActor.assumeIsolated { panelState.mouseEntered() }
+                }
+                Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { _ in
+                    MainActor.assumeIsolated { panelState.goExtended() }
+                }
+            }, settle: 1.4, expect: "extended")
+
+            // Hold the peek. The dwell timer is parked for the whole schedule,
+            // and the panel is latched open, so a hover-out measured after a
+            // hover-in collapses *from peek* — the path a real cursor produces
+            // when it crosses the pill without stopping — instead of being
+            // stolen by the auto-promotion or by `frameAnimationEnded`.
+            leg("hover-in-second", {
+                panelState.popoverOpen = true
+                panelState.mouseEntered()
+            }, settle: 0.9, expect: "peek")
             // Drive the *real* pointer-exit path, not `collapse()`. The two are
             // not the same code: `mouseExited` runs the debounce, the popover
             // and text-input guards, the mid-animation deferral, and then
@@ -655,6 +808,19 @@ enum PreviewRuntime {
     /// `--preview-peek` drives compact → peek → inbox from inside the process
     /// (no cursor). Captures each landing and writes geometry so QA can tell
     /// a mask spring from `setFrameInstantly`.
+    ///
+    /// **The `peek-inbox` PNG is a black plate and that is not a product bug.**
+    /// A surface mounted by an *animated* reveal can be photographed empty when
+    /// the display is asleep (no refresh to display it in). The mechanism is
+    /// not established — `--preview-notification` reaches a freshly mounted
+    /// banner through the same animated path and captures fine, and no forced
+    /// layout, `display()`, `setFrame(display: true)` or
+    /// `displayIgnoringOpacity` rescues the inbox shot. What is established is
+    /// the workaround: the geometry, mask rect, laid-out subview tree and every
+    /// frame number in `wechathud-peek-qa.json` are correct, so read the
+    /// animation from this sequence's `fps` / `p95Ms` / `samples`, and take the
+    /// settled inbox's pixels from `--preview-expand-row`, which reaches the
+    /// same state through the instant landing.
     @MainActor static func runPeekMorphCapture(panelState: PanelState) {
         guard isEnabled, CommandLine.arguments.contains("--preview-peek") else { return }
         CompanionMotion.hoverExpandDelayProvider = { 0.85 }
@@ -664,6 +830,12 @@ enum PreviewRuntime {
 
         func facts(_ tag: String) -> [String: Any] {
             let island = (NSApp.delegate as? AppDelegate)?.panel?.visibleIslandFrame
+            // Read the finished run, not the live samples: the next remeasure
+            // calls `begin()` and empties them, so a retargeted transition
+            // reports "0 fps" — a number that looks like a result and is not
+            // one. `completedRuns` is what actually happened.
+            let intervals = IslandFrameTiming.completedRuns.last?.intervals ?? []
+            let average = intervals.isEmpty ? 0 : intervals.reduce(0, +) / Double(intervals.count)
             return [
                 "tag": tag,
                 "currentState": "\(panelState.currentState)",
@@ -671,10 +843,30 @@ enum PreviewRuntime {
                 "width": island?.width ?? 0,
                 "height": island?.height ?? 0,
                 "instant": IslandFrameTiming.lastWasInstant,
-                "durationMs": IslandFrameTiming.lastDuration * 1000,
-                "fps": IslandFrameTiming.estimatedFPS,
-                "worstMs": IslandFrameTiming.worstInterval * 1000,
+                "durationMs": (IslandFrameTiming.completedRuns.last?.duration ?? 0) * 1000,
+                "samples": intervals.count,
+                "fps": average > 0 ? 1 / average : 0,
+                "worstMs": (intervals.max() ?? 0) * 1000,
+                "p95Ms": intervals.isEmpty ? 0 : {
+                    let sorted = intervals.sorted()
+                    return sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))] * 1000
+                }(),
+                "runs": IslandFrameTiming.completedRuns.count,
+                "totalTicks": IslandFrameTiming.totalTicks,
+                "surface": "\(panelState.islandSurface)",
+                "inbox": (NSApp.delegate as? AppDelegate)?.monitor?.inboxItems.count ?? -1,
+                "content": viewFacts(),
             ]
+        }
+
+        /// What the window is actually holding, next to what the mask reveals.
+        ///
+        /// `cacheDisplay` renders the view tree without the compositor mask, so
+        /// a shot of an island that shows only its background is a *content*
+        /// problem, not a mask problem — and the two look identical in the
+        /// photograph. This is the field that tells them apart.
+        func viewFacts() -> [String: Any] {
+            islandCaptureFacts()
         }
 
         var notes: [[String: Any]] = []
@@ -686,25 +878,212 @@ enum PreviewRuntime {
             // spring lands and the hit test reports the pointer outside.
             panelState.popoverOpen = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                notes.append(facts("peek"))
+                notes.append(facts("peek-mid-dwell"))
                 captureSurfaces(as: "peek-hover")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                    notes.append(facts("peek-landed"))
-                    captureSurfaces(as: "peek-landed")
-                    panelState.goExtended()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                    notes.append(facts("extended"))
-                    captureSurfaces(as: "peek-inbox")
-                    let url = URL(fileURLWithPath: NSTemporaryDirectory())
-                        .appendingPathComponent("wechathud-peek-qa.json")
-                    if let data = try? JSONSerialization.data(
-                        withJSONObject: notes, options: [.prettyPrinted, .sortedKeys]
-                    ) {
-                        try? data.write(to: url)
-                    }
-                    }
+                // `.peek` has no settled frame by design — it is the dwell
+                // before the inbox opens (PanelState.scheduleHoverExpand).
+                // Waiting for it to "land" only photographs the state it
+                // promotes *into*, which is what the old `peek-landed` shot
+                // turned out to be: a byte-identical copy of the inbox below
+                // it, filed under a name that promised a third shape.
+                panelState.goExtended()
+                waitForIslandToSettle()
+                notes.append(facts("extended"))
+                captureSurfaces(as: "peek-inbox")
+                let url = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("wechathud-peek-qa.json")
+                if let data = try? JSONSerialization.data(
+                    withJSONObject: notes, options: [.prettyPrinted, .sortedKeys]
+                ) {
+                    try? data.write(to: url)
                 }
             }
+        }
+    }
+
+    /// Block until the island has actually stopped moving.
+    ///
+    /// Island snapshots used to be taken on a fixed delay. The reveal is a
+    /// spring, so a delayed capture can land mid-flight and QA then reads the
+    /// transitional mask as a product bug — and the reverse error is just as
+    /// expensive: a shot taken before the run has even been armed photographs
+    /// the *previous* shape under the name of the new one. `minimumWait`
+    /// covers the run that starts a tick later than the call; `cap` covers a
+    /// frame driver that never ticks at all, and has to stay above the panel's
+    /// own watchdog deadline (2.55 s) so the gate waits *through* that landing
+    /// instead of photographing the stall before it.
+    ///
+    /// Stopping the motion is not the end of a transition: the surface inside
+    /// the mask is measured a beat later and that measurement re-arms the
+    /// spring, so one capture photographed a 422 pt inbox clipped by a 339 pt
+    /// window. The gate therefore also requires the revealed size to hold still
+    /// across two polls.
+    ///
+    /// Spins nested runloop turns rather than handing back a continuation: this
+    /// only runs inside the preview capture scripts, and keeping them
+    /// straight-line is what makes a photograph of the island mean the same
+    /// thing twice in a row.
+    @MainActor static func waitForIslandToSettle(
+        minimumWait: TimeInterval = 0.35,
+        cap: TimeInterval = 3.0
+    ) {
+        guard let panel = (NSApp.delegate as? AppDelegate)?.panel else {
+            RunLoop.main.run(until: Date().addingTimeInterval(minimumWait))
+            return
+        }
+        let started = Date()
+        var lastSize: CGSize?
+        var stablePolls = 0
+        while true {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            let waited = Date().timeIntervalSince(started)
+            if waited >= cap { return }
+            let size = panel.visibleIslandFrame?.size
+            stablePolls = size == lastSize ? stablePolls + 1 : 0
+            lastSize = size
+            if waited >= minimumWait, stablePolls >= 2, !panel.isFrameAnimationRunning { return }
+        }
+    }
+
+    /// `--preview-detail` opens the island's own detail surface on a fixture
+    /// conversation. It is the one island state with no capture path: compact,
+    /// peek, extended and notification all have one, so a 500pt-tall layout
+    /// that users reach by clicking a row had never been photographed.
+    ///
+    /// Deferred to the next runloop turn for the same reason
+    /// `applyIslandSnapshotOverrides` is: running it inline from
+    /// `applicationDidFinishLaunching` lets the state flip before the panel has
+    /// laid out its first frame, and the flag then manufactures the defect it
+    /// exists to photograph.
+    @MainActor static func applyIslandDetailOverride(panelState: PanelState) {
+        guard isEnabled, CommandLine.arguments.contains("--preview-detail") else { return }
+        DispatchQueue.main.async {
+            panelState.popoverOpen = true
+            panelState.showDetail(
+                kind: .conversation(chatUsername: "preview-project"),
+                chatName: "项目协作群"
+            )
+        }
+    }
+
+    /// `--preview-retrospective` opens the 按时间回顾 window on a repeatable
+    /// launch. It is only reachable from the status-bar menu or the 今日 quick
+    /// link, so before this flag it could not be reached without moving the
+    /// operator's pointer — and it had never been photographed.
+    @MainActor static func applyRetrospectiveOverride(monitor: ChatMonitor) {
+        guard isEnabled, CommandLine.arguments.contains("--preview-retrospective") else { return }
+        DispatchQueue.main.async {
+            RetrospectiveWindowManager.shared.showWindow(monitor: monitor)
+        }
+    }
+
+    /// `--preview-narrow=<points>` resizes the workspace window so a layout that
+    /// only exists below a breakpoint can be photographed. The 洞察 overview's
+    /// stacked narrow branch ships untested by pixels because the window always
+    /// launches at its default width. Retried for a few turns because the
+    /// window is created lazily by the tab override that runs just before this.
+    ///
+    /// `minSize` has to be relaxed first: the workspace floors itself at 900pt,
+    /// and AppKit clamps `setContentSize` to that floor. The flag that used to
+    /// ask for 820pt therefore got 900pt and nobody noticed — a preview switch
+    /// that silently does nothing is worse than none, because the screenshot
+    /// still looks like a pass. The achieved width is written out beside the
+    /// PNG so the clamp can never be re-introduced as an invisible no-op.
+    @MainActor static func applyWindowWidthOverride(attempt: Int = 0) {
+        guard isEnabled else { return }
+        let prefix = "--preview-narrow="
+        guard let raw = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }),
+              let width = Int(raw.dropFirst(prefix.count)), width >= 320 else { return }
+        let window = NSApp.windows.first {
+            $0.title == CompanionProductCopy.brandName && !$0.isSheet
+        }
+        guard let window else {
+            if attempt < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    applyWindowWidthOverride(attempt: attempt + 1)
+                }
+            }
+            return
+        }
+        window.minSize = NSSize(width: 320, height: 420)
+        let height = max(window.contentLayoutRect.height, 420)
+        window.setContentSize(NSSize(width: CGFloat(width), height: height))
+        window.center()
+        let achieved = Int(window.frame.width.rounded())
+        let facts: [String: Any] = [
+            "requestedWidth": width,
+            "achievedWidth": achieved,
+            "clamped": achieved != width,
+        ]
+        if let data = try? JSONSerialization.data(
+            withJSONObject: facts, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("wechathud-window-qa.json"))
+        }
+    }
+
+    /// `--preview-scroll=<points>` scrolls the workspace's content pane down so
+    /// a surface below the fold can be photographed. The 洞察 overview's six KPI
+    /// cards — where a whole class of copy/algorithm mismatch lives — had never
+    /// been seen as pixels for this reason.
+    ///
+    /// Driven from the AppKit side instead of threading a `ScrollViewReader`
+    /// anchor through every screen: a switch that only scrolls where someone
+    /// remembered to add a hook is a switch that silently photographs the top of
+    /// the page everywhere else, and the screenshot still looks like a pass.
+    /// The clip view's resulting origin is written out beside the PNG, so "it
+    /// didn't scroll" cannot be read as "there was nothing there".
+    @MainActor static func applyWorkspaceScrollOverride(attempt: Int = 0) {
+        guard isEnabled else { return }
+        let prefix = "--preview-scroll="
+        guard let raw = CommandLine.arguments.first(where: { $0.hasPrefix(prefix) }),
+              let offset = Double(raw.dropFirst(prefix.count)), offset >= 0 else { return }
+        guard let window = NSApp.windows.first(where: {
+            $0.title == CompanionProductCopy.brandName && !$0.isSheet
+        }) else {
+            if attempt < 20 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    applyWorkspaceScrollOverride(attempt: attempt + 1)
+                }
+            }
+            return
+        }
+        var scrollViews: [NSScrollView] = []
+        func collect(_ view: NSView) {
+            if let scroll = view as? NSScrollView { scrollViews.append(scroll) }
+            view.subviews.forEach(collect)
+        }
+        if let root = window.contentView { collect(root) }
+        // The widest-and-tallest scroll view is the content pane; the sidebar's
+        // own list is narrower and the split's inspector is shorter.
+        guard let pane = scrollViews.max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }) else { return }
+        let clip = pane.contentView
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: offset))
+        pane.reflectScrolledClipView(clip)
+        // `scroll(to:)` accepts an offset past the end of the document and the
+        // clip view's origin reports it anyway, so the number alone proved
+        // nothing: a sweep of six pages "scrolled 900pt" and every one of them
+        // was a page shorter than the viewport that had not moved at all.
+        // Report the distance the content could actually travel.
+        let visibleHeight = Double(clip.bounds.height)
+        let documentHeight = Double(pane.documentView?.frame.height ?? 0)
+        let maxOffset = max(0, documentHeight - visibleHeight)
+        let facts: [String: Any] = [
+            "requestedOffset": offset,
+            "achievedOffset": Double(clip.bounds.origin.y.rounded()),
+            "effectiveOffset": min(offset, maxOffset),
+            "maxOffset": maxOffset,
+            "documentHeight": documentHeight,
+            "viewportHeight": visibleHeight,
+            "nothingBelowFold": maxOffset <= 0,
+            "scrollViewsFound": scrollViews.count,
+        ]
+        if let data = try? JSONSerialization.data(
+            withJSONObject: facts, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("wechathud-scroll-qa.json"))
         }
     }
 
@@ -748,13 +1127,23 @@ enum PreviewRuntime {
             guard expandRow else { return }
             // Let the inbox measure and the mask spring land before the row
             // opens, so this is a real click-expand, not a launch-sized panel.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            var notes: [[String: Any]] = []
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                waitForIslandToSettle()
                 captureSurfaces(as: "inbox-closed")
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                notes.append(["tag": "inbox-closed"]
+                    .merging(islandCaptureFacts()) { _, new in new })
                 panelState.expandedInboxItemID = monitor.inboxItems.first?.id
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                    captureSurfaces(as: "row-expanded")
+                waitForIslandToSettle()
+                captureSurfaces(as: "row-expanded")
+                notes.append(["tag": "row-expanded"]
+                    .merging(islandCaptureFacts()) { _, new in new })
+                let url = URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("wechathud-row-qa.json")
+                if let data = try? JSONSerialization.data(
+                    withJSONObject: notes, options: [.prettyPrinted, .sortedKeys]
+                ) {
+                    try? data.write(to: url)
                 }
             }
         }
@@ -803,6 +1192,59 @@ enum PreviewRuntime {
         }
     }
 
+    /// The panel's view tree as data, for the QA JSON next to a snapshot.
+    @MainActor static func islandCaptureFacts() -> [String: Any] {
+        guard let view = (NSApp.delegate as? AppDelegate)?.panel?.contentView else {
+            return [:]
+        }
+        func layerFacts(_ label: String, _ v: NSView?) -> [String: Any] {
+            guard let v else { return ["\(label).missing": true] }
+            return [
+                "\(label).class": "\(type(of: v))",
+                "\(label).frame": "\(v.frame)",
+                "\(label).alpha": v.alphaValue,
+                "\(label).hidden": v.isHidden,
+                "\(label).opacity": v.layer?.opacity ?? -1,
+                "\(label).mask": v.layer?.mask.map { "\($0.frame)" } ?? "none",
+                "\(label).subviews": v.subviews.map { "\($0.frame)" },
+            ]
+        }
+        var facts: [String: Any] = [
+            "bounds": "\(view.bounds)",
+            "subviews": view.subviews.count,
+            "needsLayout": view.needsLayout,
+        ]
+        facts.merge(layerFacts("root", view)) { _, new in new }
+        facts.merge(layerFacts("child", view.subviews.first)) { _, new in new }
+        facts.merge(layerFacts("grand", view.subviews.first?.subviews.first)) { _, new in new }
+        facts["inbox"] = (NSApp.delegate as? AppDelegate)?.monitor?.inboxItems.count ?? -1
+        facts["surface"] = "\((NSApp.delegate as? AppDelegate)?.panelState?.islandSurface ?? .firstLaunch)"
+        facts["state"] = "\((NSApp.delegate as? AppDelegate)?.panelState?.currentState ?? .compact)"
+        if let mask = view.layer?.mask {
+            facts["mask.opacity"] = mask.opacity
+            facts["mask.hidden"] = mask.isHidden
+            facts["mask.frame"] = "\(mask.frame)"
+            facts["mask.cornerRadius"] = mask.cornerRadius
+            facts["mask.contents"] = mask.contents == nil ? "nil" : "set"
+            facts["mask.shapePath"] = (mask as? CAShapeLayer)?.path == nil ? "nil" : "set"
+            facts["mask.backgroundColor"] = mask.backgroundColor.map { "\($0)" } ?? "nil"
+            facts["mask.sublayers"] = mask.sublayers?.count ?? -1
+            facts["mask.superlayer"] = mask.superlayer == view.layer ? "root" : "\(String(describing: mask.superlayer?.name))"
+        } else {
+            facts["mask"] = "none"
+        }
+        // `writeSurfaceBitmaps` names every FloatingPanel it sees `island`, so
+        // a second panel window overwrites the first one's snapshot. Which one
+        // wins is dictionary-order luck, and an empty one is indistinguishable
+        // from a reveal that never painted.
+        facts["panels"] = NSApp.windows.compactMap { window -> String? in
+            guard window is FloatingPanel else { return nil }
+            return "frame=\(window.frame) visible=\(window.isVisible) alpha=\(window.alphaValue)"
+                + " subviews=\(window.contentView?.subviews.count ?? -1)"
+        }
+        return facts
+    }
+
     /// Writes PNG snapshots of the workspace, island, onboarding, and any
     /// attached sheet/alert from inside the process.
     @MainActor static func captureSurfaces(as tag: String? = nil) {
@@ -846,6 +1288,12 @@ enum PreviewRuntime {
                 write(window, name: "onboarding\(suffix)")
             } else if window.title == CompanionProductCopy.brandName, window.sheetParent == nil, !window.isSheet {
                 write(window, name: "workspace\(suffix)")
+            } else if window.title == CompanionProductCopy.timeReview {
+                // The 按时间回顾 window is a separate NSWindow with its own
+                // title, so it matched none of the branches above and could
+                // never be photographed — 18 rounds of pixel QA had zero
+                // evidence for it.
+                write(window, name: "retrospective\(suffix)")
             } else if window.isSheet || window.sheetParent != nil || window.level.rawValue >= NSWindow.Level.modalPanel.rawValue {
                 write(window, name: overlayIndex == 0 ? "overlay\(suffix)" : "overlay\(overlayIndex)\(suffix)")
                 overlayIndex += 1

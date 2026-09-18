@@ -177,13 +177,13 @@ enum DailyReportPresentationPolicy {
         lines.append("- 完成: \(p.completedCount)/\(p.totalCount)")
         lines.append("- 待处理: \(p.activeCount)")
         if p.overdueCount > 0 {
-            lines.append("- 超期: \(p.overdueCount)")
+            lines.append("- 已到期: \(p.overdueCount)")
         }
         lines.append("")
 
         // Urgent
         if !viewModel.urgentActions.isEmpty {
-            lines.append("## 🔴 紧急待处理")
+            lines.append("## 优先处理")
             for action in viewModel.urgentActions {
                 lines.append("- [ ] \(action.content) (\(action.sourceChatName))")
             }
@@ -234,7 +234,7 @@ enum DailyReportPresentationPolicy {
 
         // AI / local insight
         if let narrative = viewModel.narrative, !narrative.isEmpty {
-            lines.append("## 💡 \(viewModel.isAIEnhanced ? "AI 总结" : "规则整理")")
+            lines.append("## 💡 \(viewModel.isAIEnhanced ? "AI 小结" : "本地统计")")
             lines.append(narrative)
             lines.append("")
         }

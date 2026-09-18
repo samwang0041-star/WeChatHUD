@@ -164,7 +164,7 @@ final class DetailNoticeTests: XCTestCase {
             isAtMention: true,
             askType: .none,
             reasons: [],
-            suggestedReplyMinutes: 60,
+            overdueThresholdMinutes: 60,
             status: .active,
             dismissedAtMsgId: nil,
             aiSummary: "需要你确认评审时间",

@@ -21,6 +21,11 @@ struct MissedReplyFeed: View {
         }
     }
 
+    /// What the walk did not cover, if anything. Rendered once per state: the
+    /// empty card folds it into its own explanation, a non-empty list gets the
+    /// line above it.
+    private var coverageCaveat: String? { monitor.missedReplyCoverage?.caveat }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             rangePills
@@ -35,6 +40,17 @@ struct MissedReplyFeed: View {
                         .accessibilityLabel("结束日期")
                 }
                 .controlSize(.small)
+            }
+            if !visible.isEmpty, let caveat = coverageCaveat {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    Text(caveat)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
             }
             content
         }
@@ -77,13 +93,23 @@ struct MissedReplyFeed: View {
             .padding(.vertical, 24)
             .companionSurface()
         } else if visible.isEmpty {
+            // 「没有遗漏」 is a completeness claim; it may only be made when the
+            // walk actually covered everything. A search that matched nothing is
+            // a different fact and keeps its own explanation.
+            let caveat = coverageCaveat
             ContentUnavailableView(
-                query.isEmpty ? "没有没回的消息" : "没有匹配的消息",
-                systemImage: query.isEmpty ? "checkmark.bubble" : "magnifyingglass",
+                !query.isEmpty
+                    ? "没有匹配的消息"
+                    : (caveat == nil
+                        ? CompanionInteractionCopy.missedRepliesAllClear
+                        : CompanionInteractionCopy.missedRepliesPartial),
+                systemImage: !query.isEmpty
+                    ? "magnifyingglass"
+                    : (caveat == nil ? "checkmark.bubble" : "exclamationmark.bubble"),
                 description: Text(
-                    query.isEmpty
-                    ? CompanionInteractionCopy.missedRepliesEmpty
-                    : "试试联系人姓名或消息里的关键词。"
+                    !query.isEmpty
+                        ? "试试联系人姓名或消息里的关键词。"
+                        : (caveat ?? CompanionInteractionCopy.missedRepliesEmpty)
                 )
             )
             .frame(maxWidth: .infinity)
@@ -117,6 +143,11 @@ struct MissedReplyFeed: View {
                     }
                     Spacer(minLength: 8)
                     if item.isAtMention { CompanionBadge(title: "@ 我") }
+                    if item.repliedWithAckOnly {
+                        // Same words the inbox uses for this exact case, so the
+                        // two surfaces do not describe one fact two ways.
+                        CompanionBadge(title: ReplyDebtReasonCode.unsubstantiveReply.label)
+                    }
                     if item.unrepliedCount > 1 {
                         CompanionBadge(title: "\(item.unrepliedCount) 条")
                     }
@@ -146,8 +177,8 @@ struct MissedReplyFeed: View {
                     } label: {
                         Label("理解上下文与回复", systemImage: "text.bubble")
                     }
-                    .buttonStyle(.borderedProminent)
                     .tint(CompanionPalette.jade)
+                    .buttonStyle(.borderedProminent)
                     Spacer()
                     Text(item.senderName)
                         .font(.system(size: 12))

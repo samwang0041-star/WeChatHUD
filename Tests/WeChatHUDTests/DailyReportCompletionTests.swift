@@ -149,7 +149,7 @@ final class DailyReportCompletionTests: XCTestCase {
             isAtMention: false,
             inboundCountSinceLastOutbound: 1,
             reasons: [],
-            suggestedReplyMinutes: 30
+            overdueThresholdMinutes: 30
         )
     }
 

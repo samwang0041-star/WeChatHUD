@@ -93,23 +93,24 @@ struct MacExperienceSettingsView: View {
                 }
             }
             SettingsRowDivider()
-            Text("关闭这个窗口后，助手仍留在顶部和菜单栏。")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.vertical, 12)
-            SettingsRowDivider()
             SettingsRow("动画与透明度", subtitle: "减少动态效果时立刻切换状态；减少透明度时用实底，不靠桌面衬出字。", icon: "circle.dotted", iconColor: CompanionPalette.jade) {
                 Text(accessibilityStatus)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.trailing)
             }
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jadeInk)
-                Text("更改已保存").font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16).padding(.bottom, 12)
+            // 「更改已保存」 used to be unconditional text here. Nothing on this
+            // page saves anything — it reads macOS and opens System Settings —
+            // so it was a receipt for a transaction that never happened.
+            // The window note moved to the end of the card: sandwiched between
+            // two permission rows with a divider on each side it read as a
+            // permission of its own.
+            SettingsRowDivider()
+            Text("关闭这个窗口后，助手仍留在顶部和菜单栏。")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 12)
             if PreviewRuntime.isEnabled {
                 Text("演示模式不修改登录项或申请系统权限。")
                     .font(.caption).foregroundStyle(.secondary)

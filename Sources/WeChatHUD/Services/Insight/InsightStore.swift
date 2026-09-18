@@ -13,6 +13,10 @@ enum InsightTimeWindow: String, CaseIterable {
     case quarter = "近 90 天"
     case all = "全部"
 
+    /// The overview page's heading. It used to be the literal 「今天聊了什么」
+    /// while the picker right beside it could say 近 30 天.
+    var overviewHeading: String { "\(rawValue)聊了什么" }
+
     var seconds: Int? {
         switch self {
         case .all: return nil
@@ -63,6 +67,26 @@ final class InsightStore: ObservableObject {
 
     private let dataLoader = InsightDataLoader()
     private var detailStatsCache: [String: ChatStatsData] = [:]
+
+    /// Preview-only: put the overview page into a renderable state without a
+    /// WeChat database. The numbers still come from the shipped
+    /// `computeGlobalOverview`, so a screenshot is not a mock-up of the math.
+    func applyProductPreviewFixture(chatStats: [String: ChatStatsData]) {
+        guard PreviewRuntime.isEnabled else { return }
+        allStats = chatStats
+        statsLoaded = true
+        reloadError = nil
+        overview = ChatInsightEngine.computeGlobalOverview(
+            allStats: chatStats,
+            contacts: [],
+            commitments: [],
+            replyDebtItems: [],
+            vipUsernames: [],
+            pendingAskCount: 3,
+            urgentAskCount: 1,
+            recalledMessageCount: 2
+        )
+    }
 
     func reload(store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem]) async {
         detailStatsCache.removeAll()

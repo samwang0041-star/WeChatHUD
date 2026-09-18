@@ -70,7 +70,7 @@ final class DailyReportLoadingTests: XCTestCase {
                 isAtMention: false,
                 inboundCountSinceLastOutbound: 1,
                 reasons: [],
-                suggestedReplyMinutes: 30
+                overdueThresholdMinutes: 30
             )
         ]
         XCTAssertNotEqual(monitor.currentDailyReportFactsStamp(), stampBefore)

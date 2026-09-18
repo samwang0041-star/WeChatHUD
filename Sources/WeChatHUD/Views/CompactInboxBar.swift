@@ -335,9 +335,17 @@ struct CompactLeftWingCopy: Equatable {
                 route: route,
                 spoken: spoken,
                 accessibilityLabel: "打开聊天收件箱",
-                help: spoken + " · 点击打开收件箱"
+                help: Self.tooltip(spoken: spoken, destination: "点击打开收件箱")
             )
         }
+    }
+
+    /// `spoken` is a sentence and ends with a full stop; the tooltip joins it
+    /// to a click promise with a separator, so the stop has to go or the line
+    /// reads 「3 条待处理。 · 点击打开收件箱」.
+    private static func tooltip(spoken: String, destination: String) -> String {
+        let stem = spoken.hasSuffix("。") ? String(spoken.dropLast()) : spoken
+        return "\(stem) · \(destination)"
     }
 }
 

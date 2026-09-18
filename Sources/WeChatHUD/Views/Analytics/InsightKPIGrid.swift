@@ -11,8 +11,18 @@ struct InsightKPIGrid: View {
         ]
         let rowB = [
             KPI(label: "回复率", value: "\(Int(overview.responseRate * 100))%", hint: overview.responseRate >= 0.8 ? "稳定" : overview.responseRate >= 0.6 ? "一般" : "偏低", status: overview.responseRate >= 0.8 ? .green : overview.responseRate >= 0.6 ? .orange : .red),
-            KPI(label: "承诺履约", value: "\(Int(overview.commitmentCompletionRate * 100))%", hint: "\(overview.fulfilledCommitments) 已完成 / \(overview.overdueCommitments) 超期", status: overview.commitmentCompletionRate >= 0.8 ? .green : overview.commitmentCompletionRate >= 0.6 ? .orange : .red),
-            KPI(label: "VIP 占比", value: "\(Int(overview.vipMessageRatio * 100))%", hint: overview.vipMessageRatio < 0.1 ? "注意力偏离" : "合理", status: overview.vipMessageRatio < 0.1 ? .orange : .green),
+            // 0 完成 / 0 到期 used to render as 「100%」 with a green dot: an
+            // empty denominator praised someone for perfect follow-through on
+            // commitments they never made. The rate is undefined here, so say
+            // there is nothing to grade instead of grading it.
+            commitmentKPI(overview),
+            // This card used to print a verdict — 「注意力偏离」 below 10%.
+            // The ratio's denominator is the user's own VIP marking, so anyone
+            // who follows one colleague in a hundred chats was told their
+            // attention is off-track no matter what they do: the judgement
+            // could not be acted on, only endured. It now states the dimension
+            // the number is measured over.
+            KPI(label: "VIP 占比", value: "\(Int(overview.vipMessageRatio * 100))%", hint: "\(Int((overview.vipMessageRatio * Double(overview.totalMessages)).rounded())) 条 / 共 \(overview.totalMessages) 条", status: .neutral),
         ]
         return VStack(spacing: 10) {
             HStack(spacing: 10) { ForEach(rowA, id: \.label) { kpiCard($0) } }
@@ -63,9 +73,16 @@ struct InsightKPIGrid: View {
         .companionPanelFace()
     }
 
+    /// Direction only. The number this used to print was a ratio of two
+    /// averages (`近 7 天日均 / 全窗口日均`) dressed as a percentage delta, so
+    /// 「-100% 近期偏闲」 was both unreadable and — because `recent7dMsgs` adds a
+    /// chat's *entire* history whenever that chat's latest message is recent
+    /// (`ChatInsightEngine.swift:385`) — not a count of the last seven days at
+    /// all. Words carry the same guidance without implying a precision the
+    /// computation does not have.
     private func densityHint(_ ratio: Double) -> String {
-        if ratio > 1.3 { return "+\(Int((ratio - 1) * 100))% 近期偏忙" }
-        if ratio < 0.7 { return "-\(Int((1 - ratio) * 100))% 近期偏闲" }
+        if ratio > 1.3 { return "近期更活跃" }
+        if ratio < 0.7 { return "近期更安静" }
         return "节奏正常"
     }
 
@@ -73,6 +90,19 @@ struct InsightKPIGrid: View {
         if ratio > 1.5 { return .red }
         if ratio > 1.3 || ratio < 0.7 { return .orange }
         return .green
+    }
+
+    private func commitmentKPI(_ overview: ChatInsightEngine.GlobalOverview) -> KPI {
+        guard overview.fulfilledCommitments + overview.overdueCommitments > 0 else {
+            return KPI(label: "承诺履约", value: "—", hint: "还没有承诺记录", status: .neutral)
+        }
+        return KPI(
+            label: "承诺履约",
+            value: "\(Int(overview.commitmentCompletionRate * 100))%",
+            hint: "\(overview.fulfilledCommitments) 已完成 / \(overview.overdueCommitments) 已到期",
+            status: overview.commitmentCompletionRate >= 0.8 ? .green
+                : overview.commitmentCompletionRate >= 0.6 ? .orange : .red
+        )
     }
 
     private func responseHint(_ seconds: Double) -> String {

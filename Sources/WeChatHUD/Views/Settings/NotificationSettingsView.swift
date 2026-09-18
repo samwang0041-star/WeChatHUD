@@ -8,13 +8,21 @@ struct NotificationSettingsView: View {
     @State private var saved = false
 
     var body: some View {
+        // Two sections, because the page governs two different things and the
+        // row that sets how long the island stays up does not belong under a
+        // header about who gets one.
         SettingsSection("谁来的消息要弹出") {
-            SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗，帮助你理解上下文。", isOn: $config.atMention)
+            SettingsToggleRow("群里 @ 我的消息", subtitle: "收到群聊 @ 时展开浮窗。关掉只是不弹，消息仍在收件箱。", isOn: $config.atMention)
             SettingsRowDivider()
-            SettingsToggleRow("重点关注的人", subtitle: "重点关注联系人的私聊会弹出。", isOn: $config.important)
+            SettingsToggleRow("重点关注的人", subtitle: "重点联系人、以及群里你指定的重点成员，说话时弹出。", isOn: $config.important)
             SettingsRowDivider()
-            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。关注的群不会因此弹出每一条闲聊。", isOn: $config.allWhitelist)
-            SettingsRowDivider()
+            // The old second sentence promised 关注的群不会弹出每一条闲聊. That
+            // was only true while 提醒范围 is 只提醒我关注的人; under 全部未读
+            // 都提醒 this switch pops every message in every room. 已经进入
+            // 收件箱 already carries the honest boundary.
+            SettingsToggleRow("关注对话的普通更新", subtitle: "开启后，已经进入收件箱的普通消息也会弹出。", isOn: $config.allWhitelist)
+        }
+        SettingsSection("弹出后停留多久") {
             SettingsRow("展示时间", subtitle: "鼠标移入后可继续阅读和操作。") {
                 Picker("展示时间", selection: $config.durationSeconds) {
                     ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
@@ -24,7 +32,7 @@ struct NotificationSettingsView: View {
             }
             SettingsRowDivider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("这些开关控制顶部浮窗。承诺到期等系统通知由 macOS 通知设置管理。")
+                Text("承诺到期等系统通知由 macOS 通知设置管理。")
                     .font(.caption).foregroundStyle(.secondary)
                 if let error {
                     HStack {

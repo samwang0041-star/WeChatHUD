@@ -128,12 +128,7 @@ enum CompanionProductCopy {
         return clockLabel(date, now: now, calendar: calendar)
     }
 
-    static let compactHoverHint = "移入查看。"
     static let forbiddenChrome = ["工作台", "洞察", "简报", "白名单", "db_storage"]
-
-    static func compactStatus(count: Int, sync: String) -> String {
-        "收起 · \(count) 项待处理。\(compactHoverHint) \(sync)"
-    }
 
     /// Menu-bar badge next to the icon. Read aloud it should make sense:
     /// "3 待办" = three things waiting on you; "等 4h+" = a VIP has been

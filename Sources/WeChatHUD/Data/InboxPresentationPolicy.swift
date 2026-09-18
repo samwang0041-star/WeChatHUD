@@ -1,19 +1,39 @@
 import Foundation
 
 enum InboxPresentationPolicy {
+    /// The three buckets the pending list is made of. Anything else — an AI
+    /// failure row, a sync issue, an idle row — is not part of the list, and
+    /// must not be counted by its header either.
+    static func buckets(
+        _ items: [InboxItem]
+    ) -> (action: [InboxItem], fyi: [InboxItem], passive: [InboxItem]) {
+        (
+            items.filter { $0.participatesInActionQueue },
+            items.filter { $0.semanticState == .groupMentionFYI },
+            items.filter { $0.isAggregatablePassiveUpdate }
+        )
+    }
+
+    /// How many items the list stands for, folded tail included. This is the
+    /// number the 「待处理 (N)」 header prints: it used to print the size of the
+    /// action bucket only, so a panel of one reply-needed row and two group
+    /// @s said 「1」 above three rows.
+    static func pendingCount(_ items: [InboxItem]) -> Int {
+        let split = buckets(items)
+        return split.action.count + split.fyi.count + split.passive.count
+    }
+
     static func visibleItems(
         _ items: [InboxItem],
         showAllPassive: Bool = false,
         passiveLimit: Int = 3,
         limit: Int = 10
     ) -> [InboxItem] {
-        let actionItems = items.filter { $0.participatesInActionQueue }
-        let fyiItems = items.filter { $0.semanticState == .groupMentionFYI }
-        let passiveItems = items.filter { $0.isAggregatablePassiveUpdate }
-        let nonPassiveItems = actionItems + fyiItems
+        let split = buckets(items)
+        let nonPassiveItems = split.action + split.fyi
         let remainingSlots = max(0, limit - nonPassiveItems.count)
         let passiveVisibleLimit = showAllPassive ? remainingSlots : min(passiveLimit, remainingSlots)
-        let visiblePassive = Array(passiveItems.prefix(passiveVisibleLimit))
+        let visiblePassive = Array(split.passive.prefix(passiveVisibleLimit))
         return Array((nonPassiveItems + visiblePassive).prefix(limit))
     }
 
@@ -24,12 +44,10 @@ enum InboxPresentationPolicy {
         limit: Int = 10
     ) -> Int {
         guard !showAllPassive else { return 0 }
-        let actionItems = items.filter { $0.participatesInActionQueue }
-        let fyiItems = items.filter { $0.semanticState == .groupMentionFYI }
-        let passiveCount = items.filter { $0.isAggregatablePassiveUpdate }.count
-        let remainingSlots = max(0, limit - actionItems.count - fyiItems.count)
+        let split = buckets(items)
+        let remainingSlots = max(0, limit - split.action.count - split.fyi.count)
         let visiblePassiveCount = min(passiveLimit, remainingSlots)
-        return max(0, passiveCount - visiblePassiveCount)
+        return max(0, split.passive.count - visiblePassiveCount)
     }
 
     static func summaryCandidates(

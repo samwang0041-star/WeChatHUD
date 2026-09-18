@@ -75,6 +75,35 @@ final class RelativeTimeVocabularyTests: XCTestCase {
         XCTAssertTrue(try ViewSource.load("Sources/WeChatHUD/Views/ViewHelpers.swift").text.contains("enum RelativeTimeFormatter"))
     }
 
+    // MARK: - Deadline vocabulary
+
+    func testPassedDeadlineIsCalledOneThingAcrossTheApp() throws {
+        // A deadline that had passed used to be described by three different
+        // words — 已超期, 已过期 and 已到期 — and one tab switch could put two
+        // of them side by side (the island said 承诺已到期 while its own page
+        // said 已超期). The plainest one wins, so the others are banned here.
+        let root = try Self.repoRoot()
+        let files = try FileManager.default.subpathsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix("Sources/") && ($0.hasSuffix(".swift") || $0.hasSuffix(".txt")) }
+        XCTAssertGreaterThan(files.count, 100, "the scan found nothing to scan")
+
+        var violations: [String] = []
+        var unified = 0
+        for file in files {
+            let text = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
+            for line in text.split(separator: "\n") {
+                if line.contains("已到期") || line.contains("前到期") { unified += 1 }
+                guard line.contains("超期") || line.contains("过期") else { continue }
+                // A login token running out is a different fact from a promise
+                // coming due, so that one reading of 过期 survives.
+                if file.contains("Codex"), line.contains("登录态") { continue }
+                violations.append("\(file): \(line.trimmingCharacters(in: .whitespaces))")
+            }
+        }
+        XCTAssertEqual(violations, [], "A passed deadline is 已到期 everywhere.")
+        XCTAssertGreaterThan(unified, 5, "the guard is only meaningful while 已到期 is the live word")
+    }
+
     // MARK: - Island contrast budget
 
     func testIslandNeverUsesTheWeakestInkForContent() throws {
@@ -90,13 +119,31 @@ final class RelativeTimeVocabularyTests: XCTestCase {
     func testIslandSyncStateStaysReadable() throws {
         let inbox = try ViewSource.load("Sources/WeChatHUD/Views/InboxView.swift")
         // The sync state and the handled count are facts the user reads, so
-        // they must not sit on the decorative steps.
-        for literal in ["Text(\"同步中\")", "Text(syncLabel(syncAt))", "Text(\"一切正常\")", "Text(\"已处理 (\\(monitor.handledItems.count))\")"] {
+        // they must not sit on the decorative steps. The island's status word
+        // and its list label are the same kind of fact: `IslandInk.tertiary`
+        // is ≈3.9:1 on the black body, under AA, and is documented as chrome
+        // only — a sentence the user has to read to know what happened may not
+        // live there.
+        for literal in [
+            "Text(\"同步中\")", "Text(syncLabel(syncAt))", "Text(\"都处理好了\")",
+            "Text(\"已处理 (\\(monitor.handledItems.count))\")",
+            "Text(\"有急事要处理\")", "Text(\"等你回复\")", "Text(\"群里@了你\")",
+            "Text(\"普通更新\")", "Text(\"待处理 (",
+            "Text(showAllPassiveUpdates ? \"收起普通更新\"",
+            "Text(\"+\\(hiddenTotalCount) 更多"
+        ] {
             let range = try XCTUnwrap(inbox.text.range(of: literal), "missing " + literal)
             let tail = inbox.text[range.lowerBound...].prefix(400)
             XCTAssertTrue(tail.contains("IslandInk.meta") || tail.contains("IslandInk.secondary") || tail.contains("IslandInk.primary"),
                           literal + " must use meta or brighter")
         }
+    }
+
+    private static func repoRoot() throws -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
     }
 
     /// Content lines may not sit on IslandInk.quaternary. A quaternary line is

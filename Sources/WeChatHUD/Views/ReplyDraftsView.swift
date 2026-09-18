@@ -108,8 +108,8 @@ struct ReplyDraftsView: View {
                                 pendingContinueDraft = nil
                                 continueReply(with: draft)
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -208,13 +208,6 @@ struct ReplyDraftsView: View {
                         Text("\(selected.chatName) · \(isGroupChat(selected) ? "群聊" : "私聊")").font(.system(size: 15, weight: .semibold))
                         Text(selected.isComposerOnly ? "正在写，还没存成草稿" : "未发送").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Menu {
-                        Button("删除草稿", role: .destructive) { pendingDeleteDraft = selected }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .accessibilityLabel("草稿操作")
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -248,7 +241,11 @@ struct ReplyDraftsView: View {
                 }
                .padding(12)
                .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(SettingsView.Tab.drafts.accentColor.opacity(0.35)))
+                // The accent ring is focus, not a permanent "this is editable"
+                // paint: it used to stay on while the pointer was elsewhere, so
+                // the one thing that could light up had nothing left to say.
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(editorFocused ? SettingsView.Tab.drafts.accentColor.opacity(0.35) : CompanionPalette.border))
 
                // Four actions plus a saved-stamp do not fit the detail
                 // column at the workspace's minimum width: the row used to
@@ -267,22 +264,19 @@ struct ReplyDraftsView: View {
                         NSPasteboard.general.setString(selected.text, forType: .string)
                         feedback = "回复已复制，发送前请核对收件人。"
                     }
-                    // Destructive, and styled as such.
-                    //
-                    // It sat in a row of four identically grey-bordered buttons
-                    // next to 复制, reading as the same weight of action as
-                    // copying text — for something that cannot be undone from
-                    // the list. The confirmation dialog already exists; the
-                    // button just was not telling the truth about what it does.
-                    Button("删除草稿", role: .destructive) { pendingDeleteDraft = selected }
-                        .foregroundStyle(.red)
                    Button("查看对话") {
                        panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                    }
                    Button("继续回复") { requestContinueReply(selected) }
+                       .tint(SettingsView.Tab.drafts.accentColor)
                        .buttonStyle(.borderedProminent)
-                        .tint(SettingsView.Tab.drafts.accentColor)
                        .disabled(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    // Destructive, last, and styled as such. It used to sit
+                    // second from the left in a row of identically bordered
+                    // buttons — the same visual weight as copying text, for the
+                    // one action you cannot undo from this list.
+                    Button("删除草稿", role: .destructive) { pendingDeleteDraft = selected }
+                        .foregroundStyle(.red)
                }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Text("继续回复会打开对话，发送前再次确认。")

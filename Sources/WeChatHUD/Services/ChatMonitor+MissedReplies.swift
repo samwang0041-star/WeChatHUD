@@ -10,11 +10,13 @@ extension ChatMonitor {
         missedReplyGeneration = generation
         missedReplyLoading = true
         missedReplyError = nil
+        missedReplyCoverage = nil
 
         if PreviewRuntime.isEnabled {
             missedReplies = PreviewRuntime.missedReplyFixtures().filter {
                 $0.timestamp >= start && $0.timestamp <= end
             }
+            missedReplyCoverage = PreviewRuntime.missedRepliesCoverageOverride ?? .complete
             missedReplyLoading = false
             return
         }
@@ -28,8 +30,9 @@ extension ChatMonitor {
 
         missedReplyTask = Task { [weak self] in
             let items: [MissedReplyFinder.Item]
+            let coverage: MissedReplyFinder.Coverage
             do {
-                items = try await OffMainWork.runThrowing(qos: .userInitiated) {
+                let scan = try await OffMainWork.runThrowing(qos: .userInitiated) {
                     ScanEngine.buildMissedReplyItems(
                         reader: readerRef,
                         admissionRules: rules,
@@ -42,6 +45,8 @@ extension ChatMonitor {
                         now: Date()
                     )
                 }
+                items = scan.items
+                coverage = scan.coverage
             } catch is CancellationError {
                 return
             } catch {
@@ -52,6 +57,7 @@ extension ChatMonitor {
             }
             guard let self, self.missedReplyGeneration == generation else { return }
             self.missedReplies = items
+            self.missedReplyCoverage = coverage
             self.missedReplyLoading = false
         }
     }

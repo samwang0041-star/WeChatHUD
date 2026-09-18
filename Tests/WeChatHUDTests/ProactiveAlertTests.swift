@@ -35,6 +35,36 @@ final class ProactiveAlertTests: XCTestCase {
         )
     }
 
+    // MARK: - ReplyDebtItem factory
+
+    private func makeDebt(
+        chatUsername: String,
+        chatName: String = "Chat",
+        priority: ReplyDebtPriority,
+        minutesOld: Int,
+        now: Date
+    ) -> ReplyDebtItem {
+        ReplyDebtItem(
+            id: chatUsername,
+            chatUsername: chatUsername,
+            chatName: chatName,
+            senderName: chatName,
+            preview: "方案你定了吗？",
+            latestOutboundPreview: nil,
+            timestamp: now.addingTimeInterval(-Double(minutesOld * 60)),
+            priority: priority,
+            score: 9,
+            unreadCount: 1,
+            isGroup: false,
+            isWhitelisted: true,
+            isVIP: false,
+            isAtMention: false,
+            inboundCountSinceLastOutbound: 1,
+            reasons: [],
+            overdueThresholdMinutes: 120
+        )
+    }
+
     // MARK: - Rule 1: VIP overdue
 
     /// A tier advance is delivered as a macOS notification and nothing
@@ -66,7 +96,7 @@ final class ProactiveAlertTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t4)
         XCTAssertEqual(sent.count, 1)
-        XCTAssertEqual(sent.first?.0, "VIP 等你超过 4 小时")
+        XCTAssertEqual(sent.first?.0, "VIP 等你 4 小时了")
 
         // Re-evaluating the same overdue message must not notify again.
         engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
@@ -132,6 +162,68 @@ final class ProactiveAlertTests: XCTestCase {
         await Task.yield()
         XCTAssertTrue(engine.vipAlertTiers.isEmpty)
         XCTAssertTrue(sent.isEmpty)
+    }
+
+    /// Rule 4 read the *first* element of the priority-sorted debt list and
+    /// asked whether it was P0. When that one chat happened to be the one you
+    /// were typing in, the whole rule went silent — a second P0 that had been
+    /// waiting three hours behind it never alerted.
+    @MainActor
+    func testP0BehindAnActiveConversationStillAlerts() async {
+        let start = Date(timeIntervalSince1970: 3_000_000)
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+
+        engine.evaluate(
+            unreadItems: [],
+            replyDebtItems: [
+                makeDebt(chatUsername: "live-chat", chatName: "在聊的", priority: .p0, minutesOld: 45, now: start),
+                makeDebt(chatUsername: "buried-chat", chatName: "老板", priority: .p0, minutesOld: 180, now: start)
+            ],
+            commitments: [],
+            recentNotifications: [],
+            activeConversations: ["live-chat"]
+        )
+        await Task.yield()
+
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent.first?.0, "紧急待回复")
+        XCTAssertEqual(sent.first?.1, "老板: 方案你定了吗？")
+    }
+
+    /// The P0 path skips the rate budget, so one evaluation must not fan out
+    /// across every P0 in the list.
+    @MainActor
+    func testP0AlertFiresAtMostOncePerEvaluation() async {
+        let start = Date(timeIntervalSince1970: 3_000_000)
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+
+        engine.evaluate(
+            unreadItems: [],
+            replyDebtItems: (0..<4).map {
+                makeDebt(chatUsername: "p0-\($0)", priority: .p0, minutesOld: 60, now: start)
+            },
+            commitments: [],
+            recentNotifications: []
+        )
+        await Task.yield()
+
+        XCTAssertEqual(sent.count, 1)
     }
 
     func testVIPOverdueTriggersAlert() {

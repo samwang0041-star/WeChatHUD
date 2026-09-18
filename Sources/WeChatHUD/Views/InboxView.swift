@@ -1,11 +1,16 @@
 import SwiftUI
 import AppKit
 
+/// Which words the notch band prints. Deliberately a bare category: the number
+/// the list header prints comes from `InboxPresentationPolicy.pendingCount`, so
+/// the band's reading and the list's count cannot drift apart.
 enum InboxHeaderState: Equatable {
-    case urgent(Int)        // p0 action items
-    case replyNeeded(Int)   // p1/p2 action items (privateActionRequired / groupActionRequired)
-    case mentioned(Int)     // group @mentions
-    case updates(Int)       // passive updates only
+    /// ≥1 p0 in the action queue.
+    case urgent
+    /// Action items, none p0 (privateActionRequired / groupActionRequired).
+    case replyNeeded
+    case mentioned   // group @mentions
+    case updates     // passive updates only
     case idle
 }
 
@@ -27,20 +32,20 @@ func hiddenPassiveUpdateCount(_ items: [InboxItem], showAllPassive: Bool = false
     )
 }
 
+/// Which category dominates the list, i.e. what the notch band says.
+///
+/// It reads the same buckets the list is built from, so the band cannot name a
+/// category the rows do not contain: the mention test used to be
+/// `messageType == .groupMentionFYI`, which also matched items the user had
+/// already dealt with, and the band kept saying 「群里@了你」 over a list with no
+/// such row. The number is no longer this function's business — see
+/// `InboxPresentationPolicy.pendingCount`.
 func inboxHeaderState(_ items: [InboxItem]) -> InboxHeaderState {
-    let actionItems = items.filter { $0.participatesInActionQueue }
-    let urgentCount = actionItems.filter { $0.priority == .p0 }.count
-    if urgentCount > 0 { return .urgent(urgentCount) }
-
-    let replyCount = actionItems.filter { $0.priority != .p0 }.count
-    if replyCount > 0 { return .replyNeeded(replyCount) }
-
-    let mentionCount = items.filter { $0.messageType == .groupMentionFYI }.count
-    if mentionCount > 0 { return .mentioned(mentionCount) }
-
-    let passiveCount = items.filter { $0.isAggregatablePassiveUpdate }.count
-    if passiveCount > 0 { return .updates(passiveCount) }
-
+    let split = InboxPresentationPolicy.buckets(items)
+    if split.action.contains(where: { $0.priority == .p0 }) { return .urgent }
+    if !split.action.isEmpty { return .replyNeeded }
+    if !split.fyi.isEmpty { return .mentioned }
+    if !split.passive.isEmpty { return .updates }
     return .idle
 }
 
@@ -118,7 +123,7 @@ struct InboxView: View {
                         Button(action: { showAllPassiveUpdates.toggle() }) {
                             Text(showAllPassiveUpdates ? "收起普通更新" : "还有 \(hiddenPassiveCount) 条普通更新")
                                 .islandMicro()
-                                .foregroundColor(IslandInk.tertiary)
+                                .foregroundColor(IslandInk.meta)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,7 +139,7 @@ struct InboxView: View {
                             // in-place expansion, so the label says so.
                             Text("+\(hiddenTotalCount) 更多 — 查看全部（新窗口）")
                                 .islandMicro()
-                                .foregroundColor(IslandInk.tertiary)
+                                .foregroundColor(IslandInk.meta)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
                                 .padding(.vertical, 7)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -165,15 +170,19 @@ struct InboxView: View {
     }
 
     /// List header. Replaces the 24pt bold "现在有 N 件事需要你" headline:
-    /// the count already sits in the notch band, and the panel is 560pt
-    /// wide — a headline that size is what made the HUD read as a phone app
-    /// for a much smaller screen. The sync state moved here from the bottom
-    /// bar, where it competed with the buttons for attention.
+    /// the panel is 560pt wide — a headline that size is what made the HUD
+    /// read as a phone app for a much smaller screen. The sync state moved here
+    /// from the bottom bar, where it competed with the buttons for attention.
+    ///
+    /// The count lives *here*, beside the list it counts, and mirrors the
+    /// 「已处理 (N)」 footer label. It is the total the list stands for — action
+    /// rows, group @s and the folded 「还有 N 条普通更新」 tail — because a number
+    /// that counts only one of those disagreed with the rows printed under it.
     private var islandSectionRow: some View {
         HStack(spacing: 8) {
-            Text("需要你处理")
+            Text("待处理 (\(InboxPresentationPolicy.pendingCount(monitor.inboxItems)))")
                 .islandSection()
-                .foregroundStyle(IslandInk.tertiary)
+                .foregroundStyle(IslandInk.meta)
             Spacer(minLength: 8)
             // Sync state lives in this fixed slot — the "同步中" indicator
             // occupies exactly where the fresh-sync label sits, so a refresh starting
@@ -271,19 +280,11 @@ struct InboxView: View {
     }
 
     private var workspaceBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             Button {
                 panelState.islandSurface = .tasks
             } label: {
-                Image(systemName: "checklist")
-                    .font(.system(size: 11))
-                    .foregroundColor(IslandInk.secondary)
-                    // Measured at 12.5×11 in the live AX tree — the smallest
-                    // target in the island, in the one piece of chrome that is
-                    // always on screen. The glyph stays 11pt; the frame is what
-                    // the pointer aims at.
-                    .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
-                    .contentShape(Rectangle())
+                barAction(glyph: "checklist", title: "待办", ink: IslandInk.secondary)
             }
             .buttonStyle(IslandIconButtonStyle())
             .help("查看待办")
@@ -293,11 +294,7 @@ struct InboxView: View {
                 panelState.pendingSettingsTab = "today"
                 panelState.showDetail()
             } label: {
-                Image(systemName: "macwindow")
-                    .font(.system(size: 11))
-                    .foregroundColor(IslandInk.tertiary)
-                    .frame(width: InboxView.barIconTarget, height: InboxView.barIconTarget)
-                    .contentShape(Rectangle())
+                barAction(glyph: "macwindow", title: "查看全部", ink: IslandInk.tertiary)
             }
             .buttonStyle(IslandIconButtonStyle())
             .help(CompanionProductCopy.openCompanion)
@@ -313,7 +310,25 @@ struct InboxView: View {
         .background(IslandInk.bar)
     }
 
-    /// Hit area for the two glyph buttons in the island's bottom bar.
+    /// A bottom-bar jump, named. Two bare glyphs on a 560 pt bar asked the user
+    /// to hover a tooltip before acting, and the bar is the one piece of island
+    /// chrome that is always on screen.
+    ///
+    /// The 22pt square used to be the pointer target; with a title the whole
+    /// label is the target, which is wider than the glyph frame ever was.
+    private func barAction(glyph: String, title: String, ink: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: glyph)
+                .font(.system(size: 11))
+            Text(title)
+                .font(.system(size: 11))
+        }
+        .foregroundColor(ink)
+        .frame(minHeight: InboxView.barIconTarget)
+        .contentShape(Rectangle())
+    }
+
+    /// Minimum height for the island's bottom-bar jumps.
     ///
     /// 22pt is the standard macOS push-button height. The island cannot afford
     /// much more than that in a 32pt-tall bar, but it should not ask the pointer
@@ -339,39 +354,39 @@ struct InboxView: View {
             // Left wing — priority status
             HStack(spacing: 6) {
                 switch inboxHeaderState(monitor.inboxItems) {
-                case .urgent(let count):
+                case .urgent:
                     Circle()
                         .fill(Color.red)
                         .frame(width: 6, height: 6)
-                    Text("\(count) 条紧急")
+                    Text("有急事要处理")
                         .islandMicro()
                         .foregroundColor(IslandInk.primary)
-                case .replyNeeded(let count):
+                case .replyNeeded:
                     Circle()
                         .fill(Color.orange)
                         .frame(width: 6, height: 6)
-                    Text("\(count) 条等你回复")
+                    Text("等你回复")
                         .islandMicro()
                         .foregroundColor(IslandInk.secondary)
-                case .mentioned(let count):
+                case .mentioned:
                     Circle()
                         .fill(Color.blue)
                         .frame(width: 5, height: 5)
-                    Text("\(count) 条 @了你")
+                    Text("群里@了你")
                         .islandMicro()
-                        .foregroundColor(IslandInk.tertiary)
-                case .updates(let count):
+                        .foregroundColor(IslandInk.meta)
+                case .updates:
                     Circle()
                         .fill(Color.white.opacity(0.45))
                         .frame(width: 5, height: 5)
-                    Text("\(count) 条更新")
+                    Text("普通更新")
                         .islandMicro()
-                        .foregroundColor(IslandInk.tertiary)
+                        .foregroundColor(IslandInk.meta)
                 case .idle:
                     Circle()
                         .fill(Color.green.opacity(0.7))
                         .frame(width: 5, height: 5)
-                   Text("一切正常")
+                   Text("都处理好了")
                        .islandMicro()
                         .foregroundColor(IslandInk.meta)
                 }
@@ -821,8 +836,8 @@ private struct IslandTaskPreview: View {
                         .buttonStyle(.bordered)
                         .controlSize(.mini)
                     Button("标记完成") { complete(item) }
-                        .buttonStyle(.borderedProminent)
                         .tint(CompanionPalette.jade)
+                        .buttonStyle(.borderedProminent)
                         .controlSize(.mini)
                 }
             }

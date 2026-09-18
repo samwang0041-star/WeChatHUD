@@ -82,11 +82,10 @@ class SettingsWindow: NSWindow {
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
 
-        // Deterministic preview sizes make native layout checks repeatable.
-        if PreviewRuntime.isEnabled && CommandLine.arguments.contains("--preview-compact") {
-            window.setContentSize(NSSize(width: 820, height: 620))
-            window.center()
-        }
+        // Deterministic preview widths live in
+        // `PreviewRuntime.applyWindowWidthOverride`, which relaxes `minSize`
+        // before resizing — an inline resize here was clamped to 900 and so
+        // had been a no-op that its screenshots still looked like a pass.
 
         if screen == nil {
             window.center()

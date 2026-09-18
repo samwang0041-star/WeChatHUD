@@ -21,7 +21,7 @@ JSON schema:
 - 提取高亮: {highlight_count}
 - 待办事项: {pending_todo_count}
 - 待处理请求: {pending_ask_count}
-- 待履行承诺: {pending_commitment_count}（超期: {overdue_commitment_count}）
+- 待履行承诺: {pending_commitment_count}（已到期: {overdue_commitment_count}）
 - 回复债务: {reply_debt_count}
 - 撤回消息: {recalled_count}
 
@@ -39,7 +39,7 @@ JSON schema:
 1. **必须引用具体来源** — narrative 中要提到具体的人名/群名和决策内容，如"与林总确认了预算方案"，不能写"今天处理了一些工作事项"
 2. **不要编造数据** — 只用输入里给的信息
 3. **明天最优先的事项** 选择原则：
-   - 已超期的承诺/待办最优先
+   - 已到期的承诺/待办最优先
    - 截止时间在 24h 内的次之（用上面的报告日期去比，不要自己猜今天是几号）
    - 高置信度的高亮相关的行动再次之
 4. **微信日报要简洁** — 上级愿意看的通常 100-150 字，用专业但自然的口吻

@@ -87,7 +87,7 @@ struct DiscussionWorkspaceView: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CompanionPalette.jadeInk)
-                    .accessibilityHint("切到「全部都记」，这些内容会回到列表里")
+                    .accessibilityHint("切到「全记」，这些内容会回到列表里")
                 }
             }
             Text(strictness.explanation)
@@ -234,8 +234,8 @@ struct DiscussionWorkspaceView: View {
                                 showBatchClearConfirm = false
                                 batchClear(items: items)
                             }
-                            .buttonStyle(.borderedProminent)
                             .tint(SettingsView.Tab.tasks.accentColor)
+                            .buttonStyle(.borderedProminent)
                         }
                     }
                 }
@@ -292,8 +292,8 @@ struct DiscussionWorkspaceView: View {
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             Text(showHistory
-                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是过期太久、没有处理的，不是你标完成的。"
-                 : "当前只显示还没做完的。过期太久的会收起，不占这个列表。")
+                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是很久没处理的，不是你标完成的。"
+                 : "当前只显示还没做完的。很久没处理的会收起，不占这个列表。")
                 .font(.system(size: 11))
                 // `.secondary`, not `.tertiary`.
                 //
@@ -325,9 +325,9 @@ struct DiscussionWorkspaceView: View {
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
             description: Text(query.isEmpty
                 ? (showHistory
-                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。过期太久自动收起的在「较早收起」里。"
+                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。很久没处理、自动收起的在「较早收起」里。"
                     : (heldBackByLevel
-                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全部都记」能看到它们。"
+                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全记」能看到它们。"
                         : "连上微信并选好对话后，还没做完的事会出现在这里。"))
                 : "当前搜索：\(query)")
         )
@@ -353,7 +353,7 @@ struct DiscussionWorkspaceView: View {
                             Button {
                                 expandArchived = true
                             } label: {
-                                Text("\(group.items.count) 件过期未处理，点开查看")
+                                Text("\(group.items.count) 件很久没处理，点开查看")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(CompanionPalette.jadeInk)
                             }
@@ -405,19 +405,9 @@ struct DiscussionWorkspaceView: View {
     private func taskDetail(_ item: DiscussionItem) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top) {
-                    Text(item.content)
-                        .workspaceTitle()
-                        .textSelection(.enabled)
-                    Spacer()
-                    Menu {
-                        Button("更正归属") { correcting = item }
-                        Button("查看原文") { showingSource = true }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }
-                    .accessibilityLabel("更多操作")
-                }
+                Text(item.content)
+                    .workspaceTitle()
+                    .textSelection(.enabled)
                 metaRow("归属", systemImage: "person", value: item.owner.workspaceLabel)
                 metaRow("截止时间", systemImage: "calendar", value: DiscussionPresentation.absoluteDueLabel(item.dueAt))
                 metaRow("来源", systemImage: "bubble.left", value: item.chatName)
@@ -429,42 +419,46 @@ struct DiscussionWorkspaceView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                Spacer(minLength: 12)
-                if item.status == .pending {
-                   Button {
-                       update(id: item.id, to: .done, previous: item.status, title: item.content)
-                   } label: {
-                       // Sized to its title, not to the pane.
-                       //
-                       // This was `Text("标记完成").frame(maxWidth: .infinity)`,
-                       // which rendered a 436pt-wide filled bar for a 4-character
-                       // label — width driven by the pane, not the word. A
-                       // full-bleed filled button is the iOS primary-action
-                       // pattern; on macOS a push button is sized to its title
-                       // and sits at the trailing edge of the row it belongs to.
-                       Text("标记完成")
-                   }
-                   .buttonStyle(.borderedProminent)
-                    .tint(SettingsView.Tab.tasks.accentColor)
-                   .controlSize(.large)
-                   .frame(maxWidth: .infinity, alignment: .trailing)
-               } else {
-                    Button("恢复为未完成") { update(id: item.id, to: .pending, previous: item.status, title: item.content) }
-                        .buttonStyle(.bordered)
-                }
-                HStack(spacing: 18) {
-                    Button { correcting = item } label: {
-                        Label("更正归属", systemImage: "person.crop.circle.badge.questionmark")
+                // One action row. These were two blocks split by a Spacer, and
+                // a Spacer inside a ScrollView expands to the viewport — the
+                // finish button ended up ~200pt below the note it acts on.
+                HStack(alignment: .center, spacing: 18) {
+                    HStack(spacing: 18) {
+                        Button { correcting = item } label: {
+                            Label("更正归属", systemImage: "person.crop.circle.badge.questionmark")
+                        }
+                        .accessibilityIdentifier("workspace.correctOwnership")
+                        Button { showingSource = true } label: {
+                            Label("查看原文", systemImage: "doc.text")
+                        }
                     }
-                    .accessibilityIdentifier("workspace.correctOwnership")
-                   Button { showingSource = true } label: {
-                       Label("查看原文", systemImage: "doc.text")
-                   }
-               }
-               .buttonStyle(.plain)
-                .foregroundStyle(SettingsView.Tab.tasks.accentColor)
-               .font(.system(size: 13, weight: .medium))
-               Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SettingsView.Tab.tasks.accentColor)
+                    .font(.system(size: 13, weight: .medium))
+                    Spacer(minLength: 12)
+                    if item.status == .pending {
+                        Button {
+                            update(id: item.id, to: .done, previous: item.status, title: item.content)
+                        } label: {
+                            // Sized to its title, not to the pane.
+                            //
+                            // This was `Text("标记完成").frame(maxWidth: .infinity)`,
+                            // which rendered a 436pt-wide filled bar for a 4-character
+                            // label — width driven by the pane, not the word. A
+                            // full-bleed filled button is the iOS primary-action
+                            // pattern; on macOS a push button is sized to its title
+                            // and sits at the trailing edge of the row it belongs to.
+                            Text("标记完成")
+                        }
+                        .tint(SettingsView.Tab.tasks.accentColor)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                    } else {
+                        Button("恢复为未完成") { update(id: item.id, to: .pending, previous: item.status, title: item.content) }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
                     .font(.system(size: 11))
                     // An assurance the user has to be able to read: it is what
                     // tells them editing here will not touch WeChat. It measured
@@ -701,8 +695,8 @@ struct DiscussionCorrectionForm: View {
                 Button("保存更正") {
                     onSave(content.trimmingCharacters(in: .whitespacesAndNewlines), owner, hasDue ? dueAt : nil)
                 }
-                .buttonStyle(.borderedProminent)
                 .tint(CompanionPalette.jade)
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -862,7 +856,7 @@ enum DiscussionPresentation {
                 mapped[title].map { Group(title: title, items: $0) }
             }
         }
-        let order = ["今天", "明天", "本周", "之后", "已过期", "无期限"]
+        let order = ["今天", "明天", "本周", "之后", "已到期", "无期限"]
         let mapped = Dictionary(grouping: items) { groupTitle(for: $0.dueAt, now: now, calendar: calendar) }
         return order.compactMap { title in
             mapped[title].map { Group(title: title, items: $0) }
@@ -897,7 +891,7 @@ enum DiscussionPresentation {
 
     private static func groupTitle(for date: Date?, now: Date, calendar: Calendar) -> String {
         guard let date else { return "无期限" }
-        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已过期" }
+        if date < now && !calendar.isDate(date, inSameDayAs: now) { return "已到期" }
         if calendar.isDate(date, inSameDayAs: now) { return "今天" }
         if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
            calendar.isDate(date, inSameDayAs: tomorrow) { return "明天" }

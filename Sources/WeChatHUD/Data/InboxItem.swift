@@ -18,7 +18,7 @@ struct InboxItem: Identifiable, Equatable {
     let isAtMention: Bool
     let askType: AskType
     let reasons: [ReplyDebtReason]
-    let suggestedReplyMinutes: Int
+    let overdueThresholdMinutes: Int
 
     var status: InboxStatus
     var dismissedAtMsgId: Int64?
@@ -354,7 +354,7 @@ extension InboxItem {
             isAtMention: isAtMention,
             inboundCountSinceLastOutbound: 1,
             reasons: reasons,
-            suggestedReplyMinutes: suggestedReplyMinutes,
+            overdueThresholdMinutes: overdueThresholdMinutes,
             contextNotification: contextNotification
         )
     }

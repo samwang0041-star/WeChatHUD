@@ -324,4 +324,35 @@ final class ChatNamingTests: XCTestCase {
         )
         XCTAssertEqual(reader.displayName(for: "43753159251@chatroom"), "群聊 · 赖豪、张沛")
     }
+
+    // MARK: - Reader echo must not shadow a stored name
+
+    /// A reader whose contact cache never loaded — the state right after an
+    /// account switch, and the state the island's detail header was photographed
+    /// in. It answers `displayName(for:)` with the username itself.
+    @MainActor
+    private func makeMonitorWithEmptyReader(store: HUDStore) -> ChatMonitor {
+        let reader = WeChatReader(dbDir: "/tmp/wechathud-no-contacts-\(UUID().uuidString)",
+                                  cacheStrategy: .memory)
+        return ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
+    }
+
+    @MainActor
+    func testUsernameEchoFallsBackToStoredName() throws {
+        try store.saveContactTracking(username: "zhangsan2024", displayName: "张三",
+            isGroup: false, category: .work, attentionLevel: .whitelist, role: .colleague)
+        let monitor = makeMonitorWithEmptyReader(store: store)
+        // "zhangsan2024" is not raw *by shape*, so the old check accepted the
+        // echo and the UI printed an account id over a name already stored.
+        XCTAssertEqual(monitor.displayName(for: "zhangsan2024"), "张三")
+    }
+
+    @MainActor
+    func testUnnameableChatStillFallsBackToItsUsername() throws {
+        let monitor = makeMonitorWithEmptyReader(store: store)
+        // Nothing is stored anywhere: the username is the only honest answer
+        // for a non-raw id, and inventing a placeholder would hide the fact
+        // that this chat was never resolved.
+        XCTAssertEqual(monitor.displayName(for: "zhangsan2024"), "zhangsan2024")
+    }
 }

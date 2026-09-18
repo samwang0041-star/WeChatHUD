@@ -117,7 +117,10 @@ struct ModelPicker: View {
 
 struct ProviderCard: View {
     let isCustomSource: Bool
-    let isVerified: Bool
+    /// The same three states the 当前 AI 服务 card prints. It used to own a
+    /// second vocabulary ("已启用 · 未验证"), so an empty key showed 未配置 up
+    /// top and 已启用 below it on one screen.
+    let status: (label: String, color: Color, icon: String)
 
     @Binding var providerID: String
     @Binding var baseURL: String
@@ -158,9 +161,9 @@ struct ProviderCard: View {
             SettingsRow("状态", icon: isCustomSource ? "slider.horizontal.3" : "shippingbox.fill", iconColor: CompanionPalette.accent) {
                 HStack(spacing: 8) {
                     CompanionBadge(
-                        title: isVerified ? "已启用 · 已验证" : "已启用 · 未验证",
-                        systemImage: isVerified ? "checkmark.circle.fill" : "exclamationmark.circle",
-                        tint: isVerified ? CompanionPalette.accent : .orange
+                        title: status.label,
+                        systemImage: status.icon,
+                        tint: status.color
                     )
                     testButton
                 }
@@ -510,7 +513,9 @@ struct AISettingsView: View {
                     .contextMenu {
                         Button("复制") { CompanionClipboard.write(summary) }
                     }
-                Text("改完会自动保存。打开后，相关聊天会发给这个服务来写摘要和草稿。请先点测试，确认能用。")
+                // 「打开后」 pointed at a switch that is not on this page — the
+                // on/off toggles live under AI 分析与建议.
+                Text("改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。先点测试，确认能用。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -567,7 +572,7 @@ struct AISettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("你始终可以查看原文")
                 .font(.system(size: 15, weight: .semibold))
-            Text("AI 只整理，不代替聊天。关键决定面都留着原文入口。")
+            Text("AI 只整理，不代替聊天。每个关键决定都留着原文入口。")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
@@ -618,9 +623,10 @@ struct AISettingsView: View {
     // MARK: - Top Controls
 
     private var topControls: some View {
-        // Same rule as the sync page: the header names the topic, the row
-        // names the control. Identical strings doubled the phrase on screen.
-        SettingsSection("用哪家 AI") {
+        // Headerless. The page gloss already reads 摘要用哪家, the card above
+        // reads 当前 AI 服务, and the only row here is labelled 服务来源 —
+        // a fourth way of saying the same thing on one screen.
+        SettingsSection(nil) {
             SettingsRow("服务来源", icon: "bolt.fill", iconColor: .purple) {
                 Picker("服务来源", selection: $serviceSource) {
                     Text("预设供应商").tag(ServiceSource.preset)
@@ -706,7 +712,7 @@ struct AISettingsView: View {
     private var providerCard: some View {
         ProviderCard(
             isCustomSource: serviceSource == .custom,
-            isVerified: store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true,
+            status: activeServiceStatus,
             providerID: $providerID,
             baseURL: $baseURL,
             model: $model,
@@ -732,17 +738,22 @@ struct AISettingsView: View {
 
     private var behaviorSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SettingsSection("分析与建议") {
-                SettingsToggleRow("消息摘要", subtitle: "显示消息摘要。", isOn: $summaryEnabled)
+            // The page is titled AI 分析与建议; a section header repeating it
+            // is a no-op. This group is the list of jobs the AI is hired for.
+            SettingsSection("让 AI 做什么") {
+                // "显示消息摘要" restated the row's own label.
+                SettingsToggleRow("消息摘要", subtitle: "收件箱每行下面那行 AI 提炼。", isOn: $summaryEnabled)
                 SettingsRowDivider()
                 SettingsToggleRow("回复建议", subtitle: "起草回复，由你发送。", isOn: $suggestionsEnabled)
                 SettingsRowDivider()
-                SettingsRow("整理待办", subtitle: "有可用的 AI 服务时会自动从聊天里找待办，没有单独开关。未设 AI 仍可看原文。") {
+                // "没有单独开关" described the interface instead of the
+                // behaviour; the missing control is already obvious.
+                SettingsRow("整理待办", subtitle: "有可用的 AI 服务时自动从聊天里找待办；未设 AI 时仍可看原文。") {
                     Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             originalExampleCard
-            SettingsSection("更多帮助") {
+            SettingsSection("额外提示") {
                 SettingsToggleRow("重点联系人的语气提示", subtitle: "整理重点联系人在群聊中的表达，结合原话提示语气，供你参考。", isOn: $moodDetectionEnabled)
                 SettingsRowDivider()
                 SettingsToggleRow("今日小结里的下一步建议", subtitle: "给紧急事项加下一步建议。", isOn: $dailyReportActionInsightsEnabled)
@@ -805,7 +816,9 @@ struct AISettingsView: View {
         let tested = store.loadAIConnectionEvidence().record(for: buildSlot())?.succeeded == true
         if tested { return savedAt == nil ? "连接已验证" : "更改已保存" }
         if savedAt != nil || !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "配置已保存 · 尚未测试"
+            // 未验证, not 尚未测试 — the badge two rows up already uses that
+            // word, and a page should have one vocabulary for one state.
+            return "配置已保存 · 未验证"
         }
         return "配置加载后，修改会自动保存"
     }

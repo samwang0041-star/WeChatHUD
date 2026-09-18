@@ -47,13 +47,16 @@ actor StyleProfiler {
         /// How the user typically sends messages.
         enum TypingRhythm {
             case singleMessage    // One message covers everything
-            case multiMessage     // Splits thoughts into 2-3 consecutive messages
+            /// Splits thoughts into several messages. `burstSize` is the
+            /// measured median length of those runs — the prompt used to
+            /// hard-code "2-3 条" no matter how many the user actually sent.
+            case multiMessage(burstSize: Int)
             case mixed
 
             var description: String {
                 switch self {
                 case .singleMessage: return "一条消息说完"
-                case .multiMessage: return "习惯分多条发送（每次表达2-3条连发）"
+                case .multiMessage(let burstSize): return "习惯分多条发送（一次连发约 \(burstSize) 条）"
                 case .mixed: return "有时一条说完，有时分几条"
                 }
             }
@@ -351,6 +354,7 @@ actor StyleProfiler {
         let chrono = outgoing.reversed()
         var burstCount = 0  // consecutive message groups (< 30s apart)
         var singleCount = 0
+        var burstSizes: [Int] = []
         var prev: MessageInfo?
 
         var currentBurstSize = 1
@@ -360,21 +364,32 @@ actor StyleProfiler {
                 if gap < 30 {
                     currentBurstSize += 1
                 } else {
-                    if currentBurstSize > 1 { burstCount += 1 }
-                    else { singleCount += 1 }
+                    if currentBurstSize > 1 {
+                        burstCount += 1
+                        burstSizes.append(currentBurstSize)
+                    } else {
+                        singleCount += 1
+                    }
                     currentBurstSize = 1
                 }
             }
             prev = msg
         }
         // Flush last group
-        if currentBurstSize > 1 { burstCount += 1 }
-        else { singleCount += 1 }
+        if currentBurstSize > 1 {
+            burstCount += 1
+            burstSizes.append(currentBurstSize)
+        } else {
+            singleCount += 1
+        }
 
         let total = burstCount + singleCount
         guard total > 0 else { return .singleMessage }
         let burstRatio = Double(burstCount) / Double(total)
-        if burstRatio > 0.5 { return .multiMessage }
+        if burstRatio > 0.5 {
+            let median = burstSizes.sorted()[burstSizes.count / 2]
+            return .multiMessage(burstSize: max(2, median))
+        }
         if burstRatio > 0.2 { return .mixed }
         return .singleMessage
     }

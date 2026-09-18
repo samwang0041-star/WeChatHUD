@@ -193,40 +193,57 @@ enum CompactIslandPolicy {
         return tier >= .t3 ? .critical : .attention
     }
 
+    /// The state sentence — what is true right now, and nothing else.
+    ///
+    /// Two things were removed from these strings: 「收起 ·」, which is the
+    /// *collapsed* state of a disclosure control leaking into a status
+    /// readout, and the 「移入查看」 hover hint, which is an instruction for a
+    /// pointer. `spoken` is the VoiceOver `accessibilityValue` of a button
+    /// whose label already names the action, so a screen-reader user was told
+    /// to hover on something they cannot hover. The tooltip keeps its own
+    /// click promise.
     private static func spoken(for phase: CompactIslandPhase) -> String {
         switch phase {
         case .connectionProblem:
-            return "微信还连不上。\(CompanionProductCopy.compactHoverHint)"
+            return "微信还连不上。"
         case .urgent(let priority, let count):
-            let what = priority == .p0 ? "有需要尽快处理的事" : "有待回复的消息"
-            return "\(what)，共 \(spokenCount(count)) 项。\(CompanionProductCopy.compactHoverHint)"
+            return priority == .p0
+                ? "\(spokenCount(count)) 条急事要处理。"
+                : "\(spokenCount(count)) 条消息等你回复。"
         case .working(.analyzing):
-            return "AI 正在整理。\(CompanionProductCopy.compactHoverHint)"
+            return "AI 正在整理。"
         case .waiting(let count):
-            return "收起 · \(spokenCount(count)) 项待处理。\(CompanionProductCopy.compactHoverHint)"
+            return "\(spokenCount(count)) 条待处理。"
         case .notices(let count):
-            return "有 \(spokenCount(count)) 条群里的新消息。\(CompanionProductCopy.compactHoverHint)"
+            return "\(spokenCount(count)) 条群消息。"
         case .quiet:
-            return "暂无待处理。\(CompanionProductCopy.compactHoverHint)"
+            return "暂无待处理。"
         }
     }
 
+    /// The peek pill's whole text budget is `IslandChrome.peekSlotWidth`
+    /// (78 pt) minus 20 pt of padding, so every string here is ≤5 CJK glyphs.
+    ///
+    /// All five counted phases share one shape — `N 条<X>` — because they used
+    /// to mix two orderings ("紧急 · 1" against "2 待处理"), which reads as two
+    /// different products: a number after a separator is a label code, a number
+    /// before a classifier is a sentence a person can read at a glance.
     private static func glance(for phase: CompactIslandPhase) -> String {
         switch phase {
         case .connectionProblem:
-            return "连不上"
+            return "微信连不上"
         case .urgent(let priority, let count):
             return priority == .p0
-                ? "紧急 · \(spokenCount(count))"
-                : "待回 · \(spokenCount(count))"
+                ? "\(spokenCount(count)) 条急事"
+                : "\(spokenCount(count)) 条待回"
         case .working:
-            return "整理中"
+            return "AI 整理中"
         case .waiting(let count):
-            return "\(spokenCount(count)) 待处理"
+            return "\(spokenCount(count)) 条待处理"
         case .notices(let count):
             return "\(spokenCount(count)) 条群消息"
         case .quiet:
-            return "暂无"
+            return "都处理好了"
         }
     }
 

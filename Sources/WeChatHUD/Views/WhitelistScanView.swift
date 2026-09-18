@@ -62,6 +62,7 @@ struct WhitelistScanView: View {
                             .font(.system(size: 12, weight: .medium))
                     }
                 }
+                .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.regular)
 
@@ -71,6 +72,7 @@ struct WhitelistScanView: View {
                     Text("\(pendingResults.count) 条待处理")
                         .font(.system(size: 11)).foregroundColor(.secondary)
                     Button("全部接受") { acceptAll() }
+                        .tint(CompanionPalette.accent)
                         .buttonStyle(.borderedProminent).controlSize(.small)
                     Button("全部忽略") { dismissAll() }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -193,6 +195,7 @@ struct WhitelistScanView: View {
             }
             Spacer()
             Button("加入") { accept(item) }
+                .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent).controlSize(.mini)
             Button("忽略") { dismiss(item) }
                 .buttonStyle(.bordered).controlSize(.mini)
@@ -210,6 +213,7 @@ struct WhitelistScanView: View {
             }
             Spacer()
             Button("添加关注") { acceptDismissed(entry) }
+                .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent).controlSize(.mini)
             Button("删除", role: .destructive) { pendingRemoveDismissed = entry }
                 .buttonStyle(.bordered).controlSize(.mini)

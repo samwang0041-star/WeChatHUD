@@ -368,6 +368,11 @@ class FloatingPanel: NSPanel {
 
     private var animationTimer: Timer?
     private var animationDisplayLink: CADisplayLink?
+    /// Ends a run even when no frame driver ever ticks — see `armFrameAnimationWatchdog`.
+    private var animationWatchdog: Timer?
+    /// Second look at whether the display link is delivering frames at all —
+    /// see `armFrameDriverProbe`.
+    private var animationDriverProbe: Timer?
     private var animationRun: SpringRun?
     var onFrameAnimationStarted: (() -> Void)?
     var onFrameAnimationEnded: (() -> Void)?
@@ -413,6 +418,15 @@ class FloatingPanel: NSPanel {
         /// Refreshed on retarget: the wedge cap protects a wedged run,
         /// not a healthy one that just received a new goal.
         var startedWallClock: Date
+        /// Never refreshed: when the motion actually began.
+        ///
+        /// The frame samples are continuous across a retarget — the spring
+        /// keeps its velocity and the tick loop never restarts — so a duration
+        /// read from `startedWallClock` covers only the last leg while the
+        /// samples cover all of them. A two-leg reveal therefore reported a
+        /// 336 ms run carrying 665 ms of 60 Hz frames, and `fps` derived from
+        /// the two disagreed with either.
+        var motionStartedWallClock: Date
 
         /// The rect the run ends on: the target as the window server will
         /// store it. See `FloatingPanel.landing(_:)`.
@@ -511,6 +525,10 @@ class FloatingPanel: NSPanel {
         animationTimer = nil
         animationDisplayLink?.invalidate()
         animationDisplayLink = nil
+        animationWatchdog?.invalidate()
+        animationWatchdog = nil
+        animationDriverProbe?.invalidate()
+        animationDriverProbe = nil
         animationRun = nil
         clearIslandMask()
         if notify {
@@ -630,6 +648,7 @@ class FloatingPanel: NSPanel {
             ),
             lastTimestamp: 0,
             startedWallClock: Date(),
+            motionStartedWallClock: Date(),
             landing: landing,
             painted: FloatingPanel.components(of: fromVisible),
             cover: cover
@@ -653,22 +672,86 @@ class FloatingPanel: NSPanel {
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: Float(ceiling), preferred: Float(ceiling))
             link.add(to: .main, forMode: .common)
             animationDisplayLink = link
+            armFrameDriverProbe()
         } else {
             // Fallback when the view is not in a window yet.
-            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
-                guard self?.animationRun != nil else {
-                    timer.invalidate()
-                    return
-                }
-                self?.stepFrameAnimation(at: CACurrentMediaTime())
-            }
-            animationTimer = timer
-            // Continue animating during mouse tracking and menu interactions.
-            RunLoop.main.add(timer, forMode: .common)
+            installTimerFrameDriver()
         }
+        armFrameAnimationWatchdog()
+    }
+
+    /// Step the run from the runloop clock instead of the display.
+    ///
+    /// Shared by the two cases where no vsync exists: a view that is not in a
+    /// window yet, and a display link that turns out to deliver nothing.
+    private func installTimerFrameDriver() {
+        animationDisplayLink?.invalidate()
+        animationDisplayLink = nil
+        animationDriverProbe?.invalidate()
+        animationDriverProbe = nil
+        guard animationTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            guard self?.animationRun != nil else {
+                timer.invalidate()
+                return
+            }
+            self?.stepFrameAnimation(at: CACurrentMediaTime())
+        }
+        animationTimer = timer
+        // Continue animating during mouse tracking and menu interactions.
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Move a starved run to the timer driver instead of letting it stall.
+    ///
+    /// `contentView.displayLink` only fires while the view can actually be
+    /// drawn into. With the display asleep — the state every unattended
+    /// capture session and every locked Mac sits in — it delivers nothing at
+    /// all, and a run armed there waited the full 2.55 s for the watchdog and
+    /// then slammed to its target: a dead pause where the user was supposed to
+    /// see a spring. Two vsyncs after arming, ask the link whether it ever
+    /// ticked; if not, run the same spring off the runloop clock, which is
+    /// exactly what the pre-display-link driver did.
+    ///
+    /// The probe is a switch, not a deadline: the watchdog still catches a run
+    /// whose *timer* never fires, and a link that ticks even once cancels this.
+    private func armFrameDriverProbe() {
+        animationDriverProbe?.invalidate()
+        let timer = Timer(timeInterval: 2.0 / 60.0, repeats: false) { [weak self] _ in
+            guard let self, self.animationRun != nil else { return }
+            guard IslandFrameTiming.ticksForCurrentRun == 0 else { return }
+            AnimationDebugger.logEvent("display link delivered no frame — switching to timer driver")
+            self.installTimerFrameDriver()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationDriverProbe = timer
+    }
+
+    /// Guarantees the run ends even if the frame driver never ticks.
+    ///
+    /// A `CADisplayLink` stops delivering frames when its window is off-screen
+    /// or fully occluded, and the wedge cap that used to be the only other way
+    /// out lives *inside* the tick handler. With no ticks the run never
+    /// finished: the mask stayed on the pre-expand pill while the window sat at
+    /// the covering stage, so an expanded island showed nothing at all. The
+    /// timer is a deadline, not a motion source — a healthy run ends from its
+    /// own tick and simply invalidates this.
+    private func armFrameAnimationWatchdog() {
+        animationWatchdog?.invalidate()
+        let timer = Timer(timeInterval: IslandMotion.maxRunDuration + 0.05, repeats: false) { [weak self] _ in
+            guard let self, self.animationRun != nil else { return }
+            AnimationDebugger.logEvent("watchdog ended a run with no landing tick")
+            self.finishFrameAnimation()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationWatchdog = timer
     }
 
     @objc private func stepFrameAnimation(_ link: CADisplayLink) {
+        // The link is live: the probe that watches for a starved run has
+        // nothing left to decide.
+        animationDriverProbe?.invalidate()
+        animationDriverProbe = nil
         // `targetTimestamp` is the presentation time of the frame being
         // drawn right now — one refresh ahead of `timestamp` — so the
         // position lands exactly where it should appear on screen.
@@ -728,8 +811,9 @@ class FloatingPanel: NSPanel {
         }
 
         // The wedge cap is a safety net for a run that cannot converge; a
-        // healthy run settles well inside it (measured ~0.44 s expand,
-        // ~0.50 s collapse).
+        // healthy run settles well inside it. A hover-driven reveal measured
+        // 0.34 s on its last leg and 0.67 s end to end (pill widen, then bend
+        // to the inbox) at a 16.7 ms cadence.
         let wedged = Date().timeIntervalSince(run.startedWallClock) > IslandMotion.maxRunDuration
         if weldedToTarget(run) || wedged {
             finishFrameAnimation()
@@ -755,6 +839,10 @@ class FloatingPanel: NSPanel {
         animationTimer = nil
         animationDisplayLink?.invalidate()
         animationDisplayLink = nil
+        animationWatchdog?.invalidate()
+        animationWatchdog = nil
+        animationDriverProbe?.invalidate()
+        animationDriverProbe = nil
         // Park the mask on the whole-point rect the spring landed on and
         // leave the window at the stage. The island the user sees is exactly
         // this rect; the window around it is invisible either way, and
@@ -766,7 +854,7 @@ class FloatingPanel: NSPanel {
         applyIslandMask(painted: FloatingPanel.rect(from: run.landing), in: run.cover)
         onFrameAnimationEnded?()
         AnimationDebugger.logEnd(frame: frame)
-        IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.startedWallClock))
+        IslandFrameTiming.finish(duration: Date().timeIntervalSince(run.motionStartedWallClock))
     }
 
     /// Snap the panel to the target size with NO animation. Used on
@@ -1064,11 +1152,28 @@ enum IslandFrameTiming {
     }
 
     static func tick(uptime: TimeInterval) {
+        totalTicks += 1
         if let previousUptime {
             lastIntervals.append(uptime - previousUptime)
         }
         previousUptime = uptime
     }
+
+    /// Ticks delivered for the run in flight (0 before its first frame).
+    ///
+    /// `lastIntervals` lags by one — it records *intervals*, so a run's first
+    /// tick leaves it empty. Anything asking "has the frame driver come up
+    /// yet?" needs the tick count, not the interval count.
+    static var ticksForCurrentRun: Int { previousUptime == nil ? 0 : lastIntervals.count + 1 }
+
+    /// Ticks since launch, never cleared.
+    ///
+    /// A capture pass that reports `fps: 0` means one of two very different
+    /// things — the animation was retargeted before it landed, or the display
+    /// never delivered a frame (asleep, headless, fully occluded). This tells
+    /// them apart, which is the difference between a measurement and a
+    /// screenshot of nothing.
+    private(set) static var totalTicks = 0
 
     /// One completed run, kept for inspection.
     struct CompletedRun {
@@ -1148,6 +1253,8 @@ enum IslandFrameTiming {
             "instant": lastWasInstant,
             "duration": lastDuration,
             "samples": lastIntervals.count,
+            "intervalsMs": lastIntervals.map { round($0 * 10000) / 10 },
+            "totalTicks": totalTicks,
             "fps": estimatedFPS,
             "averageMs": (averageInterval ?? 0) * 1000,
             "p95Ms": p95Interval * 1000,

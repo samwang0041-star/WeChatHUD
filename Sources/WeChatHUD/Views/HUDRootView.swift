@@ -14,6 +14,53 @@ struct SizePreferenceKey: PreferenceKey {
     }
 }
 
+/// The island's content clock, expressed apart from the view that draws it.
+///
+/// The silhouette is driven by an AppKit frame spring, and the content inside
+/// it is a SwiftUI swap — two systems on two clocks. Left to themselves the
+/// content arrives at the *start* of the morph, so the mask spends the first
+/// fifth of a second clipping a timestamp in half. This type owns the one
+/// decision that fixes it: when the content is allowed to be visible.
+enum IslandContentChoreography {
+    /// Compact and peek share one surface (`CompactInboxBar`), so hovering
+    /// must not re-run the reveal — the widen has to read as one gesture.
+    enum Family: Equatable {
+        case ambient
+        case body
+    }
+
+    static func family(of state: HUDState) -> Family {
+        switch state {
+        case .compact, .peek: return .ambient
+        case .extended, .notification, .detail: return .body
+        }
+    }
+
+    /// - Parameter midFlight: a collapsing spring is running, so
+    ///   `presentedState` is still the outgoing body surface while
+    ///   `currentState` has already asked for compact. The surface stays
+    ///   mounted to keep the covering window painted, which is exactly when
+    ///   the mask would otherwise cut a glyph in half.
+    /// - Parameter revealed: the body content has been let in. Only the body
+    ///   family waits for this; the ambient wings never do, or every hover
+    ///   would blink.
+    static func isVisible(family: Family, midFlight: Bool, revealed: Bool) -> Bool {
+        if midFlight { return false }
+        if family == .body && !revealed { return false }
+        return true
+    }
+
+    /// The curve for the transition *into* `visible`.
+    ///
+    /// A collapse landing back on the ambient wings is instant: the pill is
+    /// already at its final size by then, and a delayed reveal there would
+    /// leave the closed island visibly empty for 200 ms.
+    static func animation(family: Family, visible: Bool) -> Animation? {
+        if !visible { return CompanionMotion.islandContentFadeOut() }
+        return family == .body ? CompanionMotion.islandContentReveal() : nil
+    }
+}
+
 struct HUDRootView: View {
     @EnvironmentObject var panelState: PanelState
     /// Bumped when Increase Contrast / Differentiate Without Color move, so
@@ -23,6 +70,10 @@ struct HUDRootView: View {
         // Read so the island re-evaluates when the flag flips; the value is
         // carried by `.companionDisplayGeneration` below.
 
+    /// Whether the body surface (inbox / banner / detail) has been let in yet.
+    /// Flips false the moment the silhouette starts opening so the content
+    /// materialises inside the shape rather than being unmasked mid-word.
+    @State private var bodyContentRevealed = true
 
     var body: some View {
         // Each pill state is rendered at its own fixed intrinsic width,
@@ -49,6 +100,14 @@ struct HUDRootView: View {
         // notch. Centering would drop compact content into the middle of the
         // cover while the mask shrinks from the top.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The content breathes on a different clock from the silhouette: it
+        // leaves first and arrives last, so the mask never shows half a
+        // timestamp. Applied *before* the background so the black body itself
+        // stays opaque through the whole morph.
+        .opacity(islandContentVisible ? 1 : 0)
+        .animation(IslandContentChoreography.animation(family: islandContentFamily,
+                                                      visible: islandContentVisible),
+                   value: islandContentVisible)
         .background(
             // One black body: notch band + pill are the same color as
             // the hardware Dynamic Island, so compact wings disappear
@@ -96,11 +155,34 @@ struct HUDRootView: View {
         // the reference implementation groups its notch scene the same way.
         .compositingGroup()
         .animation(nil, value: panelState.presentedState)
+        .onChange(of: islandContentFamily) { _, family in
+            guard family == .body else {
+                bodyContentRevealed = true
+                return
+            }
+            // Two run-loop turns on purpose: the 0 has to be committed before
+            // the 1, or SwiftUI coalesces both writes into one transaction and
+            // the reveal never renders.
+            bodyContentRevealed = false
+            DispatchQueue.main.async { bodyContentRevealed = true }
+        }
         .companionDisplayGeneration(CompanionAccessibility.generation)
         .dynamicTypeSize(CompanionTypeScale.appliedRange(largeType: PreviewRuntime.largeType))
         .onReceive(NotificationCenter.default.publisher(for: CompanionAccessibility.displayOptionsDidChange)) { _ in
             displayOptionsNonce &+= 1
         }
+    }
+
+    /// Which surface family is painted right now.
+    private var islandContentFamily: IslandContentChoreography.Family {
+        IslandContentChoreography.family(of: panelState.presentedState)
+    }
+
+    /// The one value the content opacity reads.
+    private var islandContentVisible: Bool {
+        IslandContentChoreography.isVisible(family: islandContentFamily,
+                                            midFlight: panelState.presentedState != panelState.currentState,
+                                            revealed: bodyContentRevealed)
     }
 
     private var islandNotchWidth: CGFloat {

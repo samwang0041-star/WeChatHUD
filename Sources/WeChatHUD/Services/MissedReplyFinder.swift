@@ -64,6 +64,52 @@ enum MissedReplyFinder {
         let rangeEnd: Date
     }
 
+    /// How much of the walk actually happened.
+    ///
+    /// The list is capped at `maxChats` and each chat is read on its own, so a
+    /// scan can be short in two silent ways: chats never looked at, and chats
+    /// whose read threw (a failed read yields no messages, which then looks
+    /// exactly like "answered"). Without this, an empty page tells the user
+    /// nothing was left unanswered when part of the corpus was not consulted.
+    struct Coverage: Equatable {
+        let examinedChats: Int
+        let unreadableChats: Int
+        let unexaminedChats: Int
+        /// The session list itself failed, so group @-mentions outside the
+        /// whitelist were never enumerated. The size of that hole is unknown,
+        /// which is why it is not folded into `missingChats`.
+        let groupSessionsUnavailable: Bool
+
+        init(
+            examinedChats: Int,
+            unreadableChats: Int = 0,
+            unexaminedChats: Int = 0,
+            groupSessionsUnavailable: Bool = false
+        ) {
+            self.examinedChats = examinedChats
+            self.unreadableChats = max(0, unreadableChats)
+            self.unexaminedChats = max(0, unexaminedChats)
+            self.groupSessionsUnavailable = groupSessionsUnavailable
+        }
+
+        static let complete = Coverage(examinedChats: 0)
+
+        var isComplete: Bool { unreadableChats == 0 && unexaminedChats == 0 && !groupSessionsUnavailable }
+        var missingChats: Int { unreadableChats + unexaminedChats }
+
+        /// One honest line about what is not here, or nil when nothing was
+        /// left out. Shown in the same slot whether or not the list is empty.
+        var caveat: String? {
+            var holes: [String] = []
+            if missingChats > 0 { holes.append(CompanionInteractionCopy.missedRepliesUnread(missingChats)) }
+            if groupSessionsUnavailable {
+                holes.append(CompanionInteractionCopy.missedRepliesGroupsUnreadable)
+            }
+            guard !holes.isEmpty else { return nil }
+            return CompanionInteractionCopy.missedRepliesIncomplete(holes.joined(separator: "，"))
+        }
+    }
+
     struct Item: Identifiable, Equatable {
         let id: String
         let chatUsername: String
@@ -75,6 +121,11 @@ enum MissedReplyFinder {
         let isAtMention: Bool
         let isVIP: Bool
         let unrepliedCount: Int
+        /// The other side asked, and the only thing sent afterwards was an ack
+        /// ("收到", "嗯"). The thread is still open in substance, but "没回"
+        /// alone would read as if nothing was ever sent — so the card says
+        /// which of the two it is, using the same words the inbox badge uses.
+        var repliedWithAckOnly: Bool = false
         let sourceMessageID: String
         let sourceText: String
 
@@ -141,6 +192,10 @@ enum MissedReplyFinder {
             unreplied.append(inbound)
         }
         guard let first = unreplied.first else { return nil }
+        let ackedOnly = outbounds.contains { outbound in
+            MessageHelpers.isSameOrAfter(outbound.message, first.message)
+                && ImportanceDetector.isAckOnly(outbound.message.text)
+        }
 
         return Item(
             id: "\(seed.session.username)|\(first.message.id)",
@@ -153,6 +208,7 @@ enum MissedReplyFinder {
             isAtMention: first.isAtMe,
             isVIP: seed.isVIP,
             unrepliedCount: unreplied.count,
+            repliedWithAckOnly: ackedOnly,
             sourceMessageID: first.message.id,
             sourceText: first.message.text
         )

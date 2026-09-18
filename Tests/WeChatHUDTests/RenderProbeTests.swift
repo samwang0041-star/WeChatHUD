@@ -72,7 +72,7 @@ final class RenderProbeTests: XCTestCase {
     func testWorkspaceSettingsRowRendersInk() {
         let view = VStack(alignment: .leading, spacing: 8) {
             Text(SettingsView.Tab.today.label).workspaceDisplay()
-            Text(SettingsView.Tab.today.subtitle).workspaceBody().foregroundStyle(.secondary)
+            Text(SettingsView.Tab.today.subtitle ?? "").workspaceBody().foregroundStyle(.secondary)
             SettingsSection("提醒范围") {
                 SettingsRow("只提醒我关注的人", subtitle: "只有关注的人会进来。", icon: "person.crop.circle") {
                     EmptyView()

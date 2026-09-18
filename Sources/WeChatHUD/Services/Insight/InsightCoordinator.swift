@@ -17,6 +17,15 @@ final class InsightCoordinator: ObservableObject {
     @Published var chatInsightErrors: [String: String] = [:]
     /// Global briefing across all whitelisted chats.
     @Published var globalBriefing: GlobalBriefing? = nil
+    /// When `globalBriefing` was produced, by our own clock.
+    ///
+    /// `briefing.date` is the model's free-text 「日期」 field — the prompt asks
+    /// for a date, not a timestamp, and the model echoes back whatever it
+    /// likes. The freshness check used to parse that string as ISO8601, get
+    /// `nil`, fall back to `.distantPast`, and therefore treat *every* briefing
+    /// as infinitely old: a full AI batch over the whole whitelist re-ran on
+    /// every scan. Freshness is a local fact, so it is recorded locally.
+    private(set) var briefingGeneratedAt: Date?
     /// True while insight analysis is running.
     @Published var insightLoading: Bool = false
     /// Insight progress: "正在分析 3/12…"
@@ -29,9 +38,14 @@ final class InsightCoordinator: ObservableObject {
     private var requestVersions: [String: UUID] = [:]
     private var resultDays: [String: Date] = [:]
 
+    /// A briefing stays useful for this long; past it, the next refresh
+    /// regenerates. See `briefingGeneratedAt`.
+    static let briefingTTL: TimeInterval = 1800
+
     private let readerActor: WeChatReaderActor
     private let store: HUDStore
     private let aiService: AIService
+    private let now: () -> Date
     private lazy var chatInsightService: ChatInsightService = {
         ChatInsightService(readerActor: readerActor, store: store, aiService: aiService)
     }()
@@ -39,10 +53,11 @@ final class InsightCoordinator: ObservableObject {
     /// Insight load task — kept so we can cancel and avoid duplicates.
     private var insightLoadTask: Task<Void, Never>?
 
-    init(reader: WeChatReader, store: HUDStore, aiService: AIService) {
+    init(reader: WeChatReader, store: HUDStore, aiService: AIService, now: @escaping () -> Date = Date.init) {
         self.readerActor = WeChatReaderActor(reader)
         self.store = store
         self.aiService = aiService
+        self.now = now
     }
 
     deinit {
@@ -50,6 +65,25 @@ final class InsightCoordinator: ObservableObject {
     }
 
     // MARK: - Public API
+
+    /// Whether a scheduled refresh may be skipped because the current briefing
+    /// is still fresh.
+    ///
+    /// A briefing with no recorded generation time is treated as expired, not
+    /// as infinitely old-and-fresh: the old code reached the same conclusion by
+    /// parsing the model's free-text date and falling back to `.distantPast`,
+    /// which made every briefing look stale and re-ran the whole AI batch on
+    /// every scan.
+    nonisolated static func shouldSkipBriefingRefresh(
+        force: Bool,
+        briefing: GlobalBriefing?,
+        generatedAt: Date?,
+        now: Date,
+        ttl: TimeInterval
+    ) -> Bool {
+        guard !force, briefing != nil, let generatedAt else { return false }
+        return now.timeIntervalSince(generatedAt) < ttl
+    }
 
     /// Trigger a background insight refresh. Idempotent — if one is already
     /// running, the call is ignored.
@@ -117,12 +151,12 @@ final class InsightCoordinator: ObservableObject {
     private func loadInsight(force: Bool = false) async {
         guard !insightLoading else { return }
 
-        // Cache check: skip if generated within last 30 minutes
-        if !force, let briefing = globalBriefing {
-            let age = Date().timeIntervalSince(
-                ISO8601DateFormatter().date(from: briefing.date) ?? .distantPast
-            )
-            if age < 1800 { return }
+        // Cache check: skip while the current briefing is still fresh.
+        if Self.shouldSkipBriefingRefresh(
+            force: force, briefing: globalBriefing,
+            generatedAt: briefingGeneratedAt, now: now(), ttl: Self.briefingTTL
+        ) {
+            return
         }
 
         insightLoading = true
@@ -223,6 +257,7 @@ final class InsightCoordinator: ObservableObject {
             chatInsights[chatUsername] = result
         }
         globalBriefing = briefing
+        briefingGeneratedAt = briefing == nil ? nil : now()
         insightLoading = false
         insightProgress = ""
         insightProgressFraction = 1.0

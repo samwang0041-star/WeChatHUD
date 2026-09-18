@@ -21,17 +21,49 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         )
     }
 
-    func testEveryGroupChatPromiseOnThePageIsTheSameSentence() throws {
+    func testGroupChatPromiseAppearsOnceOnThePage() throws {
         let source = try AutopilotViewSource.load()
-        // The toggle and the advanced section must not each own their own
-        // version of the promise.
+        // One canonical sentence, and one place that renders it: the 高级
+        // section used to print the same string again under a toggle whose
+        // subtitle already said it.
         XCTAssertEqual(
             source.occurrences(of: "AutopilotSettingsCopy.groupRule"),
-            2,
-            "The rule is stated once and reused; the view still renders it twice."
+            1,
+            "The rule is stated once in the copy enum and rendered once."
         )
         XCTAssertFalse(source.text.contains("群 @ 会写成待确认草稿"), "old contradictory string")
         XCTAssertFalse(source.text.contains("群聊消息仅记录，不自动发送回复"), "old contradictory string")
+    }
+
+    /// 「每小时最多」 limits *every* send, not just automatic ones: the reply a
+    /// user approves by hand in 待确认回复 goes through the same
+    /// `serialSendWithRateLimit`. The hint used to describe it as an auto-reply
+    /// knob and promise a clock-hour reset that does not exist (the window is
+    /// rolling), and the failure toast said 「自动回复上限」 — so with 自动发出去
+    /// off, a user hit a wall they had no way to explain.
+    func testHourlyCapCopyCoversManualSends() throws {
+        XCTAssertTrue(
+            AutopilotSettingsCopy.perHourHint.contains("确认后才发"),
+            AutopilotSettingsCopy.perHourHint
+        )
+        XCTAssertFalse(AutopilotSettingsCopy.perHourHint.contains("等下一个小时"),
+                       "滚动窗口没有整点重置，文案不能承诺一个不存在的恢复点")
+
+        let service = try read("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let manual = service.range(of: "func executeSend")
+            .map { String(service[$0.lowerBound...].prefix(2600)) } ?? ""
+        XCTAssertTrue(manual.contains("serialSendWithRateLimit("),
+                      "确认后才发的发送必须走同一个每小时闸门，否则这条文案就是假的")
+        XCTAssertFalse(service.contains("每小时自动回复上限"),
+                       "同一条提示也会在人工确认的发送上触发，不能只说自动回复")
+    }
+
+    /// The onboarding page must not promise a group draft that only exists
+    /// once 群里 @我 时也准备回复 is switched on.
+    func testGuideStatesTheGroupGuaranteeRatherThanADraft() throws {
+        let text = try read("Sources/WeChatHUD/Views/CompanionGuideView.swift")
+        XCTAssertFalse(text.contains("群聊只记草稿"), "no draft is written while the group switch is off")
+        XCTAssertTrue(text.contains("群聊不会自动发出"), "the always-true half of the rule")
     }
 
     // MARK: - Exclusion wording

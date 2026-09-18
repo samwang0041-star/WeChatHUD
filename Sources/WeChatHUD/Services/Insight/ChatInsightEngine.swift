@@ -223,6 +223,18 @@ enum ChatStatsEngine {
         let urgentAsks: Int
         let recalledMessages: Int
         let recentDensityRatio: Double      // last 7d daily avg / overall daily avg
+
+        /// The quantity `boundaryScore` is made of. The score is literally
+        /// `100 - 下班后的工作消息 / 全部工作消息`, so showing 「边界分 70」 asked
+        /// readers to invert a subtraction to learn that 30% of their work
+        /// messages land after hours. Printing the percentage needs no manual.
+        /// And no work messages at all is not a perfect boundary — it is no
+        /// measurement, which is what the old `workCount == 0 → 100` claimed.
+        var boundarySummary: String {
+            guard workMessages > 0 else { return "无工作消息" }
+            let percent = Int((Double(workAfterHoursCount) / Double(workMessages) * 100).rounded())
+            return "\(percent)% 工作消息在下班后"
+        }
     }
 
     static func computeGlobalOverview(

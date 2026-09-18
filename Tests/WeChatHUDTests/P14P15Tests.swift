@@ -13,36 +13,6 @@ final class P14P15Tests: XCTestCase {
 
     override func tearDown() { store.close() }
 
-    // MARK: - Reply Time Prediction (P15a)
-
-    func testPredictReplyWindowVIPP0() {
-        let seed = makeScoreSeed(isVIP: true)
-        // VIP P0 → 10 min
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p0), 10)
-    }
-
-    func testPredictReplyWindowVIPP1() {
-        let seed = makeScoreSeed(isVIP: true)
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p1), 20)
-    }
-
-    func testPredictReplyWindowAtMention() {
-        let seed = makeScoreSeed(isAtMention: true, isGroup: true)
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p1), 30)
-    }
-
-    func testPredictReplyWindowWhitelistPrivate() {
-        let seed = makeScoreSeed(isWhitelisted: true)
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p0), 15)
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p2), 60)
-    }
-
-    func testPredictReplyWindowDefault() {
-        let seed = makeScoreSeed()
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p0), 30)
-        XCTAssertEqual(ReplyDebtScorer.predictReplyWindow(seed: seed, priority: .p2), 120)
-    }
-
     // MARK: - Relationship Strength (P15c)
 
     func testRelationshipStrengthActiveLabel() {
@@ -108,55 +78,4 @@ final class P14P15Tests: XCTestCase {
         }
         XCTAssertEqual(store.loadDrafts().count, 5)
     }
-
-    // MARK: - ReplyDebtItem suggestedReplyMinutes field
-
-    func testReplyDebtItemHasSuggestedMinutes() {
-        let item = ReplyDebtItem(
-            id: "c1", chatUsername: "c1", chatName: "C1",
-            senderName: "S", preview: "hi", latestOutboundPreview: nil,
-            timestamp: Date(), priority: .p1, score: 5, unreadCount: 1,
-            isGroup: false, isWhitelisted: true, isVIP: false,
-            isAtMention: false, inboundCountSinceLastOutbound: 1,
-            reasons: [], suggestedReplyMinutes: 45
-        )
-        XCTAssertEqual(item.suggestedReplyMinutes, 45)
-    }
-
-    func testReplyDebtItemNilSuggestedMinutes() {
-        let item = ReplyDebtItem(
-            id: "c1", chatUsername: "c1", chatName: "C1",
-            senderName: "S", preview: "hi", latestOutboundPreview: nil,
-            timestamp: Date(), priority: .p2, score: 3, unreadCount: 0,
-            isGroup: false, isWhitelisted: false, isVIP: false,
-            isAtMention: false, inboundCountSinceLastOutbound: 0,
-            reasons: [], suggestedReplyMinutes: nil
-        )
-        XCTAssertNil(item.suggestedReplyMinutes)
-    }
-
-    // MARK: - Helpers
-
-    private func makeScoreSeed(
-        isVIP: Bool = false,
-        isAtMention: Bool = false,
-        isWhitelisted: Bool = false,
-        isGroup: Bool = false
-    ) -> ReplyDebtScorer.Seed {
-        ReplyDebtScorer.Seed(
-            session: SessionInfo(username: "c1", isGroup: isGroup, unreadCount: 1, lastTimestamp: 0),
-            chatName: "C1",
-            isWhitelisted: isWhitelisted,
-            isVIP: isVIP,
-            latestInbound: nil,
-            latestOutbound: nil,
-            inboundCountSinceLastOutbound: 0,
-            isAtMention: isAtMention,
-            chatAction: nil,
-            now: Date(),
-            contactReplyWindowMinutes: nil
-        )
-    }
 }
-
-// predictReplyWindow is now internal, accessible directly via ReplyDebtScorer.predictReplyWindow

@@ -116,8 +116,8 @@ struct DailyReportTabView: View {
                Button(action: exportReport) {
                    Label("导出", systemImage: "square.and.arrow.up")
                }
+               .tint(SettingsView.Tab.dailyReport.accentColor)
                .buttonStyle(.borderedProminent)
-                .tint(SettingsView.Tab.dailyReport.accentColor)
                .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
                .accessibilityLabel("导出今日小结")
             }

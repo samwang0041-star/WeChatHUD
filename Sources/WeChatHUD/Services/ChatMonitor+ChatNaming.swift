@@ -26,7 +26,13 @@ extension ChatMonitor {
             return alias
         }
         let resolved = reader.displayName(for: chatUsername)
-        if resolved.isEmpty || ContactIdentityIndex.isRawChatIdentifier(resolved) {
+        // The reader's last resort is to hand back the username itself, and it
+        // does that whenever its contact cache is empty — right after an
+        // account switch, before the first contact refresh. Such an echo is not
+        // "raw" by shape for a legacy weixinid, so the old check let it through
+        // and the UI printed an account id over a name already in hud.sqlite3.
+        if resolved.isEmpty || resolved == chatUsername
+            || ContactIdentityIndex.isRawChatIdentifier(resolved) {
             if let contactName = store.getContact(username: chatUsername)?.displayName,
                !contactName.isEmpty,
                !ContactIdentityIndex.isRawChatIdentifier(contactName) {

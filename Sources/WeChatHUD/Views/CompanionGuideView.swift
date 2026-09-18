@@ -56,7 +56,14 @@ struct CompanionGuideView: View {
             VStack(alignment: .leading, spacing: 18) {
                 guideStep(number: "1", title: "连接微信", detail: "读取这台 Mac 上已登录的微信。", buttonTitle: "连接微信", action: showIntroduction)
                 guideStep(number: "2", title: "选择关注的人", detail: "选一个联系人或群。", buttonTitle: "选择对话", action: { navigate(.contacts) })
-                guideStep(number: "3", title: "看清下一步", detail: "「今天」里看待回和待办。", buttonTitle: "打开今天", action: { navigate(.today) })
+                // The old detail was 「「今天」里看待回和待办。」 — the same
+                // sentence the 每天怎么用 card prints 300pt below it, twice on
+                // one screen. This one carries the relation instead: the pill
+                // reports a number, this page is where the list behind it is.
+                // (Deliberately not "岛上报几条，这里就列几条" — the pill counts
+                // 待回 only, while this page also lists 待办, as the r12 island
+                // captures show: 「1 条待回」 over a 待处理 (3) inbox.)
+                guideStep(number: "3", title: "看清下一步", detail: "岛上报数，这里列明细。", buttonTitle: "打开今天", action: { navigate(.today) })
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -78,7 +85,10 @@ struct CompanionGuideView: View {
             guideTopic("我答应的事", "带着原话和截止时间。做完后点完成。", icon: "checkmark.bubble.fill")
             guideTopic("草稿", "写好后存草稿，确认再发。", icon: "square.and.pencil")
             guideTopic("头顶上的提醒", "可分别开关群 @、重点联系人和普通更新。移上去就能看。", icon: "bell.badge.fill")
-            guideTopic("发送和自动回复", "发送前会确认。自动回复默认关；打开后先到「待确认回复」。群聊只记草稿。", icon: "paperplane.fill")
+            // The old ending promised a group draft, but no draft is written
+            // until 群里 @我 时也准备回复 is on. What is always true is that a
+            // group reply never goes out unattended.
+            guideTopic("发送和自动回复", "发送前会确认。自动回复默认关；打开后先到「待确认回复」。群聊不会自动发出。", icon: "paperplane.fill")
         }
     }
 

@@ -194,7 +194,7 @@ final class ProductWorkspaceTests: XCTestCase {
         let overdue = item(5, due: calendar.date(byAdding: .day, value: -2, to: now))
         XCTAssertEqual(
             DiscussionPresentation.groups([overdue, item(1, due: today), item(4, due: nil)], now: now, calendar: calendar).map(\.title),
-            ["今天", "已过期", "无期限"]
+            ["今天", "已到期", "无期限"]
         )
         XCTAssertTrue(DiscussionPresentation.dueLabel(today, now: now, calendar: calendar).contains("今天"))
         XCTAssertTrue(DiscussionPresentation.dueLabel(tomorrow, now: now, calendar: calendar).contains("明天"))
@@ -213,7 +213,7 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertTrue(CommitmentPresentation.isOverdue(commitment(1, deadline: past), now: now))
         XCTAssertFalse(CommitmentPresentation.isOverdue(commitment(2, deadline: today), now: now))
         let groups = CommitmentPresentation.groups([commitment(1, deadline: past), commitment(2, deadline: today), commitment(3, deadline: nil)], now: now, calendar: calendar)
-        XCTAssertEqual(groups.map(\.title).first, "已过期")
+        XCTAssertEqual(groups.map(\.title).first, "已到期")
         XCTAssertTrue(groups.contains { $0.title.hasPrefix("今天") })
         XCTAssertTrue(groups.contains { $0.title == "无期限" })
     }
@@ -539,7 +539,7 @@ final class ProductWorkspaceTests: XCTestCase {
                 id: "chat", chatUsername: "chat", chatName: "林晓", senderName: "林晓",
                 preview: "确认一下", isGroup: false, timestamp: now, actionRequired: true,
                 priority: .p1, isVIP: true, isWhitelisted: true, unreadCount: 1,
-                isAtMention: false, askType: .none, reasons: [], suggestedReplyMinutes: 60,
+                isAtMention: false, askType: .none, reasons: [], overdueThresholdMinutes: 60,
                 status: .active, dismissedAtMsgId: nil, aiSummary: summary, moodEmoji: nil,
                 contextNotification: note()
             )
@@ -612,7 +612,13 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertTrue(CommitmentPresentation.matches(pendingPast, filter: .overdue, now: now))
         XCTAssertTrue(CommitmentPresentation.matches(overdueStatus, filter: .active))
         XCTAssertFalse(CommitmentPresentation.matches(fulfilled, filter: .active))
-        XCTAssertEqual(CommitmentPresentation.emptyTitle(for: .all), "没有正在跟进的承诺")
+        // 「全部」 covers fulfilled and cancelled rows too, so a title that says
+        // "nothing being followed up" describes the wrong set.
+        XCTAssertEqual(CommitmentPresentation.emptyTitle(for: .all), "还没有记下的承诺")
+        let emptyTitles = [CommitmentPresentation.Filter.active, .overdue, .fulfilled, .all]
+            .map { CommitmentPresentation.emptyTitle(for: $0) }
+        XCTAssertEqual(Set(emptyTitles).count, emptyTitles.count,
+                       "四个筛选标签的空态标题各自说明自己的集合，不能撞成同一句")
         XCTAssertTrue(CommitmentPresentation.emptyDescription(for: .all).contains("还在本地"))
     }
 
@@ -771,7 +777,7 @@ final class ProductWorkspaceTests: XCTestCase {
                 preview: "请确认", isGroup: isGroup, timestamp: Date(),
                 actionRequired: actionRequired, priority: .p1, isVIP: isVIP,
                 isWhitelisted: true, unreadCount: 1, isAtMention: isAtMention,
-                askType: .none, reasons: [], suggestedReplyMinutes: 60,
+                askType: .none, reasons: [], overdueThresholdMinutes: 60,
                 status: status, dismissedAtMsgId: nil
             )
             if status != .active { item.replied = status == .dismissed }

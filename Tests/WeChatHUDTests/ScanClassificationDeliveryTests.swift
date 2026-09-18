@@ -178,6 +178,36 @@ final class ScanClassificationDeliveryTests: XCTestCase {
         XCTAssertEqual(outcome?.latestPreview?.kind, .groupAt)
     }
 
+    /// Each popup switch owns exactly one signal. `important` used to OR in
+    /// `isAt`, so an @ kept popping with 群里 @ 我的消息 switched off — the
+    /// one thing that row exists to let you turn off.
+    func testAtMentionSwitchStandsAloneWhenImportantIsOn() async throws {
+        let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
+        defer { fixture.cleanup() }
+        let store = try fixture.makeStore()
+        defer { store.close() }
+
+        var config = NotificationConfig()
+        config.atMention = false
+        config.important = true
+        try store.setSettingJSON("notification", value: config)
+        try store.addToWhitelist(
+            username: fixture.groupChatUsername,
+            displayName: "项目群",
+            isGroup: true,
+            category: .work,
+            attentionLevel: .watch
+        )
+        try store.setWhitelistCursor(username: fixture.groupChatUsername, lastCreateTime: 100, lastLocalId: 0)
+
+        let outcome = try await scan(fixture.reader, store: store)
+        XCTAssertNil(outcome?.latestPreview, "an @ must not pop once its own switch is off")
+        XCTAssertNotNil(
+            outcome?.recentNotifications.first(where: { $0.chatUsername == fixture.groupChatUsername }),
+            "the @ still belongs in the inbox"
+        )
+    }
+
     func testLatestPreviewUsesOrdinaryPrivateMessageWhenEnabled() async throws {
         let fixture = try SyntheticScanFixture(chatUsername: chatUsername)
         defer { fixture.cleanup() }

@@ -149,6 +149,26 @@ enum CompanionMotion {
             : .spring(response: morphCollapseResponse, dampingFraction: 1.0)
     }
 
+    /// The island's content leaves before the silhouette has shrunk far enough
+    /// to cut a glyph in half.
+    ///
+    /// On collapse the outgoing surface stays mounted until the frame spring
+    /// lands — otherwise the covering window shows an empty black plate — so
+    /// the mask spends the first ~200 ms of that spring clipping the inbox at
+    /// an intermediate width. Measured on a 120 Hz panel at 110 ms into a
+    /// collapse: 「10 分」 with the rest of the timestamp outside the shape.
+    /// Fading the content over the first 110 ms keeps the plate painted (the
+    /// body is black anyway) and the half-cut text invisible.
+    static func islandContentFadeOut() -> Animation? { easeOut(0.11) }
+
+    /// The counterpart: content materialises *inside* an opening silhouette
+    /// instead of being unmasked mid-word while the shape widens. The 80 ms
+    /// delay is what makes the two read as one gesture — the island opens,
+    /// then what it opened for appears.
+    static func islandContentReveal() -> Animation? {
+        reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.2).delay(0.08)
+    }
+
     /// Compact hover stays in .peek this long before opening the inbox.
     /// Tests replace this so they do not wait on the live 180ms.
     static var hoverExpandDelayProvider: () -> TimeInterval = { 0.18 }
@@ -545,9 +565,28 @@ enum IslandNotificationLayout {
 /// starting while expand is still in flight) bends the trajectory
 /// instead of stopping and restarting, which is what reads as "卡".
 enum IslandMotion {
-    /// Nominal settle times used by the debug slow-mo path and tests.
-    static let expandDuration: TimeInterval = 0.36
-    static let collapseDuration: TimeInterval = 0.22
+    /// Nominal settle times, measured off the shipping integrator at 60 Hz
+    /// (see `IslandSpringCadenceTests`). They used to read 0.36 / 0.22 while
+    /// the collapse actually ran to 0.45 s — slower than the expand it was
+    /// supposed to tuck away after.
+    static let expandDuration: TimeInterval = 0.38
+    static let collapseDuration: TimeInterval = 0.33
+
+    /// Integration sub-step, independent of the display's cadence.
+    ///
+    /// A single full-tick Euler step is only accurate while `ω·dt` stays
+    /// small. At the collapse stiffness (`ω ≈ 31 rad/s`) a 33 ms tick gives
+    /// `ω·dt ≈ 1.0`, and the energy that error injects is enough to ring the
+    /// *painted* rect across the pixel grid: traced at 30 Hz the collapse
+    /// flipped its edges back and forth 53 times over 2.4 s, and at 24 Hz it
+    /// never settled at all until the wedge cap fired and snapped it.
+    /// `maxStep` is a stall clamp at 50 ms, so a 30 Hz frame sails past it.
+    ///
+    /// Sub-stepping at 120 Hz makes the motion the same shape at 20, 24, 30,
+    /// 60, 90 and 120 Hz — the collapse ends in 433 ms with zero edge flips
+    /// at 30 Hz instead of 2367 ms with 53. Going finer (1/240) starts
+    /// reintroducing single flips at low rates and buys nothing at 60.
+    static let subStep: TimeInterval = 1.0 / 120.0
 
     /// Spring constants in (stiffness, damping). Converted from the
     /// familiar response/dampingFraction pair: k = (2π/r)², c = 4π·ζ/r.
@@ -563,10 +602,21 @@ enum IslandMotion {
     /// `arrivalBand`, then borrows the critically damped pair so the last
     /// couple of points converge from one side instead of ringing across the
     /// pixel grid.
+    ///
+    /// The pop phase had to be re-tuned when the integrator started
+    /// sub-stepping. At one coarse step per frame the ζ=0.82 pair overshot by
+    /// ~9 pt only because `ω·h ≈ 0.25` leaked energy into the tail; integrate
+    /// it accurately and the designed overshoot is 1.1% of the travel —
+    /// 2.5 pt, i.e. invisible. ζ=0.62 at response 0.34 gives back the +9 pt of
+    /// height the traced hover expand actually showed, for 33 ms.
+    ///
+    /// The shared arrival/collapse response used to be 0.26, which measured
+    /// 0.42 s for a full tuck-away — longer than the expand it follows. At
+    /// 0.20 the collapse lands in 0.33 s and is again the quicker of the two.
     static func spring(expanding: Bool, distance: Double) -> (stiffness: Double, damping: Double) {
         let popping = expanding && distance >= arrivalBand
-        var response = popping ? 0.42 : 0.26
-        let dampingFraction = popping ? 0.82 : 1.0
+        var response = popping ? 0.34 : 0.20
+        let dampingFraction = popping ? 0.62 : 1.0
         // AnimationDebugger's slow-mo used to stretch the fixed-duration
         // ease; under springs the equivalent is scaling the response.
         if AnimationDebugger.isSlowMotion {
@@ -676,10 +726,24 @@ struct IslandFrameSpring {
         self.expanding = expanding
     }
 
-    /// One vsync step of semi-implicit Euler: velocity integrates
-    /// acceleration, position integrates the new velocity. Stable for our
-    /// stiffness range and cheap enough to run inside a display-link tick.
+    /// One vsync step, taken as fixed sub-steps of `IslandMotion.subStep`.
+    ///
+    /// Semi-implicit Euler: velocity integrates acceleration, position
+    /// integrates the new velocity. Stable and accurate for our stiffness range
+    /// only while `ω · h` stays small, which a raw 30 Hz tick breaks — see
+    /// `IslandMotion.subStep`. Sub-stepping also means the arrival band is
+    /// tested at 120 Hz instead of once per frame, so a run that crosses it
+    /// mid-tick switches damping on the same frame either way.
     mutating func step(dt: TimeInterval) {
+        var remaining = dt
+        while remaining > 0 {
+            let h = min(remaining, IslandMotion.subStep)
+            remaining -= h
+            integrate(dt: h)
+        }
+    }
+
+    private mutating func integrate(dt: TimeInterval) {
         let (k, c) = IslandMotion.spring(expanding: expanding,
                                          distance: simd_distance(position, target))
         let accel = -k * (position - target) - c * velocity

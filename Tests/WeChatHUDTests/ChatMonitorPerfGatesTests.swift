@@ -53,7 +53,7 @@ final class ChatMonitorPerfGatesTests: XCTestCase {
             isAtMention: isAtMention,
             askType: .none,
             reasons: [],
-            suggestedReplyMinutes: 30,
+            overdueThresholdMinutes: 30,
             status: .active,
             dismissedAtMsgId: nil,
             aiSummary: nil,

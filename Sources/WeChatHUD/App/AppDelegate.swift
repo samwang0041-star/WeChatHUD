@@ -821,7 +821,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // to photograph is worse than no flag.
         if PreviewRuntime.isEnabled {
             PreviewRuntime.applyIslandSnapshotOverrides(monitor: monitor, panelState: panelState)
+            PreviewRuntime.applyIslandDetailOverride(panelState: panelState)
+            PreviewRuntime.applyRetrospectiveOverride(monitor: monitor)
             PreviewRuntime.applyWorkspaceTabOverride(panelState: panelState)
+            PreviewRuntime.applyWindowWidthOverride()
+            PreviewRuntime.applyWorkspaceScrollOverride()
         }
     }
 
