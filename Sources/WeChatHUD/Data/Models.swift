@@ -44,10 +44,10 @@ struct HUDStats {
 /// reminders. ProactiveAlertEngine advances the tier on each scan and
 /// fires the right signal for each level:
 ///
-/// - `.t1` (30m waited): one system notification
-/// - `.t2` (1h+): menu-bar "!" badge + compact pill pulse (visual only)
-/// - `.t3` (2h+): second system notification + in-panel toast
-/// - `.t4` (4h+): third notification + persistent "!Nh" in menu bar
+/// - `.t1` (30 分钟 waited): one system notification
+/// - `.t2` (1 小时+): menu-bar "!" badge + compact pill pulse (visual only)
+/// - `.t3` (2 小时+): second system notification
+/// - `.t4` (4 小时+): third notification + the wait in the menu-bar badge
 ///
 /// Each tier only fires once per item; resetting requires the user to
 /// act on the item (reply / dismiss / snooze).
@@ -68,15 +68,17 @@ enum VIPAlertTier: Int, Comparable, Codable {
         return .none
     }
 
-    /// How long the sender has been waiting — rendered in the menu bar and
-    /// banner so the user knows how urgent it is.
+    /// How long the sender has been waiting — rendered in the menu bar
+    /// badge so the user knows how urgent it is. Chinese units, because the
+    /// badge sits in an otherwise all-Chinese string ("3 待办 · 等 2 小时")
+    /// and "2h" read as a different product's label.
     var agingLabel: String {
         switch self {
         case .none: return ""
-        case .t1:   return "30m"
-        case .t2:   return "1h"
-        case .t3:   return "2h"
-        case .t4:   return "4h+"
+        case .t1:   return "30 分钟"
+        case .t2:   return "1 小时"
+        case .t3:   return "2 小时"
+        case .t4:   return "4 小时+"
         }
     }
 }

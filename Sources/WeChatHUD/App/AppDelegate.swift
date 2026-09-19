@@ -775,7 +775,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .store(in: &cancellables)
 
         // Update badge when inbox items OR VIP escalation tiers change.
-        // At VIP T2+ the badge also shows the longest wait ("等 4h+");
+        // At VIP T2+ the badge also shows the longest wait ("等 4 小时+");
         // otherwise it's just the pending count. The string itself lives
         // in CompanionProductCopy.menuBarBadge so it's unit-testable.
         //

@@ -265,8 +265,12 @@ final class ProactiveAlertEngine {
         let (title, body): (String, String)
         switch tier {
         case .t1:
-            title = "VIP 消息超时"
-            body = "\(item.senderName) 的消息已超时未回复"
+            // Not 「已超时未回复」: 超时 is a different, user-configurable
+            // notion (关注谁 → 多久算超时, per contact). A VIP whose own window
+            // is 2 小时 would see a row that is not 超时 in the inbox while an
+            // OS banner called it 超时. This tier only ever claims the wait.
+            title = "VIP 等你 \(tier.agingLabel)了"
+            body = "\(item.senderName) 的消息还没回"
         case .t2:
             // Visual-only. Skip the OS notification — the pill pulse
             // and menu-bar badge are enough. A silent notification
@@ -275,7 +279,7 @@ final class ProactiveAlertEngine {
             lastPushedTier[item.chatUsername] = max(lastPushedTier[item.chatUsername] ?? .none, tier)
             return
         case .t3:
-            title = "VIP 等你 2 小时了"
+            title = "VIP 等你 \(tier.agingLabel)了"
             body = "\(item.senderName): \(item.preview)"
         case .t4:
             // The tier fires at exactly 240 minutes, so 超过 was off by the

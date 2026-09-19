@@ -105,6 +105,39 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertEqual(sent.count, 1)
     }
 
+    /// The first tier must not use the word 超时. 超时 is the per-contact,
+    /// user-configurable 回复窗口 (关注谁 → 多久算超时), while this ladder is
+    /// fixed milestones — the two are documented as independent, so a banner
+    /// saying 「已超时未回复」 at 30 分钟 contradicted an inbox row that was
+    /// correctly not 超时 for a contact with a 2 小时 window.
+    @MainActor
+    func testFirstTierClaimsTheWaitNotATimeout() async {
+        let start = Date(timeIntervalSince1970: 3_100_000)
+        var sent: [(String, String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { title, body, _, completion in
+                sent.append((title, body))
+                completion(nil)
+            }
+        )
+        let item = makeUnread(
+            chatUsername: "vip-chat", senderName: "Alice", isVIP: true,
+            timestamp: start.addingTimeInterval(-45 * 60)
+        )
+
+        engine.evaluate(unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: [])
+        await Task.yield()
+
+        XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent.first?.0, "VIP 等你 30 分钟了")
+        XCTAssertEqual(sent.first?.1, "Alice 的消息还没回")
+        XCTAssertFalse(sent.contains { $0.0.contains("超时") || $0.1.contains("超时") },
+                       "the ladder must not borrow the configurable 超时 word")
+    }
+
     /// A VIP item you already answered must not escalate — before this
     /// fix, replied rows still fired "VIP 等你 2 小时了" OS alerts.
     @MainActor

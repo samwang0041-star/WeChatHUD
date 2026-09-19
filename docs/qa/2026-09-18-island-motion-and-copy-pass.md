@@ -1810,3 +1810,34 @@ VIP / 承诺 / 多条未回 / 紧急待回复。
 再加一个可注入时钟的测试面。判据：只有当"离开电脑也要被提醒"成为需求时才值。
 另一个证据缺口：撤销条/toast 上的回执文案没有预览开关，本轮没截到像素
 （改动是 12→13 字符、在带 Spacer 的 HStack 里，布局风险为零）。
+
+## §97（第 27 轮）VIP 升档第一档：把「超时」这个词还给能配置它的那个人
+
+`Models.swift:41-45` 早就写清楚了：升档阶梯是**固定里程碑**，
+和 `ReplyDebtConfig` 里那个可按联系人配置的「多久算超时」是两回事
+（"changing 「多久算超时」 moves the badges but not the reminders"）。
+但 t1 的文案却写着 `title = "VIP 消息超时"` / `body = "…已超时未回复"` ——
+于是给某个 VIP 设了 2 小时窗口的用户会看到：收件箱里这条**没有**标超时，
+系统通知里它**已经**超时。同一个词，两个意思，两个结论。
+
+算法没错（里程碑本来就该固定），错在文案借了对面的词。改成只说自己知道的事：
+t1 = 「VIP 等你 30 分钟了」/「…的消息还没回」，和 t3/t4 的
+「等你 2 小时了」「等你 4 小时了」同一个句式；t3 的标题改为从
+`tier.agingLabel` 生成（今天输出完全相同，但阶梯一改就不会只改一半）。
+
+顺带同一族的英文单位泄漏：菜单栏 badge 是「3 待办 · 等 4h+」——
+一条全中文里嵌着 `4h+`。`agingLabel` 的生产消费者只有
+`CompanionProductCopy.menuBarBadge` 一处（全仓 grep 确认），所以直接换成
+「30 分钟 / 1 小时 / 2 小时 / 4 小时+」，badge 变「3 待办 · 等 4 小时+」。
+`MenuBarController` 里没有截断或宽度上限逻辑，宽度由 NSStatusItem 自管。
+
+测试：`testFirstTierClaimsTheWaitNotATimeout` 钉住 t1 的标题/正文，并断言
+这条阶梯发出的任何通知里**不出现**「超时」二字（防以后又借词）。
+它自己也先红了一次：`makeUnread(minutesAgo:)` 用的是真实墙上时间，
+而引擎注入的 `now` 是 1970 年附近，等待时长算成负数 → 档位 `.none`。
+改成显式传 `timestamp: start.addingTimeInterval(-45*60)` 才对。
+相关面 184/184 绿，release 零警告。
+
+证据缺口（诚实记录）：菜单栏 badge 不在截图通路里
+（`writeSurfaceBitmaps` 只认 FloatingPanel / 工作台 / onboarding / 回顾窗口，
+NSStatusItem 不属于任何一支），所以这一处只有单测证据，没有像素。

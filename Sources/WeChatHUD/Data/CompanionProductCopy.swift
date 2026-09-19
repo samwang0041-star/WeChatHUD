@@ -134,7 +134,7 @@ enum CompanionProductCopy {
     static let forbiddenChrome = ["工作台", "洞察", "简报", "白名单", "db_storage"]
 
     /// Menu-bar badge next to the icon. Read aloud it should make sense:
-    /// "3 待办" = three things waiting on you; "等 4h+" = a VIP has been
+    /// "3 待办" = three things waiting on you; "等 4 小时+" = a VIP has been
     /// waiting that long. Empty string = nothing needs attention.
     static func menuBarBadge(pendingCount: Int, longestWait: VIPAlertTier) -> String {
         switch longestWait {

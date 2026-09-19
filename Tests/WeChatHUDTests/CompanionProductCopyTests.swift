@@ -179,7 +179,7 @@ final class CompanionProductCopyTests: XCTestCase {
         // Below T2 escalation the badge stays a plain count.
         XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t1), " 3 待办")
         // Escalated: count + how long the VIP has been waiting.
-        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t4), " 3 待办 · 等 4h+")
-        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .t3), " 等 2h")
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t4), " 3 待办 · 等 4 小时+")
+        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .t3), " 等 2 小时")
     }
 }
