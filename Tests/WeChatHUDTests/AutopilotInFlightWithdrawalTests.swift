@@ -90,6 +90,33 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertFalse(withdrawn, "the row is the user's withdrawal — it is gone, so stop")
     }
 
+    /// The approval branch, against a real log row: `approvePending` leaves the
+    /// row in 'pending' for the whole send (it flips it only on success), so a
+    /// 取消本条 landing mid-flight is visible to the gate exactly through this.
+    func testApprovalGateFollowsTheRealLogRow() async throws {
+        let reply = "我下午给你结论"
+        let logSession = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: logSession, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_a/7", triggerText: "结论有了吗",
+            generatedReply: reply, confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        let logId = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: logSession).first?.id,
+            "fixture 没落库 ⇒ 这条测试什么都没验")
+        XCTAssertEqual(store.autopilotLogPendingReply(id: logId), reply,
+                       "行必须处于 pending，否则闸门没有理由打开")
+
+        let open = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        XCTAssertTrue(open, "人还没撤回 ⇒ 允许发送")
+
+        await service.rejectPending(logId: logId, chatUsername: "wxid_peer", replyText: reply)
+        let closed = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        XCTAssertFalse(closed, "取消本条把行翻出 pending ⇒ 闸门必须关掉")
+    }
+
     /// The cancel path itself: the old `guard pendingSendQueue.first …  else
     /// return` early-out meant a cancel aimed at an in-flight row did nothing
     /// except print a success receipt.
