@@ -582,6 +582,19 @@ struct InboxView: View {
         .accessibilityLabel(islandEmptyCopy + (islandEmptyDetail.map { " \($0)" } ?? ""))
     }
 
+    /// The two AI facts the empty-state copy branches on. They used to be
+    /// `true` literals at the call site below, so a user with no AI set up got
+    /// 「没有待处理的事 / 没有新消息。」 instead of the 「摘要和草稿还没准备好」
+    /// that is actually true for them — and the island has no other place that
+    /// says so.
+    private var aiReadiness: (configured: Bool, tested: Bool) {
+        let configuration = monitor.store.loadAIConfig()
+        return (
+            AISettingsValidation.connectionError(configuration.provider, requireModel: true) == nil,
+            AIConnectionEvidenceStore.isSuccessful(configuration, store: monitor.store)
+        )
+    }
+
     private var islandEmptyDetail: String? {
         switch monitor.stats.syncStatus {
         case .syncing, .error, .waitingForWeChat, .accountSwitched:
@@ -590,8 +603,8 @@ struct InboxView: View {
             return FirstLaunchGuide.todayEmpty(
                 wechatConnected: monitor.stats.lastSyncAt != nil,
                 hasTrackedConversations: monitor.store.hasWhitelistEntries(),
-                aiConfigured: true,
-                aiTested: true,
+                aiConfigured: aiReadiness.configured,
+                aiTested: aiReadiness.tested,
                 searching: false
             ).detail
         }

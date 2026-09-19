@@ -525,3 +525,36 @@ pendingSendQueue.append(retained)
 
 变异：M8 把 `catch` 改回 `return .resolved` ⇒ 库层那条失败；
 M9 把 `.unreadable` 判成 `.drop` ⇒ 真值表那条失败。
+
+## §152 岛的空态把 AI 状态写死成"已经配好"
+
+`InboxView.islandEmptyDetail` 调 `FirstLaunchGuide.todayEmpty(...)` 时传的是
+`aiConfigured: true, aiTested: true` 两个字面量。`todayEmpty` 里有四条分支，
+第三条才是"没配 AI"的人该看到的那句「摘要和草稿还没准备好 / 没有 AI 也能看微信
+原文…」—— 在岛上它永不可达，未配置的静默用户永远读到「没有待处理的事 /
+没有新消息。」，把"这个应用还没开始帮你"读成"你真的没有事"。同一个函数在
+`AssistantTodayView.swift:207-211` 是拿真值调的，所以两个界面对同一个人的同
+一件事说两种话。
+
+修：岛上改成读同一份判据（`AISettingsValidation.connectionError` +
+`AIConnectionEvidenceStore.isSuccessful`，与 `OnboardingReadiness` 同源），
+`testIslandEmptyCopyReadsTheRealAIState` 盯住调用块里不能再出现字面量。
+
+## §153 判阴：`.stale` 不是"忘了接线"，是它对事件驱动的扫描没有意义
+
+同一份报告里另一条代理结论说：`SyncStatus.stale` 注释写着「>5 min since last
+sync」，但全仓库找不到生产点，于是收起态的"微信连不上"和展开态的"没有新消息"
+互相打脸。回源码量的结果：
+
+- 生产点确实没有（只有 `Models.swift:99`、`CompactIslandPolicy.swift:141`、
+  `SettingsView.swift:732`、`SupportDiagnosticsView.swift:73`、
+  `AssistantTodayView.swift:403` 五处消费），所以那条"互相打脸"是不可观察的；
+- 更关键的是这个定义站不住：扫描是事件驱动的（FSEvents + 打开面板），
+  `lastSyncAt` 只在 `ScanEngine.swift:1002` 一次扫描完成时盖章，安全定时器
+  （`ChatMonitor.swift:524`）只做延后重算/承诺提醒/待发队列，不跑扫描。
+  也就是说一个没人发消息的安静下午，`lastSyncAt` 本来就会超过 5 分钟 ——
+  照注释去生产 `.stale`，岛会在一切正常的时候报"微信连不上"。
+- 扫描真的抛错时已经有 `.error("scan唯一能确定的是它现在不参与任何判断。删掉那五处 `case .stale`
+  也不改变任何行为。这一轮的处置是记录：不动代码，不生产它，也不假装它是待办。
+  真要"读取管道停摆"这个信号，得先有一个与"有没有新消息"无关的心跳事实
+  （比如每次 tick 都记一次"扫描尝试完成"），那是另一条设计变更。

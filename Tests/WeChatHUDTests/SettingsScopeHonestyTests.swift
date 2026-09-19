@@ -75,6 +75,19 @@ final class SettingsScopeHonestyTests: XCTestCase {
         XCTAssertEqual(mode & 0o777, 0o600, String(format: "0%o", mode))
     }
 
+    /// The island's empty-state detail branches on two AI facts that were
+    /// hardcoded `true` at the call site, so one of the four branches in
+    /// `FirstLaunchGuide.todayEmpty` could never render there.
+    func testIslandEmptyCopyReadsTheRealAIState() throws {
+        let view = try source("Sources/WeChatHUD/Views/InboxView.swift")
+        let call = try XCTUnwrap(view.range(of: "FirstLaunchGuide.todayEmpty("))
+        let block = view[call.lowerBound...].components(separatedBy: ").detail").first ?? ""
+        XCTAssertFalse(block.contains("aiConfigured: true"), "岛上那句空态又写成常量了")
+        XCTAssertFalse(block.contains("aiTested: true"), "同上")
+        XCTAssertTrue(block.contains("aiReadiness.configured"))
+        XCTAssertTrue(block.contains("aiReadiness.tested"))
+    }
+
     func testAutoInstallStatesWhenItCanFire() throws {
         let view = try source("Sources/WeChatHUD/Views/Settings/AppUpdateSettingsView.swift")
         let controller = try source("Sources/WeChatHUD/Services/AppUpdateController.swift")
