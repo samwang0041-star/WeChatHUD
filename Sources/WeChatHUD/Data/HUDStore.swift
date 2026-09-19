@@ -3532,6 +3532,19 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         try exec("DELETE FROM autopilot_pending_sends WHERE id=?", params: [id.uuidString])
     }
 
+    /// Whether a queued reply is still on the board. A send in flight re-reads
+    /// this as its last permission check: 取消本条 / 停止 delete the row, and no
+    /// keystroke may land after that.
+    func hasPendingSend(id: UUID) -> Bool {
+        queryOne(
+            "SELECT 1 FROM autopilot_pending_sends WHERE id=? LIMIT 1",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, id.uuidString, -1, Self.sqliteTransient)
+            },
+            decode: { _ in true }
+        ) ?? false
+    }
+
     /// A held reply exists as BOTH a pending_sends row and an autopilot_log
     /// row. New log rows carry the queue item's UUID in `queue_id` — resolve
     /// by that key. Rows written before the column existed match by

@@ -50,8 +50,14 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
                        "滚动窗口没有整点重置，文案不能承诺一个不存在的恢复点")
 
         let service = try read("Sources/WeChatHUD/Services/AutopilotService.swift")
-        let manual = service.range(of: "func executeSend")
-            .map { String(service[$0.lowerBound...].prefix(2600)) } ?? ""
+        // The real function body, not a fixed-size window: the call moved past
+        // 2600 characters the first time a comment was added above it, and the
+        // gate reported a missing gate.
+        let manual = service.range(of: "func executeSend").map { body in
+            let rest = service[body.lowerBound...]
+            let end = rest.range(of: "\n    private func stalePendingSendReason")?.lowerBound ?? rest.endIndex
+            return String(rest[..<end])
+        } ?? ""
         XCTAssertTrue(manual.contains("serialSendWithRateLimit("),
                       "确认后才发的发送必须走同一个每小时闸门，否则这条文案就是假的")
         XCTAssertFalse(service.contains("每小时自动回复上限"),

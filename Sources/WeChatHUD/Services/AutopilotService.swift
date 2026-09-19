@@ -281,6 +281,36 @@ actor AutopilotService {
         print("[WCHUD] Autopilot: MANUALLY RESUMED by user")
     }
 
+    /// The one decision the launcher's last checkpoint asks: may these
+    /// keystrokes still land in WeChat? Every input here is something the user
+    /// can do WHILE a send is suspended inside `serialSend`, so the pre-send
+    /// guards cannot cover it — a stop, a pause or a 取消本条 that lands in that
+    /// window used to be typed out anyway.
+    nonisolated static func mayStillDeliver(
+        paused: Bool, sessionOpen: Bool,
+        queueRowLive: Bool?, approvalRowPending: Bool?
+    ) -> Bool {
+        if paused || !sessionOpen { return false }
+        return (queueRowLive ?? true) && (approvalRowPending ?? true)
+    }
+
+    /// The queue as persisted for this session. A row whose send is in flight
+    /// is no longer in `pendingSendQueue`, so this is the only place a cancel
+    /// can still find it.
+    private func pendingSendRows() -> [PendingSend] {
+        guard let sid = sessionId else { return [] }
+        return store.loadPendingSends(sessionId: sid)
+    }
+
+    func deliveryStillPermitted(queueId: UUID?, logId: Int64?) -> Bool {
+        Self.mayStillDeliver(
+            paused: isPaused,
+            sessionOpen: sessionId != nil,
+            queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
+            approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil }
+        )
+    }
+
     /// Called by ChatMonitor when WeChat becomes the frontmost app.
     func onUserBecameActive() {
         guard !isPaused else { return }
@@ -515,7 +545,13 @@ actor AutopilotService {
         }
         let success = await serialSendWithRateLimit(
             chatName: chatName, chatUsername: chatUsername, text: reply, config: config,
-            typingDelay: Self.estimateTypingDelay(for: reply)
+            typingDelay: Self.estimateTypingDelay(for: reply),
+            // The approval row is the human's own signal: a 取消本条 landing
+            // mid-flight flips it out of 'pending', and that must be the last
+            // thing checked before the send key.
+            gate: { [weak self] in
+                await self?.deliveryStillPermitted(queueId: nil, logId: logId) ?? false
+            }
         )
         if success {
             // Atomically record the send + report whether a 'pending' row was
@@ -1063,7 +1099,8 @@ actor AutopilotService {
         text: String,
         typingDelay: TimeInterval = 0,
         peerLastMessage: String? = nil,
-        topic: String? = nil
+        topic: String? = nil,
+        gate: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> Bool {
         // M5 fix: block concurrent sends through actor suspension points
         guard !isSending else {
@@ -1089,7 +1126,8 @@ actor AutopilotService {
                 text: text,
                 typingDelay: typingDelay,
                 sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey,
-                searchNames: searchNames(for: chatUsername, fallback: chatName)
+                searchNames: searchNames(for: chatUsername, fallback: chatName),
+                abortCheck: gate
             )
             if uiResult.succeeded {
                 // Verify by checking DB for new outgoing message (I5 fix: use chatUsername)
@@ -1145,7 +1183,8 @@ actor AutopilotService {
         text: String, config: AutopilotConfig,
         typingDelay: TimeInterval = 0,
         peerLastMessage: String? = nil,
-        topic: String? = nil
+        topic: String? = nil,
+        gate: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> Bool {
         let now = Date()
         let oneHourAgo = now.addingTimeInterval(-3600)
@@ -1166,7 +1205,8 @@ actor AutopilotService {
             text: text,
             typingDelay: typingDelay,
             peerLastMessage: peerLastMessage,
-            topic: topic
+            topic: topic,
+            gate: gate
         )
         if success {
             globalSendTimestamps.append(now)
@@ -1246,7 +1286,14 @@ actor AutopilotService {
 
     /// Cancel a pending send by ID. Logs as skipped for audit trail.
     func cancelPendingSend(id: UUID) {
-        guard let item = pendingSendQueue.first(where: { $0.id == id }) else { return }
+        // A row mid-send has already been taken out of `pendingSendQueue`, so
+        // looking only at memory used to drop this cancel on the floor while
+        // the UI printed "已取消" and the keystrokes landed anyway. The DB twin
+        // is the durable record: deleting it is what the launcher's last
+        // checkpoint re-reads before the send key.
+        let item = pendingSendQueue.first(where: { $0.id == id })
+            ?? pendingSendRows().first(where: { $0.id == id })
+        guard let item else { return }
         pendingSendQueue.removeAll { $0.id == id }
         try? store.deletePendingSend(id: id)
         // Resolve the pending log twin too — without this the approval UI
@@ -1442,10 +1489,19 @@ actor AutopilotService {
             return .blocked(staleReason)
         }
         let typingDelay = Self.estimateTypingDelay(for: item.replyText)
+        // The checkpoint's withdrawal signal is this row's `pending_sends`
+        // record, so it must exist for the whole send. Enqueue normally writes
+        // it, but a row that entered the queue while the session was closed (or
+        // was re-queued by a blocked send) has no twin yet — without this the
+        // gate would read "canceled" and silently never send it.
+        if let sid = sessionId { try? store.upsertPendingSend(item, sessionId: sid) }
         let success = await serialSendWithRateLimit(
             chatName: item.chatName, chatUsername: item.chatUsername,
             text: item.replyText, config: config, typingDelay: typingDelay,
-            peerLastMessage: item.peerLastMessage, topic: item.topic
+            peerLastMessage: item.peerLastMessage, topic: item.topic,
+            gate: { [weak self] in
+                await self?.deliveryStillPermitted(queueId: item.id, logId: nil) ?? false
+            }
         )
         if success {
             // Delivered, so it counts as sent even if the bookkeeping below

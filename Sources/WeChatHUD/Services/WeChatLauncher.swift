@@ -52,6 +52,12 @@ enum WeChatLauncher {
         case accountUnverified
         case accountMismatch
         case operationInProgress
+        /// The reply was withdrawn (停止 / 暂停 / 取消本条) while this send's
+        /// keystrokes were still being queued, so nothing reached WeChat.
+        case withdrawnBeforeSend
+        /// No floating-panel process to read account evidence from — a test
+        /// runner, or the helper binary rather than the app.
+        case automationHostMissing
 
         var userMessage: String {
             switch self {
@@ -59,6 +65,8 @@ enum WeChatLauncher {
             case .accountUnverified: return "无法核验微信当前账号，已停止自动操作。回复内容仍在助手中，请在微信核对账号后手动回复。"
             case .accountMismatch: return "微信当前账号与助手数据账号不一致，已停止自动操作。请保留回复内容并核对账号。"
             case .operationInProgress: return "另一条回复正在处理，当前内容仍保留。请稍后重试。"
+            case .withdrawnBeforeSend: return "这条回复在按下发送前已经停住，微信没有收到。"
+            case .automationHostMissing: return "浮窗主程序没有运行，已停止自动操作，微信不会收到任何内容。"
             case .weChatNotRunning:
                 return "微信未运行"
             case .accessibilityDenied:
@@ -714,9 +722,10 @@ enum WeChatLauncher {
         text: String,
         typingDelay: TimeInterval = 0,
         sendKey: WeChatSendKey = .cmdEnter,
-        searchNames: [String] = []
+        searchNames: [String] = [],
+        abortCheck: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> SendResult {
-        switch await performTextAction(chatName: chatName, text: text, typingDelay: typingDelay, sendKey: sendKey, searchNames: searchNames) {
+        switch await performTextAction(chatName: chatName, text: text, typingDelay: typingDelay, sendKey: sendKey, searchNames: searchNames, abortCheck: abortCheck) {
         case .completed: return .sent
         case .failed(let reason): return .failed(reason)
         }
@@ -739,9 +748,15 @@ enum WeChatLauncher {
     /// The only path that places reply text into WeChat. A matching chat title
     /// cannot establish an account, so verify process database evidence before
     /// navigation, before paste, and once more immediately before the send key.
+    ///
+    /// `abortCheck` is the withdrawal re-read. Keystrokes already queued cannot
+    /// be recalled, and every one of these awaits is a window where 停止 / 暂停 /
+    /// 取消本条 can land in the caller's actor — without this gate the reply is
+    /// typed out anyway and the UI keeps the receipt that says it wasn't.
     @MainActor private static func performTextAction(
         chatName: String, text: String, typingDelay: TimeInterval, sendKey: WeChatSendKey?,
-        searchNames: [String] = []
+        searchNames: [String] = [],
+        abortCheck: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> TextActionOutcome {
         // Same alias isolation as above: supplied names are WeChat-resolved;
         // the HUD label must not join them via the username slot.
@@ -753,8 +768,14 @@ enum WeChatLauncher {
         textActionInFlight = true
         defer { textActionInFlight = false }
         guard let app = runningWeChat() else { return .failed(.weChatNotRunning) }
-        guard let root = (NSApp.delegate as? AppDelegate)?.reader?.dbDir, !root.isEmpty,
-              let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else { return .failed(.accountUnverified) }
+        // `NSApp` is an implicitly unwrapped global: reading it in a process
+        // without an application object used to crash here, and that crash is
+        // also the only thing that ever kept `swift test` on a machine with
+        // WeChat open from driving the developer's real chat list. Refuse on
+        // purpose instead — no account evidence, no keystrokes.
+        guard let host = (NSApp as NSApplication?)?.delegate as? AppDelegate,
+              let root = host.reader?.dbDir, !root.isEmpty,
+              let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else { return .failed(.automationHostMissing) }
         let binding = AccountBinding(processID: app.processIdentifier, launchDate: launchDate,
                                      bundleID: bundleID, databaseRoot: WeChatAccountEvidence.canonicalRoot(root))
         if let failure = await accountFailure(binding) { return .failed(failure) }
@@ -786,6 +807,7 @@ enum WeChatLauncher {
         if let failure = await accountFailure(binding) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
+        guard await sendStillAllowed(abortCheck) else { return .failed(.withdrawnBeforeSend) }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         postCmdKey(kVK_ANSI_V)
@@ -807,12 +829,25 @@ enum WeChatLauncher {
             retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(.chatMismatch)
         }
+        guard await sendStillAllowed(abortCheck) else {
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            return .failed(.withdrawnBeforeSend)
+        }
         switch sendKey {
         case .cmdEnter: postCmdKey(kVK_Return)
         case .enter: postKey(kVK_Return)
         }
         log("sendMessage: account-verified submit to \(chatName)")
         return .completed
+    }
+
+    /// Last-mile withdrawal re-read. Returns false only when the caller says
+    /// this send no longer has permission to press keys.
+    @MainActor private static func sendStillAllowed(
+        _ abortCheck: (@MainActor @Sendable () async -> Bool)?
+    ) async -> Bool {
+        guard let abortCheck else { return true }
+        return await abortCheck()
     }
 
     /// Every navigation step is awaited while the shared automation lock is held.
