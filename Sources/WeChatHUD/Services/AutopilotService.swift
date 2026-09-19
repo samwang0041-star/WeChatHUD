@@ -174,6 +174,19 @@ actor AutopilotService {
         case cancelled(chatUsername: String, replyText: String)
     }
 
+    /// Both id axes have to be recorded together. `approvePending`'s gate reads
+    /// only the log row (`queueId: nil`), and a queue-side write that failed left
+    /// that log row 'pending' — so a hold kept only under the queue id would not
+    /// stop the 确认发送 button, which is exactly how a canceled reply reaches a
+    /// real person.
+    private func holdTwinLog(for queueId: UUID, kind: UnresolvedQueueWrite) {
+        guard let logId = store.autopilotLogIdForQueueId(queueId: queueId) else { return }
+        switch kind {
+        case .delivered: unresolvedSentLogWrites.insert(logId)
+        case .cancelled: unresolvedSkippedLogWrites.insert(logId)
+        }
+    }
+
     /// What this process is holding back, for the behaviour tests and the
     /// diagnostics that read it.
     var unresolvedQueueWritesSnapshot: [UUID: UnresolvedQueueWrite] { unresolvedQueueWrites }
@@ -809,12 +822,25 @@ actor AutopilotService {
             // The queue twin holds the SAVED draft text — `reply` may carry
             // an unsaved edit. Legacy matching must use the stored reply or
             // the twin survives and later auto-sends the superseded text.
-            try? store.deletePendingSendForLog(
-                logId: logId, chatUsername: chatUsername,
-                replyText: savedReply ?? reply
-            )
-            if let qid = store.autopilotLogQueueId(id: logId), let uuid = UUID(uuidString: qid) {
-                pendingSendQueue.removeAll { $0.id == uuid }
+            let twinQueueId = store.autopilotLogQueueId(id: logId).flatMap(UUID.init(uuidString:))
+            let twinText = savedReply ?? reply
+            do {
+                try store.deletePendingSendForLog(
+                    logId: logId, chatUsername: chatUsername, replyText: twinText
+                )
+            } catch {
+                print("[WCHUD] Autopilot: 已发送的队列孪干没删掉: \(error)")
+                // 队列轴同样要记一笔：这行还在 `autopilot_pending_sends` 里，恢复会话
+                // 或重启后 `processPendingQueue` 会把同一文本再发一遍给同一个人，
+                // 而这一条只有 logId 轴的拦截，闸门读不到它。
+                if let twinQueueId {
+                    unresolvedQueueWrites[twinQueueId] = .delivered(
+                        chatUsername: chatUsername, replyText: twinText
+                    )
+                }
+            }
+            if let twinQueueId {
+                pendingSendQueue.removeAll { $0.id == twinQueueId }
             } else if let idx = pendingSendQueue.firstIndex(where: {
                 $0.chatUsername == chatUsername && $0.replyText == (savedReply ?? reply)
             }) {
@@ -1674,9 +1700,11 @@ actor AutopilotService {
         if !deleteLanded || !logLanded {
             // The UI has already printed 已取消. Until the write lands this row is
             // still sendable through the queue, so it is held here.
-            unresolvedQueueWrites[item.id] = .cancelled(
+            let hold: UnresolvedQueueWrite = .cancelled(
                 chatUsername: item.chatUsername, replyText: item.replyText
             )
+            unresolvedQueueWrites[item.id] = hold
+            holdTwinLog(for: item.id, kind: hold)
         }
         if flipped > 0 {
             sessionPending = max(0, sessionPending - 1)
@@ -1892,9 +1920,11 @@ actor AutopilotService {
                 flipped = 0
                 // The keystrokes landed. Without this hold the queue row survives,
                 // and a resume or a restart sends the same reply a second time.
-                unresolvedQueueWrites[item.id] = .delivered(
+                let hold: UnresolvedQueueWrite = .delivered(
                     chatUsername: item.chatUsername, replyText: item.replyText
                 )
+                unresolvedQueueWrites[item.id] = hold
+                holdTwinLog(for: item.id, kind: hold)
             }
             // Resolve the pending autopilot_log twin in the same step —
             // otherwise the approval list keeps offering this reply and a

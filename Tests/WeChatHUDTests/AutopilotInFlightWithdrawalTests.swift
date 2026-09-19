@@ -113,6 +113,50 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertFalse(cancelledHeld, "写回失败的取消也必须拦住发送")
     }
 
+    /// 只在一条 id 轴上记账 = 另一条轴上的闸门一直是开的。`approvePending` 的 gate
+    /// 传的是 `queueId: nil`，而「取消本条」写失败时那条日志行仍然是 'pending' ——
+    /// 只记队列轴的话，「待确认回复」上那颗按钮照样能按，用户取消掉的回复还是会发给真人。
+    @MainActor
+    func testFailedCancelWriteHoldsBothIdAxes() async throws {
+        let sid = try XCTUnwrap(
+            store.loadAutopilotSessions(limit: 1).first?.id,
+            "start() 没建出会话 ⇒ 这条测试什么都没验")
+        let queueId = UUID()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_x/1", triggerText: "结论有了吗",
+            generatedReply: "我下午给你结论", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: queueId.uuidString
+        ))
+        let logId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sid).first?.id)
+        let pending = item("我下午给你结论")
+        let twin = PendingSend(
+            id: queueId, chatUsername: pending.chatUsername, chatName: pending.chatName,
+            senderName: pending.senderName, replyText: pending.replyText,
+            confidence: 0.9, risk: .low, reasoning: "ok", styleScore: 80,
+            scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        try store.upsertPendingSend(twin, sessionId: sid)
+        let control = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        XCTAssertTrue(control, "没被取消过的行不该被拦住")
+
+        try store.exec("""
+            CREATE TRIGGER break_log_update BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'simulated log write failure'); END
+            """)
+        await service.cancelPendingSend(id: queueId)
+
+        XCTAssertFalse(store.hasPendingSend(id: queueId), "这条路径上队列行删掉了")
+        XCTAssertEqual(store.autopilotLogPendingReply(id: logId), "我下午给你结论",
+                       "日志行仍是 pending —— 待确认那颗按钮还活着")
+        let viaQueueAxis = await service.deliveryStillPermitted(queueId: queueId, logId: nil)
+        XCTAssertFalse(viaQueueAxis, "队列轴上必须记着")
+        let viaLogAxis = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        XCTAssertFalse(viaLogAxis, "确认发送只读 logId 轴，跨轴也必须拦住")
+    }
+
     /// 队列行的终态写回失败 = 那行还在表里 = 恢复会话或重启后它会被再发一次。
     /// 用触发器只让 DELETE 失败：读一切正常，所以闸门唯一的依据就是这个本地集合
     /// （上一版整张表删掉的写法被另一个信号满足了，见 §169）。
@@ -407,11 +451,17 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         )
         XCTAssertTrue(source.contains("rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) }"),
                       "取消侧的集合也必须真的喂给闸门，否则那条被取消的草稿照样能发")
-        // 队列轴：已验证投递之后只是收口失败的那条，和取消写失败的那条，都必须记下来。
-        XCTAssertTrue(source.contains("unresolvedQueueWrites[item.id] = .delivered("),
-                      "键盘已经按下去了，收口失败时这条队列行不能再发第二遍")
-        XCTAssertTrue(source.contains("unresolvedQueueWrites[item.id] = .cancelled("),
-                      "界面上写了「已取消」，盘上那行还没删掉时就必须拦住")
+        // 队列轴：已验证投递之后只是收口失败的那条，和取消写失败的那条，都必须记下来；
+        // 而且两条都要同时喂给另一根 id 轴（approvePending 只读 logId）。
+        XCTAssertEqual(source.components(separatedBy: "unresolvedQueueWrites[item.id] = hold").count - 1, 2,
+                       "两处终态写回失败都必须记队列轴，一处漏了那条闸门就永远读不到它")
+        // 第三条：人工「确认发送」之后孪干删不掉，同样要记队列轴（那条路没有测试能走）。
+        XCTAssertTrue(source.contains("unresolvedQueueWrites[twinQueueId] = .delivered("),
+                      "确认发送后的收口失败也必须记队列轴")
+        XCTAssertEqual(source.components(separatedBy: "holdTwinLog(for: item.id, kind: hold)").count - 1, 2,
+                       "两根轴必须同时记：确认发送只读 logId 轴")
+        XCTAssertTrue(source.contains("case .delivered: unresolvedSentLogWrites.insert(logId)"))
+        XCTAssertTrue(source.contains("case .cancelled: unresolvedSkippedLogWrites.insert(logId)"))
         XCTAssertTrue(source.contains("queueHeldHere: queueId.map { unresolvedQueueWrites[$0] != nil }"))
     }
 }

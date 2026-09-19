@@ -3929,7 +3929,8 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         case .unreadable:
             // 「这条日志没有 queue_id」和「这次读不到 queue_id」是两个答案：后者会
             // 掉进下面的文本匹配，删掉另一条同文本、无人认领的草稿，而真正该删的那条
-            // 继续可发。宁可什么都不删 —— 调用方那条日志仍被本地集合拦着。
+            // 继续可发。宁可什么都不删：按文本删会误伤另一条同文本、无人认领的草稿，
+            // 而该由谁拦住这一条，是调用方自己的事（见 AutopilotService 的两条 id 轴）。
             throw HUDStoreError.sqlError("读不到这条日志的队列孪干，跳过文本匹配删除")
         case .value:
             break
@@ -3969,6 +3970,20 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         } catch {
             return .unreadable
         }
+    }
+
+    /// Reverse direction: the log twin(s) of a queue row. A terminal write that
+    /// failed on the queue axis leaves the *log* row 'pending' too, and the
+    /// approval card keys its 确认发送 button off that row — so holds have to be
+    /// recorded on both id axes or the gate that reads the other axis stays open.
+    func autopilotLogIdForQueueId(queueId: UUID) -> Int64? {
+        queryOne(
+            "SELECT id FROM autopilot_log WHERE queue_id=? ORDER BY id DESC LIMIT 1",
+            bind: { stmt in
+                sqlite3_bind_text(stmt, 1, queueId.uuidString, -1, Self.sqliteTransient)
+            },
+            decode: { stmt in Int64(sqlite3_column_int64(stmt, 0)) }
+        )
     }
 
     /// The queue item UUID a log row twins with.

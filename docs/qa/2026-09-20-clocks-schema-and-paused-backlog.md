@@ -457,3 +457,30 @@ M4-M6（预占窗口两向、免打扰三态、版本收据）、M7-M13（前台
 已修/未修的完整清单在 §170（划掉的是本轮收口的）。仍未处理里最高的一条是
 **投递收口的跨重启窗口**：需要持久化的 outbox intent 行（发信前落、收口时删），
 以及 `ConversationMemoryUpdater` 读失败把 90 天滚动摘要覆成「首次生成」那两条 P1。
+
+## §173 §171 的修法自己留了一个 P0：拦截记在两根 id 轴上，闸门只读一根
+
+复检刚提交那一路攻出来的，回源码成立。`AutopilotService` 有两条互不相通的行标识轴：
+队列行按 `queueId(UUID)` 记，审计行按 `logId(Int64)` 记，而**唯一的交叉出口** ——
+`approvePending`（人工「确认发送」）的 gate 传的是 `queueId: nil, logId: logId`
+（`AutopilotService.swift:789`）。于是 §171 新加的 `unresolvedQueueWrites` 对那条路完全不可见：
+
+- 取消侧：`cancelPendingSend` 的 `markAutopilotLogSkipped` 抛错 → 日志行**仍是 'pending'** →
+  「待确认回复」上那颗 确认发送 还活着 → 失败只记在队列轴上 → 用户点一下，刚取消的回复发给真人。
+- 投递侧：人工「立即发送」成功后 `resolveVerifiedSend` 抛错 → 同理，同一条文本可再发一遍。
+
+这正是 §168 我自己定价为 P0 的那个形状，只是换了个入口 —— 修得不彻底，而不是新问题的类型。
+
+修法：两根轴同时记。`holdTwinLog(for:kind:)` 用新的
+`HUDStore.autopilotLogIdForQueueId(queueId:)` 反查孪干日志行，`.delivered` 进
+`unresolvedSentLogWrites`、`.cancelled` 进 `unresolvedSkippedLogWrites`（两个重试分支各自
+本来就会做正确的写回）。第三条漏点同轮补上：`approvePending` 成功后
+`deletePendingSendForLog` 抛错时也要记队列轴，否则「已发送的草稿仍留在 autopilot_pending_sends 里」
+这一半仍然没人拦。顺手改掉一句假话注释（store 里那句「调用方那条日志仍被本地集合拦着」
+在三个 `try?` 调用点上并不成立）。
+
+判据：`testFailedCancelWriteHoldsBothIdAxes` —— 用 `BEFORE UPDATE ON autopilot_log
+RAISE(ABORT)` 只让日志写失败（队列 DELETE 照常），先确认「日志行仍是 pending、那颗按钮还活着」，
+再分别按两根轴问闸门。变异 P1（不跨轴记账）、P2（把 cancelled 记到 sent 集合）、
+P3（approve 路径又不记队列轴）全红；P3 第一版是活的，因为接线判据只数了 `= hold` 那两处 ——
+补了第三条字面句才红。
