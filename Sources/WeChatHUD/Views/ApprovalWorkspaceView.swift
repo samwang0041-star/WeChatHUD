@@ -399,7 +399,10 @@ struct ApprovalWorkspaceView: View {
     }
 
     private func sendPendingNow(_ item: PendingSend) async -> String? {
-        let outcome = await monitor.sendAutopilotNow(id: item.id, config: monitor.loadAutopilotConfig())
+        guard let config = monitor.loadAutopilotConfig() else {
+            return ChatMonitor.unreadableConfigNotice
+        }
+        let outcome = await monitor.sendAutopilotNow(id: item.id, config: config)
         await monitor.syncAutopilotPendingQueue()
         switch outcome {
         case .sent:

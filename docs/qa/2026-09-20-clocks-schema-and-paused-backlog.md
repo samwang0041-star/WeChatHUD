@@ -700,6 +700,124 @@ S4 never-ran 当刚跑过、S5 锚点回墙上时钟、S6 撤回不读框、S7 �
 `MessageHelpers.swift:140-142` 下面紧跟着的注释写明这是有意的分工（「should this interrupt me?」
 与「是否只 @ 了全组」是两个问题），且群聊一律人工确认（`AutopilotService:2460`）—— 不改。
 
-未修但已定性的常驻问题（§177 之外新增）：`analysis_cache` 只按整键惰性删、`autopilot_log`
-无任何保留策略、所有 housekeeping 只在开库时跑一次（对 24/7 进程等于「14 天 + 整个在线时长」）、
+未修但已定性的常驻问题（§177 之外新增）：~~`analysis_cache` 只按整键惰性删~~（§182 已修）、
+`autopilot_log` 无任何保留策略、~~所有 housekeeping 只在开库时跑一次~~（§182 已修）、
 心跳 tick 体无在飞保护、timer 装在 `.default` 模式（菜单跟踪期间不响）。
+
+---
+
+## §180 静音哨兵的判别线在两侧不一致：未来 30 秒的水印 = 永久静音
+
+`chat_actions.silencedAt` 这一列同时装两个意思：「隐藏到这一刻」（`dismissInboxItem` 写，
+值 = 最新一条消息自己的 `createTime`）和「永久静音」（写 `now + 10 年`）。于是
+「这条对话算不算被静音」必须有一个判别线，而仓库里同时存在两条：
+
+- 收件箱水合（`ChatMonitor:2617`）：`silencedAt > now + 1 年`；
+- 两处投递闸门 + 发送闸门 + 静音清单：`silencedAt > now`。
+
+松的那条是错的。`dismissInboxItem` 存的是**对端消息的时间戳**，对方时钟快几秒（本周已经
+为「未来时间戳把对话永久静音」修过一次，§128 同族）就得到 `silencedAt = now + 十几秒`：
+收件箱认为它没被静音（照常显示新消息），托管链却按永久静音处理 —— 一句「隐藏此对话」
+把这条对话从自动回复里永久摘掉，且它会出现在「已静音的对话」清单里，看上去像是用户自己
+关的。量级：任何一条时间戳跑在前面的消息都能触发，不需要恶意输入。
+
+修法是把判别线收回一处：`ChatActionState.permanentSilenceBufferSeconds = 365 * 86400`，
+四个消费点（`ScanEngine:679`、`ScanEngine:978`、`AutopilotService.conversationIsMuted`、
+`ChatMonitor` 水合）全部只读 `isPermanentlySilenced(nowEpoch:)`。
+
+**一条被上一轮自己写坏的判据**：`testEveryAutopilotFeedChecksTheMute` 数的是
+`silencedAt ?? 0) > nowEpoch` 这个**字面串**在 `ScanEngine.swift` 里出现的次数 ≥
+投递次数。它给的是文本分，不是位置分：守卫写 dead branch、写在 append 之后，都算数；
+而把那一处迁到共用哨兵上，它会立刻变红 —— 也就是说这条判据在结构上钉住了它自己声称要
+消灭的重复。本轮改成数 `isPermanentlySilenced(nowEpoch: nowEpoch)` 的出现次数，并加两条
+「不许再出现内联拼写」的红线。变异验证：把第二处投递的守卫换成 `false`，该条判据红
+（`/tmp` 记录，1 failure）。
+
+诚实记录一处**下限判据独木**：第二处投递（按联系人补齐那条）只有这条文本下限在守，没有
+行为判据 —— 本轮的夹具（`SyntheticShardedScanFixture` → `performScan`）只能驱动白名单那条
+投递。上一轮把这件事写成「行为测试覆盖 :727，下限覆盖 :978」，是对的但不够：下限判据
+被绕过的方式比行为判据多。补第二套夹具是本轮之外的事。
+
+## §181 撤回用错了失败方向：读不到输入框就全选删除
+
+§178 那三个覆盖闸门刻意**失败打开**（`kAXValueAttribute` 读不到时放行）：为了看不见
+就拒绝发送，等于微信一升级自动回复就永久失效。但同一条谓词被 `retractPastedDraft`
+拿去当"能不能删"的依据，而撤回是**已经放弃发送之后**的动作 —— 它唯一的代价是草稿留在
+框里（函数自己的注释就这么写）。于是 nil → true → `Cmd+A` + Delete：
+把用户在这条粘贴之后自己打的字连着我们的删掉，正是 §178 立起来要防的那次丢失。
+
+修法不是把那条谓词翻过来（那会连带改掉发送侧的刻意选择），而是给破坏性调用配一个
+失败关闭的姊妹判据 `boxIsKnownToHoldOnlyTheReply`（nil → false，空盒仍为 true），
+并让判据扫**全部** `postCmdKey(kVK_ANSI_A)`：现仓三处 —— 覆盖前、撤回前、微信搜索框
+（第三处清的是查询词不是人的草稿，判阴保留）。三处的 320 字符窗口太窄会误报，
+改成 700 并让「总数 == 3」成为真正的牙。
+
+## §182 保留窗口只活在启动迁移里 = 24/7 进程从不执行
+
+`pruneAIAudit(olderThanDays: 14)` 全仓只有一个调用点，在 `HUDStore.open()` 的迁移段里；
+`gcDailyReportState(45)` 只在全仓一次性的迁移里；`conversation_memory` 的 90 天清理同。
+对这个**永远不重启**的浮窗进程，"启动时清一次"就是"从不清"。
+
+最难看的还是 `analysis_cache`：它的删除只发生在 `loadAnalysisCache` 命中同一个
+`(chat, type, input_hash)` 且发现已过期时，而那个哈希覆盖的是**消息窗口** —— 每来一条新消息
+就换一个键，过期行几乎永远不会被再访问。每一行装的是 AI 结果全文。这就是历史文档里
+那句「14 天 / 72 小时」的实际含义。
+
+修法：`HUDStore.runRetentionSweep()`（四处清理，保留「expires_at > 0」这一半条件，免得把
+别的写入方的"永不过期"行顺手删光 → 那会把每次刷新变成一次真实 AI 请求），
+由心跳按 `retentionSweepInterval = 3600` 触发（用的是 §176 那条 `windowElapsed`，
+锚点 `nil` 表示"从没跑过"，所以第一次 tick 就扫）。启动那一次保留（升级后首启要立刻收口）。
+
+行为判据两条，都带正对照：审计行「清理前 2 条 / 清理后 1 条」；缓存行用
+`loadAnalysisCache(now:)` 的**过去时刻**读取来区分「过期且已被扫掉」和「过期但还躺在库里」——
+直接读默认 `now` 的话，惰性删除也会返回 nil，测试会在没有清理的情况下变绿。
+`autopilot_log` / `vip_traces` / `commitment_scans` 仍无窗口：它们从来没有声明过保留期，
+挑一个数字是「面板能往回说多久」的产品决定，本轮不替 owner 挑（§141 同一处置纪律）。
+
+## §183 静音一条对话，会把草稿永久转人工，理由还是「请先检查微信」
+
+§179 给「中途暂停」开过的药，在静音这条轴上原样复发：闸门在按下发送键之前拒绝
+（`mayStillDeliver` → `conversationMuted`），`executeSend` 却把它当成一次**发送失败**
+记账 —— `sendFailureDisposition` 看到 `paused=false, sessionOpen=true, rowStillQueued=true`
+（发送前刚 upsert 过）⇒ `.humanRequired` ⇒ `manualOnlyReason = "…请先检查微信，再手动处理"`。
+而 `isEligibleForAutomaticSend` 要求 `manualOnlyReason == nil`：**取消静音不会把它换回来**，
+回执还在怪一个什么都没坏掉的微信。
+
+修法是给那条唯一决定账目的纯函数补上它缺的那个输入：`conversationMuted`，静音时
+`.requeueUnchanged("这个对话已静音，这条没有发出，仍留在队列里。")`（留在队列里是安全的：
+静音期间闸门本来就拦着，取消静音才恢复）。读法走 `conversationIsMuted(_:)`，与投递闸门
+同一个谓词 —— 记账和闸门不许各自理解一次「静音」。真失败的正对照留在判据里
+（同一条 reason + 未静音 ⇒ 仍要 `.humanRequired`），否则"永远不 stamp"也能过。
+
+## §184 幽灵草稿的「挂住」以内存副本还在为条件
+
+§179 那段丢弃分支写成 `catch { if let ghost { unresolvedQueueWrites[uuid] = .cancelled(...) } }`，
+而 `ghost` 是从 `pendingSendQueue`（内存）里查的。问题是 `stop()` 清的正是这份内存 ——
+也即这条分支存在的理由。内存没留 + DB 删失败 ⇒ 什么都不挂，那条草稿记在**新**会话下
+等 `start()` 水化后自己发出去，与 §179 主判据想拦的是同一件事。
+改成无条件：`ghost?.chatUsername ?? entry.chatUsername`、`ghost?.replyText ?? entry.generatedReply`
+（批次结果带着同一对话同一段文本入队时的值）。
+
+## §185 「立即发送」四条路仍在用默认值兜底（同一谓词的收尾）
+
+`ChatMonitor.loadAutopilotConfig()` 还是 `getSettingJSON(...) ?? AutopilotConfig()`，
+而它喂的正是真键盘：`AutopilotTabView:778/848`、`ApprovalWorkspaceView:402`、
+`ConversationDetailView:334` → `sendNow`/`editAndSend` → `executeSend(config:)` 读
+`config.sensitiveKeywords` 与 `maxSendsPerSession`。半写坏的 `settings.autopilot` 行 ⇒
+人工点「立即发送」时用的是内置敏感词表和内置上限 —— 就是上一提交在三个自动闸门上
+关掉的那个放宽，区别只在这次有个人站在按钮前。
+
+改：`loadAutopilotConfig() -> AutopilotConfig?` 走同一个诚实读法，四处各自
+`guard let`，拒绝话术集中到 `ChatMonitor.unreadableConfigNotice`（同一个动作不许在两个
+按钮上说成两句话）。判据数的是**四个** `guard let config = monitor.loadAutopilotConfig()`
+加一条「不许再出现 `monitor.loadAutopilotConfig().` 直接当非可选用」。同一轮把
+`AIReplySuggester` 的敏感词读法也并进来：它的安全方向与发送闸门**相反**（这一页读不到
+配置仍可以显示草稿），所以内置词表照用，但"源文本有没有敏感信号"在读不到时按**有**算，
+只剩保守转手能站住。为此把过滤决策抽成 `AIReplySuggester.suggestions(from:input:storedConfig:)`
+一个纯函数（配置由调用点交进来，函数内不许再摸 `store.`），四条真行为判据 + 一条接线判据。
+
+仍未收口（同族，已定价）：`AutopilotService:1546` 的 `sendKey` 还在那条禁用兜底上读；
+判阴一处 —— 静音清单的「取消」用 `clearChatAction` 删整行，会连带清掉这条对话的
+隐藏水印与贪睡，但那两个值在**静音那一刻**就已经被哨兵覆盖了，取消只是不还原，
+不是新损伤（P3，产品上"静音=重置这条对话的分诊状态"也讲得通）；`ContactsSettingsView:850`
+丢了返回值，且那一页不渲染 `inboxActionError`（取消失败看起来像成功）—— 下一轮。

@@ -368,7 +368,7 @@ final class ChatMonitor: ObservableObject {
     @Published var actionPrefetch: [String: PrefetchedAction] = [:]
 
     private var safetyTimer: Timer?
-    /// These three cadences are process-observed windows, not calendar facts,
+    /// These cadences are process-observed windows, not calendar facts,
     /// so they live on `MonotonicClock` like every other window in the app.
     /// On `Date()` a backward correction — which is exactly what macOS applies
     /// on resume after a timezone change — made each delta negative and
@@ -385,6 +385,13 @@ final class ChatMonitor: ObservableObject {
     private var lastProactiveOutreachAt: TimeInterval?
     /// ~10 minutes, matching the historical "every 60th 10-second tick".
     static let proactiveOutreachInterval: TimeInterval = 600
+    /// Retention for a process that never restarts. Every window in the store
+    /// (14 天审计、45 天日报状态、72 小时分析缓存、90 天对话记忆) was only
+    /// enforced from a startup migration, i.e. once per install. Hourly is far
+    /// more often than any of those windows needs, and cheap: four DELETEs on
+    /// indexed columns.
+    private var lastRetentionSweepAt: TimeInterval?
+    static let retentionSweepInterval: TimeInterval = 3600
     /// Injectable so a test can move elapsed time without waiting real minutes.
     var monotonicNow: MonotonicSeconds = { MonotonicClock.seconds() }
 
@@ -602,6 +609,15 @@ final class ChatMonitor: ObservableObject {
                                       interval: self.safetyScanInterval) {
                     self.lastSafetyScanAt = self.monotonicNow()
                     await self.scan()
+                }
+                // Retention, see HUDStore.runRetentionSweep: the windows it
+                // enforces were only ever applied at startup, and this process
+                // is the one that stays alive long enough to need them.
+                if Self.windowElapsed(since: self.lastRetentionSweepAt,
+                                      now: self.monotonicNow(),
+                                      interval: Self.retentionSweepInterval) {
+                    self.lastRetentionSweepAt = self.monotonicNow()
+                    self.store.runRetentionSweep()
                 }
                 // Proactive outreach every ~10 minutes (wall-clock, so the
                 // cadence is independent of the tick rate).
@@ -2355,9 +2371,18 @@ final class ChatMonitor: ObservableObject {
         store.loadConversationMemory(chatUsername: chatUsername)
     }
 
-    func loadAutopilotConfig() -> AutopilotConfig {
-        store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+    /// The honest read for every path that is about to press keys: `nil` means
+    /// 「读不到托管设置」, not 「用内置默认值」. A corrupt row used to hand the
+    /// manual 立即发送 button the built-in 敏感词 list and a cap of 50, i.e. the
+    /// exact widening the autopilot gates were closed against — the only
+    /// difference was that a human was standing there.
+    func loadAutopilotConfig() -> AutopilotConfig? {
+        store.autopilotConfigForSendGate()
     }
+
+    /// One sentence for all four manual-send surfaces, so a refused send is
+    /// never described differently depending on which button was pressed.
+    static let unreadableConfigNotice = "暂时读不到托管设置，这条没有发送。请先在设置里恢复托管配置，再重试。"
 
     func sendAutopilotNow(id: UUID, config: AutopilotConfig) async -> AutopilotService.ManualSendOutcome {
         guard let service = autopilotService else { return .notFound }
@@ -2602,10 +2627,6 @@ final class ChatMonitor: ObservableObject {
     private func hydrateInboxActionsFromStore() {
         let actions = store.loadChatActions()
         let nowEpoch = Int(Date().timeIntervalSince1970)
-        // Anything silenced further than a year ahead is from the
-        // "silence forever" branch (which writes now + 10 years).
-        let permanentThreshold = nowEpoch + 365 * 86400
-
         dismissedInbox.removeAll(keepingCapacity: true)
         snoozedInbox.removeAll(keepingCapacity: true)
         silencedInbox.removeAll(keepingCapacity: true)
@@ -2614,7 +2635,7 @@ final class ChatMonitor: ObservableObject {
             if action.snoozedUntil > nowEpoch {
                 snoozedInbox[user] = Date(timeIntervalSince1970: TimeInterval(action.snoozedUntil))
             }
-            if action.silencedAt > permanentThreshold {
+            if action.isPermanentlySilenced(nowEpoch: nowEpoch) {
                 silencedInbox.insert(user)
             } else if action.silencedAt > 0 {
                 dismissedInbox[user] = Int64(action.silencedAt)

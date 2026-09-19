@@ -676,7 +676,8 @@ enum ScanEngine {
                     // row hides it, but the banner path used to ignore the
                     // mute entirely. Snoozed chats keep bannering: snooze is
                     // a "hide the row" affordance, not a mute.
-                    let isSilenced = (chatActions[msg.chatUsername]?.silencedAt ?? 0) > nowEpoch
+                    let isSilenced = chatActions[msg.chatUsername]?
+                        .isPermanentlySilenced(nowEpoch: nowEpoch) ?? false
                     let suppressPopup = alreadyAnswered || isLiveExchange || isSilenced
                     if decision.isAdmitted,
                        shouldPresent,
@@ -975,7 +976,8 @@ enum ScanEngine {
                     // the unattended reply pipeline — the one surface that used
                     // to show the incoming message was hidden, and a reply still
                     // went out to that peer.
-                    guard (chatActions[msg.chatUsername]?.silencedAt ?? 0) <= nowEpoch else {
+                    guard chatActions[msg.chatUsername]?
+                            .isPermanentlySilenced(nowEpoch: nowEpoch) != true else {
                         continue
                     }
                     if autopilotActive {

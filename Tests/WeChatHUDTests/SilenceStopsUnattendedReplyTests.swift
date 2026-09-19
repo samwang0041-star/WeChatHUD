@@ -106,26 +106,41 @@ final class SilenceStopsUnattendedReplyTests: XCTestCase {
     /// Both feeds are separate `if` blocks over separate loops, so one of them
     /// being guarded is not evidence the other is. A third feed added later
     /// fails this floor by construction: it counts appends, not guards.
+    ///
+    /// This used to count the *text* `silencedAt ?? 0) > nowEpoch`, which scored
+    /// nothing but the spelling: it was satisfied by a comparison in a dead
+    /// branch, and — worse — went RED when a feed was migrated onto the shared
+    /// sentinel, i.e. it pinned the duplication it claimed to police.
     func testEveryAutopilotFeedChecksTheMute() throws {
-        let url = URL(fileURLWithPath: #filePath)
+        let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Sources/WeChatHUD/Services/ScanEngine.swift")
-        let source = try String(contentsOf: url, encoding: .utf8)
+            .appendingPathComponent("Sources/WeChatHUD")
+        let source = try String(
+            contentsOf: root.appendingPathComponent("Services/ScanEngine.swift"), encoding: .utf8)
         let appends = source.components(separatedBy: "autopilotInbound.append(inbound)").count - 1
         XCTAssertGreaterThanOrEqual(appends, 2, "锚点：两处投递都要被数到")
-        let muteGuards = source.components(
-            separatedBy: "silencedAt ?? 0) > nowEpoch").count - 1
-            + source.components(
-                separatedBy: "silencedAt ?? 0) <= nowEpoch").count - 1
-        XCTAssertGreaterThanOrEqual(
-            muteGuards, appends,
-            "投递点比静音判断多：有一处投递没查静音")
+        let guards = source.components(separatedBy: "isPermanentlySilenced(nowEpoch: nowEpoch)").count - 1
+        XCTAssertGreaterThanOrEqual(guards, appends,
+                                    "投递点比静音判据多：有一处投递没查静音")
+        XCTAssertFalse(source.contains("silencedAt ?? 0) >"),
+                       "又自己拼了一次「现在算不算静音」，两处判据会漂移")
+        XCTAssertFalse(source.contains("silencedAt ?? 0) <="),
+                       "同上：反向拼写也算第二处实现")
     }
 
     /// One sentinel, read one way. The 「永久」 watermark is `now + 10 years`, so
-    /// "is this chat muted" is only answerable against a moment — and every one
-    /// of the five consumers used to spell that comparison itself.
+    /// "is this chat muted" is only answerable against a moment — and it must be
+    /// the same moment-rule for all four readers.
+    ///
+    /// The rule itself used to be two different things: the feeds and the send
+    /// gate asked `silencedAt > now`, the inbox hydration asked
+    /// `silencedAt > now + 1 year`. Because `silencedAt` doubles as the ordinary
+    /// 「隐藏此对话」 watermark — which is written as the newest message's own
+    /// time — a peer whose clock runs a few seconds ahead produced a future
+    /// watermark, and the stricter rule silently promoted a one-off dismiss into
+    /// a mute that starved the conversation of replies until the sentinel list
+    /// was opened.
     func testPermanentSilenceSentinelHasOneReader() {
         let now = 1_800_000_000
         func state(_ silencedAt: Int) -> HUDStore.ChatActionState {
@@ -134,6 +149,35 @@ final class SilenceStopsUnattendedReplyTests: XCTestCase {
         XCTAssertFalse(state(now - 1).isPermanentlySilenced(nowEpoch: now), "过期水印不是静音")
         XCTAssertFalse(state(now).isPermanentlySilenced(nowEpoch: now), "正好等于现在也不算")
         XCTAssertTrue(state(now + 10 * 365 * 24 * 3600).isPermanentlySilenced(nowEpoch: now))
+        // The discriminator between the two meanings of the same column.
+        XCTAssertFalse(state(now + 30).isPermanentlySilenced(nowEpoch: now),
+                       "对方时钟快了 30 秒，不该把「隐藏此对话」变成永久静音")
+        XCTAssertFalse(state(now + 30 * 24 * 3600).isPermanentlySilenced(nowEpoch: now),
+                       "30 天也不是永久")
+        XCTAssertTrue(state(now + 2 * 365 * 24 * 3600).isPermanentlySilenced(nowEpoch: now),
+                      "越过一年缓冲才算哨兵，和收件箱那侧同一条线")
+    }
+
+    /// Wiring for the rule above: the inbox hydration used to keep its own copy
+    /// of the threshold, so the two sides could disagree about whether a chat is
+    /// muted — one of them showing it in 「已静音的对话」 while the other kept
+    /// handing it to the reply pipeline.
+    func testInboxHydrationUsesTheSameSentinel() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let monitor = try String(
+            contentsOf: root.appendingPathComponent("Services/ChatMonitor.swift"), encoding: .utf8)
+        let hydrate = (monitor.components(separatedBy: "dismissedInbox.removeAll(keepingCapacity: true)").last ?? "")
+            .components(separatedBy: "/// Dismiss an inbox item").first ?? ""
+        XCTAssertFalse(hydrate.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertTrue(hydrate.contains("action.isPermanentlySilenced(nowEpoch: nowEpoch)"),
+                      "收件箱那侧要读同一条判据")
+        XCTAssertFalse(hydrate.contains("permanentThreshold"),
+                      "阈值不许在这一处再算一遍")
+        XCTAssertFalse(monitor.contains("silencedAt > nowEpoch"),
+                       "ChatMonitor 里不许留第三种拼写")
     }
 
     /// The escape hatch has to be durable. The list used to be

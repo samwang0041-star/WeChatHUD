@@ -152,7 +152,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         repairVIPTrackingAlignment()
 
         // Best-effort housekeeping. Failures are non-fatal — the app
-        // still starts, we just leave old audit rows around.
+        // still starts, we just leave old audit rows around. This is only
+        // the *first* pass: the same windows are re-applied hourly by
+        // `runRetentionSweep`, because a process that never restarts never
+        // runs a startup migration twice.
         try? pruneAIAudit(olderThanDays: 14)
 
         // Retrospective tab migration + crash recovery (Plan M1.2 / M1.6).
@@ -1252,13 +1255,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         let silencedAt: Int    // unix seconds; items with ts ≤ this are hidden
         let snoozedUntil: Int  // unix seconds; entire chat suppressed until this
 
-        /// 「永久静音」 is stored as a watermark ten years out, so whether a chat is
-        /// muted can only be answered against a moment — and every consumer must
-        /// answer it the same way. The inbox row, the banner, both autopilot feeds
-        /// and the send gate are five readings of one fact; each spelling that
-        /// used to be its own comparison.
+        /// 「永久静音」 is stored as a watermark ten years out, so "is this chat
+        /// muted" is only answerable against a moment — and it has to be answered
+        /// the same way by all four readers (inbox hydration, both autopilot
+        /// feeds, the send gate, the mute list). Two discriminators used to exist:
+        /// `> now` in the feeds and `> now + 1 year` in the inbox.
+        ///
+        /// The buffer is the correct one. `silencedAt` doubles as the ordinary
+        /// 「隐藏此对话」 watermark, and that watermark is the newest message's own
+        /// time — which sits in the future whenever the peer's clock is ahead.
+        /// Under `> now` a few seconds of skew promoted a one-off dismiss into a
+        /// mute that starved the conversation of replies indefinitely.
+        static let permanentSilenceBufferSeconds = 365 * 86400
+
         func isPermanentlySilenced(nowEpoch: Int) -> Bool {
-            silencedAt > nowEpoch
+            silencedAt > nowEpoch + Self.permanentSilenceBufferSeconds
         }
     }
 
@@ -1856,6 +1867,35 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     func pruneAIAudit(olderThanDays days: Int) throws {
         let cutoff = Int(Date().timeIntervalSince1970) - max(0, days) * 24 * 3600
         try exec("DELETE FROM ai_audit WHERE ts < ?", params: ["\(cutoff)"])
+    }
+
+    /// Everything this store promises to forget, in one call.
+    ///
+    /// Each window below already existed, but was only enforced from inside a
+    /// startup migration — and this app is a notch overlay that is never
+    /// restarted, so "14 天审计保留" and "72 小时缓存" were claims, not
+    /// behaviour. `analysis_cache` was the worst of the four: its rows are only
+    /// deleted when the *same* `(chat, type, input_hash)` is looked up again, and
+    /// the hash covers a message window that changes with every new message, so
+    /// an expired row is essentially never revisited — it just accumulates the
+    /// full AI result text of every analysis the user ever triggered.
+    ///
+    /// Deliberately not here: `autopilot_log`, `vip_traces`,
+    /// `commitment_scans`. Those have no declared window at all, and picking one
+    /// is a product decision about how far back the dashboard and the radar may
+    /// speak — see §182.
+    func runRetentionSweep(now: Date = Date()) {
+        try? pruneAIAudit(olderThanDays: 14)
+        gcDailyReportState(retentionDays: 45)
+        let nowTs = Int64(now.timeIntervalSince1970)
+        // `expires_at > 0` keeps the "never expires" rows whatever other writer
+        // inserts; deleting those would turn a cache miss into an AI request.
+        try? exec(
+            "DELETE FROM analysis_cache WHERE expires_at > 0 AND expires_at <= ?",
+            params: ["\(nowTs)"])
+        try? exec(
+            "DELETE FROM conversation_memory WHERE last_updated > 0 AND last_updated < ?",
+            params: ["\(nowTs - 90 * 86400)"])
     }
 
     // MARK: - Analysis cache

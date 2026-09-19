@@ -931,6 +931,17 @@ enum WeChatLauncher {
             == text.replacingOccurrences(of: "\r\n", with: "\n")
     }
 
+    /// Retraction is the one caller where a missing read must mean *don't type*.
+    /// The overwrite guards fail open on nil because refusing would turn a WeChat
+    /// AX change into "auto-send never works again"; here the alternative to
+    /// guessing is leaving our own draft sitting in the box, which is a cost the
+    /// callers of `retractPastedDraft` have already accepted. Select-all + Delete
+    /// on a box we cannot read is how the human's later typing gets erased.
+    static func boxIsKnownToHoldOnlyTheReply(readValue: String?, expecting text: String) -> Bool {
+        guard let readValue else { return false }
+        return pastedBoxStillHoldsOnlyTheReply(readValue: readValue, expecting: text)
+    }
+
     /// Every navigation step is awaited while the shared automation lock is held.
     /// No delayed search or clipboard callback survives this method's return.
     @MainActor private static func navigateToChat(app: NSRunningApplication, searchNames: [String], automation: Bool = true) async -> SendFailureReason? {
@@ -1016,10 +1027,10 @@ enum WeChatLauncher {
         // loss the three overwrite guards exist to prevent — so retract only a
         // box still holding nothing but what we pasted. Leaving a draft behind
         // is the failure this path can afford.
-        guard pastedBoxStillHoldsOnlyTheReply(
+        guard boxIsKnownToHoldOnlyTheReply(
             readValue: readInputBoxValue(input), expecting: text
         ) else {
-            log("skipped draft retraction — box no longer holds only the pasted reply; left as typed")
+            log("skipped draft retraction — box unreadable or no longer holds only the pasted reply; left as typed")
             return
         }
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)

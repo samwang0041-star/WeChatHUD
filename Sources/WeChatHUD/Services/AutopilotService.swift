@@ -456,11 +456,20 @@ actor AutopilotService {
     /// string) and any one of them alone reads as "the send failed".
     nonisolated static func sendFailureDisposition(
         paused: Bool, sessionOpen: Bool, rowStillQueued: Bool,
-        reason: String, retryableReason: Bool
+        conversationMuted: Bool, reason: String, retryableReason: Bool
     ) -> SendFailureDisposition {
         if Self.withheldByPause(paused: paused, sessionOpen: sessionOpen,
                                 rowStillQueued: rowStillQueued) {
             return .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。")
+        }
+        // A muted conversation is not a place where a send can legitimately
+        // fail: the gate refused it before any keystroke, and the row it
+        // refused over is still on the board. Burning the draft as
+        // 「请先检查微信，再手动处理」 would be a permanent verdict derived
+        // from a permission the user can revoke — unmuting would never give
+        // the draft back. Same shape as the pause branch above (§179).
+        if conversationMuted {
+            return .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。")
         }
         if retryableReason { return .requeueUnchanged(reason: reason) }
         return .humanRequired(reason: Self.joinSendFailure(reason, "已转为人工确认"))
@@ -488,10 +497,17 @@ actor AutopilotService {
     /// makes 静音此对话 a withdrawal: the mute is applied to the durable
     /// `chat_actions` row, while the draft this decision guards may already be
     /// sitting in the queue from a message that arrived before the mute.
+    /// One read of 「is this conversation muted」 for every consumer in this
+    /// actor: the delivery gate and the failure bookkeeping must not disagree
+    /// about whether a refusal was a permission change or a failed keystroke.
+    private func conversationIsMuted(_ username: String) -> Bool {
+        store.loadChatActions()[username]?.isPermanentlySilenced(
+            nowEpoch: Int(Date().timeIntervalSince1970)
+        ) ?? false
+    }
+
     func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?) -> Bool {
-        let muted = chatUsername.map { name in
-            (store.loadChatActions()[name]?.silencedAt ?? 0) > Int(Date().timeIntervalSince1970)
-        } ?? false
+        let muted = chatUsername.map { conversationIsMuted($0) } ?? false
         return Self.mayStillDeliver(
             paused: isPaused,
             sessionOpen: sessionId != nil,
@@ -736,10 +752,18 @@ actor AutopilotService {
                     do {
                         try store.deletePendingSend(id: uuid)
                     } catch {
-                        if let ghost {
-                            unresolvedQueueWrites[uuid] = .cancelled(
-                                chatUsername: ghost.chatUsername, replyText: ghost.replyText)
-                        }
+                        // The hold has to be registered whether or not this
+                        // process still holds the row in memory — `stop()`
+                        // clears exactly that copy, so keying the hold on it
+                        // means the dangerous half (the DB twin, rehydrated and
+                        // fired by the next session) goes unheld in the one
+                        // case this branch exists for. The batch entry is the
+                        // fallback: it carries the same conversation and the
+                        // same text the queue row was written with.
+                        unresolvedQueueWrites[uuid] = .cancelled(
+                            chatUsername: ghost?.chatUsername ?? entry.chatUsername,
+                            replyText: ghost?.replyText ?? entry.generatedReply ?? ""
+                        )
                     }
                 }
                 continue
@@ -1994,6 +2018,7 @@ actor AutopilotService {
             paused: isPaused,
             sessionOpen: sessionId != nil,
             rowStillQueued: store.hasPendingSend(id: item.id),
+            conversationMuted: conversationIsMuted(item.chatUsername),
             reason: failureReason,
             retryableReason: Self.isRetryableSendBusy(failureReason)
         )

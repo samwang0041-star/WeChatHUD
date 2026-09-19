@@ -328,10 +328,16 @@ struct AutopilotTabView: View {
     }
 
     private var autoSendSummary: String {
-        let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
-        return config.autoSendEnabled
-            ? "已打开自动发出去 · 比较有把握的回复会按你设的节奏发出"
-            : "没有打开自动发出去 · 只写成草稿，等你确认"
+        // Three states, because this sentence is what the user believes about
+        // whether replies are going out on their own.
+        switch store.autopilotConfigForSendGate()?.autoSendEnabled {
+        case .some(true):
+            return "已打开自动发出去 · 比较有把握的回复会按你设的节奏发出"
+        case .some(false):
+            return "没有打开自动发出去 · 只写成草稿，等你确认"
+        case nil:
+            return "暂时读不到托管设置 · 这一页先不判断回复会不会自己发出去"
+        }
     }
 
     private var isAutopilotPaused: Bool {
@@ -769,7 +775,10 @@ struct PendingSendRow: View {
                 HStack(spacing: 6) {
                     Button("发送") {
                         Task {
-                            let config = monitor.loadAutopilotConfig()
+                            guard let config = monitor.loadAutopilotConfig() else {
+                                await MainActor.run { sendError = ChatMonitor.unreadableConfigNotice }
+                                return
+                            }
                             let outcome = await monitor.editAndSendAutopilot(id: item.id, newText: editText, config: config)
                             await MainActor.run {
                                 switch outcome {
@@ -839,7 +848,10 @@ struct PendingSendRow: View {
 
                 Button("立即发送") {
                     Task {
-                        let config = monitor.loadAutopilotConfig()
+                        guard let config = monitor.loadAutopilotConfig() else {
+                            await MainActor.run { sendError = ChatMonitor.unreadableConfigNotice }
+                            return
+                        }
                         let outcome = await monitor.sendAutopilotNow(id: item.id, config: config)
                         await MainActor.run {
                             switch outcome {

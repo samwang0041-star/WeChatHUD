@@ -331,7 +331,12 @@ struct ConversationDetailView: View {
             sendSucceeded = false
             return
         }
-        let sendKey = monitor.loadAutopilotConfig().sendKey
+        guard let config = monitor.loadAutopilotConfig() else {
+            sendResult = ChatMonitor.unreadableConfigNotice
+            sendSucceeded = false
+            return
+        }
+        let sendKey = config.sendKey
         // `chatName` is the HUD label, which may be a local alias WeChat has
         // never seen. Passing it as the search set pointed the send at a
         // same-named stranger (and validated them as the target). Search only

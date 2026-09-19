@@ -216,19 +216,38 @@ actor AIReplySuggester {
     // MARK: - Parsing
 
     private func parse(_ raw: String, input: Input) -> [Suggestion]? {
+        Self.suggestions(from: raw, input: input, storedConfig: store.autopilotConfigForSendGate())
+    }
+
+    /// One pure decision point for "what may this page show", with the config
+    /// read handed in rather than guessed at inside. See the note on
+    /// `storedConfig` for why the safe direction here is the opposite of the
+    /// send gates'.
+    nonisolated static func suggestions(
+        from raw: String,
+        input: Input,
+        storedConfig: AutopilotConfig?
+    ) -> [Suggestion]? {
         guard let dto = AIJSONExtractor.decodeFirstObject(from: raw, as: ResultDTO.self) else { return nil }
         let validTones: Set<String> = ["recommended", "friendly", "formal", "brief", "professional", "concise", "友好", "正式", "简洁"]
-        let sensitiveKeywords = (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sensitiveKeywords
+        // Same honest read as the send gates, but the safe direction is the
+        // opposite one here: a send gate must not *send* on a failed read, while
+        // this page can still show a draft. So the built-in keyword list still
+        // filters, and the source is assumed sensitive — which leaves only a
+        // conservative hand-off standing, instead of silently dropping whatever
+        // words the user added to 敏感词 themselves.
+        let sensitiveKeywords = (storedConfig ?? AutopilotConfig()).sensitiveKeywords
         let sourceText = [
             input.messageBody,
             input.contextWindow,
             input.analysisSummary,
             input.knownConstraints
         ].compactMap { $0 }.joined(separator: "\n")
-        let sourceHasSensitiveSignal = ReplySuggestionSafety.sourceHasSensitiveSignal(
-            [sourceText],
-            extraKeywords: sensitiveKeywords
-        )
+        let sourceHasSensitiveSignal = storedConfig == nil
+            || ReplySuggestionSafety.sourceHasSensitiveSignal(
+                [sourceText],
+                extraKeywords: sensitiveKeywords
+            )
         let highCommitmentIntents: Set<String> = ["accept", "decline"]
         let filtered = dto.suggestions
             .filter { $0.safeToSend }

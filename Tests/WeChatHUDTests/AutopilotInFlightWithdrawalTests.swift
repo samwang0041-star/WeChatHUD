@@ -229,16 +229,19 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: true, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false,
                 reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
             .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。"))
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false,
                 reason: "发送结果无法确认", retryableReason: false),
             .humanRequired(reason: "发送结果无法确认，已转为人工确认"))
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false,
                 reason: "已有发送正在进行", retryableReason: true),
             .requeueUnchanged(reason: "已有发送正在进行"))
         // The real reason strings are complete sentences ending in 。; the
@@ -247,8 +250,60 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false,
                 reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
             .humanRequired(reason: "这条回复在按下发送前已经停住，微信没有收到，已转为人工确认"))
+    }
+
+    /// 静音此对话 is a permission the user can revoke, so it cannot be allowed
+    /// to leave a permanent verdict on the draft. Before this branch existed the
+    /// mute refusal fell into the 「发送失败」 tail: the row got
+    /// `manualOnlyReason = "…请先检查微信，再手动处理"`, which
+    /// `isEligibleForAutomaticSend` reads as a disqualifier forever —取消静音
+    /// never gave the draft back, and the receipt blamed WeChat for something
+    /// nothing had failed at.
+    func testMuteRefusalNeverBurnsTheDraftAsManualOnly() {
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: true,
+                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
+            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
+        // Positive control: the same reason with an unmuted conversation is
+        // still a real failure, so the branch cannot pass by never stamping.
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false,
+                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
+            .humanRequired(reason: "发送前已撤回，微信没有收到，已转为人工确认"))
+    }
+
+    /// Wiring: the failure tail must ask the durable table, not a flag. A mute
+    /// lands while the send is already in flight, so only the 「永久静音」 row
+    /// can tell the two cases apart afterwards.
+    func testFailureTailAsksTheDurableMuteTable() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let tail = try XCTUnwrap(
+            source.components(separatedBy: "let disposition = Self.sendFailureDisposition(").last
+        ).components(separatedBy: "if case .humanRequired").first ?? ""
+        XCTAssertFalse(tail.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertTrue(tail.contains("conversationMuted: conversationIsMuted(item.chatUsername)"),
+                      "记账必须按这条草稿所属的对话去查静音表，否则永远传 false")
+        // One predicate, both consumers: the gate and the bookkeeping must not
+        // keep their own copy of "is this chat muted".
+        let gate = source.components(separatedBy: "func deliveryStillPermitted(").last ?? ""
+        XCTAssertTrue(gate.components(separatedBy: "conversationIsMuted(").count - 1 >= 1,
+                      "闸门也要走同一个读法")
+        let helper = (source.components(separatedBy: "private func conversationIsMuted(").last ?? "")
+            .components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertFalse(helper.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertTrue(helper.contains("isPermanentlySilenced("),
+                      "读法要落在 §180 的那个哨兵上，而不是自己再比一次时间")
     }
 
     func testFailureTailDecidesPauseBeforeStampingManualOnly() throws {
@@ -689,5 +744,113 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         // The settings page still has to be able to save its way out of that.
         XCTAssertTrue(try store.updateAutopilotConfig { $0.autoSendEnabled = true })
         XCTAssertEqual(store.autopilotConfigForSendGate()?.autoSendEnabled, true)
+    }
+
+    /// The three overwrite guards fail *open* on a nil AX read on purpose: a
+    /// WeChat build that stops exposing `kAXValueAttribute` must not turn into
+    /// "auto-send never works". Retraction is the opposite caller — it runs
+    /// after the send was already abandoned, and the only thing it risks is a
+    /// draft staying in the box. Guessing there means `Cmd+A`+Delete into text
+    /// this process never read, which is the loss the guards were added for.
+    func testRetractionRefusesToDeleteOnAnUnreadableBox() {
+        XCTAssertFalse(
+            WeChatLauncher.boxIsKnownToHoldOnlyTheReply(readValue: nil, expecting: "你好"),
+            "读不到输入框时不许全选删除")
+        XCTAssertTrue(
+            WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: nil, expecting: "你好"),
+            "发送侧仍是刻意失败打开：看不见不等于拦住")
+        // Same read, both directions agree once there is content to compare.
+        XCTAssertTrue(WeChatLauncher.boxIsKnownToHoldOnlyTheReply(readValue: "你好", expecting: "你好"))
+        XCTAssertFalse(WeChatLauncher.boxIsKnownToHoldOnlyTheReply(readValue: "你好，还有我打的字", expecting: "你好"))
+        XCTAssertTrue(WeChatLauncher.boxIsKnownToHoldOnlyTheReply(readValue: "   ", expecting: "你好"),
+                      "空盒里全选删除不丢任何东西")
+    }
+
+    /// Wiring: a correct predicate that the destructive caller doesn't use is
+    /// the defect, not a mitigation.
+    func testRetractCallSiteUsesTheFailClosedPredicate() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/WeChatLauncher.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let body = try XCTUnwrap(
+            source.components(separatedBy: "private static func retractPastedDraft(").last
+        ).components(separatedBy: "@MainActor private static func accountFailure").first ?? ""
+        XCTAssertFalse(body.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertEqual(body.components(separatedBy: "boxIsKnownToHoldOnlyTheReply(").count - 1, 1,
+                       "撤回必须只走失败关闭的那个读法")
+        XCTAssertFalse(body.contains("pastedBoxStillHoldsOnlyTheReply("),
+                       "撤回里出现失败打开的谓词 = 读不到就删别人的字")
+        // Every keystroke that selects all is a chance to destroy text, so each
+        // one has to be preceded by the guard that fits its surface: the message
+        // box before overwriting, the message box before retracting, and WeChat's
+        // search field (whose contents are a query, not the human's draft).
+        let chunks = source.components(separatedBy: "postCmdKey(kVK_ANSI_A)")
+        XCTAssertEqual(chunks.count - 1, 3, "全选键的总数变了要逐条看，不能默认安全")
+        for (index, chunk) in chunks.dropLast().enumerated() {
+            let tail = String(chunk.suffix(700))
+            XCTAssertTrue(
+                tail.contains("inputBoxIsSafeToOverwrite")
+                    || tail.contains("boxIsKnownToHoldOnlyTheReply")
+                    || tail.contains("findSearchField"),
+                "第 \(index + 1) 处 Cmd+A 前面没有任何守卫")
+        }
+    }
+
+    /// 「读不到托管设置」 used to be answered with the built-in config on the four
+    /// human-pressed send paths, so a half-written row meant 立即发送 ran with the
+    /// stock 敏感词 list, the stock 每小时/每会话上限 and a guessed 发送键 —— the
+    /// exact widening the autopilot gates were closed against one commit earlier.
+    func testManualSendPathsRefuseAnUnreadableConfig() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let monitor = try String(
+            contentsOf: root.appendingPathComponent("Services/ChatMonitor.swift"), encoding: .utf8)
+        let body = monitor.components(separatedBy: "func loadAutopilotConfig() -> AutopilotConfig?").last ?? ""
+        XCTAssertFalse(body.isEmpty, "锚点没了：这个读法又 returning 非可选了")
+        XCTAssertTrue(body.hasPrefix(" {\n        store.autopilotConfigForSendGate()\n    }"),
+                      "手动发送的读法必须就是那个诚实读法")
+        XCTAssertFalse(body.components(separatedBy: "\n    }\n").first?
+            .contains("?? AutopilotConfig()") ?? false,
+                       "这里不许再用默认值兜底")
+
+        var sites = 0
+        for name in ["Views/AutopilotTabView.swift",
+                     "Views/ApprovalWorkspaceView.swift",
+                     "Views/ConversationDetailView.swift"] {
+            let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+            sites += text.components(separatedBy: "guard let config = monitor.loadAutopilotConfig()").count - 1
+            XCTAssertFalse(text.contains("monitor.loadAutopilotConfig()."),
+                           "\(name) 还在把可选读法当非可选直接用")
+        }
+        XCTAssertEqual(sites, 4, "编辑后发送/立即发送/审批台/对话详情四处都要拦，少一处就是漏")
+        XCTAssertEqual(
+            try String(contentsOf: root.appendingPathComponent("Views/AutopilotTabView.swift"), encoding: .utf8)
+                .components(separatedBy: "ChatMonitor.unreadableConfigNotice").count - 1, 2,
+            "同一句拒绝话术要出现在这一页的两个按钮上")
+    }
+
+    /// The ghost-branch hold used to be registered `if let ghost`, i.e. only when
+    /// this process still had the row in memory — but `stop()` clears that copy,
+    /// which is the whole reason the branch exists. The DB twin then survives a
+    /// failed delete with nobody holding the gate.
+    func testGhostHoldDoesNotDependOnTheMemoryCopy() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let branch = (source.components(separatedBy: "if sid != sessionId {").last ?? "")
+            .components(separatedBy: "if entry.action == .skipped").first ?? ""
+        XCTAssertFalse(branch.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertFalse(branch.contains("if let ghost {"),
+                       "挂住这条不许以内存里还留着它为条件")
+        XCTAssertTrue(branch.contains("chatUsername: ghost?.chatUsername ?? entry.chatUsername"),
+                      "内存没有就用批次结果兜上，闸门不许读到 nil")
+        XCTAssertTrue(branch.contains("replyText: ghost?.replyText ?? entry.generatedReply"),
+                      "同上：文本也要有第二来源")
     }
 }
