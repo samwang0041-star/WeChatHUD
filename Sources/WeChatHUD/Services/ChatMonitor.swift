@@ -3412,7 +3412,7 @@ final class ChatMonitor: ObservableObject {
             if let service = autopilotService {
                 await service.rejectPending(logId: logId, chatUsername: chatUsername, replyText: replyText)
             } else {
-                if store.resolveAutopilotLogSkipped(id: logId), let chatUsername, let replyText {
+                if store.resolveAutopilotLogSkipped(id: logId) == .consumedPending, let chatUsername, let replyText {
                     try? store.deletePendingSendForLog(
                         logId: logId, chatUsername: chatUsername, replyText: replyText
                     )

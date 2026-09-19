@@ -111,9 +111,26 @@ struct AdmissionRules {
     let watchedMembers: [String: Set<String>]
     let perChatMuted: [String: Set<String>]
     let globalMuted: Set<String>
+    /// The bulk follow-list read failed, so `followedChats` is empty for a
+    /// reason that has nothing to do with the user. `decide` cannot express
+    /// 「我这次没读到」, and its 「没关注」 answer is destructive downstream: the
+    /// classification worker deletes the queue row it was given. Callers that
+    /// delete on a negative verdict have to check this first. Defaults to
+    /// `false` so a hand-built snapshot in a test stays honest about the case it
+    /// means to cover.
+    var followingUnreadable: Bool = false
 
     static func load(store: HUDStore) -> AdmissionRules {
-        let whitelist = store.getWhitelist()
+        let whitelist: [WhitelistEntry]
+        let unreadable: Bool
+        switch store.whitelistAllRead() {
+        case .value(let entries):
+            whitelist = entries
+            unreadable = false
+        case .unreadable:
+            whitelist = []
+            unreadable = true
+        }
         return AdmissionRules(
             config: store.loadAdmissionConfig(),
             followedChats: Set(whitelist.map(\.id)),
@@ -125,7 +142,8 @@ struct AdmissionRules {
             ),
             watchedMembers: store.loadGroupMemberMap(),
             perChatMuted: store.loadIgnoredSenderMap(),
-            globalMuted: store.loadGlobalIgnoredSenders()
+            globalMuted: store.loadGlobalIgnoredSenders(),
+            followingUnreadable: unreadable
         )
     }
 

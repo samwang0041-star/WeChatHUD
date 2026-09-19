@@ -139,4 +139,21 @@ final class SettingsScopeHonestyTests: XCTestCase {
                 "\(file) 一处都没走合并入口，判据不能零命中")
         }
     }
+
+    /// §164 only closed half of it if 载入 still paints defaults: the eight
+    /// fields hydrated on appear are the eight `save()` writes back over the
+    /// stored record, so a BUSY at onAppear followed by any edit pushes defaults
+    /// onto disk — `excludedContacts` emptied, and 自动发送 re-enabled by someone
+    /// reading a screen that lied about its own state.
+    func testAutopilotPageNeverHydratesFromDefaultsItCouldThenSave() throws {
+        let view = try source("Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift")
+        XCTAssertFalse(view.contains("getSettingJSON(\"autopilot\""),
+                       "载入也走三态读：读不到时这一页必须不接受改动")
+        XCTAssertTrue(view.contains("loadError = \"读不到"),
+                      "三分支里 unreadable 那臂必须真的把页面钉住，光有个 loadError 变量不算")
+        XCTAssertTrue(view.contains("guard didLoad, !isHydrating, loadError == nil"),
+                      "载入失败之后 save() 必须被挡住，否则合并写只是把屏上的默认值盖回盘")
+        XCTAssertTrue(view.contains("重新读取设置"),
+                      "拒绝保存要给出出口，不然这一页就卡死了")
+    }
 }

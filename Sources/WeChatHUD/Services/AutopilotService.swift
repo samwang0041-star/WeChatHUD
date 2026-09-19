@@ -156,6 +156,10 @@ actor AutopilotService {
     /// on purpose: there is no durable place to put this, and the window it
     /// protects is the one where a user can tap 确认发送 again.
     private var unresolvedSentLogWrites: Set<Int64> = []
+    /// Log ids whose 'skipped' write failed after the user 取消了这条. Same
+    /// session scope for the same reason: the window it protects is the one where
+    /// 待确认回复 can still offer that draft.
+    private var unresolvedSkippedLogWrites: Set<Int64> = []
     /// All msgUIDs of messages sent by autopilot — used for style isolation.
     private var sentMsgUIDs: Set<String> = []
 
@@ -360,13 +364,15 @@ actor AutopilotService {
     nonisolated static func mayStillDeliver(
         paused: Bool, sessionOpen: Bool,
         queueRowLive: Bool?, approvalRowPending: Bool?,
-        alreadySentHere: Bool = false
+        alreadySentHere: Bool = false,
+        rejectedHere: Bool = false
     ) -> Bool {
         if paused || !sessionOpen { return false }
-        // This one is not about the row's state but about what this process
-        // already delivered: the database still calls the row 'pending' because
-        // the write-back failed, so no row read can rule out a second send.
-        if alreadySentHere { return false }
+        // These two are not about the row's state but about what this process
+        // already decided: the database still calls the row 'pending' because the
+        // write-back failed, so no row read can rule out either a second send of
+        // a reply that already went out, or a send of one the user 取消了.
+        if alreadySentHere || rejectedHere { return false }
         return (queueRowLive ?? true) && (approvalRowPending ?? true)
     }
 
@@ -447,7 +453,8 @@ actor AutopilotService {
             sessionOpen: sessionId != nil,
             queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
-            alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false
+            alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
+            rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false
         )
     }
 
@@ -804,11 +811,15 @@ actor AutopilotService {
         return success
     }
 
-    /// Re-attempts the 'sent' writes that failed after a verified send.
+    /// Re-attempts the terminal writes that failed — both the 'sent' stamp after
+    /// a verified send and the 'skipped' stamp after 取消本条.
     ///
     /// A row that never flips stays approvable in 待确认回复, so this is not
-    /// bookkeeping — it is what keeps a sent draft from being sent twice.
+    /// bookkeeping — it is what keeps a sent draft from being sent twice, and a
+    /// cancelled one from being sent at all. Sent first, because a verified send
+    /// is the stronger fact about a row that appears in both sets.
     func retryUnresolvedSendWrites() {
+        retryUnresolvedSkipWrites()
         guard !unresolvedSentLogWrites.isEmpty else { return }
         for logId in unresolvedSentLogWrites.sorted() {
             switch store.resolveAutopilotLogSent(id: logId) {
@@ -824,14 +835,48 @@ actor AutopilotService {
         }
     }
 
+    private func retryUnresolvedSkipWrites() {
+        guard !unresolvedSkippedLogWrites.isEmpty else { return }
+        for logId in unresolvedSkippedLogWrites.sorted() {
+            switch store.resolveAutopilotLogSkipped(id: logId) {
+            case .consumedPending:
+                sessionPending = max(0, sessionPending - 1)
+                persistSessionCounts()
+                unresolvedSkippedLogWrites.remove(logId)
+            case .wasNotPending:
+                unresolvedSkippedLogWrites.remove(logId)
+            case .writeFailed:
+                break
+            }
+        }
+    }
+
     /// Reject a pending item (mark as skipped) and drop its pending_sends
     /// twin — a rejected draft must not stay sendable through the queue row.
     func rejectPending(logId: Int64, chatUsername: String? = nil, replyText: String? = nil) {
         // Idempotent AND race-safe: the flip only fires on a still-pending
         // row, so a double-tap or a reject landing during an in-flight
         // approve (whose send already completed) cannot re-resolve it.
-        let consumed = store.resolveAutopilotLogSkipped(id: logId)
-        if consumed, let chatUsername, let replyText {
+        let consumed: Bool
+        switch store.resolveAutopilotLogSkipped(id: logId) {
+        case .consumedPending:
+            consumed = true
+            unresolvedSkippedLogWrites.remove(logId)
+        case .wasNotPending:
+            // Resolved elsewhere (a reject landing during an in-flight approve,
+            // for instance): that path owns the twin now.
+            consumed = false
+            unresolvedSkippedLogWrites.remove(logId)
+        case .writeFailed:
+            // The row is still 'pending' in the database, so 待确认回复 keeps
+            // offering a draft the user cancelled and the queue can still send
+            // it. Hold the id: the delivery gate refuses it and the retry loop
+            // keeps trying the write. The twin is still this cancel's to clean.
+            consumed = false
+            unresolvedSkippedLogWrites.insert(logId)
+        }
+        let clearTwin = consumed || unresolvedSkippedLogWrites.contains(logId)
+        if clearTwin, let chatUsername, let replyText {
             try? store.deletePendingSendForLog(
                 logId: logId, chatUsername: chatUsername, replyText: replyText
             )

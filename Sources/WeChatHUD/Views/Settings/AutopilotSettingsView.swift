@@ -70,6 +70,8 @@ struct AutopilotSettingsView: View {
 
     @State private var isHydrating = true
     @State private var saveError: String?
+    /// 载入失败时非空：这一页显示的就必须是盘上的值，不接受改动。
+    @State private var loadError: String?
     @State private var didLoad = false
     @State private var showClearConfirm = false
     @State private var sessions: [AutopilotSession] = []
@@ -195,7 +197,11 @@ struct AutopilotSettingsView: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
 
-            if let saveError {
+            if let loadError {
+                Label(loadError, systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.red)
+                Button("重新读取设置") { load() }
+            } else if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
                 Button("重试保存设置") { save() }
@@ -433,7 +439,23 @@ struct AutopilotSettingsView: View {
     // MARK: - Persistence
 
     private func load() {
-        let cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        // §164 closed the write side of `nil == 读不到`; this is the other half,
+        // and it is not a read-only default. The eight fields hydrated here are
+        // exactly the eight that `save()` writes back over the stored record, so
+        // one BUSY at onAppear used to paint defaults on screen — and the next
+        // control the user touched pushed them onto disk: `excludedContacts`
+        // emptied (「不再自动回复这些人」gone) and, if they then re-enabled
+        // 自动发送, previously excluded people started receiving AI replies.
+        let cfg: AutopilotConfig
+        switch store.readSettingJSON("autopilot", as: AutopilotConfig.self) {
+        case .value(let stored): cfg = stored
+        case .absent: cfg = AutopilotConfig()
+        case .unreadable:
+            loadError = "读不到当前的托管设置，这一页暂时不接受改动。请点「重新读取设置」再试一次。"
+            saved = false
+            return
+        }
+        loadError = nil
         autoSendEnabled = cfg.autoSendEnabled
         handleGroupAt = cfg.handleGroupAt
         confidenceThreshold = cfg.confidenceThreshold
@@ -448,7 +470,7 @@ struct AutopilotSettingsView: View {
     }
 
     private func save() {
-        guard didLoad, !isHydrating else { return }
+        guard didLoad, !isHydrating, loadError == nil else { return }
         // One merge-update for the whole page, so we don't clobber fields the
         // settings UI doesn't surface yet (maxSendsPerSession, sensitiveKeywords,
         // proactive*, etc. all default-construct and would blow away user values

@@ -84,7 +84,12 @@ extension ChatMonitor {
                 senderName: msg.senderName,
                 isAtMention: isAt
             ).isAdmitted else {
-                completed.insert(msg.id)
+                switch Self.dispositionForUnadmitted(
+                    followingUnreadable: admissionRules.followingUnreadable
+                ) {
+                case .retire: completed.insert(msg.id)
+                case .retry: try? store.deferClassificationMessage(id: msg.id)
+                }
                 continue
             }
             // A message with no readable text left after sanitizing — a sticker,
@@ -171,6 +176,22 @@ extension ChatMonitor {
     /// in the log to explain the gap. Deferring reuses the queue's own
     /// attempts/backoff rather than inventing a second one.
     enum ScopeVerdict: Equatable { case proceed, retire, retry }
+
+    /// What to do with a message the admission rules rejected.
+    ///
+    /// The bulk follow-list read (`getWhitelist`) answers `[]` both for 「没关注
+    /// 任何人」 and for 「这次读不到」, `AdmissionPolicy.decide` turns that into
+    /// 「没关注」, and this branch used to delete the queue row — so a single BUSY
+    /// during `AdmissionRules.load` erased a whole batch of pending analysis
+    /// rather than one row. Same conflation as ``scopeVerdict(whitelist:muted:)``,
+    /// one level up, and destructive in the same direction.
+    enum UnadmittedDisposition: Equatable { case retire, retry }
+
+    nonisolated static func dispositionForUnadmitted(
+        followingUnreadable: Bool
+    ) -> UnadmittedDisposition {
+        followingUnreadable ? .retry : .retire
+    }
 
     /// The mapping itself, so a test can drive all three arms: the caller's
     /// job is only to hand it a real read and honour the answer.

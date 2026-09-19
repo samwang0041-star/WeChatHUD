@@ -1043,7 +1043,7 @@ final class HUDStoreTests: XCTestCase {
         // Approve-path send completes first.
         XCTAssertEqual(store.resolveAutopilotLogSent(id: logId), .consumedPending)
         // Reject lands late — must not flip a sent row, must not count.
-        XCTAssertFalse(store.resolveAutopilotLogSkipped(id: logId))
+        XCTAssertEqual(store.resolveAutopilotLogSkipped(id: logId), .wasNotPending)
         // Double-send resolution doesn't recount either.
         XCTAssertEqual(store.resolveAutopilotLogSent(id: logId), .wasNotPending)
 
@@ -1455,6 +1455,142 @@ final class HUDStoreTests: XCTestCase {
             "读不到/写不回时必须报告失败，不能当成『已经不是待确认』"
         )
         _ = sessionId
+    }
+
+    /// The cancel side has to answer the same three questions, because a Bool
+    /// answers two of them with the same `false`: when the 'skipped' write-back
+    /// fails the row is still 'pending' in the database, 待确认回复 keeps offering
+    /// it, and one tap sends to a real person the reply they had explicitly
+    /// 取消了. Same defect as the send side, opposite direction.
+    func testSkipResolutionSeparatesWriteFailureFromNotPending() throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_s/1", triggerText: "结论有了吗",
+            generatedReply: "我下午给你结论", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        let logId = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: sessionId).first?.id,
+            "fixture 没落库 ⇒ 这条测试什么都没验"
+        )
+        XCTAssertEqual(
+            store.resolveAutopilotLogSkipped(id: logId), .consumedPending,
+            "真的吃掉了一个 pending 行，这条判据才算数"
+        )
+        XCTAssertEqual(store.resolveAutopilotLogSkipped(id: logId), .wasNotPending,
+                       "第二次取消不该再算一次")
+        try store.exec("DROP TABLE autopilot_log")
+        XCTAssertEqual(store.resolveAutopilotLogSkipped(id: logId), .writeFailed,
+                       "写不回必须单独报失败，不能当成『已经不是待确认』")
+    }
+
+    /// `getWhitelist` answers `[]` for two different worlds, and the admission
+    /// snapshot hands that `[]` to a verdict whose negative branch deletes work:
+    /// one BUSY during `AdmissionRules.load` retired a whole batch of pending
+    /// analysis instead of a single row.
+    func testWhitelistAllReadSeparatesNobodyFollowedFromUnreadable() throws {
+        if case .value(let empty) = store.whitelistAllRead() {
+            XCTAssertTrue(empty.isEmpty, "没关注任何人时是空列表")
+        } else {
+            XCTFail("空表不是读失败")
+        }
+        try store.addToWhitelist(
+            username: "wxid_here", displayName: "同事", isGroup: false, category: .work
+        )
+        if case .value(let entries) = store.whitelistAllRead() {
+            XCTAssertEqual(entries.map(\.id), ["wxid_here"])
+        } else {
+            XCTFail("关注过就该原样读回来")
+        }
+        try store.exec("DROP TABLE whitelist")
+        if case .unreadable = store.whitelistAllRead() {} else {
+            XCTFail("表读不到时不许答『谁都没关注』")
+        }
+    }
+
+    /// 水位读失败被当成「从没扫过」时，两条扫描链都会把水位直接基线到「最新一条」——
+    /// 上次水位到最新之间的那段消息从此再也扫不到（无未回、无待办、不进托管），
+    /// 而且没有任何地方说为什么。
+    func testCursorReadSeparatesNeverScannedFromUnreadable() throws {
+        if case .neverScanned = store.whitelistCursorRead(username: "wxid_never") {} else {
+            XCTFail("没扫过的对话必须是 neverScanned，不能顺手算成读失败")
+        }
+        try store.setWhitelistCursor(username: "wxid_here", lastCreateTime: 1_780_000_000,
+                                     lastLocalId: 42, lastShard: "Msg.db")
+        switch store.whitelistCursorRead(username: "wxid_here") {
+        case .value(let time, let localId, let shard):
+            XCTAssertEqual(time, 1_780_000_000)
+            XCTAssertEqual(localId, 42)
+            XCTAssertEqual(shard, "Msg.db")
+        default: XCTFail("写过的水位必须原样读回来")
+        }
+        // DEFAULT-0 from the migration means "no per-second id yet", not "unreadable".
+        try store.setWhitelistCursor(username: "wxid_zero", lastCreateTime: 1_780_000_000,
+                                     lastLocalId: 0, lastShard: "Msg.db")
+        if case .value(_, let localId, _) = store.whitelistCursorRead(username: "wxid_zero") {
+            XCTAssertEqual(localId, .max, "同一秒内的历史行不许被重放")
+        } else { XCTFail("time>0 就是有一条水位") }
+
+        try store.exec("DROP TABLE sync_state")
+        if case .unreadable = store.whitelistCursorRead(username: "wxid_here") {} else {
+            XCTFail("表读不到时必须单独报 unreadable —— 这是唯一能阻止水位前跳的信号")
+        }
+        if case .unreadable = store.autopilotCursorRead(username: "wxid_here") {} else {
+            XCTFail("托管那条链同样要分得开")
+        }
+    }
+
+    /// The store can tell the three apart; the scan has to act on it. Both
+    /// watermark chains are gated, so a future third consumer that goes back to
+    /// `getWhitelistCursor() == nil` shows up here instead of shipping.
+    func testScanSkipsTheRoundWhenTheWatermarkCannotBeRead() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let scan = try String(
+            contentsOf: root.appendingPathComponent("Sources/WeChatHUD/Services/ScanEngine.swift"),
+            encoding: .utf8
+        )
+        // 验的是「读不到」那个 if 的**体内**有没有跳过本轮：整段区间里别处的
+        // `continue`（比如 `guard let messages = … else { continue }`）不算数——
+        // 第一版这么写，第二条变异删掉真正的 continue 照样绿。
+        // (读的那一句, 判读的那个 if) —— 白名单那条先把结果存进 `cursorRead`，
+        // 所以两句的锚点不一样。
+        for (read, anchor) in [
+            ("store.whitelistCursorRead(username: entry.id)",
+             "if case .unreadable = cursorRead"),
+            ("store.autopilotCursorRead(username: session.username)",
+             "if case .unreadable = store.autopilotCursorRead(username: session.username)"),
+        ] {
+            XCTAssertTrue(scan.contains(read), "这条水位链没再走三态读：\(read)")
+            let body = try XCTUnwrap(
+                Self.ifBody(of: scan, anchor: anchor),
+                "找不到 \(anchor) 的分支体，判据不能零命中")
+            XCTAssertTrue(body.contains("continue"), "\(anchor) 里面必须真的跳过本轮：\(body)")
+        }
+    }
+
+    /// The braces of one `if`/`switch` body, matched by counting rather than by
+    /// indentation: a slice that runs past the closing brace picks up unrelated
+    /// statements and turns the gate green for the wrong reason.
+    private static func ifBody(of source: String, anchor: String) -> String? {
+        guard let found = source.range(of: anchor),
+              let open = source[found.upperBound...].firstIndex(of: "{")
+        else { return nil }
+        var depth = 0
+        var index = source.index(after: open)
+        while index < source.endIndex {
+            switch source[index] {
+            case "{": depth += 1
+            case "}":
+                if depth == 0 { return String(source[source.index(after: open)..<index]) }
+                depth -= 1
+            default: break
+            }
+            index = source.index(after: index)
+        }
+        return nil
     }
 
     func testWhitelistReadSeparatesUnfollowedFromUnreadable() throws {

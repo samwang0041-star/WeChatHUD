@@ -70,6 +70,43 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             paused: false, sessionOpen: true, queueRowLive: nil, approvalRowPending: nil,
             alreadySentHere: true),
             "写回失败的已发送草稿不能再发一次")
+        // 取消侧同形：写回失败时数据库里那条还是 'pending'，任何行读法都排不掉
+        // 「用户已经把它取消了」这件事。
+        XCTAssertFalse(AutopilotService.mayStillDeliver(
+            paused: false, sessionOpen: true, queueRowLive: nil, approvalRowPending: nil,
+            rejectedHere: true),
+            "写回失败的已取消草稿不许再发出去")
+    }
+
+    /// The set is only worth having if `rejectPending` fills it at the moment the
+    /// write fails — that instant is the one where the database still says
+    /// 'pending' while the user has already said 不发了. The control in front
+    /// proves the hold is per-row rather than a blanket refusal.
+    @MainActor
+    func testCancelWithFailedWriteIsHeldByTheGate() async throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_g/1", triggerText: "结论有了吗",
+            generatedReply: "我下午给你结论", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        let openId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sessionId).first?.id)
+        let openStillAllowed = await service.deliveryStillPermitted(queueId: nil, logId: openId)
+        XCTAssertTrue(openStillAllowed, "没被取消过的待确认行不该被这条闸门拦住")
+
+        // 让 UPDATE 失败而 SELECT 照常：整张表没了的话，闸门会因为「读不到 pending
+        // 行」而拒绝，那个假绿测不到本地集合是否在承重（第一条变异就是这么活的）。
+        try store.exec("""
+            CREATE TRIGGER break_skip_write BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END
+            """)
+        XCTAssertEqual(store.autopilotLogPendingReply(id: openId), "我下午给你结论",
+                       "行必须仍是 pending，否则这条测试又在验另一个信号")
+        await service.rejectPending(logId: openId, chatUsername: "wxid_peer", replyText: "我下午给你结论")
+        let cancelledHeld = await service.deliveryStillPermitted(queueId: nil, logId: openId)
+        XCTAssertFalse(cancelledHeld, "写回失败的取消也必须拦住发送")
     }
 
     /// The other direction of the same bug: stopping the keystrokes must not
@@ -318,6 +355,9 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         // 声明本身也叫这个名字，所以 `contains` 一句是空判：要看的是真的有人调它。
         XCTAssertGreaterThanOrEqual(
             source.components(separatedBy: "retryUnresolvedSendWrites()").count - 1, 2,
-            "写回要重试，不然这条草稿永远卡在待确认里")
+            "写回要重试，不然这条草稿永远卡在待确认里"
+        )
+        XCTAssertTrue(source.contains("rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) }"),
+                      "取消侧的集合也必须真的喂给闸门，否则那条被取消的草稿照样能发")
     }
 }

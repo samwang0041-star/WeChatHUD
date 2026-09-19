@@ -311,7 +311,20 @@ enum ScanEngine {
             let sessionMap = Self.sessionLookup(sessions)
 
             for entry in whitelist {
-                let storedCursor = store.getWhitelistCursor(username: entry.id)
+                // 读不到水位时这一条本轮什么都不做：当「从没扫过」会把水位推到最新，
+                // 中间那段消息此后再也不会被扫到；沿用旧值又是另一种猜法。
+                let cursorRead = store.whitelistCursorRead(username: entry.id)
+                if case .unreadable = cursorRead {
+                    print("[WCHUD] scan: 水位读不到，跳过该对话本轮: \(entry.id)")
+                    continue
+                }
+                let storedCursor: (lastCreateTime: Int, lastLocalId: Int, lastShard: String)?
+                switch cursorRead {
+                case .value(let lastCreateTime, let lastLocalId, let lastShard):
+                    storedCursor = (lastCreateTime, lastLocalId, lastShard)
+                case .neverScanned, .unreadable:
+                    storedCursor = nil
+                }
                 let isFirstWhitelistScan = storedCursor == nil
                 let messages: [MessageInfo]
                 var currentCursor = (0, 0)
@@ -884,6 +897,15 @@ enum ScanEngine {
                 // Only scan recent private chats with unread messages
                 guard let messages = autopilotBatch[session.username] else { continue }
 
+                // Same three answers as the whitelist path: a watermark this
+                // process could not read must not be mistaken for 「从没扫过」,
+                // because the else branch below baselines to the newest row and
+                // everything between the old watermark and now is then lost to
+                // autopilot for good.
+                if case .unreadable = store.autopilotCursorRead(username: session.username) {
+                    print("[WCHUD] autopilot: 水位读不到，跳过该会话本轮: \(session.username)")
+                    continue
+                }
                 guard let baseline = store.getAutopilotCursor(username: session.username) else {
                     let seed = messages.first.map { ($0.createTime, $0.localId, $0.shardRelPath) }
                         ?? (Int(Date().timeIntervalSince1970), 0, "")

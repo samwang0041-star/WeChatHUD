@@ -178,6 +178,39 @@ final class ClassificationQueueWorkerTests: XCTestCase {
                        "这条还得排得回去，否则和删掉只差一步")
     }
 
+    /// The admission snapshot's own half of the same rule: a rejected message may
+    /// only be retired when the follow list was actually read.
+    func testUnadmittedMessageIsRetiredOnlyOverAReadableList() throws {
+        XCTAssertEqual(ChatMonitor.dispositionForUnadmitted(followingUnreadable: false), .retire)
+        XCTAssertEqual(ChatMonitor.dispositionForUnadmitted(followingUnreadable: true), .retry,
+                       "名单没读到 ⇒ 这条既不是『不用管』，更不该被删掉")
+
+        // Wiring, both ends: the snapshot must come from the tri-state read, and
+        // the worker must consult the flag before deleting.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let policy = try String(
+            contentsOf: root.appendingPathComponent("Sources/WeChatHUD/Services/AdmissionPolicy.swift"),
+            encoding: .utf8
+        )
+        let load = try XCTUnwrap(
+            policy.components(separatedBy: "static func load(store: HUDStore)").last,
+            "锚点没了")
+        XCTAssertFalse(load.contains("store.getWhitelist()"),
+                       "准入快照不能再用那条把读失败塌成 [] 的读")
+        XCTAssertTrue(load.contains("whitelistAllRead"))
+        let worker = try String(
+            contentsOf: root.appendingPathComponent("Sources/WeChatHUD/Services/ChatMonitor+Classification.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(worker.contains("dispositionForUnadmitted("),
+                      "判决抽出来了却没人用，等于没抽")
+        // 光「用了这个函数」不够：两个臂写反了它照样绿。承重的是 retry 那一臂真的退避。
+        XCTAssertTrue(
+            worker.contains("case .retry: try? store.deferClassificationMessage(id: msg.id)"),
+            "读不到名单时那一臂必须退避，而不是把行删掉")
+    }
+
     /// All three arms of the verdict, driven directly. The queue test above can
     /// only show one of them at a time, and it is the wiring; this is the rule.
     func testScopeVerdictMapsAllThreeWhitelistAnswers() {

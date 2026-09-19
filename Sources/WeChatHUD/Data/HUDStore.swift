@@ -989,6 +989,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         whitelistRead(username) == .followed
     }
 
+    /// Bulk version of ``whitelistRead(_:)``. `getWhitelist` answers `[]` both
+    /// when nobody is followed and when the table could not be read, and the
+    /// admission snapshot is fed to a verdict whose negative branch deletes work.
+    enum WhitelistAllRead {
+        case value([WhitelistEntry])
+        case unreadable
+    }
+
+    func whitelistAllRead() -> WhitelistAllRead {
+        let sql = """
+            SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
+            FROM whitelist
+            ORDER BY CASE attention_level WHEN 'vip' THEN 0 ELSE 1 END, category, display_name
+            """
+        do {
+            let rows: [WhitelistEntry?] = try queryAllThrowing(sql, bind: { _ in }) { stmt in
+                decodeWhitelistEntry(stmt)
+            }
+            return .value(rows.compactMap { $0 })
+        } catch {
+            return .unreadable
+        }
+    }
+
     func getWhitelistEntry(username: String) -> WhitelistEntry? {
         queryOne("""
             SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
@@ -1048,6 +1072,52 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     func getAutopilotCursor(username: String) -> (lastCreateTime: Int, lastLocalId: Int, lastShard: String)? {
         getMessageCursor(sourceKey: "ap/\(username)")
+    }
+
+    /// Watermark read with the third answer kept. `getMessageCursor` returns
+    /// `nil` for 「从没扫过」 and for 「这次读不到」 alike, and both scan consumers treat
+    /// nil as 「从没扫过」 — which baselines the watermark to whatever the freshest
+    /// fetched row is. A single BUSY therefore moved the watermark past every
+    /// message between the stored point and now: that stretch is never scanned
+    /// again, so no 未回, no 待办, no autopilot, and nothing says why.
+    enum CursorRead {
+        case value(lastCreateTime: Int, lastLocalId: Int, lastShard: String)
+        case neverScanned
+        case unreadable
+    }
+
+    func whitelistCursorRead(username: String) -> CursorRead {
+        cursorRead(sourceKey: "wl/\(username)")
+    }
+
+    func autopilotCursorRead(username: String) -> CursorRead {
+        cursorRead(sourceKey: "ap/\(username)")
+    }
+
+    private func cursorRead(sourceKey key: String) -> CursorRead {
+        let row: (time: Int, localId: Int, shard: String)?
+        do {
+            row = try queryOneThrowing(
+                "SELECT last_create_time, last_local_id, last_shard FROM sync_state WHERE source_key=?",
+                bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, key, -1, Self.sqliteTransient)
+                },
+                decode: { stmt in
+                    (Int(sqlite3_column_int64(stmt, 0)), Int(sqlite3_column_int64(stmt, 1)), Self.textColumn(stmt, 2))
+                }
+            ) ?? nil
+        } catch {
+            return .unreadable
+        }
+        guard let row, row.time > 0 else { return .neverScanned }
+        // `last_local_id == 0` is DEFAULT-0 from the migration: the row predates
+        // per-second local ids, so treat the whole second as seen rather than
+        // replaying history once after an upgrade.
+        return .value(
+            lastCreateTime: row.time,
+            lastLocalId: row.localId > 0 ? row.localId : Int.max,
+            lastShard: row.shard
+        )
     }
 
     private func getMessageCursor(sourceKey key: String) -> (lastCreateTime: Int, lastLocalId: Int, lastShard: String)? {
@@ -3910,13 +3980,35 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     /// Atomically skip a log row ONLY if still pending — a reject racing an
     /// in-flight approve must not stomp a completed send. Returns whether a
-    /// pending row was consumed (for sessionPending accounting).
-    @discardableResult
-    func resolveAutopilotLogSkipped(id: Int64) -> Bool {
-        (try? execReturningChanges(
-            "UPDATE autopilot_log SET action='skipped' WHERE id=? AND action='pending'",
-            params: [String(id)]
-        )) == 1
+    /// pending row was consumed (for sessionPending accounting), and — the
+    /// reason this is not a Bool — whether the write simply did not land.
+    /// A cancelled draft whose 'skipped' write failed is still offered by
+    /// 待确认回复, and approving it sends to a real person the reply they
+    /// explicitly 取消了.
+    func resolveAutopilotLogSkipped(id: Int64) -> AutopilotSendResolution {
+        var outcome: AutopilotSendResolution = .writeFailed
+        do {
+            try withTransaction {
+                let action: String? = try queryOneThrowing(
+                    "SELECT action FROM autopilot_log WHERE id=?",
+                    bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+                    decode: { stmt in Self.textColumn(stmt, 0) }
+                )
+                guard action == AutopilotAction.pending.rawValue else {
+                    outcome = .wasNotPending
+                    return
+                }
+                let changed = try execReturningChanges(
+                    "UPDATE autopilot_log SET action='skipped' WHERE id=? AND action='pending'",
+                    params: [String(id)]
+                )
+                outcome = changed == 1 ? .consumedPending : .wasNotPending
+            }
+        } catch {
+            outcome = .writeFailed
+            print("[WCHUD] autopilot_log 的取消状态写回失败: \(error)")
+        }
+        return outcome
     }
 
     /// Sync the log twin's text when a queue item's reply is edited —

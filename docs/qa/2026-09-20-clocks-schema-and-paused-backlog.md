@@ -220,10 +220,11 @@ try store.setSettingJSON("autopilot", value: cfg)   // INSERT OR REPLACE 整条
 设置页永久锁死。两个页面的「已保存」只在 `wrote == true` 时出现，否则是
 「读不回当前的托管设置，这次没有保存 —— 否则会用默认规则盖掉这页没有显示的开关」。
 
-**读侧的默认值不改**（定价，不是漏掉）：读失败时最危险的字段 `autoSendEnabled` 的默认是 `false`，
-所以失败即不发；剩下的（自定义敏感词、每会话上限）放松的前提是自动发送本来就关着，
+**只读消费点的默认值不改**（定价，不是漏掉）：读失败时最危险的字段 `autoSendEnabled` 的默认是
+`false`，所以失败即不发；剩下的（自定义敏感词、每会话上限）放松的前提是自动发送本来就关着，
 而要让所有 `getSettingJSON("autopilot")` 消费点在失败时都改为「按住不发」，代价是把
 一次性 BUSY 变成整条托管路径停摆 —— 这条交易现在不划算。已扫过全部 11 个消费点。
+**但这条定价当时划错了界**：`load()` 不是只读消费点，它是写操作数 —— 已在 §168 修掉。
 
 判据：`testSettingReadSeparatesAbsentFromUnreadable`（含垃圾 JSON 那条支路）、
 `testAutopilotConfigMergeWriteRefusesAnUnreadableConfig`（false 时闭包未执行 + 正常时未暴露字段存活）、
@@ -312,3 +313,106 @@ M4-M6（预占窗口两向、免打扰三态、版本收据）、M7-M13（前台
 「变异后仍全绿」这一轮出现 3 次，三次的结论都是判据有问题：两次是切片/锚点指错，
 一次（M6）直接暴露了 §163 那条真的死守卫。
 
+
+## §168 同一条形状的其余实例：这一轮先从「批量读」和「水位读」两处补
+
+派出去的两路（一路攻刚提交的 6f164045，一路按形状扫全仓）回来 6 条候选 P0，逐条回源码后
+成立 4 条、其中 1 条是我自己上一轮的漏定价。本轮修掉 4 条：
+
+- **§164 的另一半在载入侧**（我自己漏的）。`AutopilotSettingsView.load()` 仍然是
+  `getSettingJSON("autopilot") ?? AutopilotConfig()`：onAppear 一次 BUSY 就把 8 个字段以默认值
+  上屏，而 `save()` 合并写回去的正是这 8 个 —— 用户看到「自动发送是关的」于是打开它，
+  这一次点击同时把 `excludedContacts` 清成 `[]`（「不再自动回复这些人」没了），并显示「已保存」。
+  §164 的定价理由（「失败即不发」）只覆盖只读消费点，`load()` 是**写操作数**，不算只读。
+  改法：载入走三态；`.unreadable` 时置 `loadError`、`save()` 的守卫里带上 `loadError == nil`，
+  页面给「重新读取设置」出口。判据：`testAutopilotPageNeverHydratesFromDefaultsItCouldThenSave`。
+- **准入快照用的是把读失败塌成 `[]` 的批量读**。`AdmissionRules.load` → `store.getWhitelist()`
+  （`queryAll` 吞错）→ `followedChats` 空 → `AdmissionPolicy.decide` 答「没关注」→
+  分类队列那一支 `completed.insert` → 行被删。和 §161 修掉的 `isWhitelisted` 是同一件事，
+  但一次 BUSY 抹掉的是**整批**待分析消息而不是一条。改法：`whitelistAllRead()` 三态 +
+  `AdmissionRules.followingUnreadable` + 把「拒绝时怎么办」抽成
+  `dispositionForUnadmitted(followingUnreadable:)` 可直驱的谓词。
+  判据：`testWhitelistAllReadSeparatesNobodyFollowedFromUnreadable`、
+  `testUnadmittedMessageIsRetiredOnlyOverAReadableList`（含两端接线：快照必须来自三态读、
+  `.retry` 那一臂必须真的写 `deferClassificationMessage`）。
+- **水位读失败被当成「从没扫过」**（`ScanEngine.swift:314`、`:887` 两条链）。`nil` 的语义是
+  「首次扫描 ⇒ 基线到当前最新」，于是一次 BUSY 把水位直接推到最新，**上次水位到最新之间那段
+  消息此后再也不会被扫到**：没有未回、没有待办、不进托管，也没有任何地方说为什么。
+  这正是 :366-374 注释里承认过的老 bug，经「读失败」这条路复活。改法：`CursorRead` 三态
+  （`value / neverScanned / unreadable`），读不到时该对话本轮 `continue`，既不前跳也不猜旧值。
+  判据：`testCursorReadSeparatesNeverScannedFromUnreadable`（含 DEFAULT-0 那一臂仍算 neverScanned）、
+  `testScanSkipsTheRoundWhenTheWatermarkCannotBeRead`。
+- **取消侧的写回失败没有第三种答案**（`resolveAutopilotLogSkipped` 原为 Bool）。
+  `false` 同时代表「不是待确认」和「写失败」，于是写失败时那条被用户明确取消的草稿继续留在
+  待确认里，点一下就把他取消掉的回复发给真人 —— §161 修的发送侧的反方向。改法：返回
+  `AutopilotSendResolution`，`rejectPending` 在 `.writeFailed` 时把 id 记进
+  `unresolvedSkippedLogWrites`，闸门 `mayStillDeliver(rejectedHere:)` 拒发，
+  `retryUnresolvedSendWrites()` 里补一条 skip 重试（先 sent 后 skipped：一条同时出现在两个集合里时，
+  已投递是更强的事实）。三个消费点全扫：`AutopilotService.rejectPending`、
+  `ChatMonitor.rejectAutopilotItem`（无 service 的那支）、以及原有那条断言。
+  判据：`testSkipResolutionSeparatesWriteFailureFromNotPending`（真吃掉一个 pending 行才算数）、
+  `testCancelWithFailedWriteIsHeldByTheGate`。
+
+## §169 判据侧这轮又踩到的两个「假绿」，都是我自己写的
+
+13 条新变异里有 4 条第一版是活的，四条的教训各不相同：
+
+- **N3**：`dispositionForUnadmitted` 的两个臂写反（`.retry` 分支去 `completed.insert`）判据仍绿 ——
+  因为我只验了「这个函数被调用了」。补：钉住那一臂的完整字面句。
+- **N6**：`testCancelWithFailedWriteIsHeldByTheGate` 第一版把整张 `autopilot_log` 删掉，于是闸门
+  因为「读不到 pending 行」而拒绝发送 —— 断言被**另一个信号**满足了，本地集合删掉也不红。
+  改成用 `BEFORE UPDATE … RAISE(ABORT)` 让写失败而读照常，先断言行仍是 pending，再验闸门。
+- **N7**：`load()` 的 `.unreadable` 臂只把 `loadError =` 换成 `_ =` 判据仍绿（三处字符串都还在）。
+  补：钉住 `loadError = "读不到` 这一句。载入是 SwiftUI 视图里的状态机，单测驱动不了，
+  源码判据是这里能做到的上限。
+- **N10**：托管水位链的切片取「循环头 → guard」整段，里面别处本来就有 `continue`
+  （`guard let messages = … else { continue }`），删掉真正的 `continue` 照样绿。
+  改成按花括号配对取那个 `if` 的**体内**再验（新增 `ifBody(of:anchor:)`，数括号而不是数缩进）。
+
+一条被拒的变异：`retryUnresolvedSkipWrites` 里 `.wasNotPending` 不放回集合 —— 那个改动只是把
+拦截做得更严（行已终态时多拦一会儿），不是缺陷，所以不为它写断言。
+
+本轮（§168–§169）共 14 条变异，全部抓住：N1-N11 + N6b（拒）+ 重跑的 N3/N7/N10。
+
+## §170 已验未修（下一轮的清单，逐条带后果链）
+
+攻刚提交那一路另外报的，全部回过源码、都成立，但都不适合塞进本轮（要么需要新的持久状态，
+要么要动 2900 行的文件）：
+
+- **P0 `AutopilotService.swift:1771` 队列孪干的收口失败**：`resolveVerifiedSend` 抛错时只 print +
+  `flipped = 0`，事务回滚 → `pending_sends` 行仍存活；`start()`（:241 + :256 `loadPendingSends`）
+  会把它整条载回，闸门读 `hasPendingSend` 得 true → **重启后同一条 AI 回复无人点击就再发一遍**。
+  `unresolvedSentLogWrites` 是内存态且按 logId 索引，这条路两个条件都不满足。
+  需要的是「已投递但收口失败」的 queueId **持久化**（一列或一张小表），`start()` 载入时命中即挂
+  `manualOnlyReason`。这条是本轮 §161 那条 P0 的另一半，优先级最高。
+- **P0 `AutopilotService.swift:1553`「取消本条」的持久侧**：`try? deletePendingSend` +
+  `try? markAutopilotLogSkipped` 双双吞掉；:1545-1548 的注释自己写着「DB twin 才是发送键前
+  最后一次校验的持久记录」。删除失败即取消在持久层空转，界面显示「已取消」，重启或发送检查
+  仍按该行放行。（V4 修的是另一条路径上的同一个形状，这条还没走。）
+- **P1 `HUDStore.swift:4096 clearAutopilotHistory`**：安全联锁用 `currentAutopilotSession()`
+  （`queryOne`）→ 读失败判「无活动会话」→ 4103/4105 **全表** `DELETE FROM autopilot_log` +
+  `autopilot_pending_sends`，而托管其实还在跑；页面随后显示成功。联锁要改 `queryOneThrowing` 并抛错。
+- **P1 `HUDStore.swift:3845/3864 deletePendingSendForLog`**：依赖 `autopilotLogQueueId`
+  （`queryOne`），读失败 → 掉进 legacy 文本匹配分支，`DELETE … WHERE chat_username=? AND
+  reply_text=?` 会删掉**另一条**同文本草稿，而真正该删的那条继续可发。读失败时不许降级到文本匹配。
+- **P1 `ConversationMemoryUpdater.swift:105/113`**：`loadConversationMemory`（`queryOne`）读失败
+  → 既绕过频控又让 `oldSummary` 变空 → prompt 写「（首次生成）」→ `upsertConversationMemory`
+  对**全部列** `DO UPDATE SET`：90 天滚动摘要被一次瞬时 BUSY 覆成首轮摘要。
+- **P1 `ChatMonitor.swift:3441`**：改草稿后 `autopilotLogQueueId` 读失败 → 跳过
+  `updatePendingSendReply` → 队列孪干仍存旧文本（正是 :3932 注释里「pre-edit text stays sendable」
+  的后果），而用户看到「已保存」。
+- **P1 `ProactiveAlertEngine.swift:489`**：预占 120 秒过期与 completion 抢跑 —— 晚于 120 秒到达的
+  **成功**回执被 `removeValue` 的 guard 直接 return，既不记配额也不记去重 → 同一标识符每 ~120 秒
+  重投一次。过期只该用于释放槽位，回执仍要按 identifier 记一次账。
+  （和 §166 定价的「失败不记账」同一形状，但这条是成功路径，之前没定价到。）
+- **P1 `ChatMonitor+Classification.swift:72` 的 `.retry` 无退役路径**：`deferClassificationMessage`
+  的 attempts 无上限（`HUDStore+DiscussionQueue.swift:135` 的兄弟队列有 `attempts>=?` 死信），
+  永久读不到就是永远排队；不算无痕（`classificationQueueCount()` 在
+  SupportDiagnosticsView:94 / SyncSettingsView:400 可见），但也不是「重试过就放弃」。
+- **P2 两处**：同一条消息一轮里被 defer 两次（`attempts += 2`，退避比设计快一倍）；
+  `SchemaMigrator.swift:30` 又把「表不存在」（合法）和「索引建失败」塌进同一个 Bool，
+  前者会让 `user_version` 永不落地、每次启动重跑刷 NSLog —— 正是本轮要消灭的形状，
+  我自己刚写的那条守卫带了它。
+- **P2 死字段**：`AutopilotConfig.vipAutoNotify` / `vipBusyTemplate`（Models.swift:2140 起）
+  全仓零消费者，唯一相关代码就是 §165 删掉的 `pushVIPNotification`；注释还在承诺「VIP 有 busy
+  自动通知」，§164 还把 `vipAutoNotify` 列为要保命的护栏。要么删字段，要么把话说清楚。
