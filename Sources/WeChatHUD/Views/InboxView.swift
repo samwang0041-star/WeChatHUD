@@ -321,7 +321,7 @@ struct InboxView: View {
             Image(systemName: glyph)
                 .font(.system(size: 11))
             Text(title)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
         }
         .foregroundColor(ink)
         .frame(minHeight: InboxView.barIconTarget)

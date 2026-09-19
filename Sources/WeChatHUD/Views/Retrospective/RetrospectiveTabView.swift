@@ -54,10 +54,10 @@ struct RetrospectiveTabView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("回顾结果")
                     .workspaceTitle()
-                    .foregroundColor(.white.opacity(0.94))
+                    .companionDimmedForeground(0.94)
                 Text(statusLine)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.52))
+                    .companionDimmedForeground(0.52)
             }
 
             Spacer()
@@ -87,7 +87,7 @@ struct RetrospectiveTabView: View {
                     .controlSize(.small)
                 Text(runningText)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white.opacity(0.82))
+                    .companionDimmedForeground(0.82)
             }
 
             if case .analyzingChats(let progress, let total) = currentState {
@@ -95,7 +95,7 @@ struct RetrospectiveTabView: View {
                     .tint(.cyan)
                 Text("\(progress) / \(total) 个对话")
                     .font(.system(size: 11))
-                    .foregroundColor(.white.opacity(0.45))
+                    .companionDimmedForeground(0.45)
             }
         }
         .padding(14)
@@ -115,10 +115,10 @@ struct RetrospectiveTabView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("还没有回顾结果")
                     .workspaceTitle()
-                    .foregroundColor(.white.opacity(0.9))
+                    .companionDimmedForeground(0.9)
                 Text("从上次回顾到现在、你关注的对话里，提取重点、待办和风险。第一次使用默认回顾本周。")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.56))
+                    .companionDimmedForeground(0.56)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -169,11 +169,11 @@ struct RetrospectiveTabView: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundColor(.white.opacity(0.45))
+            .companionDimmedForeground(0.45)
 
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.white.opacity(0.9))
+                .companionDimmedForeground(0.9)
                 .lineLimit(1)
         }
         .padding(12)
@@ -244,11 +244,11 @@ struct RetrospectiveTabView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(todo.content)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.86))
+                    .companionDimmedForeground(0.86)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(todoMeta(todo))
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.42))
+                    .companionDimmedForeground(0.42)
             }
 
             Spacer(minLength: 8)
@@ -272,16 +272,16 @@ struct RetrospectiveTabView: View {
                     .foregroundColor(.cyan.opacity(0.85))
                 Text(highlight.sourceChatName)
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.42))
+                    .companionDimmedForeground(0.42)
                 Spacer()
                 Text(highlight.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.35))
+                    .companionDimmedForeground(0.35)
             }
 
             Text(highlight.summary)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.82))
+                .companionDimmedForeground(0.82)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 3)
@@ -294,7 +294,7 @@ struct RetrospectiveTabView: View {
             Text(text)
                 .font(.system(size: 13, weight: .semibold))
         }
-        .foregroundColor(.white.opacity(0.82))
+        .companionDimmedForeground(0.82)
     }
 
     private func summaryRow(label: String, text: String) -> some View {
@@ -304,7 +304,7 @@ struct RetrospectiveTabView: View {
                 .foregroundColor(.cyan.opacity(0.78))
             Text(text)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.8))
+                .companionDimmedForeground(0.8)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -313,7 +313,7 @@ struct RetrospectiveTabView: View {
     private func placeholderLine(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 12))
-            .foregroundColor(.white.opacity(0.42))
+            .companionDimmedForeground(0.42)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
     }
@@ -326,10 +326,10 @@ struct RetrospectiveTabView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.9))
+                    .companionDimmedForeground(0.9)
                 Text(detail)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.56))
+                    .companionDimmedForeground(0.56)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

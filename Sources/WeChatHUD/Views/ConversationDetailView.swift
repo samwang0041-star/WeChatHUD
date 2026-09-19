@@ -86,7 +86,7 @@ struct ConversationDetailView: View {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, dark: true, onClose: { showSendConfirm = false }) {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: chatName, text: replyText))
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.white.opacity(0.85))
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
@@ -163,7 +163,7 @@ struct ConversationDetailView: View {
             if let result = sendResult {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(result)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(sendSucceeded ? CompanionPalette.islandMint : .orange)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 10) {
@@ -203,12 +203,12 @@ struct ConversationDetailView: View {
     private var replyControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("回复", systemImage: "square.and.pencil")
-                .font(.system(size: 11, weight: .semibold))
+                .companionFont(size: 11, weight: .semibold)
                 .foregroundStyle(CompanionPalette.islandMint)
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $replyText)
                     .accessibilityLabel("回复内容")
-                    .font(.system(size: 14))
+                    .companionFont(size: 14)
                     .frame(height: 64)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 4)
@@ -216,8 +216,8 @@ struct ConversationDetailView: View {
 
                 if replyText.isEmpty {
                     Text("输入回复…")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.35))
+                        .companionFont(size: 14)
+                        .companionDimmedForeground(0.35)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 11)
                         .allowsHitTesting(false)
@@ -238,12 +238,12 @@ struct ConversationDetailView: View {
                     // "not sent" a fact rather than a starting condition.
                     if sendSucceeded || sendResult != nil {
                         Text(composerStatusTitle)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
+                            .companionFont(size: 11, weight: .medium)
+                            .companionDimmedForeground(0.55)
                     }
                     Text(composerStatusDetail)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.35))
+                        .companionFont(size: 10)
+                        .companionDimmedForeground(0.35)
                 }
                 Spacer()
 
@@ -295,7 +295,7 @@ struct ConversationDetailView: View {
                         showSendConfirm = true
                     }
                     .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(CompanionPalette.jade, in: Capsule())
@@ -396,8 +396,8 @@ struct ConversationDetailView: View {
                 panelState.currentState = .extended
             }) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.6))
+                    .companionFont(size: 11, weight: .semibold)
+                    .companionDimmedForeground(0.6)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("返回收件箱")
@@ -405,11 +405,11 @@ struct ConversationDetailView: View {
             let isGroup = MessageHelpers.isGroupChat(chatUsername)
                 || store.getWhitelistEntry(username: chatUsername)?.isGroup == true
             Image(systemName: isGroup ? "person.3.fill" : "person.fill")
-                .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.5))
+                .companionFont(size: 10)
+                .companionDimmedForeground(0.5)
 
             Text("\(monitor.displayName(for: chatUsername)) · \(isGroup ? "群聊" : "私聊")")
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
                 .foregroundColor(.white)
                 .lineLimit(1)
 
@@ -422,8 +422,8 @@ struct ConversationDetailView: View {
                     // next to the chat's name. Uncircled, the pencil stays a
                     // pencil at this size.
                     Image(systemName: "pencil")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.55))
+                        .companionFont(size: 11, weight: .semibold)
+                        .companionDimmedForeground(0.55)
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }
@@ -476,8 +476,8 @@ struct ConversationDetailView: View {
                 previewTranscript
             } else if transcriptRows.isEmpty {
                 Text("暂无消息记录")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.35))
+                    .companionFont(size: 13)
+                    .companionDimmedForeground(0.35)
                     .padding(.vertical, 6)
             } else {
                 ForEach(Array(transcriptRows.enumerated()), id: \.offset) { index, msg in
@@ -504,11 +504,11 @@ struct ConversationDetailView: View {
             if mine { Spacer(minLength: 40) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 Text(sender)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.45))
+                    .companionFont(size: 10, weight: .medium)
+                    .companionDimmedForeground(0.45)
                 Text(body)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.9))
+                    .companionFont(size: 13)
+                    .companionDimmedForeground(0.9)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(
@@ -549,9 +549,9 @@ struct ConversationDetailView: View {
                     Button(action: { Task { await loadSuggestions() } }) {
                         HStack(spacing: 3) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 10))
+                                .companionFont(size: 10)
                             Text("生成建议")
-                                .font(.system(size: 10))
+                                .companionFont(size: 10)
                         }
                         .foregroundColor(.accentColor.opacity(0.8))
                         .padding(.horizontal, 6)
@@ -568,14 +568,14 @@ struct ConversationDetailView: View {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.6)
                     Text("正在生成…")
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.4))
+                        .companionFont(size: 10)
+                        .companionDimmedForeground(0.4)
                 }
                 .padding(.vertical, 6)
             } else if suggestions.isEmpty {
                 Text(suggestionMessage ?? (hasReplyDebtContext ? "点击「生成建议」获取 AI 回复建议" : "当前没有待回复上下文"))
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .companionFont(size: 10)
+                    .companionDimmedForeground(0.3)
                     .padding(.vertical, 4)
             } else {
                 ForEach(Array(suggestions.enumerated()), id: \.offset) { _, suggestion in
@@ -621,8 +621,8 @@ struct ConversationDetailView: View {
     private func sectionLabel(_ label: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.45))
+                .companionFont(size: 10, weight: .semibold)
+                .companionDimmedForeground(0.45)
             Spacer()
         }
     }
@@ -642,8 +642,8 @@ private struct SuggestionRowView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(suggestion.text)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.88))
+                    .companionFont(size: 13)
+                    .companionDimmedForeground(0.88)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(action: {
@@ -652,22 +652,22 @@ private struct SuggestionRowView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                 }) {
                     Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(copied ? .green : .white.opacity(0.4))
                 }
                 .buttonStyle(.plain)
             }
             HStack(spacing: 6) {
                 Text(suggestion.tone)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.4))
+                    .companionFont(size: 10)
+                    .companionDimmedForeground(0.4)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
                     .background(Color.white.opacity(0.06))
                     .cornerRadius(3)
                 Text(suggestion.rationale)
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.3))
+                    .companionFont(size: 10)
+                    .companionDimmedForeground(0.3)
                     .lineLimit(1)
             }
         }

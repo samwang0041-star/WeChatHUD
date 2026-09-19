@@ -210,7 +210,7 @@ struct CompactInboxBar: View {
             leftMark(snap.mark)
             if let badge = snap.badge {
                 Text(badge)
-                    .font(.system(size: CompactInboxMetrics.badgeSize, weight: .semibold))
+                    .companionFont(size: CompactInboxMetrics.badgeSize, weight: .semibold)
                     .monospacedDigit()
                     .foregroundColor(IslandInk.primary)
                     .lineLimit(1)

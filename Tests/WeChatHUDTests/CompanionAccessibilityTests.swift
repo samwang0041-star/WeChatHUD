@@ -147,4 +147,110 @@ final class CompanionAccessibilityTests: XCTestCase {
         let silhouettes = Set(CompanionStatusDot.Level.allCases.map(\.silhouette))
         XCTAssertEqual(silhouettes, [.disc], "the default look must not change")
     }
+
+    // MARK: - Dimmed text: the half the border ramp never reached
+
+    /// The canvas the island-detail and retrospective panels composite onto.
+    /// Their own fill is `Color.black.opacity(0.94…0.96)` over a lightened
+    /// panel material, so ~6 % white is the honest worst case — a darker guess
+    /// would flatter every caption in this file.
+    private static let darkCanvas = 0.06
+
+    private func relativeLuminance(_ channel: Double) -> Double {
+        let c = max(0, min(1, channel))
+        return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    /// WCAG contrast ratio for `Color.white.opacity(alpha)` over `canvas`.
+    private func contrastRatio(whiteAlpha: Double) -> Double {
+        let canvas = Self.darkCanvas
+        let foreground = relativeLuminance(canvas + whiteAlpha * (1 - canvas))
+        let background = relativeLuminance(canvas)
+        return (max(foreground, background) + 0.05) / (min(foreground, background) + 0.05)
+    }
+
+    /// The defect in numbers: the dimmest caption the app shipped sat at 2.7:1,
+    /// well under the 4.5:1 that WCAG calls the floor for body text. Pinning the
+    /// *un-ramped* value keeps the fix from being argued away as cosmetics.
+    func testUnrampedCaptionsReallyDidFailLegibility() {
+        setIncreaseContrast(false)
+        XCTAssertLessThan(
+            contrastRatio(whiteAlpha: CompanionAccessibility.foregroundOpacity(0.35)), 4.5,
+            "if 0.35 ever stops failing, the ramp below is solving a problem that is gone"
+        )
+    }
+
+    /// Every opacity actually written into a view must clear AA once the switch
+    /// is on. Scanning the shipped source rather than a hand-picked list is the
+    /// point: a new `companionDimmedForeground(0.1)` added next month fails here.
+    func testEveryShippedDimmedCaptionClearsWCAGAAUnderIncreaseContrast() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+
+        var found: [(file: String, nominal: Double)] = []
+        var files: [URL] = []
+        if let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator where url.pathExtension == "swift" {
+                files.append(url)
+            }
+        }
+        for url in files {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for chunk in text.components(separatedBy: "companionDimmedForeground(").dropFirst() {
+                guard let close = chunk.firstIndex(of: ")") else { continue }
+                let literal = String(chunk[..<close]).trimmingCharacters(in: .whitespaces)
+                guard let nominal = Double(literal) else { continue }
+                found.append((url.lastPathComponent, nominal))
+            }
+        }
+        XCTAssertGreaterThanOrEqual(
+            found.count, 20,
+            "the scan found \(found.count) call sites — the ramp is applied at 35, so a drop this large means the scan broke, not the app"
+        )
+
+        setIncreaseContrast(true)
+        for site in found {
+            let ramped = CompanionAccessibility.foregroundOpacity(site.nominal)
+            XCTAssertGreaterThanOrEqual(
+                contrastRatio(whiteAlpha: ramped), 4.5,
+                "\(site.file)'s \(site.nominal) caption lifts to \(ramped) under Increase Contrast, which is still \(String(format: "%.1f", contrastRatio(whiteAlpha: ramped))):1"
+            )
+        }
+    }
+
+    /// Off, nothing moves: these are the exact values every screenshot and
+    /// WCAG measurement in the QA log was taken against.
+    func testDimmedForegroundIsExactlyTheDesignedOpacityWhenTheSwitchIsOff() {
+        setIncreaseContrast(false)
+        for nominal in [0.3, 0.35, 0.45, 0.56, 0.82, 0.94] {
+            XCTAssertEqual(
+                CompanionAccessibility.foregroundOpacity(nominal), nominal,
+                accuracy: 0.0001,
+                "a user who never opened 辅助功能 must see the app that was measured"
+            )
+        }
+    }
+
+    /// The ramp may only add legibility, never reorder the hierarchy: a caption
+    /// that was quieter than its title has to stay quieter, and primary text is
+    /// already loud enough to leave alone.
+    func testRampLiftsMonotonicallyAndLeavesPrimaryTextAlone() {
+        setIncreaseContrast(true)
+        var previous = 0.0
+        for nominal in stride(from: 0.2, through: 1.0, by: 0.02) {
+            let ramped = CompanionAccessibility.foregroundOpacity(nominal)
+            XCTAssertGreaterThanOrEqual(ramped, previous - 0.0001, "hierarchy reordered at \(nominal)")
+            XCTAssertGreaterThanOrEqual(ramped, nominal, "the switch may not dim anything")
+            previous = ramped
+        }
+        for primary in [0.88, 0.9, 0.92, 0.94, 1.0] {
+            XCTAssertEqual(
+                CompanionAccessibility.foregroundOpacity(primary), primary, accuracy: 0.0001,
+                "primary text is the loudest thing on the surface already"
+            )
+        }
+    }
 }

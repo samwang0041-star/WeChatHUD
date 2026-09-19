@@ -77,6 +77,46 @@ enum CompanionAccessibility {
         min(opacity * borderOpacityScale, 0.32)
     }
 
+    // MARK: - Derived text ramp
+
+    /// The dimmest white-on-dark foreground that still clears 4.5:1 — the WCAG
+    /// AA threshold for body text — against these surfaces' near-black canvas.
+    ///
+    /// Derived, not picked: `Color.white.opacity(a)` over the 0.94-black canvas
+    /// resolves to an sRGB channel of ≈ a, and the ratio against that canvas is
+    /// `(lin(a) + 0.05) / (lin(0.06) + 0.05)` where `lin` is the sRGB
+    /// linearisation. That crosses 4.5 at a ≈ 0.50, hence 0.52 with a hair of
+    /// margin. `CompanionAccessibilityTests` recomputes the ratio for every
+    /// nominal value the app ships and fails if one lands under the threshold.
+    static let legibleDimFloor: Double = 0.52
+
+    /// Ceiling for the lift. Above this a caption stops reading as a caption
+    /// and starts competing with the title the ramp exists to sit under.
+    static let legibleDimCeiling: Double = 0.86
+
+    /// Primary-text threshold: at 0.88 and above the foreground is already the
+    /// loudest thing on the surface, and lifting it further would only flatten
+    /// the hierarchy.
+    static let primaryForegroundThreshold: Double = 0.88
+
+    /// Foreground opacity for dimmed text on the island and retrospective
+    /// canvases.
+    ///
+    /// `borderOpacityScale` answers "this hairline is too faint to see as an
+    /// edge" and does nothing for the far more common complaint on those two
+    /// surfaces, which is the 0.30–0.65 white text that carries the actual
+    /// sentences. The switch now lifts that ramp too: monotonically, so
+    /// whatever was quieter stays quieter, but never below `legibleDimFloor`.
+    static func foregroundOpacity(_ nominal: Double) -> Double {
+        guard increaseContrast else { return nominal }
+        guard nominal < primaryForegroundThreshold else { return nominal }
+        let lifted = min(max(nominal * 1.35, legibleDimFloor), legibleDimCeiling)
+        // The outer `max` is load-bearing: a ceiling alone would *dim* a value
+        // sitting just above it (0.87 → 0.86), and a legibility switch must
+        // never make anything harder to read than it already was.
+        return max(nominal, lifted)
+    }
+
     /// The keyboard focus ring.
     ///
     /// macOS draws this itself for AppKit controls, but every custom control in
@@ -215,5 +255,35 @@ extension InsettableShape {
     /// Wrap this shape in a contrast-aware hairline outline.
     func companionHairline(tint: Color? = nil) -> CompanionHairline<Self> {
         CompanionHairline(shape: self, tint: tint)
+    }
+}
+
+/// Dimmed white text that answers Increase Contrast.
+///
+/// A modifier rather than a `foregroundColor(.white.opacity(ramp(x)))` at the
+/// call site because of the dependency: the ramp is a *static* read, and
+/// SwiftUI only re-evaluates a view when something it *read* changes. Reading
+/// `companionDisplayGeneration` here is what makes a switch flip redraw the
+/// sentences instead of leaving the old opacity until some unrelated
+/// invalidation happens to come along.
+private struct CompanionDimmedForegroundModifier: ViewModifier {
+    let nominal: Double
+
+    @Environment(\.companionDisplayGeneration) private var generation
+
+    func body(content: Content) -> some View {
+        let _ = generation
+        content.foregroundColor(
+            .white.opacity(CompanionAccessibility.foregroundOpacity(nominal))
+        )
+    }
+}
+
+extension View {
+    /// `foregroundColor(.white.opacity(nominal))` that also lifts under
+    /// Increase Contrast. Drop-in for the dimmed text on the dark island and
+    /// retrospective canvases.
+    func companionDimmedForeground(_ nominal: Double) -> some View {
+        modifier(CompanionDimmedForegroundModifier(nominal: nominal))
     }
 }
