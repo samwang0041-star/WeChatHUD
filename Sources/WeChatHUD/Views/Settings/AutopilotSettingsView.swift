@@ -208,7 +208,16 @@ struct AutopilotSettingsView: View {
                 // (`updateAutopilotConfig` maps `.corrupt` onto defaults); it
                 // simply was not reachable from this screen.
                 if loadIsCorrupt {
-                    Button("用默认设置覆盖并重载") { rebuildFromDefaults() }
+                    Button("用默认设置覆盖并重载（含敏感词、发送上限等本页不显示的项）") { rebuildFromDefaults() }
+                    // This has to render INSIDE the loadError branch. `saveError`
+                    // sits in the `else if` below it, so a failed rebuild wrote a
+                    // sentence the page could only show once the read had already
+                    // recovered — the one escape hatch the send-side refusals
+                    // point at looked like a button that did nothing.
+                    if let rebuildError {
+                        Label(rebuildError, systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.red)
+                    }
                 }
             } else if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle")
@@ -493,14 +502,19 @@ struct AutopilotSettingsView: View {
     /// defaults over the row.
     @State private var loadIsCorrupt = false
 
+    /// Rendered beside the rebuild button rather than in `saveError`: see the
+    /// branch above for why a shared error slot hid it.
+    @State private var rebuildError: String?
+
     /// The one write this page must be able to make *while* its read is failing:
     /// `updateAutopilotConfig` rebuilds from defaults on `.corrupt`, so a no-op
     /// mutation is what replaces the unreadable row with a readable one. It is
     /// destructive (every stored 托管 setting goes back to defaults), which is why
     /// it is a named button and not something 保存 does behind the user's back.
     private func rebuildFromDefaults() {
+        rebuildError = nil
         guard (try? store.updateAutopilotConfig { _ in }) == true else {
-            saveError = "默认设置也没写进去：数据库可能正被占用。请稍后再试一次。"
+            rebuildError = "默认设置也没写进去：数据库可能正被占用。请稍后再试一次。"
             return
         }
         loadError = nil

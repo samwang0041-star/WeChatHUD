@@ -41,12 +41,32 @@ enum ClipboardGuard {
         return SavedState(items: saved.isEmpty ? nil : saved, changeCount: changeCount, hadContent: hadContent)
     }
 
-    static func restore(_ state: SavedState) {
-        let pb = NSPasteboard.general
+    /// - Parameter pastedText: exactly what this process wrote to the
+    ///   pasteboard during the send. Only consulted when the snapshot came
+    ///   back empty, where it is the one way to tell our own draft from
+    ///   something the user copied afterwards.
+    /// - Parameter pasteboard: injectable so the leak below has a behaviour
+    ///   test; the general pasteboard cannot be observed from a test run.
+    static func restore(_ state: SavedState, pastedText: String? = nil,
+                        on pasteboard: NSPasteboard? = nil) {
+        let pb = pasteboard ?? .general
         // Only restore if the clipboard was changed (by our send)
         guard pb.changeCount != state.changeCount else { return }
         if state.hadContent && (state.items == nil || state.items?.isEmpty == true) {
-            // Snapshot failed (promised files / images). Do not wipe irreplaceable data.
+            // The snapshot failed (promised files / images). The comment here
+            // used to say 「do not wipe irreplaceable data」 — but the caller's
+            // `clearContents()` runs before the paste, so by this line that
+            // data is already gone and this branch protects nothing. What it
+            // did keep alive was our own draft: chat text, often quoting the
+            // other party, parked on the general pasteboard for any clipboard
+            // manager to read and for Universal Clipboard to sync to the
+            // user's other devices. Erase it, but only when the pasteboard
+            // still holds exactly the string we wrote — content someone else
+            // copied since then is not ours to destroy.
+            if state.hadContent, let pastedText, !pastedText.isEmpty,
+               pb.string(forType: .string) == pastedText {
+                pb.clearContents()
+            }
             return
         }
         pb.clearContents()

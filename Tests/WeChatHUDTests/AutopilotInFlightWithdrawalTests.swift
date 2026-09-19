@@ -322,7 +322,7 @@ keystrokesMayHaveLanded: false,
             // The cap and staleness branches stamp manual-only BEFORE the send
             // and must keep doing so; the ordering that matters is inside the
             // post-send failure tail.
-            .components(separatedBy: "let failureReason = lastSendFailureMessage").last!
+            .components(separatedBy: "let failureReason = attempt.failureMessage").last!
         let decide = body.range(of: "let disposition = Self.sendFailureDisposition(")!.lowerBound
         let stamp = body.range(of: "retained.manualOnlyReason =")!.lowerBound
         XCTAssertLessThan(decide, stamp,
@@ -904,30 +904,46 @@ keystrokesMayHaveLanded: false,
             .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
     }
 
-    /// Wiring for the landed-keystroke fact: it has to be reset per send and set
-    /// at the one place that knows the keys went in.
-    func testLandedKeystrokeFlagIsResetAndSetAtTheRightPlace() throws {
+    /// The landed-keystroke fact and the failure sentence have to travel with
+    /// the call. Parked on the actor, whichever send started next rewrote both —
+    /// and a send does start during the previous one's post-keystroke `await`,
+    /// because `isSending` is only checked inside `serialSend` while the reset
+    /// sat at the outer entry. The first send then read back 「什么都没敲」 plus
+    /// the second send's 「已有发送正在进行」, requeued a draft the peer had
+    /// already received, and fired it again on resume.
+    func testLandedKeystrokeFactTravelsWithTheCall() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
-        let resets = source.components(
-            separatedBy: "lastSendKeystrokesMayHaveLanded = false").count - 1
-        XCTAssertGreaterThanOrEqual(resets, 1, "每次发送前必须清零，否则会沿用上一条的结论")
-        let setTrue = source.range(of: "lastSendKeystrokesMayHaveLanded = true")
-        let reset = source.range(of: "lastSendKeystrokesMayHaveLanded = false")
-        XCTAssertNotNil(setTrue, "确认失败那一处必须把它设为 true")
-        XCTAssertNotNil(reset)
-        XCTAssertLessThan(reset!.lowerBound, setTrue!.lowerBound, "先清后置")
-        // The rate limiter's own early refusals happen before serialSend runs, so
-        // the reset must sit at the outer entry point too.
-        let limiter = (source.components(separatedBy: "private func serialSendWithRateLimit(").last ?? "")
-            .components(separatedBy: "\n    }\n").first ?? ""
-        XCTAssertTrue(limiter.contains("lastSendKeystrokesMayHaveLanded = false"),
-                      "外层入口也要清零：限流拒绝根本没进过 serialSend")
+        XCTAssertFalse(source.contains("var lastSendKeystrokesMayHaveLanded"),
+                       "「键有没有落」是单次发送的事实，放进 actor 变量就会被下一次发送改写")
+        XCTAssertFalse(source.contains("var lastSendFailureMessage"),
+                       "失败原因同理：两条发送共用一个字符串 = 后一条的说法盖住前一条")
+        XCTAssertTrue(source.contains("keystrokesLanded = true"),
+                      "确认失败那一处仍要把它设为 true")
+        XCTAssertTrue(source.contains("keystrokesMayHaveLanded: attempt.keystrokesLanded"),
+                      "处置判定要读那次调用的返回值")
+        XCTAssertTrue(source.contains("let failureReason = attempt.failureMessage"),
+                      "失败说法同样只能来自那次调用")
+        // The set site must sit inside the verification-failure branch, not
+        // drift next to one of the launcher refusals that typed nothing.
+        let landed = source.range(of: "keystrokesLanded = true")!.lowerBound
+        XCTAssertTrue(source[source.index(landed, offsetBy: -400)...landed]
+            .contains("发送后未在微信数据库中确认"),
+                      "置位点要贴着那条确认失败，别漂到别的分支去")
     }
 
+    /// Positive control for the type itself: a refusal is by construction a
+    /// send that never reached the keyboard.
+    func testRefusedAttemptNeverClaimsLandedKeystrokes() {
+        let refused = AutopilotService.SendAttempt.refused("测试")
+        XCTAssertFalse(refused.verified)
+        XCTAssertFalse(refused.keystrokesLanded,
+                       "拒绝路径若带出 landed=true，人工确认那条就会被说成「可能已发」")
+        XCTAssertEqual(refused.failureMessage, "测试")
+    }
     /// The mute gate used to sit inside the launcher, after WeChat had already
     /// been activated, the search box opened and the conversation switched. A
     /// muted chat with a queued draft therefore stole the foreground once a
@@ -972,13 +988,49 @@ keystrokesMayHaveLanded: false,
     /// come back, i.e. *before* the resolve — so a second click (or a second surface
     /// showing the same row) could pass every guard here and type the same reply to
     /// the same person twice.
-    func testApprovalClaimNeedsBothFactsAtOnce() {
-        XCTAssertTrue(AutopilotService.mayStartApproval(rowPending: true, alreadyInFlight: false))
-        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: false, alreadyInFlight: false),
+    func testApprovalClaimNeedsAllThreeFactsAtOnce() {
+        XCTAssertTrue(AutopilotService.mayStartApproval(
+            rowPending: true, alreadyInFlight: false, twinKnown: true))
+        XCTAssertFalse(AutopilotService.mayStartApproval(
+            rowPending: false, alreadyInFlight: false, twinKnown: true),
                        "行已经不 pending 就不能再发")
-        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: true, alreadyInFlight: true),
+        XCTAssertFalse(AutopilotService.mayStartApproval(
+            rowPending: true, alreadyInFlight: true, twinKnown: true),
                        "同一条正在发送中 ⇒ 第二次必须被拒")
-        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: false, alreadyInFlight: true))
+        XCTAssertFalse(AutopilotService.mayStartApproval(
+            rowPending: true, alreadyInFlight: false, twinKnown: false),
+                       "孪生读不到 ≠ 没有孪生：那条 hold 可能正拦着一次已落键的发送")
+    }
+
+    /// The claim is only half of it: the delivery gate that runs *during* the
+    /// send has to see the same second id axis, or a hold recorded against the
+    /// queue row is invisible to the one button a human can press.
+    func testApprovalGateSeesBothIdAxes() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let approval = source.components(separatedBy: "func approvePending(logId:")
+            .last ?? ""
+        let gate = approval.components(separatedBy: "deliveryStillPermitted").dropFirst().first ?? ""
+        XCTAssertFalse(gate.isEmpty, "锚点没了：确认发送这条路上已经没有闸门")
+        XCTAssertTrue(gate.contains("queueId: twinQueueId"),
+                      "审批只带 logId 轴 = 队列轴上的 hold 永远拦不住这只手")
+        XCTAssertTrue(gate.contains("logId: logId"))
+        // 「查不到」 must not be answered with the fail-open read.
+        XCTAssertTrue(approval.components(separatedBy: "inFlightApprovalLogIds.insert(logId)").first?
+            .contains("autopilotLogQueueIdRead") ?? false,
+                      "孪生要用会报错的读法，`autopilotLogQueueId` 把占用也读成 nil")
+        // A predicate with three inputs is only as good as the call site that
+        // feeds all three: passing a literal here keeps the unit test green.
+        let claims = approval.components(separatedBy: "Self.mayStartApproval(").dropFirst()
+        XCTAssertEqual(claims.count, 1, "确认发送这条路上只该有一次领取")
+        let claim = (claims.first ?? "").components(separatedBy: ") else {").first ?? ""
+        XCTAssertTrue(claim.contains("twinKnown: twinKnown"),
+                      "第三个事实必须来自那次读，写死的 true 等于没有这个事实")
+        XCTAssertFalse(claim.contains(": true"),
+                       "领取判据的入参里不许出现字面量")
     }
 
     /// Wiring, and the only part a unit test cannot reach: the claim has to be

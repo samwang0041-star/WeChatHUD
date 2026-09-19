@@ -185,6 +185,11 @@ struct MessageInfo: Identifiable, Codable {
     static func formatRelative(_ ts: Int) -> String {
         let now = Int(Date().timeIntervalSince1970)
         let diff = now - ts
+        // Same verdict as every other relative clock here, and this one is not
+        // only cosmetic: four prompt builders put this string in front of the
+        // model, so 「刚刚」 for a stamp that reads as the future tells the model
+        // the conversation is fresh exactly when the clock cannot say so.
+        if diff < 0 { return RelativeTimeFormatter.unknown }
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(diff / 60)分钟前" }
         if diff < 86400 { return "\(diff / 3600)小时前" }

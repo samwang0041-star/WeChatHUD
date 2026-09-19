@@ -166,7 +166,7 @@ final class SettingsScopeHonestyTests: XCTestCase {
 
     /// 「保存一次会重建默认设置」 was a promise this page could not keep: `save()`
     /// is gated on `loadError == nil`, so a `.corrupt` 托管设置 row had no way out
-    /// on the very screen that all five send sites tell the user to visit. The
+    /// on the very screen that the send-side refusals tell the user to visit. The
     /// recovery exists in the store (`updateAutopilotConfig` rebuilds on
     /// `.corrupt`) but was unreachable from the UI.
     func testCorruptAutopilotSettingsPageHasAReachableEscape() throws {
@@ -189,6 +189,14 @@ final class SettingsScopeHonestyTests: XCTestCase {
         XCTAssertTrue(fn.contains("updateAutopilotConfig"),
                       "要走那条会把 corrupt 重建为默认值的写，而不是另起一条")
         XCTAssertFalse(fn.contains("save()"), "绕道 save() 会被同一个 loadError 再挡一次")
-        XCTAssertTrue(fn.contains("saveError"), "重建也可能失败，失败要说，不能显示「已保存」")
+        XCTAssertFalse(fn.contains("saveError ="),
+                       "写进 saveError 等于没写：它在 `else if` 那一支，而此刻 loadError 必然非空")
+        XCTAssertTrue(fn.contains("rebuildError ="), "重建也可能失败，失败要说，不能显示「已保存」")
+        XCTAssertTrue(block.contains("if let rebuildError"),
+                      "文案要渲染在 loadError 分支内，否则这个按钮看起来就是点了没反应")
+        XCTAssertTrue(block.contains("Label(rebuildError,"),
+                      "渲染的要就是那个变量本身，不是另一处副本")
+        XCTAssertTrue(fn.hasPrefix(" {\n        rebuildError = nil"),
+                      "入口要先清掉上一次的失败，否则第二次成功之后旧错误还会浮出来")
     }
 }

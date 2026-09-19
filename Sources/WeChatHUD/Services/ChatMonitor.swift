@@ -2382,7 +2382,7 @@ final class ChatMonitor: ObservableObject {
 
     /// One sentence for all four manual-send surfaces, so a refused send is
     /// never described differently depending on which button was pressed.
-    static let unreadableConfigNotice = "暂时读不到托管设置，这条没有发送。请先在设置里恢复托管配置，再重试。"
+    nonisolated static let unreadableConfigNotice = "暂时读不到托管设置，这条没有发送。请先在设置里恢复托管配置，再重试。"
 
     func sendAutopilotNow(id: UUID, config: AutopilotConfig) async -> AutopilotService.ManualSendOutcome {
         guard let service = autopilotService else { return .notFound }
@@ -3495,16 +3495,18 @@ final class ChatMonitor: ObservableObject {
 
     /// Approve a pending autopilot item and send it.
     func approveAutopilotItem(logId: Int64, reply: String, chatName: String, chatUsername: String,
-                              createdAt: Date? = nil) async -> Bool {
-        guard let service = await ensureAutopilotReadyForSend() else { return false }
-        let success = await service.approvePending(
+                              createdAt: Date? = nil) async -> AutopilotService.SendAttempt {
+        guard let service = await ensureAutopilotReadyForSend() else {
+            return .refused("自动驾驶没能启动，这条没有敲键。请先启动托管，或手动发送。")
+        }
+        let attempt = await service.approvePending(
             logId: logId, reply: reply, chatName: chatName,
             chatUsername: chatUsername, createdAt: createdAt
         )
         // I1 fix: refresh counters from DB session instead of manual adjustment
         refreshAutopilotSessionState()
         await refreshAutopilotLiveState()
-        return success
+        return attempt
     }
 
     /// Reject a pending autopilot item.

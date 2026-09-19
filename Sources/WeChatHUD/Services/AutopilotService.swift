@@ -148,9 +148,6 @@ actor AutopilotService {
 
     /// True while a send is in progress — prevents concurrent UI automation.
     private var isSending = false
-    /// Last precise send failure reason. Read immediately by the caller
-    /// after a false send result to preserve UI/audit explainability.
-    private var lastSendFailureMessage: String?
 
     /// Log ids whose 'sent' write failed after a verified send. Session scope
     /// on purpose: there is no durable place to put this, and the window it
@@ -174,12 +171,18 @@ actor AutopilotService {
     /// failed, this one records a send that has not finished yet.
     private var inFlightApprovalLogIds: Set<Int64> = []
 
-    /// The two facts that grant a manual approval, decided together in one
-    /// synchronous block: the board still shows the row as 'pending', and nobody
-    /// is already sending it. Splitting them across an `await` is what let a
-    /// second click pass both checks and type the same reply twice.
-    nonisolated static func mayStartApproval(rowPending: Bool, alreadyInFlight: Bool) -> Bool {
-        rowPending && !alreadyInFlight
+    /// The three facts that grant a manual approval, decided together in one
+    /// synchronous block: the board still shows the row as 'pending', nobody is
+    /// already sending it, and its queue twin is *known*. Splitting the first
+    /// two across an `await` is what let a second click pass both checks and
+    /// type the same reply twice; the third is the other half of the same
+    /// credential — a delivered-but-unrecorded send is held on the queue axis
+    /// (`unresolvedQueueWrites`), and an approval that cannot see that axis
+    /// pushes a reply the peer already received.
+    nonisolated static func mayStartApproval(
+        rowPending: Bool, alreadyInFlight: Bool, twinKnown: Bool
+    ) -> Bool {
+        rowPending && !alreadyInFlight && twinKnown
     }
 
     enum UnresolvedQueueWrite: Equatable {
@@ -463,6 +466,25 @@ actor AutopilotService {
         case humanRequired(reason: String)
     }
 
+    /// What one send attempt did, carried out as a return value.
+    ///
+    /// Both facts used to live on the actor, and an actor is reentrant at every
+    /// `await` — including the clipboard restore that runs *after* the keystrokes
+    /// have already landed. A second send starting in that window (a human
+    /// pressing 确认发送 while the batch loop is mid-retry) reset them both, so
+    /// the first send came back reading 「已有发送正在进行」/「什么都没敲」 and
+    /// requeued a draft the peer had already received.
+    struct SendAttempt {
+        let verified: Bool
+        let failureMessage: String?
+        let keystrokesLanded: Bool
+
+        /// A refusal that never reached the keyboard.
+        static func refused(_ message: String) -> SendAttempt {
+            SendAttempt(verified: false, failureMessage: message, keystrokesLanded: false)
+        }
+    }
+
     /// The single place that decides what a failed send means for the queued
     /// draft. It has to be one function because the three inputs arrive from
     /// different places (actor flags, the queue table, the launcher's reason
@@ -524,16 +546,13 @@ actor AutopilotService {
     /// makes 静音此对话 a withdrawal: the mute is applied to the durable
     /// `chat_actions` row, while the draft this decision guards may already be
     /// sitting in the queue from a message that arrived before the mute.
-    /// Whether the last failed send had already pressed keys. The launcher's
-    /// refusals (撤回 / 输入框里有草稿 / 会话切换 / 账号未证) typed nothing; a
-    /// `succeeded == true` whose DB confirmation never arrived means the text
-    /// almost certainly *did* go out. Bookkeeping must not read the second one
-    /// as 「什么都没发生」 and put the draft back in the automatic queue.
-    private var lastSendKeystrokesMayHaveLanded = false
-
+    ///
     /// One read of 「is this conversation muted」 for every consumer in this
     /// actor: the delivery gate and the failure bookkeeping must not disagree
     /// about whether a refusal was a permission change or a failed keystroke.
+    /// Whether the keys landed is not part of this question — it is carried out
+    /// of the send as `SendAttempt.keystrokesLanded` rather than parked on the
+    /// actor, because the read happens after an `await`.
     private func conversationIsMuted(_ username: String) -> Bool {
         store.loadChatActions()[username]?.isPermanentlySilenced(
             nowEpoch: Int(Date().timeIntervalSince1970)
@@ -860,10 +879,10 @@ actor AutopilotService {
     /// pending row must not bypass the staleness check, rate limit, session
     /// cap, or pause state just because a human tapped a button.
     func approvePending(logId: Int64, reply: String, chatName: String, chatUsername: String,
-                        createdAt: Date? = nil) async -> Bool {
+                        createdAt: Date? = nil) async -> SendAttempt {
         guard !isPaused, sessionId != nil else {
             print("[WCHUD] Autopilot: approval blocked — paused or no session")
-            return false
+            return .refused("自动驾驶已暂停或会话已结束，这条没有发出。")
         }
         // A human pressed the button, so refusing costs them nothing but a
         // retry — while `?? AutopilotConfig()` would answer an unreadable
@@ -871,30 +890,50 @@ actor AutopilotService {
         // capped out of.
         guard let config = store.autopilotConfigForSendGate() else {
             print("[WCHUD] Autopilot: approval blocked — autopilot config unreadable")
-            return false
+            return .refused(ChatMonitor.unreadableConfigNotice)
         }
         guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
             print("[WCHUD] Autopilot: approval blocked — session cap reached")
-            return false
+            return .refused("这个会话的自动发送已达上限，这条没有发出。请提高上限，或手动发送。")
         }
         // Re-validate the row is still pending — a stale UI snapshot can
         // re-approve a row already rejected/sent/canceled, which would send
         // the rejected reply (and double-decrement sessionPending).
         let savedReply = store.autopilotLogPendingReply(id: logId)
+        // 「查不到孪生」 is not 「没有孪生」: on a busy database this reads as a
+        // row with no queue twin, which is exactly the shape of a send that
+        // landed and whose write-back failed. Refusing costs the human one retry;
+        // guessing sends the same text to the same person twice.
+        let twinRead = store.autopilotLogQueueIdRead(id: logId)
+        let twinQueueId: UUID?
+        let twinKnown: Bool
+        switch twinRead {
+        case .unreadable:
+            twinQueueId = nil
+            twinKnown = false
+        case .value(let raw):
+            twinQueueId = raw.flatMap(UUID.init(uuidString:))
+            twinKnown = true
+        }
         // Same synchronous block, or it is not a claim. 'pending' is the only
         // idempotency credential this path has, and the row is not resolved
         // until after the send returns — while `serialSend` releases `isSending`
         // as soon as the keystrokes come back. A second 确认发送 landing in that
         // gap re-reads 'pending', re-passes the cap (sessionSent is still
         // un-incremented) and types the same reply to the same person twice.
+        let alreadyInFlight = inFlightApprovalLogIds.contains(logId)
         guard Self.mayStartApproval(
             rowPending: savedReply != nil,
-            alreadyInFlight: inFlightApprovalLogIds.contains(logId)
+            alreadyInFlight: alreadyInFlight,
+            twinKnown: twinKnown
         ) else {
-            print(savedReply == nil
-                  ? "[WCHUD] Autopilot: approval blocked — log row no longer pending"
-                  : "[WCHUD] Autopilot: approval blocked — 这条正在发送中")
-            return false
+            let refusal = savedReply == nil
+                ? "这条已经不在待确认列表里了，没有敲键。请刷新后重新选择。"
+                : alreadyInFlight
+                  ? "这条正在发送中，没有重复敲键。"
+                  : "读不到这条的队列孪生，为了不发第二遍，这条没有敲键。请重试一次。"
+            print("[WCHUD] Autopilot: approval blocked — \(refusal)")
+            return .refused(refusal)
         }
         inFlightApprovalLogIds.insert(logId)
         defer { inFlightApprovalLogIds.remove(logId) }
@@ -906,20 +945,22 @@ actor AutopilotService {
             )
             if let stale = await stalePendingSendReason(probe) {
                 print("[WCHUD] Autopilot: approval blocked — \(stale)")
-                return false
+                return .refused(stale)
             }
         }
-        let success = await serialSendWithRateLimit(
+        let attempt = await serialSendWithRateLimit(
             chatName: chatName, chatUsername: chatUsername, text: reply, config: config,
             typingDelay: Self.estimateTypingDelay(for: reply),
             // The approval row is the human's own signal: a 取消本条 landing
             // mid-flight flips it out of 'pending', and that must be the last
             // thing checked before the send key.
             gate: { [weak self] in
-                await self?.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: chatUsername) ?? false
+                await self?.deliveryStillPermitted(
+                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername
+                ) ?? false
             }
         )
-        if success {
+        if attempt.verified {
             // Atomically record the send + report whether a 'pending' row was
             // consumed — a reject racing this send already flipped it and
             // counted the decrement.
@@ -939,7 +980,6 @@ actor AutopilotService {
             // The queue twin holds the SAVED draft text — `reply` may carry
             // an unsaved edit. Legacy matching must use the stored reply or
             // the twin survives and later auto-sends the superseded text.
-            let twinQueueId = store.autopilotLogQueueId(id: logId).flatMap(UUID.init(uuidString:))
             let twinText = savedReply ?? reply
             do {
                 try store.deletePendingSendForLog(
@@ -970,7 +1010,7 @@ actor AutopilotService {
                 )
             }
         }
-        return success
+        return attempt
     }
 
     /// Re-attempts the terminal writes that failed — both the 'sent' stamp after
@@ -1590,15 +1630,13 @@ actor AutopilotService {
         peerLastMessage: String? = nil,
         topic: String? = nil,
         gate: (@MainActor @Sendable () async -> Bool)? = nil
-    ) async -> Bool {
+    ) async -> SendAttempt {
         // M5 fix: block concurrent sends through actor suspension points
         guard !isSending else {
             print("[WCHUD] Autopilot: send already in progress, dropped — will retry on next scan")
-            lastSendFailureMessage = "已有发送正在进行"
-            return false
+            return .refused("已有发送正在进行")
         }
         isSending = true
-        lastSendFailureMessage = nil
         defer { isSending = false }
 
         // Pasteboard is MainActor-only; await save/restore so we never race
@@ -1611,11 +1649,12 @@ actor AutopilotService {
         // answer that keeps the withdrawal bookkeeping honest: nothing was typed,
         // so the draft stays withdrawable.
         guard let sendConfig = store.autopilotConfigForSendGate() else {
-            lastSendFailureMessage = "读不到托管设置（包括发送键），这条没有敲键。请先在设置里恢复托管配置。"
-            return false
+            return .refused("读不到托管设置（包括发送键），这条没有敲键。请先在设置里恢复托管配置。")
         }
         let savedClipboard = await ClipboardGuard.save()
         let verified: Bool
+        var failureMessage: String?
+        var keystrokesLanded = false
         do {
             let verificationBaseline = await latestOutgoingMessage(chatUsername: chatUsername)
             let startedAt = Int(Date().timeIntervalSince1970)
@@ -1646,11 +1685,11 @@ actor AutopilotService {
                     )
                     if verified { ok = true; outgoingMsgUID = uid; break }
                     if attempt == 2 {
-                        lastSendFailureMessage = "发送后未在微信数据库中确认"
+                        failureMessage = "发送后未在微信数据库中确认"
                         // The keys went in; only the receipt is missing. This is
                         // the one failure the withdrawal branches must never
                         // treat as 「什么都没发」.
-                        lastSendKeystrokesMayHaveLanded = true
+                        keystrokesLanded = true
                         print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
                     }
                 }
@@ -1672,14 +1711,16 @@ actor AutopilotService {
                 }
                 verified = ok
             } else {
-                lastSendFailureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
-                print("[WCHUD] Autopilot: UI send failed — \(lastSendFailureMessage ?? "unknown")")
+                failureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
+                print("[WCHUD] Autopilot: UI send failed — \(failureMessage ?? "unknown")")
                 verified = false
             }
         }
         // Always restore on MainActor after send path (no detached Task race).
-        await ClipboardGuard.restore(savedClipboard)
-        return verified
+        await ClipboardGuard.restore(savedClipboard, pastedText: text)
+        return SendAttempt(verified: verified,
+                           failureMessage: failureMessage,
+                           keystrokesLanded: keystrokesLanded)
     }
 
     private func serialSendWithRateLimit(
@@ -1689,12 +1730,8 @@ actor AutopilotService {
         peerLastMessage: String? = nil,
         topic: String? = nil,
         gate: (@MainActor @Sendable () async -> Bool)? = nil
-    ) async -> Bool {
+    ) async -> SendAttempt {
         let now = monotonic()
-        // Reset before any early return: a refusal from the rate limiter typed
-        // nothing, and the flag must not carry over from the previous send.
-        lastSendKeystrokesMayHaveLanded = false
-
         // C2 fix: global rate limit check, plus the clock-jump fix — the
         // window is measured on the monotonic axis, so moving the system
         // clock forward cannot age these timestamps out and permit a second
@@ -1707,11 +1744,10 @@ actor AutopilotService {
         globalSendTimestamps = hour.retained
         if hour.blocked {
             print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(hour.retained.count)/h)")
-            lastSendFailureMessage = "已达到每小时发送上限"
-            return false
+            return .refused("已达到每小时发送上限")
         }
 
-        let success = await serialSend(
+        let attempt = await serialSend(
             chatName: chatName,
             chatUsername: chatUsername,
             text: text,
@@ -1720,10 +1756,10 @@ actor AutopilotService {
             topic: topic,
             gate: gate
         )
-        if success {
+        if attempt.verified {
             globalSendTimestamps.append(now)
         }
-        return success
+        return attempt
     }
 
     // MARK: - Send verification
@@ -2040,7 +2076,7 @@ actor AutopilotService {
         // was re-queued by a blocked send) has no twin yet — without this the
         // gate would read "canceled" and silently never send it.
         if let sid = sessionId { try? store.upsertPendingSend(item, sessionId: sid) }
-        let success = await serialSendWithRateLimit(
+        let attempt = await serialSendWithRateLimit(
             chatName: item.chatName, chatUsername: item.chatUsername,
             text: item.replyText, config: config, typingDelay: typingDelay,
             peerLastMessage: item.peerLastMessage, topic: item.topic,
@@ -2048,7 +2084,7 @@ actor AutopilotService {
                 await self?.deliveryStillPermitted(queueId: item.id, logId: nil, chatUsername: item.chatUsername) ?? false
             }
         )
-        if success {
+        if attempt.verified {
             // Delivered, so it counts as sent even if the bookkeeping below
             // fails — but the queue row and its log twin must be retired in
             // ONE transaction. Split across two `try?` calls, a failed twin
@@ -2088,13 +2124,13 @@ actor AutopilotService {
             return .sent
         }
         var retained = item
-        let failureReason = lastSendFailureMessage ?? "发送结果无法确认"
+        let failureReason = attempt.failureMessage ?? "发送结果无法确认"
         let disposition = Self.sendFailureDisposition(
             paused: isPaused,
             sessionOpen: sessionId != nil,
             rowStillQueued: store.hasPendingSend(id: item.id),
             conversationMuted: conversationIsMuted(item.chatUsername),
-            keystrokesMayHaveLanded: lastSendKeystrokesMayHaveLanded,
+            keystrokesMayHaveLanded: attempt.keystrokesLanded,
             reason: failureReason,
             retryableReason: Self.isRetryableSendBusy(failureReason)
         )

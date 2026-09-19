@@ -34,9 +34,23 @@ struct ApprovalWorkspaceView: View {
     @State private var filter: Filter = .pending
     @State private var selectedID: Int64?
     @State private var editedReply: String = ""
-    @State private var receipt: String?
+    @State private var receipt: Receipt?
     @State private var showSendConfirm = false
     @State private var isSending = false
+
+    /// A receipt states its own verdict instead of having one inferred from its
+    /// wording. The icon used to be chosen by looking for 「失败」 in the
+    /// sentence, and none of the refusals on this screen contain it — a muted
+    /// conversation, an unreadable 托管设置, an unsaved draft and a reply whose
+    /// receipt never came back all printed a green checkmark over a message
+    /// that never reached anyone.
+    private struct Receipt {
+        let text: String
+        let isFailure: Bool
+
+        static func done(_ text: String) -> Receipt { Receipt(text: text, isFailure: false) }
+        static func problem(_ text: String) -> Receipt { Receipt(text: text, isFailure: true) }
+    }
 
     private var entries: [AutopilotLogEntry] {
         switch filter {
@@ -108,9 +122,10 @@ struct ApprovalWorkspaceView: View {
                 }
             }
             if let receipt {
-                Label(receipt, systemImage: receipt.contains("失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
+                Label(receipt.text,
+                      systemImage: receipt.isFailure ? "exclamationmark.triangle" : "checkmark.circle.fill")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(receipt.contains("失败") ? .orange : CompanionPalette.jadeInk)
+                    .foregroundStyle(receipt.isFailure ? .orange : CompanionPalette.jadeInk)
                     .padding(.top, 10)
             }
         }
@@ -343,9 +358,9 @@ struct ApprovalWorkspaceView: View {
                             Task {
                                 do {
                                     try await monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
-                                    receipt = "已保存草稿"
+                                    receipt = .done("已保存草稿")
                                 } catch {
-                                    receipt = "草稿没有保存，请重试。"
+                                    receipt = .problem("草稿没有保存，请重试。")
                                 }
                             }
                         }
@@ -356,7 +371,7 @@ struct ApprovalWorkspaceView: View {
                                 chatUsername: selected.chatUsername,
                                 replyText: selected.generatedReply
                             )
-                            receipt = "已取消本条，对应的待发草稿已一并移除。"
+                            receipt = .done("已取消本条，对应的待发草稿已一并移除。")
                         }
                         .buttonStyle(.bordered)
                     }
@@ -392,19 +407,28 @@ struct ApprovalWorkspaceView: View {
         // that had never been typed. The mute list is the one place that fact is
         // read, so this cannot drift from what 取消静音 offers.
         if monitor.silencedConversations.contains(where: { $0.username == selected.chatUsername }) {
-            receipt = "这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。"
+            receipt = .problem("这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。")
             return
         }
-        let ok = await monitor.approveAutopilotItem(
+        let attempt = await monitor.approveAutopilotItem(
             logId: selected.id,
             reply: editedReply,
             chatName: selected.chatName,
             chatUsername: selected.chatUsername,
             createdAt: selected.createdAt
         )
-        receipt = ok
-            ? CompanionProductCopy.sendSuccess(name: selected.chatName)
-            : CompanionProductCopy.sendUncertain
+        // 「可能已发」 is reserved for the one case that earned it: the keys went
+        // in and only the receipt is missing. It used to be printed for every
+        // `false`, so a paused session, an unreadable 托管设置, a session cap and
+        // a row that left the queue all told the user to go dig through WeChat
+        // for a message that was never typed.
+        if attempt.verified {
+            receipt = .done(CompanionProductCopy.sendSuccess(name: selected.chatName))
+        } else if attempt.keystrokesLanded {
+            receipt = .problem(CompanionProductCopy.sendUncertain)
+        } else {
+            receipt = .problem(attempt.failureMessage ?? "这条没有发出。")
+        }
     }
 
     private func sendPendingNow(_ item: PendingSend) async -> String? {
@@ -415,7 +439,7 @@ struct ApprovalWorkspaceView: View {
         await monitor.syncAutopilotPendingQueue()
         switch outcome {
         case .sent:
-            receipt = CompanionProductCopy.sendSuccess(name: item.chatName)
+            receipt = .done(CompanionProductCopy.sendSuccess(name: item.chatName))
             return nil
         case .blocked(let reason):
             return reason
@@ -427,7 +451,7 @@ struct ApprovalWorkspaceView: View {
     private func cancelPending(_ item: PendingSend) async {
         await monitor.autopilotService?.cancelPendingSend(id: item.id)
         await monitor.syncAutopilotPendingQueue()
-        receipt = "已取消即将发送的回复"
+        receipt = .done("已取消即将发送的回复")
     }
 }
 
