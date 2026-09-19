@@ -2351,3 +2351,38 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
 `messagesByWeekday` 在这一域里确实存在 `[]` 的取值，守卫只查了 `isEmpty` 而不是
 长度）。少一格是"打开洞察总览时进程消失"。统一走 `MessageHelpers.buckets(_:count:)`
 补零/截断：少一格从崩溃变成少一根柱子。测试断言归一函数本身 + 三处渲染点都调了它。
+
+### 第 30 轮判阴与定价（逐条回源码验过，故意不改）
+
+1. `approvePending` 的"翻孪生行 + 删队列行"仍非原子。方向与 §119 相反：先翻后删，
+   半途失败留下的是"日志已 sent、队列行还在"，而队列行的 `manualOnlyReason` 非空 ⇒
+   永不自动发出，人工点「立即发送」时 `stalePendingSendReason` 会在会话里读到我那条
+   已送达的回复而拦下。子代理自己确认重复发送不可达，故不再动。
+2. 6-8-4 的**订单号**（如 `120105-20251219-0032`）会被过掩成 `[证件]`。这是故意的：
+   多掩一个号让 AI 少一个引子，少掩一个身份证是把原文发出去。要再收窄只能加省份码
+   白名单，而 `120105` 本身就是合法区划码，收了也不解决该例。
+3. `Date(timeIntervalSince1970: Double(msg.createTime))` 在仓里有 14+ 处，只有写持久
+   水位/缓存戳的那三处会出事（§125 已收口）。根治要在 reader 出口对 `create_time` 做
+   区间钳制，但它同时进 `contentKey` 与排序键，风险面比收益大 ⇒ 留作独立一轮，配套要
+   先把"钳制后旧行的 contentKey 变了会不会重复入队"量清楚。
+4. 群成员静音按显示名落库（`ignoreSender(senderUsername: "")`）：同名成员一起被静音，
+   别人改名成被静音的名字就静默丢消息。要修得先让 `InboxItem` 带上 `senderUsername`。
+5. `ConversationDetailView` 的「暂无消息记录」把读失败说成没人说话（`recentMessagesAsync`
+   里 `try? → []`）。同一个 reader 在发送路径是会报"无法读取发送前记录"的，这里没有。
+6. 洞察页的「约 N 条 / 约 N 人 / 已等 3 小时」是模型填的数，没有任何一栏回算，UI 也
+   没有"这是推测"的标记，雷达严重度还直接吃这个伪造小时数。
+7. `queryAll/queryOne/scalarCount` 把 `sqlite3_step` 的错误当成"读到结尾" ⇒ 计数悄悄变
+   小、主动提醒不再触发。已有 `queryAllThrowing` 系列，但扫描链路没人用。
+8. 取消关注不清 `conversation_memory / ignored_senders / group_member_rules /
+   vip_traces / recalled_messages / analysis_cache`。**故意不清**：再关注时丢掉数月记忆
+   比留着更伤人，而 `recalled_messages.original_text` 是敏感原文，留着也有隐私面——
+   这是产品决策，不是顺手加几条 DELETE。
+9. `actionPrefetch / vipInsights / unsavedReplyDraftEdits` 只写不删；`ChatMonitor.stop()`
+   不解除 `start()` 注册的观察者（当前两个调用点互斥 ⇒ 潜伏，不是现役损伤）。
+10. `review_runs` 的窗口衔接：失败那期的 `range_end` 不算进下一次的起点 ⇒ 会重扫一遍
+   （AI 成本，不漏内容）；partial 那期的 `failed_chats` 永久落在所有后续窗口之外。
+11. §116 的残留：同群里两个同名成员、只有一个在 10 分钟窗口内发过言时仍会错认。要
+   分辨需要群成员名单，而 reader 的 `name2id` 只在单次查询内部可见。
+12. 小面：`AssistantTodayView` 徽标「N 项」只渲染 `prefix(3)` 且无 +N；
+    `CommitmentTabView` 「可在『已完成』列表随时查看」实为 14 天窗口；
+    `AdmissionSettingsView` 的静音规则读失败时整块变空。
