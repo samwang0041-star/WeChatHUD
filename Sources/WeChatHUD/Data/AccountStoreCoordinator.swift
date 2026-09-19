@@ -164,8 +164,22 @@ struct AccountStoreCoordinator {
         if !initialSettings.isEmpty, let legacy {
             for key in initialSettings.keys { try? legacy.deleteSetting(key) }
         }
-        let sync = device.get("sync").flatMap { $0.data(using: .utf8) }
-            .flatMap { try? JSONDecoder().decode(SyncConfig.self, from: $0) } ?? SyncConfig()
+        // A stored-but-unreadable account setting is not the same as an unset
+        // one. Defaulting it would resolve to `wechatDBPath == "auto"`, which
+        // with more than one install on the machine means no identity, which
+        // means opening a fresh empty store while the user's real data sits
+        // untouched next door — the app looks wiped. Stop instead, exactly as
+        // the other unreadable-state paths in this type do.
+        let storedSyncRaw = device.get("sync")
+        let sync: SyncConfig
+        if let storedSyncRaw, !storedSyncRaw.isEmpty {
+            guard let decoded = Self.decodedSyncConfig(from: storedSyncRaw) else {
+                throw HUDStoreError.openFailed("Device account setting is unreadable; refusing to switch accounts")
+            }
+            sync = decoded
+        } else {
+            sync = oldSync
+        }
         let root = Self.selectedRoot(configuredPath: sync.wechatDBPath, candidates: databaseCandidates)
         let identity = root.map(WeChatReader.accountCacheIdentity)
         let useLegacy = identity != nil && identity == device.legacyAccountIdentity && legacy != nil
@@ -252,6 +266,18 @@ struct AccountStoreCoordinator {
         try store.openReadOnly()
         retained = true
         return store
+    }
+
+    /// An unreadable `sync` blob must not un-select the account. `SyncConfig()`
+    /// means `wechatDBPath == "auto"`, which resolves to a root only when
+    /// discovery finds exactly one install; with two installs on the machine it
+    /// yields no identity, so bootstrap opens a fresh empty per-account store
+    /// and the whitelist, commitments and reports all look deleted. The blob can
+    /// arrive here written by an older version, because migration copies the
+    /// legacy JSON verbatim.
+    static func decodedSyncConfig(from raw: String?) -> SyncConfig? {
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(SyncConfig.self, from: data)
     }
 
     static func selectedRoot(configuredPath: String, candidates: [String]) -> String? {

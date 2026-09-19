@@ -1135,13 +1135,69 @@ struct AIProvider: Identifiable, Hashable {
     }
 }
 
-struct SyncConfig: Codable {
+extension KeyedDecodingContainer {
+    /// One key read without veto power over the rest of the blob.
+    ///
+    /// The synthesized `init(from:)` treats a missing *or* mistyped key as a
+    /// decoding failure for the whole object, and every settings read site
+    /// collapses that to defaults (`getSettingJSON(...) ?? Config()`). For
+    /// `SyncConfig` the default `wechatDBPath == "auto"` un-selects the WeChat
+    /// account, so one stale field is enough to make the user's whitelist,
+    /// commitments and reports look deleted.
+    func lenient<T: Decodable>(_ type: T.Type, forKey key: Key, fallback: T) -> T {
+        ((try? decodeIfPresent(type, forKey: key)) ?? nil) ?? fallback
+    }
+
+    /// Same, for a `RawRepresentable` enum where an unrecognized value from a
+    /// future version must fall back to the default case rather than throw.
+    func lenientEnum<T: RawRepresentable & Decodable>(
+        _ type: T.Type, forKey key: Key, default defaultValue: T
+    ) -> T where T.RawValue == String {
+        let raw = ((try? decodeIfPresent(String.self, forKey: key)) ?? nil)
+        return raw.flatMap(T.init(rawValue:)) ?? defaultValue
+    }
+}
+
+struct SyncConfig: Codable, Equatable {
     var intervalSeconds: Int = 30
     var wechatDBPath: String = "auto"
     /// User-selected local key JSON. nil keeps the historical default path.
     var keysFilePath: String? = nil
     var cacheStrategy: CacheStrategy = .temporary
     var displayScreen: DisplayScreen = .builtIn
+
+    private enum CodingKeys: String, CodingKey {
+        case intervalSeconds, wechatDBPath, keysFilePath, cacheStrategy, displayScreen
+    }
+
+    init(
+        intervalSeconds: Int = 30,
+        wechatDBPath: String = "auto",
+        keysFilePath: String? = nil,
+        cacheStrategy: CacheStrategy = .temporary,
+        displayScreen: DisplayScreen = .builtIn
+    ) {
+        self.intervalSeconds = intervalSeconds
+        self.wechatDBPath = wechatDBPath
+        self.keysFilePath = keysFilePath
+        self.cacheStrategy = cacheStrategy
+        self.displayScreen = displayScreen
+    }
+
+    /// The synthesized decoder treats every non-optional property as required
+    /// and ignores the default, so a blob written before `displayScreen`
+    /// existed failed to decode *as a whole* — and `getSettingJSON` turns that
+    /// into nil, so `wechatDBPath` fell back to "auto". At bootstrap that
+    /// resolves to no account root, which opens a fresh empty store and makes
+    /// the whitelist, commitments and reports look deleted. Read per key.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        intervalSeconds = container.lenient(Int.self, forKey: .intervalSeconds, fallback: 30)
+        wechatDBPath = container.lenient(String.self, forKey: .wechatDBPath, fallback: "auto")
+        keysFilePath = (try? container.decodeIfPresent(String.self, forKey: .keysFilePath)) ?? nil
+        cacheStrategy = container.lenientEnum(CacheStrategy.self, forKey: .cacheStrategy, default: .temporary)
+        displayScreen = container.lenientEnum(DisplayScreen.self, forKey: .displayScreen, default: .builtIn)
+    }
 }
 
 /// Which screen to show the floating panel on.
@@ -1185,6 +1241,33 @@ struct NotificationConfig: Codable {
     var important: Bool = true
     var allWhitelist: Bool = false
     var durationSeconds: Int = 3
+
+    private enum CodingKeys: String, CodingKey {
+        case atMention, important, allWhitelist, durationSeconds
+    }
+
+    init(
+        atMention: Bool = true,
+        important: Bool = true,
+        allWhitelist: Bool = false,
+        durationSeconds: Int = 3
+    ) {
+        self.atMention = atMention
+        self.important = important
+        self.allWhitelist = allWhitelist
+        self.durationSeconds = durationSeconds
+    }
+
+    /// Same reason as `SyncConfig.init(from:)`: a blob from an older version
+    /// must keep the switches the user actually set instead of failing as a
+    /// whole and silently reverting every notification preference.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        atMention = container.lenient(Bool.self, forKey: .atMention, fallback: true)
+        important = container.lenient(Bool.self, forKey: .important, fallback: true)
+        allWhitelist = container.lenient(Bool.self, forKey: .allWhitelist, fallback: false)
+        durationSeconds = container.lenient(Int.self, forKey: .durationSeconds, fallback: 3)
+    }
 
     func shouldPresent(_ semantic: InboxSemanticState) -> Bool {
         switch semantic {

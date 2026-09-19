@@ -19,6 +19,37 @@ struct AppUpdateConfig: Codable, Equatable, Sendable {
         return ISO8601DateFormatter().date(from: lastCheckAt)
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case autoCheckEnabled, autoInstallEnabled, lastCheckAt, repository, pendingOffer
+    }
+
+    init(
+        autoCheckEnabled: Bool = true,
+        autoInstallEnabled: Bool = false,
+        lastCheckAt: String? = nil,
+        repository: String = AppUpdateConfig.defaultRepository,
+        pendingOffer: AppUpdateOffer? = nil
+    ) {
+        self.autoCheckEnabled = autoCheckEnabled
+        self.autoInstallEnabled = autoInstallEnabled
+        self.lastCheckAt = lastCheckAt
+        self.repository = repository
+        self.pendingOffer = pendingOffer
+    }
+
+    /// A `pendingOffer` written by another version used to fail the whole
+    /// blob, which took the user's own auto-check / auto-install choices with
+    /// it. Read per key and drop only the field that is unreadable.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        autoCheckEnabled = container.lenient(Bool.self, forKey: .autoCheckEnabled, fallback: true)
+        autoInstallEnabled = container.lenient(Bool.self, forKey: .autoInstallEnabled, fallback: false)
+        lastCheckAt = (try? container.decodeIfPresent(String.self, forKey: .lastCheckAt)) ?? nil
+        repository = container.lenient(String.self, forKey: .repository,
+                                       fallback: AppUpdateConfig.defaultRepository)
+        pendingOffer = (try? container.decodeIfPresent(AppUpdateOffer.self, forKey: .pendingOffer)) ?? nil
+    }
+
     mutating func markChecked(at date: Date = Date()) {
         lastCheckAt = ISO8601DateFormatter().string(from: date)
     }
