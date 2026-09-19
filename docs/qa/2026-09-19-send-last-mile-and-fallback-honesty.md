@@ -278,3 +278,39 @@ SQL 轴报的两条最像 P1 的 —— `listAllChatTables()` 的 `LIKE 'Msg_%'`
 
 顺带记一条对代理报告的处理纪律：**「只有测试在调」和「没人调」是两回事**，
 前者要修，后者要删；判据要自己重跑，这次重跑直接把两条 P1 变成了零条。
+
+## §144 我这条修复自己造了一个新 P1：暂停会把草稿判死刑（本轮修）
+
+「攻本轮 diff」的子代理报回：`deliveryStillPermitted` 把 `isPaused` 算进关闭条件，
+而 `isPaused` 包含**用户切进微信时自动生效的 `pausedForUserActivity`**。
+中途关闭 ⇒ 发送失败 ⇒ 落进失败尾巴：`autoSendAttempts += 1`、
+`manualOnlyReason = "…"`、重新入队并**写进 DB**。而
+`isEligibleForAutomaticSend` 要求 `manualOnlyReason == nil`，
+`start()` 又从 DB 把它读回来 —— 结果：**用户在打字的 1.5–8 秒里切到微信，
+一条排好队的自动回复就被永久转成人工，卡片还写着「发送失败」**。
+这和 `sendNow` / 暂停分支「暂停只保留、不消费」的既有约定相反。
+
+改法：把「暂停」和「撤回」分开处置。`withheldByPause(paused:sessionOpen:rowStillQueued)`
+为真 ⇒ 走可重试路径（不记尝试、不打人工标记、回执改说
+「自动驾驶暂停，这条没有发出，仍留在队列里。」）；只有行真的没了或会话真的结束，
+才按撤回/失败消费掉这条。
+
+验证：4 条真值表断言（含两个必须为假的形状：行已删、会话已结束）+
+一条尾段顺序判据（`withheldByPause` 必须出现在 `retained.manualOnlyReason =` 之前）。
+变异 M6（把 `|| pausedMidFlight` 去掉）⇒ 顺序判据失败。
+写这条测试时先踩到自己一个坑：`retained.manualOnlyReason` 在同一个函数里
+**发送之前**的额度/过期分支也出现，取第一次出现必然判错 —— 判据要先把
+「发送之后的尾段」切出来。
+
+同轮三条 P2 一并处理：
+- `.automationHostMissing` 原本把「reader.dbDir 为空」也吞进去，
+  于是「没连微信就打开自动驾驶」会被提示成「浮窗主程序没有运行」——
+  拆回 `.accountUnverified`；
+- 删 `formatHours` 时把它那段 4 行文档注释留给了下面的 `sanitizedFinding`，已删；
+- `--preview-tab=` 打错字会静默落回「今天」，QA 脚本却以为自己拍到了目标页 ⇒
+  现在打一行警告。
+
+**仍留着的一条（定价）**：`hasPendingSend` / `autopilotLogPendingReply` 走 `queryOne`，
+而 `queryOne` 内部 `try?` 吞错 ⇒ 一次 SQLITE_BUSY 读会被读成「已撤回」，
+把真发送关掉并（修完 §144 后）转人工。要根治得给这两个查询一个能区分
+「查不到」与「查失败」的返回，属于「读不到印 0」那一整类，下一轮统一收。

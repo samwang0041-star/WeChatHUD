@@ -264,10 +264,6 @@ enum InsightRadar {
         return !nonConcreteSources.contains(text)
     }
 
-    /// `rawHours` is a `waiting_hours` straight off the model, so it is
-    /// bounded before any `Int(_:)`: a reply of `1e30` would otherwise trap
-    /// while formatting. A year is past the point where the exact figure
-    /// means anything to the reader.
     private static func sanitizedFinding(_ finding: InsightRadarFinding) -> InsightRadarFinding? {
         guard let source = readableTrimmed(finding.source),
               let title = readableTrimmed(finding.title) else {

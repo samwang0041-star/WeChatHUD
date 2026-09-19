@@ -302,6 +302,19 @@ actor AutopilotService {
         return store.loadPendingSends(sessionId: sid)
     }
 
+    /// A pause that lands mid-flight stops the keystrokes, but it is not a
+    /// failed send. Without this distinction, tabbing into WeChat during the
+    /// 1.5–8s typing window stamped the draft manual-only — and
+    /// `isEligibleForAutomaticSend` requires `manualOnlyReason == nil`, so a
+    /// queued auto-reply silently retired itself forever behind a card that
+    /// claimed the send had failed. Only a *withdrawal* (row gone, session
+    /// closed) may consume the draft.
+    nonisolated static func withheldByPause(
+        paused: Bool, sessionOpen: Bool, rowStillQueued: Bool
+    ) -> Bool {
+        paused && sessionOpen && rowStillQueued
+    }
+
     func deliveryStillPermitted(queueId: UUID?, logId: Int64?) -> Bool {
         Self.mayStillDeliver(
             paused: isPaused,
@@ -1537,7 +1550,12 @@ actor AutopilotService {
         }
         var retained = item
         let failureReason = lastSendFailureMessage ?? "发送结果无法确认"
-        let busy = Self.isRetryableSendBusy(failureReason)
+        let pausedMidFlight = Self.withheldByPause(
+            paused: isPaused,
+            sessionOpen: sessionId != nil,
+            rowStillQueued: store.hasPendingSend(id: item.id)
+        )
+        let busy = pausedMidFlight || Self.isRetryableSendBusy(failureReason)
         if !busy {
             retained.autoSendAttempts += 1
             retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
@@ -1563,6 +1581,9 @@ actor AutopilotService {
                 chatUsername: item.chatUsername, replyText: item.replyText
             )) ?? 0
             persistSessionCounts()
+        }
+        if pausedMidFlight {
+            return .blocked("自动驾驶暂停，这条没有发出，仍留在队列里。")
         }
         return .blocked(busy ? failureReason : "\(failureReason)，已转为人工确认")
     }

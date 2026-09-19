@@ -66,6 +66,43 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             "取消本条 on an approval row flips it out of 'pending' mid-send")
     }
 
+    /// The other direction of the same bug: stopping the keystrokes must not
+    /// consume the draft. A pause mid-flight used to fall into the failed-send
+    /// tail, which stamps `manualOnlyReason` — and only an unstamped row is
+    /// ever eligible for automatic send again, so tabbing into WeChat during
+    /// the typing window silently retired a queued reply forever.
+    func testPauseMidFlightKeepsTheDraftQueuedButAWithdrawalConsumesIt() throws {
+        XCTAssertTrue(AutopilotService.withheldByPause(
+            paused: true, sessionOpen: true, rowStillQueued: true),
+            "暂停（含「用户正在用微信」）⇒ 只是没发，行还要留在队列里")
+        XCTAssertFalse(AutopilotService.withheldByPause(
+            paused: true, sessionOpen: true, rowStillQueued: false),
+            "行已被删 ⇒ 这是真撤回，不能复活")
+        XCTAssertFalse(AutopilotService.withheldByPause(
+            paused: true, sessionOpen: false, rowStillQueued: true),
+            "会话已结束（停止）⇒ 按停止的处置走")
+        XCTAssertFalse(AutopilotService.withheldByPause(
+            paused: false, sessionOpen: true, rowStillQueued: true),
+            "没暂停却失败 ⇒ 仍是发送失败，要转人工")
+    }
+
+    func testFailureTailDecidesPauseBeforeStampingManualOnly() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let body = try String(contentsOf: url, encoding: .utf8)
+            .components(separatedBy: "private func executeSend").last!
+            // The cap and staleness branches stamp manual-only BEFORE the send
+            // and must keep doing so; the ordering that matters is inside the
+            // post-send failure tail.
+            .components(separatedBy: "let failureReason = lastSendFailureMessage").last!
+        let pause = body.range(of: "Self.withheldByPause(")!.lowerBound
+        let stamp = body.range(of: "retained.manualOnlyReason =")!.lowerBound
+        XCTAssertLessThan(pause, stamp,
+                          "必须先判「是不是暂停」，再决定要不要把这条转人工")
+    }
+
     // MARK: - Gate driven by real actor + store state
 
     func testGateTracksPauseStopAndTheRowItself() async throws {

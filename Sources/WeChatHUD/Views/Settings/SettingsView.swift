@@ -4,7 +4,16 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var store: HUDStore
-    @State private var selectedTab: Tab = Tab(rawValue: PreviewRuntime.requestedLaunchTab ?? "") ?? .today
+    @State private var selectedTab: Tab = {
+        guard let raw = PreviewRuntime.requestedLaunchTab else { return .today }
+        guard let tab = Tab(rawValue: raw) else {
+            // A typo used to fall back silently, so a QA run aimed at
+            // 聊天回顾 would record a 今天 screenshot as if it had landed.
+            print("[WCHUD] preview: --preview-tab=\(raw) 不是已知分页，落在「今天」")
+            return .today
+        }
+        return tab
+    }()
     /// Owned here rather than left implicit so ⌃⌘S (显示 menu) has something to
     /// toggle. SwiftUI's split view never claims `toggleSidebar:`, so the
     /// standard menu item has to be routed to a binding instead of the

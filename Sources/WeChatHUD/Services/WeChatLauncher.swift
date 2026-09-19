@@ -773,9 +773,15 @@ enum WeChatLauncher {
         // also the only thing that ever kept `swift test` on a machine with
         // WeChat open from driving the developer's real chat list. Refuse on
         // purpose instead — no account evidence, no keystrokes.
-        guard let host = (NSApp as NSApplication?)?.delegate as? AppDelegate,
-              let root = host.reader?.dbDir, !root.isEmpty,
-              let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else { return .failed(.automationHostMissing) }
+        guard let host = (NSApp as NSApplication?)?.delegate as? AppDelegate else {
+            return .failed(.automationHostMissing)
+        }
+        // A missing database root is a different problem with a different fix:
+        // 自动驾驶 was turned on before WeChat's data was connected. Folding it
+        // into the host-process case would tell the user to relaunch an app
+        // that is running fine.
+        guard let root = host.reader?.dbDir, !root.isEmpty,
+              let launchDate = app.launchDate, let bundleID = app.bundleIdentifier else { return .failed(.accountUnverified) }
         let binding = AccountBinding(processID: app.processIdentifier, launchDate: launchDate,
                                      bundleID: bundleID, databaseRoot: WeChatAccountEvidence.canonicalRoot(root))
         if let failure = await accountFailure(binding) { return .failed(failure) }
