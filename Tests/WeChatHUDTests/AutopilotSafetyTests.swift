@@ -99,6 +99,68 @@ final class AutopilotSafetyTests: XCTestCase {
         )
     }
 
+    func testSafetyNormalizationFoldsWidthAndStripsSpacing() {
+        XCTAssertEqual(AutopilotService.normalizedForSafetyMatch("轉　賬 Ｐａｙ​"), "转账pay")
+    }
+
+    func testSpacedAndFullwidthMoneySpellingsHitTheFloor() {
+        // Every one of these is the same request written a different way. A
+        // peer chooses the spelling, so the floor cannot depend on spacing,
+        // width or which half of the money word they traditionalized.
+        for trigger in ["帮我 转 账 5000", "幫我　轉　賬", "先打款吧", "ＷＩＲＥ me 5000", "用paypal结"] {
+            let hold = AutopilotService.autopilotSafetyHoldReason(
+                triggerText: trigger, replyText: "好的", risk: .low,
+                reasonCode: "routine_ack", sensitiveKeywords: []
+            )
+            XCTAssertNotNil(hold, "「\(trigger)」绕过了资金底线")
+        }
+    }
+
+    func testMoneyInTheReplyHoldsEvenWhenTheTriggerIsClean() {
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "在吗", replyText: "我把红包发你", risk: .low,
+                reasonCode: "routine_ack", sensitiveKeywords: []
+            ),
+            "疑似资金往来「红包」，需本人处理"
+        )
+    }
+
+    func testFinalSendGateFoldsLikeTheUpstreamGates() {
+        // This gate used plain lowercased(): a reply carrying 轉賬 passed the
+        // two upstream checks for using the simplified form and then went out
+        // unattended here.
+        XCTAssertNotNil(AutopilotService.automaticSendHoldReason(
+            safetyHold: nil, replyText: "我這邊轉賬給你", sensitiveKeywords: ["转账"]
+        ))
+        XCTAssertNotNil(AutopilotService.automaticSendHoldReason(
+            safetyHold: nil, replyText: "我 转 账 给你", sensitiveKeywords: ["转账"]
+        ))
+        XCTAssertNil(AutopilotService.automaticSendHoldReason(
+            safetyHold: nil, replyText: "我这就发你", sensitiveKeywords: ["转账"]
+        ))
+    }
+
+    // MARK: - The model's justification is checked against the source
+
+    func testInventedEvidenceQuoteHoldsTheSend() {
+        let hold = AutopilotService.autopilotSafetyHoldReason(
+            triggerText: "明天上午能给我个准话吗", replyText: "好的，就这么定了",
+            risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+            evidenceQuote: "同意，按这个方案签", evidenceSource: "明天上午能给我个准话吗"
+        )
+        XCTAssertEqual(hold, "AI 引用的原话不在消息里，需人工确认")
+    }
+
+    func testVerbatimEvidenceQuotePassesRegardlessOfSpacing() {
+        let hold = AutopilotService.autopilotSafetyHoldReason(
+            triggerText: "方案 A 可以", replyText: "收到",
+            risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+            evidenceQuote: "方案A可以", evidenceSource: "方案 A 可以"
+        )
+        XCTAssertNil(hold)
+    }
+
     func testNonHanziMoneyCuesHoldWithoutKeywords() {
         // Emoji and pinyin spellings cannot live in the keyword list as
         // Hanzi, so they are built-in tripwires on the incoming text.
@@ -132,12 +194,16 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertEqual(decoded.maxSendsPerSession, AutopilotConfig().maxSendsPerSession)
     }
 
-    func testEmptyKeywordListReliesOnRiskAndReasonCode() {
-        XCTAssertNil(
+    func testEmptyKeywordListStillHoldsMoneyAndUsesReasonCode() {
+        // Clearing the keyword list is the user's choice about *their* words;
+        // the money floor is not part of that choice. This asserted nil before,
+        // i.e. an emptied list disarmed 转账 entirely.
+        XCTAssertEqual(
             AutopilotService.autopilotSafetyHoldReason(
                 triggerText: "转账密码是123456", replyText: "好", risk: .low,
                 reasonCode: nil, sensitiveKeywords: []
-            )
+            ),
+            "疑似资金往来「转账」，需本人处理"
         )
         XCTAssertEqual(
             AutopilotService.autopilotSafetyHoldReason(
@@ -145,6 +211,12 @@ final class AutopilotSafetyTests: XCTestCase {
                 reasonCode: "money", sensitiveKeywords: []
             ),
             "涉及转账或金钱内容"
+        )
+        XCTAssertNil(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "在吗", replyText: "好", risk: .low,
+                reasonCode: nil, sensitiveKeywords: []
+            )
         )
     }
 

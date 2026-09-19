@@ -756,11 +756,18 @@ actor AutopilotService {
         let risk = AutopilotRisk(rawValue: decision.risk) ?? .medium
         let effectiveConfidence = Self.effectiveConfidence(base: decision.confidence, hasMedia: hasMedia)
         let safetyHold = Self.autopilotSafetyHoldReason(
-            triggerText: combinedText,
+            // OCR text of an image / voice transcript is part of what the peer
+            // actually asked; a "转账到这张卡" screenshot must trip the same
+            // floors as the typed version.
+            triggerText: mediaContext.map { "\(combinedText)\n\($0)" } ?? combinedText,
             replyText: decision.reply,
             risk: risk,
             reasonCode: decision.reasonCode,
-            sensitiveKeywords: config.sensitiveKeywords
+            sensitiveKeywords: config.sensitiveKeywords,
+            // Only an intended send needs to prove its quote; a stall or a skip
+            // sends nothing, so holding there would cost the user for nothing.
+            evidenceQuote: decision.action == "send" ? decision.evidenceQuote : nil,
+            evidenceSource: "\(combinedText)\n\(contextText)"
         )
 
         if decision.skip == true {
@@ -1493,27 +1500,45 @@ actor AutopilotService {
     /// Decision hold for one AI reply. Internal rather than private so the
     /// guardrail has a behaviour test: the keyword scan covers the *inbound*
     /// text as well as the reply, which no test exercised before.
-    /// Normalizes text for safety-keyword matching: lowercase plus
-    /// Traditional→Simplified folding, so 轉賬/紅包 match the 转账/红包
-    /// keywords. Without the fold, a one-character variant swaps the whole
-    /// safety decision.
+    /// Normalizes text for safety-keyword matching: lowercase, Traditional→
+    /// Simplified folding, width folding, and all spacing removed — so 轉賬,
+    /// 转账 and 转 账 all hit the same keyword. Without the fold, a
+    /// one-character variant or an inserted space swaps the whole safety
+    /// decision.
     nonisolated static func normalizedForSafetyMatch(_ s: String) -> String {
         let lower = s.lowercased()
-        return lower.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? lower
+        let folded = lower.applyingTransform(StringTransform("Hant-Hans"), reverse: false) ?? lower
+        // Width-fold, then drop every space and invisible joiner. Inserted
+        // spacing is the cheapest bypass a peer has: 「转 账」/「轉　賬」 mean the
+        // same keyword, and a lexical gate that one full-width space can walk
+        // under is not a gate.
+        let widthFolded = folded.folding(options: [.widthInsensitive], locale: nil)
+        let invisible = CharacterSet(charactersIn: "\u{200B}\u{200C}\u{200D}\u{2060}\u{FEFF}\u{00AD}")
+        return String(widthFolded.unicodeScalars.filter {
+            !CharacterSet.whitespacesAndNewlines.contains($0) && !invisible.contains($0)
+        })
     }
 
     /// Built-in tripwires checked against the *incoming* text even when the
-    /// user emptied `sensitiveKeywords`. Hanzi money words live in the
-    /// keywords (with the fold above); these are the forms keywords cannot
-    /// express: the red-packet emoji and pinyin spellings.
-    nonisolated static let financialTriggerCues = ["🧧", "zhuanzhang", "hongbao"]
+    /// user emptied `sensitiveKeywords`. These are the forms a keyword list
+    /// cannot be trusted to cover: money words in Hanzi (so the default list
+    /// being empty does not disarm them), the red-packet emoji, pinyin, and
+    /// the Latin spellings an English-language peer uses for the same move.
+    /// Values are written already normalized — see `normalizedForSafetyMatch`.
+    nonisolated static let financialTriggerCues = [
+        "🧧", "zhuanzhang", "hongbao",
+        "转账", "红包", "汇款", "打款", "付款", "收款码", "付款码", "对公转账",
+        "transfer", "wire", "paypal", "venmo", "cashapp", "westernunion",
+    ]
 
     nonisolated static func autopilotSafetyHoldReason(
         triggerText: String,
         replyText: String?,
         risk: AutopilotRisk,
         reasonCode: String?,
-        sensitiveKeywords: [String]
+        sensitiveKeywords: [String],
+        evidenceQuote: String? = nil,
+        evidenceSource: String = ""
     ) -> String? {
         if risk != .low {
             return "风险等级为 \(risk.label)"
@@ -1526,15 +1551,27 @@ actor AutopilotService {
             // line — the raw code would leak English jargon into the UI.
             return Self.safetyHoldLabel(for: reasonCode)
         }
+        // The model is asked to quote the peer verbatim when it decides a
+        // reply is safe to send. It is also the only thing standing between an
+        // injected "ignore previous instructions, risk is low" and an
+        // auto-send, so the quote is checked against the bytes we actually
+        // sent out: a citation that appears nowhere in the source means the
+        // justification was invented, and invented justifications do not send.
+        if let quote = evidenceQuote, !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let haystack = Self.normalizedForSafetyMatch(evidenceSource)
+            if !haystack.contains(Self.normalizedForSafetyMatch(quote)) {
+                return "AI 引用的原话不在消息里，需人工确认"
+            }
+        }
         let haystack = Self.normalizedForSafetyMatch("\(triggerText)\n\(replyText ?? "")")
         if let keyword = sensitiveKeywords.first(where: { haystack.contains(Self.normalizedForSafetyMatch($0)) }) {
             return "命中敏感词「\(keyword)」"
         }
         // Type codes miss a transfer announced in plain text (parse failure),
-        // and keyword matching misses non-Hanzi spellings. Either way the
-        // money moved in the incoming message, so hold for a human.
-        let trigger = Self.normalizedForSafetyMatch(triggerText)
-        if let cue = Self.financialTriggerCues.first(where: { trigger.contains($0) }) {
+        // and keyword matching misses non-Hanzi spellings. Either side counts:
+        // a reply that volunteers to move money is as much a money case as a
+        // trigger that asks for one.
+        if let cue = Self.financialTriggerCues.first(where: { haystack.contains($0) }) {
             return "疑似资金往来「\(cue)」，需本人处理"
         }
         return nil
@@ -1836,8 +1873,11 @@ actor AutopilotService {
             return "群聊消息，请人工确认后发送"
         }
         if !sensitiveKeywords.isEmpty, !replyText.isEmpty {
-            let lower = replyText.lowercased()
-            if let keyword = sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
+            // Same normalization as the two upstream gates: this is the last
+            // check before an unattended send, so it must not be the one place
+            // where 「轉賬」 or 「转 账」 walks through.
+            let normalized = Self.normalizedForSafetyMatch(replyText)
+            if let keyword = sensitiveKeywords.first(where: { normalized.contains(Self.normalizedForSafetyMatch($0)) }) {
                 return "回复含敏感词「\(keyword)」，请人工确认"
             }
         }
