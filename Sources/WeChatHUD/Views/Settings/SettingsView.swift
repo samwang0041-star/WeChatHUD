@@ -267,9 +267,11 @@ struct SettingsView: View {
                             Button(CompanionProductCopy.autoSendKeepManual) { previewAutoSendDialog = false }
                             Button(CompanionProductCopy.autoSendAllow) {
                                 previewAutoSendDialog = false
-                                var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
-                                cfg.autoSendEnabled = true
-                                try? store.setSettingJSON("autopilot", value: cfg)
+                                // Same merge rule as the settings page: this is the
+                                // one write that turns unattended sends on, so it
+                                // must not rebuild the config from defaults when
+                                // the stored record could not be read.
+                                _ = try? store.updateAutopilotConfig { $0.autoSendEnabled = true }
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)

@@ -144,6 +144,54 @@ final class ClassificationQueueWorkerTests: XCTestCase {
         XCTAssertEqual(store.classificationQueueCount(), 0)
     }
 
+    /// The scope re-check has three answers and the store used to have one Bool
+    /// for two of them: `isWhitelisted` is `false` both for 「没关注」 and for
+    /// 「读不到」, and the worker retired the queue row on `false`. One busy lock
+    /// or I/O error therefore erased the only record that this message needed
+    /// analysis — no 待办, no badge, no 未回, nothing in the log. The test above is
+    /// the positive control: a genuinely unfollowed chat must still be dropped.
+    @MainActor
+    func testUnreadableWhitelistKeepsTheQueueRowForRetry() async throws {
+        let (store, monitor, ai, path) = try await harness()
+        defer { cleanup(store, path) }
+        try store.addToWhitelist(username: "synthetic_peer", displayName: "合成同事", isGroup: false, category: .work)
+        try store.enqueueClassificationMessages([message(1)])
+        try store.exec("DROP TABLE whitelist")
+
+        monitor.drainClassificationQueue()
+        await monitor.classificationWorker?.value
+
+        XCTAssertEqual(store.classificationQueueCount(), 1,
+                       "读不到白名单不等于这条不用管，队列行必须还在")
+        XCTAssertTrue(store.loadPendingAsks().isEmpty)
+        let calls = await ai.calls.count
+        XCTAssertEqual(calls, 0, "范围判定读不到时不许接着问模型")
+        // 「队列里还有 1 条」也正好是 worker 完全没跑的样子，所以这条才是承重的那半句：
+        // 行必须已经被推到将来，证明确实执行过一次退避。
+        XCTAssertTrue(store.pendingClassificationMessages().isEmpty,
+                      "这条得是被 defer 推到将来的，不是原地没人碰过")
+
+        // A retry, not a dead row: once its backoff is cleared it is scheduled
+        // again, which is the whole point of deferring instead of deleting.
+        try store.retryClassificationMessages()
+        XCTAssertEqual(store.pendingClassificationMessages().count, 1,
+                       "这条还得排得回去，否则和删掉只差一步")
+    }
+
+    /// All three arms of the verdict, driven directly. The queue test above can
+    /// only show one of them at a time, and it is the wiring; this is the rule.
+    func testScopeVerdictMapsAllThreeWhitelistAnswers() {
+        XCTAssertEqual(
+            ChatMonitor.scopeVerdict(whitelist: .unreadable, muted: false), .retry,
+            "读不到时唯一不许做的事就是把这条当处理完了")
+        XCTAssertEqual(ChatMonitor.scopeVerdict(whitelist: .unfollowed, muted: false), .retire)
+        XCTAssertEqual(ChatMonitor.scopeVerdict(whitelist: .followed, muted: true), .retire)
+        XCTAssertEqual(ChatMonitor.scopeVerdict(whitelist: .followed, muted: false), .proceed)
+        // `.unreadable` outranks the mute check: a read failure must not be able
+        // to turn 「这条被免打扰」 into a reason to delete the row.
+        XCTAssertEqual(ChatMonitor.scopeVerdict(whitelist: .unreadable, muted: true), .retry)
+    }
+
 }
 
 

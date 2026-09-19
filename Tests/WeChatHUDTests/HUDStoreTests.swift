@@ -1041,11 +1041,11 @@ final class HUDStoreTests: XCTestCase {
         let logId = store.loadAutopilotLog(sessionId: sessionId)[0].id
 
         // Approve-path send completes first.
-        XCTAssertTrue(store.resolveAutopilotLogSent(id: logId))
+        XCTAssertEqual(store.resolveAutopilotLogSent(id: logId), .consumedPending)
         // Reject lands late — must not flip a sent row, must not count.
         XCTAssertFalse(store.resolveAutopilotLogSkipped(id: logId))
         // Double-send resolution doesn't recount either.
-        XCTAssertFalse(store.resolveAutopilotLogSent(id: logId))
+        XCTAssertEqual(store.resolveAutopilotLogSent(id: logId), .wasNotPending)
 
         let row = store.loadAutopilotLog(sessionId: sessionId)[0]
         XCTAssertEqual(row.action, .sent)
@@ -1437,5 +1437,118 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(try store.archiveStalePendingAsks(cutoff: cutoff, now: now), 1)
         XCTAssertEqual(store.loadPendingAsks(status: .pending, relevantSince: cutoff).map(\.msgUID), ["live"])
         XCTAssertEqual(store.loadPendingAsks(status: .dismissed).map(\.msgUID), ["old"])
+    }
+
+    /// The transaction is the whole point of the return value: `false` used to
+    /// mean "not pending" and "the write failed" at once, so after a failed
+    /// write the row stayed 'pending' in the database and 待确认回复 kept
+    /// offering a reply that had already been sent.
+    func testSentResolutionSeparatesWriteFailureFromNotPending() throws {
+        let sessionId = try store.startAutopilotSession()
+        XCTAssertEqual(
+            store.resolveAutopilotLogSent(id: 999_999), .wasNotPending,
+            "no such row is a known answer, not a failure"
+        )
+        try store.exec("DROP TABLE autopilot_log")
+        XCTAssertEqual(
+            store.resolveAutopilotLogSent(id: 1), .writeFailed,
+            "读不到/写不回时必须报告失败，不能当成『已经不是待确认』"
+        )
+        _ = sessionId
+    }
+
+    func testWhitelistReadSeparatesUnfollowedFromUnreadable() throws {
+        XCTAssertEqual(store.whitelistRead("wxid_absent"), .unfollowed)
+        try store.addToWhitelist(
+            username: "wxid_here", displayName: "同事", isGroup: false, category: .work
+        )
+        XCTAssertEqual(store.whitelistRead("wxid_here"), .followed)
+        XCTAssertTrue(store.isWhitelisted("wxid_here"))
+
+        try store.exec("DROP TABLE whitelist")
+        XCTAssertEqual(store.whitelistRead("wxid_here"), .unreadable)
+        XCTAssertFalse(store.isWhitelisted("wxid_here"), "Bool 版本仍然只能回答 false，所以删除/退役队列的调用点不许用它")
+
+        // The tri-state exists because of one caller: the classifier retired
+        // (deleted) the queue row whenever the read answered false, so a single
+        // BUSY error erased the only record that a message needed analysis —
+        // no 待办, no badge, no 未回, nothing in the log.
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/ChatMonitor+Classification.swift")
+        let classifier = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(classifier.contains("store.isWhitelisted("),
+                       "分类队列会在读失败时把消息当已处理删掉，必须走 whitelistRead 的三态")
+        XCTAssertGreaterThanOrEqual(
+            classifier.components(separatedBy: "deferClassificationMessage(").count - 1, 2,
+            "读不到要退避重试；判据至少得看见两处调用点，否则是判据自己坏了"
+        )
+    }
+
+    /// Same conflation, one level up, and this one bites on the *write* side: the
+    /// settings page merged into `?? AutopilotConfig()` and saved the result, so a
+    /// single busy lock during 保存 replaced 敏感词、每会话上限、主动提醒开关 — every
+    /// guardrail the page does not show — with defaults, and printed 「设置已保存」.
+    func testSettingReadSeparatesAbsentFromUnreadable() throws {
+        if case .absent = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {
+            XCTFail("没存过时该报 absent，否则首次保存没有合法的起点")
+        }
+        var tightened = AutopilotConfig()
+        tightened.sensitiveKeywords = ["转账", "合同金额"]
+        tightened.maxSendsPerSession = 3
+        try store.setSettingJSON("autopilot", value: tightened)
+        guard case .value(let read) = store.readSettingJSON("autopilot", as: AutopilotConfig.self)
+        else { return XCTFail("存过的配置必须原样读回来") }
+        XCTAssertEqual(read.sensitiveKeywords, ["转账", "合同金额"])
+        XCTAssertEqual(read.maxSendsPerSession, 3)
+
+        // Undecodable garbage is 「没有可合并的值」, not a read failure: refusing
+        // to write then would leave the page unable to save anything, ever.
+        try store.setSetting("autopilot", value: "{ not json")
+        if case .absent = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {
+            XCTFail("读得回来但解不开时，不许当成读失败把设置页锁死")
+        }
+
+        try store.exec("DROP TABLE settings")
+        if case .unreadable = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {
+            XCTFail("表读不到时必须报 unreadable，这是唯一能阻止合并写覆盖护栏的信号")
+        }
+    }
+
+    /// The merge-write's contract: `false` means not one byte was written.
+    func testAutopilotConfigMergeWriteRefusesAnUnreadableConfig() throws {
+        // While the read works, the fields this page doesn't show survive a save
+        // from it — that is the only reason the merge exists.
+        var tightened = AutopilotConfig()
+        tightened.sensitiveKeywords = ["转账", "合同金额"]
+        tightened.maxSendsPerSession = 3
+        tightened.autoSendEnabled = false
+        try store.setSettingJSON("autopilot", value: tightened)
+        XCTAssertTrue(try store.updateAutopilotConfig { $0.batchWindowSeconds = 25 })
+        guard case .value(let after) = store.readSettingJSON("autopilot", as: AutopilotConfig.self)
+        else { return XCTFail("这次读得回来") }
+        XCTAssertEqual(after.batchWindowSeconds, 25)
+        XCTAssertEqual(after.sensitiveKeywords, ["转账", "合同金额"],
+                       "保存这页没显示的字段，不许被默认值盖掉")
+        XCTAssertEqual(after.maxSendsPerSession, 3)
+
+        // Once it doesn't work, nothing may be written — and no receipt either.
+        var mutated = false
+        try store.exec("DROP TABLE settings")
+        XCTAssertFalse(try store.updateAutopilotConfig { cfg in
+            cfg.autoSendEnabled = true
+            mutated = true
+        }, "读不回来就不该写")
+        XCTAssertFalse(mutated, "连合并闭包都不该被调用")
+    }
+
+    /// The indexes are best-effort now; the version stamp must not advance over
+    /// a failure, or the retry-on-next-launch that the comment relies on is
+    /// gone and the database stays unindexed for good.
+    func testRetrospectiveIndexMigrationReportsWhetherItLanded() throws {
+        XCTAssertTrue(store.migrateToV3RetrospectiveIndexes())
+        try store.exec("DROP TABLE review_todos")
+        XCTAssertFalse(store.migrateToV3RetrospectiveIndexes())
     }
 }

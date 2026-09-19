@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import UserNotifications
 
 /// Central orchestrator for the autopilot auto-reply system.
 ///
@@ -102,12 +101,20 @@ actor AutopilotService {
     /// this actor that is not monotonic. Deliberately one-sided: a
     /// future-dated timestamp yields a negative age and stays eligible, so a
     /// peer's skewed clock cannot silence its own chat forever.
+    /// Anything earlier than this is not "an old message" but "no usable
+    /// timestamp": WeChat leaves `create_time` at 0 or years-stale for bot and
+    /// forwarded rows, which `ScanEngine` already works around for
+    /// notifications. Reading such a value as 1970 would drop the message with
+    /// a false audit reason and never answer it.
+    static let plausibleMessageEpoch: Int = 1_600_000_000  // 2020-09-13
+
     nonisolated static func isPastReplyHorizon(
         timestamp: Int,
         now: Date,
         horizon: TimeInterval = AutopilotService.batchReplyHorizon
     ) -> Bool {
-        now.timeIntervalSince(Date(timeIntervalSince1970: Double(timestamp))) > horizon
+        guard timestamp >= Self.plausibleMessageEpoch else { return false }
+        return now.timeIntervalSince(Date(timeIntervalSince1970: Double(timestamp))) > horizon
     }
 
     /// Prunes the rolling hour and answers the cap in one step, so the count
@@ -145,6 +152,10 @@ actor AutopilotService {
     /// after a false send result to preserve UI/audit explainability.
     private var lastSendFailureMessage: String?
 
+    /// Log ids whose 'sent' write failed after a verified send. Session scope
+    /// on purpose: there is no durable place to put this, and the window it
+    /// protects is the one where a user can tap 确认发送 again.
+    private var unresolvedSentLogWrites: Set<Int64> = []
     /// All msgUIDs of messages sent by autopilot — used for style isolation.
     private var sentMsgUIDs: Set<String> = []
 
@@ -348,9 +359,14 @@ actor AutopilotService {
     /// window used to be typed out anyway.
     nonisolated static func mayStillDeliver(
         paused: Bool, sessionOpen: Bool,
-        queueRowLive: Bool?, approvalRowPending: Bool?
+        queueRowLive: Bool?, approvalRowPending: Bool?,
+        alreadySentHere: Bool = false
     ) -> Bool {
         if paused || !sessionOpen { return false }
+        // This one is not about the row's state but about what this process
+        // already delivered: the database still calls the row 'pending' because
+        // the write-back failed, so no row read can rule out a second send.
+        if alreadySentHere { return false }
         return (queueRowLive ?? true) && (approvalRowPending ?? true)
     }
 
@@ -430,7 +446,8 @@ actor AutopilotService {
             paused: isPaused,
             sessionOpen: sessionId != nil,
             queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
-            approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil }
+            approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
+            alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false
         )
     }
 
@@ -530,23 +547,6 @@ actor AutopilotService {
             processedMsgUIDs.insert(msg.msgUID)
             processedMsgOrder.append(msg.msgUID)
 
-            // Too old to answer at all. Rows stay in the durable inbound queue
-            // until they are acknowledged, so a session started after the app
-            // was closed for a week used to receive that week's backlog and
-            // reply to it; and `processedMsgUIDs` evicts down to 2500 entries,
-            // which re-feeds anything still queued. Both end here.
-            if Self.isPastReplyHorizon(timestamp: msg.timestamp, now: arrivalNow) {
-                let entry = makeLogEntry(
-                    sessionId: sid, msg: msg, action: .skipped,
-                    reply: nil, confidence: 0, risk: .low,
-                    reasoning: "消息已超过 \(Int(Self.batchReplyHorizon / 60)) 分钟，不再回复"
-                )
-                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
-                immediateEntries.append(entry)
-                ackedMsgUIDs.append(msg.msgUID)
-                continue
-            }
-
             // Excluded contacts — skip silently
             if excludedSet.contains(msg.chatUsername) || excludedSet.contains(msg.senderUsername) {
                 let entry = makeLogEntry(
@@ -596,6 +596,26 @@ actor AutopilotService {
                     continue
                 }
                 // Respondable media — falls through to batching below
+            }
+
+            // Too old to answer, so never batched. Only the batching path is
+            // aged out: 转账/红包/小程序 still have to reach 人工确认 however
+            // long they waited, and 群消息 and excluded contacts are recorded
+            // as themselves. Rows stay in the durable inbound queue until they
+            // are acknowledged, so a session started after the app sat closed
+            // for a week used to answer that week's backlog; and
+            // `processedMsgUIDs` evicts down to 2500, which re-feeds anything
+            // still queued. Both end here.
+            if Self.isPastReplyHorizon(timestamp: msg.timestamp, now: arrivalNow) {
+                let entry = makeLogEntry(
+                    sessionId: sid, msg: msg, action: .skipped,
+                    reply: nil, confidence: 0, risk: .low,
+                    reasoning: "消息已超过 \(Int(Self.batchReplyHorizon / 60)) 分钟，不再回复"
+                )
+                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                immediateEntries.append(entry)
+                ackedMsgUIDs.append(msg.msgUID)
+                continue
             }
 
             // Buffer this message for batching
@@ -747,7 +767,19 @@ actor AutopilotService {
             // Atomically record the send + report whether a 'pending' row was
             // consumed — a reject racing this send already flipped it and
             // counted the decrement.
-            let consumed = store.resolveAutopilotLogSent(id: logId)
+            switch store.resolveAutopilotLogSent(id: logId) {
+            case .consumedPending:
+                sessionPending = max(0, sessionPending - 1)
+            case .wasNotPending:
+                break
+            case .writeFailed:
+                // The database write did not land, so the audit row is still
+                // 'pending': 待确认回复 keeps showing a reply that has already
+                // gone out, and approving it again sends a second copy to a
+                // real person. Hold the id — the delivery gate refuses it, and
+                // `processPendingQueue` retries the write until it lands.
+                unresolvedSentLogWrites.insert(logId)
+            }
             // The queue twin holds the SAVED draft text — `reply` may carry
             // an unsaved edit. Legacy matching must use the stored reply or
             // the twin survives and later auto-sends the superseded text.
@@ -762,9 +794,7 @@ actor AutopilotService {
             }) {
                 pendingSendQueue.remove(at: idx)
             }
-            // I3 fix: update actor's internal counters to stay in sync
             sessionSent += 1
-            if consumed { sessionPending = max(0, sessionPending - 1) }
             if let sid = sessionId {
                 try? store.updateAutopilotSessionCounts(
                     id: sid, handled: sessionHandled, pending: sessionPending, sent: sessionSent
@@ -772,6 +802,26 @@ actor AutopilotService {
             }
         }
         return success
+    }
+
+    /// Re-attempts the 'sent' writes that failed after a verified send.
+    ///
+    /// A row that never flips stays approvable in 待确认回复, so this is not
+    /// bookkeeping — it is what keeps a sent draft from being sent twice.
+    func retryUnresolvedSendWrites() {
+        guard !unresolvedSentLogWrites.isEmpty else { return }
+        for logId in unresolvedSentLogWrites.sorted() {
+            switch store.resolveAutopilotLogSent(id: logId) {
+            case .consumedPending:
+                sessionPending = max(0, sessionPending - 1)
+                unresolvedSentLogWrites.remove(logId)
+            case .wasNotPending:
+                // Resolved elsewhere in the meantime; nothing left to retry.
+                unresolvedSentLogWrites.remove(logId)
+            case .writeFailed:
+                break
+            }
+        }
     }
 
     /// Reject a pending item (mark as skipped) and drop its pending_sends
@@ -1608,6 +1658,7 @@ actor AutopilotService {
     /// Process pending queue — send items whose timer has expired.
     /// Called from ChatMonitor's 60s safety timer.
     func processPendingQueue(config: AutopilotConfig) async {
+        retryUnresolvedSendWrites()
         guard config.autoSendEnabled, !isPaused, sessionId != nil else { return }
         let now = Date()
         // Retire the backlog before releasing it. `handleNewMessages` never
@@ -2309,26 +2360,6 @@ actor AutopilotService {
         // Add small random jitter (±20%)
         let jitter = typingTime * Double.random(in: -0.2...0.2)
         return max(1.5, min(8.0, typingTime + jitter))  // clamp 1.5s - 8s
-    }
-
-    // MARK: - VIP push notification
-
-    private func pushVIPNotification(senderName: String, preview: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "⚠️ VIP消息: \(senderName)"
-        content.body = String(preview.prefix(100))
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "autopilot-vip-\(UUID().uuidString)",
-            content: content,
-            trigger: nil // deliver immediately
-        )
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                print("[WCHUD] Autopilot: failed to push VIP notification: \(error)")
-            }
-        }
     }
 
     // MARK: - Helpers

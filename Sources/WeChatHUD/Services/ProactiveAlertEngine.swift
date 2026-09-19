@@ -63,7 +63,14 @@ final class ProactiveAlertEngine {
     /// Notification submissions are asynchronous. Keep an identifier
     /// reserved until its completion arrives so two scans cannot enqueue
     /// the same identifier concurrently.
-    private var inFlightIdentifiers: Set<String> = []
+    ///
+    /// The value is the submission instant, and the reservation expires:
+    /// `add(_:withCompletionHandler:)` has no timeout, so a completion that
+    /// never arrives used to hold a slot in the hourly budget forever — five of
+    /// those and every later alert, including the P0 rule, was refused for the
+    /// rest of the session with nothing in the log.
+    private var inFlightSubmissions: [String: TimeInterval] = [:]
+    static let inFlightReservationWindow: TimeInterval = 120
 
     /// Current escalation tier for each VIP chat that has something
     /// outstanding. Keyed by chatUsername. Cleared when the chat is
@@ -86,6 +93,10 @@ final class ProactiveAlertEngine {
     /// of the view tree.
     var onTiersChanged: (([String: VIPAlertTier]) -> Void)?
 
+    /// Installed as the notification centre's delegate by the production init.
+    /// The centre holds its delegate weakly, so the engine has to own it.
+    private let presentationDelegate = AlertPresentationDelegate()
+
     init(store: HUDStore) {
         self.store = store
         self.now = Date.init
@@ -97,6 +108,7 @@ final class ProactiveAlertEngine {
             }
         }
         self.sendNotification = Self.systemNotificationSender
+        UNUserNotificationCenter.current().delegate = presentationDelegate
         requestNotificationPermission()
     }
 
@@ -143,9 +155,9 @@ final class ProactiveAlertEngine {
     /// Re-reads authorization when it is unknown or older than the refresh
     /// interval. A test reader completes inline, so the value is current for
     /// the rest of this evaluation.
-    private func refreshNotificationAuthorizationIfNeeded() {
+    private func refreshNotificationAuthorizationIfNeeded(force: Bool = false) {
         let at = monotonic()
-        if notificationAuthorization != nil,
+        if !force, notificationAuthorization != nil,
            let last = lastAuthorizationRead,
            at - last < Self.authorizationRefreshInterval {
             return
@@ -465,15 +477,16 @@ final class ProactiveAlertEngine {
         }
         pruneExpiredState()
         if !ignoresBudget {
-            guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
+            guard alertHistory.count + inFlightSubmissions.count < maxAlertsPerHour else { return false }
         }
         guard pushedIdentifiers[identifier] == nil else { return false }
-        guard inFlightIdentifiers.insert(identifier).inserted else { return false }
+        guard inFlightSubmissions[identifier] == nil else { return false }
+        inFlightSubmissions[identifier] = monotonic()
 
         sendNotification(title, body, identifier) { [weak self] error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard self.inFlightIdentifiers.remove(identifier) != nil else { return }
+                guard self.inFlightSubmissions.removeValue(forKey: identifier) != nil else { return }
                 guard error == nil else {
                     // Failed submissions do not consume the hourly budget or
                     // identifier dedup window. The next evaluation can retry.
@@ -503,6 +516,9 @@ final class ProactiveAlertEngine {
         let date = monotonic()
         let cutoff = date - 3600
         alertHistory.removeAll { $0 <= cutoff }
+        inFlightSubmissions = inFlightSubmissions.filter { _, submitted in
+            date - submitted < Self.inFlightReservationWindow
+        }
         pushedIdentifiers = pushedIdentifiers.filter { _, entry in
             entry.pushedAt + entry.window > date
         }
@@ -533,9 +549,35 @@ final class ProactiveAlertEngine {
             // indistinguishable from a delivered alert as far as this engine
             // was concerned, and every rule kept burning cooldowns on
             // submissions nobody received.
+            print("[WCHUD] 通知授权请求返回: granted=\(granted)")
+            // Ask the system what the status *is* rather than inferring it from
+            // `granted`: this completion also fires with an error (unsigned or
+            // unregistered bundle, notification-centre XPC unavailable) and
+            // with `.provisional`, both of which `granted == false` would have
+            // mislabelled as an explicit denial and muted for the session.
             Task { @MainActor [weak self] in
-                self?.notificationAuthorization = granted ? .authorized : .denied
+                self?.refreshNotificationAuthorizationIfNeeded(force: true)
             }
         }
+    }
+}
+
+/// macOS suppresses the banner while the app is frontmost unless the delegate
+/// asks for it, and nothing in this app ever did: 工作台 and 设置 both call
+/// `NSApp.activate`, so every reminder that came due while one of those windows
+/// was open was discarded — while `add`'s completion still reported success, so
+/// the hourly budget was spent and a dedup window of up to 24 hours was written
+/// for a banner nobody ever saw.
+final class AlertPresentationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    /// Separate from the delegate method so a test can read the decision without
+    /// a real `UNNotification`, which cannot be constructed.
+    static var foregroundPresentationOptions: UNNotificationPresentationOptions { [.banner, .sound] }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler(Self.foregroundPresentationOptions)
     }
 }

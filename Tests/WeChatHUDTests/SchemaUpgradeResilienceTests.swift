@@ -127,6 +127,32 @@ final class SchemaUpgradeResilienceTests: XCTestCase {
         return (table, columns)
     }
 
+    /// The index pass now reports whether it landed, but a second block used to
+    /// follow it and stamp `currentVersion` unconditionally — which made the
+    /// guard inert. The doc comment promised 「a failed pass retried forever」;
+    /// with the stamp in place the retry could never happen on any launch after
+    /// the one that failed, so an unindexed store stayed unindexed silently.
+    func testFailedIndexMigrationLeavesTheVersionForTheNextLaunch() throws {
+        let path = tmpDir.appendingPathComponent("v3retry.sqlite3").path
+        let store = try store(at: path)
+        defer { store.close() }
+
+        store.setSchemaUserVersion(2)
+        XCTAssertTrue(store.migrateToV3RetrospectiveIndexes(),
+                      "正常情况下这两条索引该建得起来")
+        try SchemaMigrator.applyAfterRetrospective(to: store)
+        XCTAssertEqual(store.schemaUserVersion(), SchemaMigrator.currentVersion,
+                       "落地的迁移要盖章，不然每次启动都重来一遍")
+
+        store.setSchemaUserVersion(2)
+        try store.exec("DROP TABLE red_banner_dismissals")
+        XCTAssertFalse(store.migrateToV3RetrospectiveIndexes(),
+                       "表不在时索引必然建不成，这里必须报失败")
+        try SchemaMigrator.applyAfterRetrospective(to: store)
+        XCTAssertLessThan(store.schemaUserVersion(), 3,
+                          "没落地的迁移不许盖章，否则下次启动不会再试")
+    }
+
     private func read(_ relative: String) throws -> String {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

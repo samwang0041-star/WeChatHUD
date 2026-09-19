@@ -195,16 +195,55 @@ final class AutopilotBatchWindowTests: XCTestCase {
     /// One-sided on purpose: a peer whose clock runs ahead cannot mute its own
     /// chat by sending a future-dated message.
     func testFutureTimestampsStayEligible() {
-        let now = Date(timeIntervalSince1970: 1_000)
+        let now = Date(timeIntervalSince1970: 1_780_000_000)
         XCTAssertFalse(AutopilotService.isPastReplyHorizon(
-            timestamp: 1_000 + 3_600, now: now, horizon: 600
+            timestamp: 1_780_000_000 + 3_600, now: now, horizon: 600
         ))
         XCTAssertTrue(AutopilotService.isPastReplyHorizon(
-            timestamp: 1_000 - 601, now: now, horizon: 600
+            timestamp: 1_780_000_000 - 601, now: now, horizon: 600
         ))
         XCTAssertFalse(AutopilotService.isPastReplyHorizon(
-            timestamp: 1_000 - 599, now: now, horizon: 600
+            timestamp: 1_780_000_000 - 599, now: now, horizon: 600
         ))
+    }
+
+    /// WeChat leaves `create_time` at 0 or years-stale for bot and forwarded
+    /// rows. A horizon check that read those as 1970 would retire the message
+    /// with a false audit reason and never answer it — which is worse than the
+    /// backlog it was meant to protect.
+    func testUnusableTimestampsAreNotTreatedAsAncient() {
+        let now = Date(timeIntervalSince1970: 1_780_000_000)
+        XCTAssertFalse(AutopilotService.isPastReplyHorizon(timestamp: 0, now: now, horizon: 600))
+        XCTAssertFalse(AutopilotService.isPastReplyHorizon(
+            timestamp: Int(AutopilotService.plausibleMessageEpoch) - 1, now: now, horizon: 600
+        ))
+        XCTAssertTrue(AutopilotService.isPastReplyHorizon(
+            timestamp: Int(AutopilotService.plausibleMessageEpoch) + 1, now: now, horizon: 600
+        ))
+        // Absolute, so the floor itself is pinned: with the constant allowed to
+        // drift down to 1 the predicate degenerates into `timestamp > 0` and the
+        // three lines above stay green while 「几年前的行」 gets retired again.
+        XCTAssertFalse(AutopilotService.isPastReplyHorizon(
+            timestamp: 1_200_000_000, now: now, horizon: 600
+        ), "2007 年的时间戳是可疑，不是超过 10 分钟")
+    }
+
+    /// The age-out belongs to the batching path only: 转账/红包 must still reach
+    /// 人工确认 however long they waited.
+    @MainActor
+    func testFinancialRowIsNotAgedOutOfManualReview() async throws {
+        let (service, teardown) = try await makeService(monotonic: { MonotonicClock.seconds() })
+        defer { teardown() }
+        var config = AutopilotConfig()
+        config.batchWindowSeconds = 10
+        var redPacket = inbound(uid: "rp-old", text: "[红包]", timestamp: Date().addingTimeInterval(-3_600))
+        redPacket.messageType = 49
+        redPacket.appType = 2001
+        let result = await service.handleNewMessages(
+            [redPacket], config: config, myUsername: "me"
+        )
+        XCTAssertEqual(result.logEntries.first?.action, .pending,
+                       "被超龄淘汰的是待批处理的文本，不是等人工确认的转账/红包")
     }
 
     // MARK: - Harness

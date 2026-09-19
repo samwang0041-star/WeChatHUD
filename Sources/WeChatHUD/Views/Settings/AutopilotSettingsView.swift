@@ -449,23 +449,33 @@ struct AutopilotSettingsView: View {
 
     private func save() {
         guard didLoad, !isHydrating else { return }
-        // Merge-update so we don't clobber fields the settings UI doesn't
-        // surface yet (maxSendsPerSession, sensitiveKeywords, proactive*,
-        // etc. all default-construct and would blow away user values if
-        // we rebuilt from scratch).
-        var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
-        cfg.autoSendEnabled = autoSendEnabled
-        cfg.handleGroupAt = handleGroupAt
-        cfg.confidenceThreshold = confidenceThreshold
-        cfg.maxRepliesPerHour = maxRepliesPerHour
-        cfg.batchWindowSeconds = batchWindowSeconds
-        cfg.excludedContacts = excludedContacts
-        cfg.replyStyle = replyStyle
-        cfg.sendKey = sendKey
+        // One merge-update for the whole page, so we don't clobber fields the
+        // settings UI doesn't surface yet (maxSendsPerSession, sensitiveKeywords,
+        // proactive*, etc. all default-construct and would blow away user values
+        // if we rebuilt from scratch). The merge reads the stored record and
+        // refuses to write when that read failed: `?? AutopilotConfig()` used to
+        // rebuild from defaults on a busy lock, the INSERT then replaced the
+        // user's guardrails with them, and this page printed 「设置已保存」.
+        var written = AutopilotConfig()
         do {
-            try store.setSettingJSON("autopilot", value: cfg)
+            let wrote = try store.updateAutopilotConfig { cfg in
+                cfg.autoSendEnabled = autoSendEnabled
+                cfg.handleGroupAt = handleGroupAt
+                cfg.confidenceThreshold = confidenceThreshold
+                cfg.maxRepliesPerHour = maxRepliesPerHour
+                cfg.batchWindowSeconds = batchWindowSeconds
+                cfg.excludedContacts = excludedContacts
+                cfg.replyStyle = replyStyle
+                cfg.sendKey = sendKey
+                written = cfg
+            }
+            guard wrote else {
+                saveError = "读不回当前的托管设置，这次没有保存 —— 否则会用默认规则盖掉这页没有显示的开关。请稍后再试一次。"
+                saved = false
+                return
+            }
             saveError = nil
-            safetyConfig = cfg
+            safetyConfig = written
             saved = true
         } catch {
             saveError = "设置没保存成功，现在还是上次的规则。请再试一次。"

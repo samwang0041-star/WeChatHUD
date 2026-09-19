@@ -64,6 +64,12 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertFalse(AutopilotService.mayStillDeliver(
             paused: false, sessionOpen: true, queueRowLive: true, approvalRowPending: false),
             "取消本条 on an approval row flips it out of 'pending' mid-send")
+        // The 'sent' write-back failed, so the audit row still says 'pending'
+        // and no row read can rule out a second send. This is the only signal.
+        XCTAssertFalse(AutopilotService.mayStillDeliver(
+            paused: false, sessionOpen: true, queueRowLive: nil, approvalRowPending: nil,
+            alreadySentHere: true),
+            "写回失败的已发送草稿不能再发一次")
     }
 
     /// The other direction of the same bug: stopping the keystrokes must not
@@ -259,15 +265,59 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/WeChatHUD/Services/WeChatLauncher.swift")
         let source = try String(contentsOf: url, encoding: .utf8)
-        let body = source.components(separatedBy: "private static func performTextAction").last!
+        let body = try XCTUnwrap(
+            source.components(separatedBy: "private static func performTextAction").last,
+            "锚点没了：这条判据不能对整篇文件断言")
         let checkpoints = body.components(separatedBy: "await sendStillAllowed(abortCheck)").count - 1
-        XCTAssertEqual(checkpoints, 2, "one before the paste, one before the send key")
+        XCTAssertEqual(checkpoints, 2, "一次在粘贴前，一次在按发送键前")
 
-        let firstCheckpoint = body.range(of: "await sendStillAllowed(abortCheck)")!.lowerBound
-        let sendKey = body.range(of: "switch sendKey {")!.lowerBound
-        let paste = body.range(of: "postCmdKey(kVK_ANSI_V)")!.lowerBound
-        XCTAssertGreaterThan(paste, firstCheckpoint, "the paste itself must be gated")
-        XCTAssertGreaterThan(sendKey, firstCheckpoint)
+        // Both, not just the first: the count alone also holds when the second
+        // guard is moved below the send key, which is the one that matters.
+        let sendKey = try XCTUnwrap(body.range(of: "switch sendKey {"), "找不到发送键")
+        let paste = try XCTUnwrap(body.range(of: "postCmdKey(kVK_ANSI_V)"), "找不到粘贴")
+        var cursor = body.startIndex
+        var firstCheckpoint: String.Index?
+        for index in 0..<2 {
+            let found = try XCTUnwrap(
+                body.range(of: "await sendStillAllowed(abortCheck)", range: cursor..<body.endIndex),
+                "只有 \(index) 个检查点")
+            XCTAssertLessThan(found.lowerBound, sendKey.lowerBound,
+                              "第 \(index + 1) 个检查点必须严格早于按发送键")
+            if index == 0 { firstCheckpoint = found.lowerBound }
+            cursor = found.upperBound
+        }
+        XCTAssertLessThan(paste.lowerBound, sendKey.lowerBound, "粘贴本身要在发送键之前")
+        XCTAssertGreaterThan(paste.lowerBound, firstCheckpoint ?? body.endIndex,
+                             "粘贴这一步本身要落在第一个检查点之后，否则检查点管不到它")
         XCTAssertTrue(body.contains("return .failed(.withdrawnBeforeSend)"))
+    }
+
+    /// The gate can only refuse what it is handed: after a failed write-back the
+    /// database row is still 'pending', so a second 确认发送 passes every row
+    /// check and sends a duplicate to a real person. The local set is the only
+    /// thing standing in the way, and it is invisible to `mayStillDeliver`'s
+    /// unit tests unless the call site actually feeds it.
+    func testUnresolvedSendWriteIsRecordedAndConsulted() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        // Only 确认发送 那一段：`.writeFailed` 在重试函数里也有一次，切片越界的话
+        // 这条断言就由重试函数满足了，发送路径删掉它也不会红。
+        let fromApproval = try XCTUnwrap(
+            source.components(separatedBy: "func approvePending(logId:").last,
+            "锚点没了")
+        let approval = fromApproval.components(separatedBy: "func retryUnresolvedSendWrites").first ?? ""
+        XCTAssertFalse(approval.isEmpty, "切片不能为空")
+        XCTAssertTrue(approval.contains("case .writeFailed:"), "发送后要区分『写回了』和『没写回』")
+        XCTAssertTrue(approval.contains("unresolvedSentLogWrites.insert(logId)"),
+                      "写回失败必须记下这条，否则闸门什么都不知道")
+        XCTAssertTrue(source.contains("alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) }"),
+                      "闸门必须真的读这个集合")
+        // 声明本身也叫这个名字，所以 `contains` 一句是空判：要看的是真的有人调它。
+        XCTAssertGreaterThanOrEqual(
+            source.components(separatedBy: "retryUnresolvedSendWrites()").count - 1, 2,
+            "写回要重试，不然这条草稿永远卡在待确认里")
     }
 }

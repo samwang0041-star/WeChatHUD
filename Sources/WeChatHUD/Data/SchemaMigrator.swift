@@ -22,12 +22,13 @@ enum SchemaMigrator {
     /// Runs after `migrateRetrospective()` so review/red-banner indexes have
     /// tables to attach to. Idempotent for stores already at `currentVersion`.
     static func applyAfterRetrospective(to store: HUDStore) throws {
-        if store.schemaUserVersion() < 3 {
-            try store.migrateToV3RetrospectiveIndexes()
+        // A second `if version < currentVersion { set(currentVersion) }` block
+        // used to follow this one, which made the guard inert: a failed pass
+        // still stamped the version, so the "retried forever" it promised never
+        // happened. A version number is a receipt for work that landed, not a
+        // counter to catch up.
+        if store.schemaUserVersion() < 3, store.migrateToV3RetrospectiveIndexes() {
             store.setSchemaUserVersion(3)
-        }
-        if store.schemaUserVersion() < currentVersion {
-            store.setSchemaUserVersion(currentVersion)
         }
     }
 }
@@ -77,19 +78,28 @@ extension HUDStore {
     /// Retrospective query indexes called out by the evolution plan (P2):
     /// red-banner lookups by todo + time, and pending todos by status/created.
     ///
-    /// Best-effort on purpose. Both tables are created by
+    /// Returns whether every index landed; the caller only stamps
+    /// `user_version` on that answer, so a busy launch retries next time.
+    ///
+    /// Best-effort on purpose — it must not throw. Both tables are created by
     /// `migrateRetrospective()` with `execIgnoringError`, so "the table is not
     /// there" is a state this function can legitimately meet — and a hard
     /// `try` here made it fatal: the throw propagated out of `store.open()`,
     /// which AppDelegate answers with a modal and `NSApp.terminate`, on every
     /// launch. `user_version` is only written after success, so a failed pass
     /// retried forever looked like a bricked app, not a missing index.
-    func migrateToV3RetrospectiveIndexes() throws {
+    @discardableResult
+    func migrateToV3RetrospectiveIndexes() -> Bool {
+        var allLanded = true
         for sql in [
             "CREATE INDEX IF NOT EXISTS idx_red_banner_dismissals_todo_created ON red_banner_dismissals(todo_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_review_todos_status_created ON review_todos(status, created_at)",
-        ] where (try? execProbeThrowing(sql)) == nil {
-            print("[WCHUD] hud.sqlite3: index unavailable — retrospective queries stay unindexed: \(sql)")
+        ] {
+            if (try? execProbeThrowing(sql)) == nil {
+                allLanded = false
+                NSLog("[WCHUD] hud.sqlite3: index unavailable — retrospective queries stay unindexed: %@", sql)
+            }
         }
+        return allLanded
     }
 }

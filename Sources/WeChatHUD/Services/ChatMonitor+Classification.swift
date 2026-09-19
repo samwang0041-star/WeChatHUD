@@ -58,16 +58,21 @@ extension ChatMonitor {
             // Recheck scope at consumption time: the user may have removed a chat
             // or ignored a sender while this item was backing off.
             guard item.chatUsername == msg.chatUsername,
-                  store.isWhitelisted(item.chatUsername),
-                  !admissionRules.isMuted(
-                      chatUsername: msg.chatUsername,
-                      senderUsername: msg.senderUsername,
-                      senderName: msg.senderName
-                  ),
                   !MessageHelpers.isFromSelf(msg, chatUsername: msg.chatUsername, myUsername: myUsername,
                                              myDisplayName: myDisplayName, mySelfNames: selfNames) else {
                 completed.insert(msg.id)
                 continue
+            }
+            switch scopeVerdict(for: msg, in: item.chatUsername, store: store, rules: admissionRules) {
+            case .retire:
+                completed.insert(msg.id)
+                continue
+            case .retry:
+                // Back off and keep the row; see `scopeVerdict`.
+                try? store.deferClassificationMessage(id: msg.id)
+                continue
+            case .proceed:
+                break
             }
             let isAt = MessageHelpers.isAtMe(
                 msg.text, myUsername: myUsername, myDisplayName: myDisplayName, mySelfNames: selfNames
@@ -126,14 +131,15 @@ extension ChatMonitor {
                 continue
             }
             // Scope can change while the provider is answering as well.
-            guard store.isWhitelisted(msg.chatUsername),
-                  !admissionRules.isMuted(
-                      chatUsername: msg.chatUsername,
-                      senderUsername: msg.senderUsername,
-                      senderName: msg.senderName
-                  ) else {
+            switch scopeVerdict(for: msg, in: msg.chatUsername, store: store, rules: admissionRules) {
+            case .retire:
                 completed.insert(msg.id)
                 continue
+            case .retry:
+                try? store.deferClassificationMessage(id: msg.id)
+                continue
+            case .proceed:
+                break
             }
             let contact = store.getContact(username: msg.senderUsername)
             let messageDate = Date(timeIntervalSince1970: Double(msg.createTime))
@@ -155,4 +161,44 @@ extension ChatMonitor {
         }
         return completed
     }
+
+    /// Out-of-scope re-check that can tell 「这条不在范围内，把队列行删掉」 apart
+    /// from 「读不到，等会儿再试」.
+    ///
+    /// `store.isWhitelisted` answers `false` for both, and the caller retired the
+    /// queue row on `false` — so one BUSY or I/O error erased the only record
+    /// that this message needed analysis: no 待办, no badge, no 未回, and nothing
+    /// in the log to explain the gap. Deferring reuses the queue's own
+    /// attempts/backoff rather than inventing a second one.
+    enum ScopeVerdict: Equatable { case proceed, retire, retry }
+
+    /// The mapping itself, so a test can drive all three arms: the caller's
+    /// job is only to hand it a real read and honour the answer.
+    nonisolated static func scopeVerdict(
+        whitelist: HUDStore.WhitelistRead, muted: Bool
+    ) -> ScopeVerdict {
+        switch whitelist {
+        case .unreadable: return .retry
+        case .unfollowed: return .retire
+        case .followed: break
+        }
+        return muted ? .retire : .proceed
+    }
+
+    private func scopeVerdict(
+        for msg: MessageInfo,
+        in chatUsername: String,
+        store: HUDStore,
+        rules: AdmissionRules
+    ) -> ScopeVerdict {
+        Self.scopeVerdict(
+            whitelist: store.whitelistRead(chatUsername),
+            muted: rules.isMuted(
+                chatUsername: chatUsername,
+                senderUsername: msg.senderUsername,
+                senderName: msg.senderName
+            )
+        )
+    }
+
 }

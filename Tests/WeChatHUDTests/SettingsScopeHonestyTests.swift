@@ -121,4 +121,22 @@ final class SettingsScopeHonestyTests: XCTestCase {
             .components(separatedBy: "\n").first ?? ""
         XCTAssertTrue(denied.contains("未获允许"), denied)
     }
+
+    /// Both pages write the same record, and both used to do it by reading with
+    /// `?? AutopilotConfig()` and writing the whole thing back. The store now
+    /// owns that merge, so a page that writes the key itself is a regression of
+    /// the exact defect — which is why this is a gate and not a code review note.
+    func testAutopilotConfigIsOnlyEverWrittenThroughTheMergingHelper() throws {
+        for file in ["Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift",
+                     "Sources/WeChatHUD/Views/Settings/SettingsView.swift"] {
+            let view = try source(file)
+            XCTAssertEqual(view.components(separatedBy: "setSettingJSON(\"autopilot\"").count - 1, 0,
+                           "\(file) 自己在整条写回托管配置：读失败时会拿默认值盖掉这页没显示的护栏")
+            XCTAssertEqual(view.components(separatedBy: "setSetting(\"autopilot\"").count - 1, 0,
+                           "\(file) 换了个拼写绕过合并入口，同上")
+            XCTAssertGreaterThanOrEqual(
+                view.components(separatedBy: "store.updateAutopilotConfig").count - 1, 1,
+                "\(file) 一处都没走合并入口，判据不能零命中")
+        }
+    }
 }

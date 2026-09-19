@@ -986,4 +986,89 @@ final class ProactiveAlertTests: XCTestCase {
             commitment("", to: "同事"), rules: [rule("", "")]
         ))
     }
+
+    /// `add(_:withCompletionHandler:)` has no timeout. A completion that never
+    /// arrives used to reserve a slot in the hourly budget forever — five of
+    /// those and every later alert, including the P0 未回 rule, was refused for
+    /// the rest of the session with nothing in the log.
+    @MainActor
+    func testStuckInFlightReservationExpires() async {
+        var mono: TimeInterval = 700_000
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            monotonic: { mono },
+            // Never calls the completion — the shape of a stuck submission.
+            sendNotification: { _, _, _, _ in sends += 1 }
+        )
+
+        for index in 0..<8 {
+            engine.pushCrossGroupVIPAlert(
+                vipName: "同事", vipUsername: "alice-\(index)",
+                groupName: "群聊", groupUsername: "group-\(index)",
+                preview: "hello", messageCount: 1
+            )
+        }
+        XCTAssertEqual(sends, 5, "每小时 5 条：多出来的一条都不该提交")
+
+        // Two halves, and neither is the other: the step is derived from the
+        // constant so a legitimate 180 秒 stays green, while the absolute bounds
+        // are what catch a window that drifted to hours (muting an identifier for
+        // the rest of the session behind a submission that already gave up) or to
+        // a second (a reservation that expires before the round trip does).
+        XCTAssertGreaterThanOrEqual(ProactiveAlertEngine.inFlightReservationWindow, 30)
+        XCTAssertLessThanOrEqual(ProactiveAlertEngine.inFlightReservationWindow, 600)
+        mono += ProactiveAlertEngine.inFlightReservationWindow + 1
+        engine.pushCrossGroupVIPAlert(
+            vipName: "同事", vipUsername: "alice-late",
+            groupName: "群聊", groupUsername: "group-late",
+            preview: "hello", messageCount: 1
+        )
+        XCTAssertEqual(sends, 6, "卡住的预占过期后要能把配额还回来")
+    }
+
+    /// The prompt's answer is not the system's status: an error or a
+    /// `.provisional` grant both arrive with `granted == false`, and labelling
+    /// those `.denied` muted the whole reminder path for the session.
+    func testAuthorizationIsReReadRatherThanInferredFromThePrompt() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/ProactiveAlertEngine.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let body = try XCTUnwrap(
+            source.components(separatedBy: "private func requestNotificationPermission").last?
+                .components(separatedBy: "\n    }").first,
+            "锚点没了：切片为空时下面两句负/正判据都会变成空转")
+        XCTAssertFalse(body.isEmpty, "判据不能零命中")
+        XCTAssertFalse(body.contains("granted ? .authorized : .denied"),
+                       "不能拿 requestAuthorization 的布尔值冒充授权状态")
+        XCTAssertTrue(body.contains("refreshNotificationAuthorizationIfNeeded(force: true)"),
+                      "提示回答后要重新读真值")
+    }
+
+    /// Without a delegate, macOS throws away the banner whenever the app is
+    /// frontmost — which is exactly when 工作台 or 设置 is open. The submission
+    /// still reported success, so the hourly budget was spent and up to 24 hours
+    /// of dedup were written for a reminder nobody saw.
+    func testForegroundBannersAreAskedForRatherThanDropped() throws {
+        let options = AlertPresentationDelegate.foregroundPresentationOptions
+        XCTAssertTrue(options.contains(.banner), "前台时不弹横幅，这句话就是空承诺")
+        XCTAssertFalse(options.isEmpty, "返回空集合等于让系统继续吞掉")
+
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/ProactiveAlertEngine.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let production = try XCTUnwrap(
+            source.components(separatedBy: "init(store: HUDStore) {").last?
+                .components(separatedBy: "\n    }").first,
+            "找不到生产 init")
+        XCTAssertTrue(production.contains(".delegate = presentationDelegate"),
+                      "决定要有人安装：没有委托时上面的选项永远不会被问到")
+        XCTAssertTrue(source.contains("private let presentationDelegate"),
+                      "通知中心弱引用委托，引擎必须自己持有")
+    }
 }

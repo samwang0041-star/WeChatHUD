@@ -137,9 +137,11 @@ busy_timeout=5000、磁盘满、`hardenTree` 之后文件不可写）时，`no s
 `read-failure` 那路另报 3 条 P0 + 2 组 P1，逐条回源码后确认成立、但都不在本轮的时钟轴上，
 留作下一轮：`isWhitelisted` 读失败 → 分类队列把该消息**当已处理删掉**（永久跳过，界面无痕）；
 `resolveAutopilotLogSent` 事务被 `try?` 吞掉 → 双胞胎仍是 pending → 二次「确认发送」双发；
-`?? AutopilotConfig()` 六处（含设置页的 merge-update 以默认值为基底覆写未暴露字段后仍显示
-「已保存」）。以及通知授权（`error == nil` 当成送达、不检查 authorization、
-`granted` 被丢弃、真话 `notificationExplanation` 是死代码）—— 那条单独一轮。
+`?? AutopilotConfig()` 家族（设置页的 merge-update 以默认值为基底覆写未暴露字段后仍显示
+「已保存」）—— 已在 §164 收口；谓词本身也抽成了可直驱的三臂函数。通知授权（`error == nil` 当成送达、不检查 authorization、
+`granted` 被丢弃、真话 `notificationExplanation` 是死代码）—— 那条单独一轮 —— 已写成 §162（授权闸门）+ §165（前台丢弃）+ §166（尾巴定价与两条判阴）。
+前两条的三态谓词与 `resolveAutopilotLogSent` 的失败分型也已在本轮落地（`whitelistRead` /
+`AutopilotSendResolution` + `alreadySentHere` 闸门，见 §161 之后各节）。
 
 ## §162 「已提醒」原来是算出来的：系统通知被拒时，配额和 24 小时静默期照扣
 
@@ -168,8 +170,145 @@ macOS 在通知被拒时 `add()` **不报错**，只是什么都不显示 ——
 `testAuthorizationGateFailsOpenOnlyBeforeTheFirstRead`、
 `testNotificationRowSaysWhatTheSystemAllows`（钉住「一处定义、一处渲染」，
 再少一处就是它又变回死代码）。变异 M19（闸门只看返回值不放行）→ 第一条断言红；
-M20（`nil` 当不能提交）→ 纯谓据红，并且整套提醒测试一起红（说明「失败打开」是承重的）；
+M20（`nil` 当不能提交）→ 纯判据红，并且整套提醒测试一起红（说明「失败打开」是承重的）；
 M21（被拒时仍记静默期）→ 「开启之后就该立刻提醒」那条红。
 
 未覆盖面（本轮没查）：`RetrospectiveJob` 与其他直接 `add()` 的通知生产者是否有同形问题、
 点击横幅的回跳路由、以及在 HUD 里处理完之后通知中心里的旧横幅是否还在说话。已另派一路。
+
+## §163 自查：§158 里「下次启动会重试」这句当时是假的
+
+§158 把 `migrateToV3RetrospectiveIndexes()` 改成返回 Bool、并且只在落地后才写 `user_version`，
+我以为这就恢复了重试。变异 M6（把守卫写成 `|| true`）**全绿** —— 因为同一个函数下面还留着：
+
+```swift
+if store.schemaUserVersion() < currentVersion { store.setSchemaUserVersion(currentVersion) }
+```
+
+`currentVersion == 3`，所以这个无条件兜底紧跟在守卫后面把章又盖上：失败的那次启动照样走到 3，
+「retried forever」从来只在打章之前的那一次成立。这段兜底是 Void 版迁移的遗留 ——
+当时迁移不报告结果，需要有人把版本推到 `currentVersion`；现在它是那条守卫的对偶，必须删。
+「版本号是一次工作落地的收据，不是要追平的计数器。」
+
+判据：`testFailedIndexMigrationLeavesTheVersionForTheNextLaunch`（真表 → 落地 → 章盖上；
+`DROP TABLE red_banner_dismissals` → 迁移报 false → `user_version` 必须仍 < 3）。M6 重跑 → 红。
+
+## §164 `?? AutopilotConfig()`：读失败时「以默认值为基底」合并，再把整条写回去
+
+`getSettingJSON` 对「没存过」和「这次读不回」都答 `nil` —— 和 §161 里 `isWhitelisted` 那个
+两态 Bool 是同一个缺陷，但这一处的杀伤在**写**侧。托管设置页整页只暴露 `AutopilotConfig`
+约 20 个字段里的 8 个，其余（`sensitiveKeywords`、`maxSendsPerSession`、`proactive*`、
+`vipAutoNotify`…）全靠那句 `?? AutopilotConfig()` 之外的合并注释保命：
+
+```swift
+var cfg = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+// …改 8 个字段…
+try store.setSettingJSON("autopilot", value: cfg)   // INSERT OR REPLACE 整条
+```
+
+于是一次 BUSY（`busy_timeout=5000` 之后仍失败、磁盘满、iCloud 同步中）就把用户自己加的敏感词、
+每会话上限、主动提醒开关全部换成默认值，**并且盖上「设置已保存」**。默认值里
+`autoSendEnabled=false`，所以这条不会立刻让人被自动发消息；它做的是拆掉用户自己架的护栏，
+然后假装什么都没发生。
+
+第二处同形：`SettingsView.swift:270`（截图夹具用的确认框）里「允许自动发送」按钮做的是同一件事，
+而且写失败被 `try?` 吞掉 —— 全仓最危险的那个开关，读不到时照写，写了不报。
+
+修法：`HUDStore.readSettingJSON` 三态（`.absent / .unreadable / .value`）+ 唯一的合并入口
+`updateAutopilotConfig(_:)`，读不到就 `return false`、连合并闭包都不调用；两个页面都改走它。
+解不开（deletable garbage）故意算 `.absent`：那不是读失败，没合并的余地，而在写侧拒绝会把
+设置页永久锁死。两个页面的「已保存」只在 `wrote == true` 时出现，否则是
+「读不回当前的托管设置，这次没有保存 —— 否则会用默认规则盖掉这页没有显示的开关」。
+
+**读侧的默认值不改**（定价，不是漏掉）：读失败时最危险的字段 `autoSendEnabled` 的默认是 `false`，
+所以失败即不发；剩下的（自定义敏感词、每会话上限）放松的前提是自动发送本来就关着，
+而要让所有 `getSettingJSON("autopilot")` 消费点在失败时都改为「按住不发」，代价是把
+一次性 BUSY 变成整条托管路径停摆 —— 这条交易现在不划算。已扫过全部 11 个消费点。
+
+判据：`testSettingReadSeparatesAbsentFromUnreadable`（含垃圾 JSON 那条支路）、
+`testAutopilotConfigMergeWriteRefusesAnUnreadableConfig`（false 时闭包未执行 + 正常时未暴露字段存活）、
+`testAutopilotConfigIsOnlyEverWrittenThroughTheMergingHelper`（两个页面都不得自己 `setSettingJSON`/
+`setSetting("autopilot"`，且必须真的出现 `store.updateAutopilotConfig`）。
+变异 M9（`.unreadable` 时以默认值为基底继续写）、M13（还原 SettingsView 的整条写回）→ 都红。
+
+## §165 前台时通知被系统整条丢掉，配额和 24 小时静默期照扣
+
+§162 修的是「被拒不发」，还剩另一半：**app 在前台时 macOS 不弹横幅**，除非委托对象
+`willPresent` 里要回来。全仓从来没有 `UNUserNotificationCenterDelegate`，而 工作台
+（`AppDelegate.swift:1014/1041`）和 设置（`SettingsWindow.swift:94`）都会 `NSApp.activate`
+—— 正是用户最容易看到「该提醒却没提醒」的两个窗口。`add()` 的 completion 照样报成功，
+于是那次提交既扣了一格每小时配额，又给这个标识符记上静默期（到期承诺 24 小时）：
+开一次工作台的功夫，当天这条承诺的提醒就没了。
+
+修法：`AlertPresentationDelegate`（`foregroundPresentationOptions = [.banner, .sound]` 做成独立
+静态量，因为 `UNNotification` 在测试里造不出来），由生产 init 安装、引擎自己强持有
+（通知中心弱引用委托）。测试 init 不装：`UNUserNotificationCenter.current()` 在测试宿主里不可用。
+
+同轮删除：`AutopilotService.pushVIPNotification`（原 :2368-2384）是**全仓唯一**绕过
+`pushAlert` 的直发 `add()` —— 无授权闸门、无配额、无去重，标识符还是 `UUID()`（连系统去重都吃不到）。
+它同时是唯一一处 `import UserNotifications` 的使用，连着 import 一起删。
+判阴：删之前确认过它零引用（含测试），且 `RetrospectiveJob` 等其余生产者不直接 `add()`。
+
+判据：`testForegroundBannersAreAskedForRatherThanDropped`（选项含 `.banner` + 生产 init 里真的
+`.delegate = presentationDelegate` + 引擎强持有）。M7（选项返回 `[]`）、M8（不装委托）→ 都红。
+
+## §166 通知尾巴的其余四条：定价与两条判阴
+
+派出去攻这条尾巴的那一路带回来 5 条假设 + 3 条额外发现，逐条回源码后：
+
+- **成立，未修（P2）**：没有任何点击回跳。`didReceive`/`UNNotificationResponse`/`NSUserActivity`/
+  `setNotificationCategories`（连通知按钮都没有）全仓零命中，`add()` 两处均不接点击。
+  点通知跳到那个对话是一个功能，不是修 bug；现在没有任何文案承诺它，所以不进本轮。
+- **成立，未修（P2）**：零 `removeDeliveredNotifications`/`getDeliveredNotifications`，
+  用户在 HUD 里处理完之后，通知中心里的旧横幅还在说话。标识符本来就是确定式的
+  （`commitment-overdue-<msgUID>`、`vip-<chat>-<tier>`、`p0-debt-<chat>`），
+  要清就得在 `ChatMonitor.updateCommitmentStatus:2427`、`batchUpdateCommitmentsStatus:2444`、
+  `dismissInboxItem:2587`、`HUDStore.resolveVerifiedSend:3700` 这几个状态变更点后各摘一次 ——
+  4 处接线，一处不接就不一致，所以单独立一轮而不是塞进本轮。
+- **成立（P2，故意不改）**：提交失败既不扣配额也不记去重，下一个 tick（心跳 30 秒）就重试同一个
+  标识符；`add()` 持续失败就是每 30 秒一次 XPC，无限期。给失败记静默期就等于让「用户没看到的
+  一次提交」把他该收到的提醒按住 5 分钟 —— 和 §162 刚拆掉的那个逻辑是同一个错误，只是方向相反。
+  上限就是 XPC 频率，授权闸门挡住的是更常见的成因，所以留着。
+- **判阴**：「`ProactiveAlertEngine` 的去重只在内存里，重启后同一条到期承诺会再提醒一次」成立，
+  但「能发好几次」不成立：一次启动扫描里同一条只发 1 条（心跳 `ChatMonitor:539` 与扫描
+  `evaluate→:217` 都被 `pushAlert` 的同步预占 :479 挡住），放大只来自重启，即 N 次重启 = N 条。
+- **判阴**：「DetailPanelView.swift:155 的『关掉这条提醒』管不住承诺横幅」是假阳性。
+  那个按钮关的是详情面板里那条**瞬时内联提示**，`DetailNoticeState` 的注释（:164-167）明说
+  「只活到这次访问，下次进来看见，不写盘」，tooltip 也写「消息仍在收件箱里」。
+  承诺到期告警走的是 `evaluateCommitmentDeadlines`，它确实过滤了免打扰名单
+  （`store.loadIgnoredSenders()` + `isMutedForCommitment`，:300-304）。把「稍后提醒/整条静默」
+  那套 per-chat `chat_actions` 塞进承诺路径是另一件事，不是文案落空。
+
+## §167 判据侧被攻出的四处「永远绿」，以及本轮变异表
+
+本轮最后一路专门攻我自己的判据（只读代理，不改文件），带回来 8 条，其中 4 条成立并已修：
+
+1. `testUnreadableWhitelistKeepsTheQueueRowForRetry`：`queueCount==1` + `ai.calls==0` 恰好也是
+   「worker 完全没跑」的样子。补 `pendingClassificationMessages().isEmpty`（行必须已被推到将来，
+   证明确实执行过一次退避），另加直驱三臂的 `testScopeVerdictMapsAllThreeWhitelistAnswers`
+   —— 为此把谓词抽成 `nonisolated static ChatMonitor.scopeVerdict(whitelist:muted:)`，
+   队列那条退化成接线判据。
+2. `source.contains("retryUnresolvedSendWrites()")` 被**函数声明自己**满足（声明就叫这个）。
+   删掉 `processPendingQueue` 里唯一那个调用点它照样绿。改成出现次数 ≥2（M10 → 红）。
+3. `testLauncherReReadsPermissionAtBothSidesOfThePaste`：`count==2` 加只跟**第一个**检查点比过
+   发送键 —— 把第二个 guard 挪到 `switch sendKey` 之后它仍然绿，而「按发送键前能拦住」正是这条
+   判据存在的全部理由。改为逐个检查点定位、都要求早于发送键，且粘贴在第一个之后。
+   同处把三处 `range(of:)!` 换成 `XCTUnwrap`：锚点没了会 trap，等于打死整个测试二进制。
+4. `testUnresolvedSendWriteIsRecordedAndConsulted` 的切片越界：从 `approvePending` 一路切到
+   `/// Reject a pending item` 会把 `retryUnresolvedSendWrites` 圈进来，而那里也有一句
+   `case .writeFailed:` —— 发送路径删掉它，判据由重试函数满足。收口到 `func retryUnresolvedSendWrites` 之前。
+
+另有两条同轮的自伤修正：`testFutureTimestampsStayEligible` 的玩具时间戳（epoch 1000）被我自己在
+§159 之后加的 `plausibleMessageEpoch` 地板判成「 unusable」，测试绿在产品是对的那个支路上 ——
+换到可信纪元；以及该判据的绝对值补强（`1_200_000_000` 必须是「可疑」而不是「超龄」，
+否则地板退化成 `timestamp > 0` 时上面三行仍然全绿）。
+`inFlightReservationWindow` 那条则相反：原来 `mono += window + 1` 把常量读回来当断言，
+常量飘到 1e9 秒也测不到 —— 现在行为步长仍由常量推（合法改 180 不假红），
+另外加 `30 ≤ window ≤ 600` 的绝对区间负责抓漂移。
+
+本轮 19 条变异，全部被抓住：M1-M3（已发送写回集合、喂给闸门的入参、纪元地板）、
+M4-M6（预占窗口两向、免打扰三态、版本收据）、M7-M13（前台选项、委托安装、合并写、
+重试调用、纯谓词、地板漂移、页面绕过合并入口）、M16/M19-M21（§158/§162 的既有判据）。
+「变异后仍全绿」这一轮出现 3 次，三次的结论都是判据有问题：两次是切片/锚点指错，
+一次（M6）直接暴露了 §163 那条真的死守卫。
+

@@ -834,6 +834,50 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return try? JSONDecoder().decode(type, from: data)
     }
 
+    /// 「还没存过」 and 「存着，但这次读不回来」 are different answers, and
+    /// `getSettingJSON` answers `nil` for both. That conflation only bites on the
+    /// write side: a merge-update that starts from `?? AutopilotConfig()`
+    /// rebuilds the record from defaults, and the `INSERT OR REPLACE` below
+    /// swaps it in — so one busy lock during 保存 silently reset 敏感词、每会话上限、
+    /// 主动提醒开关 and everything else the page does not show.
+    enum SettingRead<T> { case absent, unreadable, value(T) }
+
+    func readSettingJSON<T: Decodable>(_ key: String, as type: T.Type) -> SettingRead<T> {
+        let raw: String?
+        if DeviceSettingsStore.sharedKeys.contains(key), let deviceSettings {
+            raw = deviceSettings.get(key)
+        } else {
+            do {
+                raw = try queryOneThrowing(
+                    "SELECT value FROM settings WHERE key=?",
+                    bind: { sqlite3_bind_text($0, 1, key, -1, Self.sqliteTransient) },
+                    decode: { Self.textColumn($0, 0) }
+                ) ?? nil
+            } catch { return .unreadable }
+        }
+        guard let raw, !raw.isEmpty, let data = raw.data(using: .utf8) else { return .absent }
+        // Undecodable is deliberately not a read failure: there is nothing left
+        // to merge into, and refusing to write here would leave the settings page
+        // unable to save anything, ever.
+        guard let value = try? JSONDecoder().decode(type, from: data) else { return .absent }
+        return .value(value)
+    }
+
+    /// Merge-update the autopilot config, refusing to write over a config that
+    /// could not be read. `false` means nothing was touched.
+    @discardableResult
+    func updateAutopilotConfig(_ mutate: (inout AutopilotConfig) -> Void) throws -> Bool {
+        var config: AutopilotConfig
+        switch readSettingJSON("autopilot", as: AutopilotConfig.self) {
+        case .value(let stored): config = stored
+        case .absent: config = AutopilotConfig()
+        case .unreadable: return false
+        }
+        mutate(&config)
+        try setSettingJSON("autopilot", value: config)
+        return true
+    }
+
     func setSettingJSON<T: Encodable>(_ key: String, value: T) throws {
         if key == "ai", let config = value as? AIConfig {
             try persistAIConfig(config)
@@ -915,10 +959,34 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Whether a chat is followed — or whether that simply could not be read.
+    nonisolated enum WhitelistRead: Equatable {
+        case followed
+        case unfollowed
+        /// The query failed. Not the same answer as `.unfollowed`.
+        case unreadable
+    }
+
+    func whitelistRead(_ username: String) -> WhitelistRead {
+        do {
+            let hit: Int? = try queryOneThrowing(
+                "SELECT 1 FROM whitelist WHERE username=? LIMIT 1",
+                bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+                },
+                decode: { _ in 1 }
+            )
+            return hit == nil ? .unfollowed : .followed
+        } catch {
+            return .unreadable
+        }
+    }
+
+    /// `false` here means both "not followed" and "could not read". Callers
+    /// that *delete* or retire work on a false answer must use
+    /// ``whitelistRead(_:)`` instead — see `ChatMonitor+Classification`.
     func isWhitelisted(_ username: String) -> Bool {
-        queryOne("SELECT 1 FROM whitelist WHERE username=?", bind: { stmt in
-            sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
-        }, decode: { _ in true }) ?? false
+        whitelistRead(username) == .followed
     }
 
     func getWhitelistEntry(username: String) -> WhitelistEntry? {
@@ -3803,27 +3871,41 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         )
     }
 
-    /// Atomically record a verified send on a log row. Returns whether a
-    /// 'pending' row was consumed — the check and the write share one
-    /// transaction so a racing reject can't double-count sessionPending.
-    /// The send DID happen, so the row is written 'sent' regardless of its
-    /// prior action; only the pending-flip is counted.
-    @discardableResult
-    func resolveAutopilotLogSent(id: Int64) -> Bool {
-        var consumed = false
-        try? withTransaction {
-            let action = queryOne(
-                "SELECT action FROM autopilot_log WHERE id=?",
-                bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
-                decode: { stmt in Self.textColumn(stmt, 0) }
-            )
-            consumed = (action == AutopilotAction.pending.rawValue)
-            try exec(
-                "UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?",
-                params: [String(Int(Date().timeIntervalSince1970)), String(id)]
-            )
+    /// Outcome of flipping the audit twin to 'sent' after a verified send.
+    /// The check and the write share one transaction so a racing reject cannot
+    /// double-count `sessionPending`. The send DID happen, so the row is
+    /// written 'sent' whatever its prior action; only the pending-flip is
+    /// counted.
+    nonisolated enum AutopilotSendResolution: Equatable {
+        /// A 'pending' row was consumed here — the pending counter may come down.
+        case consumedPending
+        /// The row was not 'pending' (rejected or resolved by someone else).
+        case wasNotPending
+        /// The transaction failed. The row is therefore *still* 'pending', so
+        /// the approval list keeps offering a reply that has already gone out.
+        case writeFailed
+    }
+
+    func resolveAutopilotLogSent(id: Int64) -> AutopilotSendResolution {
+        var outcome: AutopilotSendResolution = .writeFailed
+        do {
+            try withTransaction {
+                let action: String? = try queryOneThrowing(
+                    "SELECT action FROM autopilot_log WHERE id=?",
+                    bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+                    decode: { stmt in Self.textColumn(stmt, 0) }
+                )
+                outcome = (action == AutopilotAction.pending.rawValue) ? .consumedPending : .wasNotPending
+                try exec(
+                    "UPDATE autopilot_log SET action='sent', sent_at=? WHERE id=?",
+                    params: [String(Int(Date().timeIntervalSince1970)), String(id)]
+                )
+            }
+        } catch {
+            outcome = .writeFailed
+            print("[WCHUD] autopilot_log 的发送状态写回失败: \(error)")
         }
-        return consumed
+        return outcome
     }
 
     /// Atomically skip a log row ONLY if still pending — a reject racing an
