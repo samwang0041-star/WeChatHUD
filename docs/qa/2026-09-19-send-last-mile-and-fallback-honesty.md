@@ -295,12 +295,24 @@ SQL 轴报的两条最像 P1 的 —— `listAllChatTables()` 的 `LIKE 'Msg_%'`
 「自动驾驶暂停，这条没有发出，仍留在队列里。」）；只有行真的没了或会话真的结束，
 才按撤回/失败消费掉这条。
 
-验证：4 条真值表断言（含两个必须为假的形状：行已删、会话已结束）+
-一条尾段顺序判据（`withheldByPause` 必须出现在 `retained.manualOnlyReason =` 之前）。
-变异 M6（把 `|| pausedMidFlight` 去掉）⇒ 顺序判据失败。
-写这条测试时先踩到自己一个坑：`retained.manualOnlyReason` 在同一个函数里
-**发送之前**的额度/过期分支也出现，取第一次出现必然判错 —— 判据要先把
-「发送之后的尾段」切出来。
+验证过程里翻了一次车，记下来：
+第一版我只加了「`withheldByPause` 出现在打标记之前」这条顺序判据，
+然后跑变异 M6（把调用点的 `|| pausedMidFlight` 去掉）—— **7 条全绿**。
+判据没牙：函数还在原地被调用，顺序当然成立，而真正被改掉的是它结果的使用方式。
+（同一个函数里 `retained.manualOnlyReason` 在发送**之前**的额度/过期分支也出现，
+第一次取到的位置在尾段之外，这条判据连"在看哪一段"都没锁住。）
+
+于是把处置收成一个纯函数 `sendFailureDisposition(paused:sessionOpen:rowStillQueued:
+reason:retryableReason:) -> .requeueUnchanged | .humanRequired`，
+打标记、记尝试、回执文案三处全部改由它的结果决定，判据也就能咬住接线：
+- 4 条真值表（含两个必须为假的形状：行已删、会话已结束）；
+- 尾段顺序 + 两条接线断言（记账必须挂在 `if case .humanRequired`，
+  判定必须真的读 `store.hasPendingSend(id:)`）。
+- **M7**（调用点把 `rowStillQueued` 写死成 true）⇒ 1 条失败。
+- **M8**（把记账挂反到 `.requeueUnchanged` 上）⇒ 1 条失败。
+
+教训：**判据写完必须用变异跑一次才知道有没有牙**，这次是跑出来才发现的，
+不是我写的时候想到的。
 
 同轮三条 P2 一并处理：
 - `.automationHostMissing` 原本把「reader.dbDir 为空」也吞进去，

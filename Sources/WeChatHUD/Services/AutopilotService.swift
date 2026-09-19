@@ -315,6 +315,29 @@ actor AutopilotService {
         paused && sessionOpen && rowStillQueued
     }
 
+    enum SendFailureDisposition: Equatable {
+        /// Keep the draft exactly as it was — it will be sent again.
+        case requeueUnchanged(reason: String)
+        /// Consume the automatic attempt and hand it to a human.
+        case humanRequired(reason: String)
+    }
+
+    /// The single place that decides what a failed send means for the queued
+    /// draft. It has to be one function because the three inputs arrive from
+    /// different places (actor flags, the queue table, the launcher's reason
+    /// string) and any one of them alone reads as "the send failed".
+    nonisolated static func sendFailureDisposition(
+        paused: Bool, sessionOpen: Bool, rowStillQueued: Bool,
+        reason: String, retryableReason: Bool
+    ) -> SendFailureDisposition {
+        if Self.withheldByPause(paused: paused, sessionOpen: sessionOpen,
+                                rowStillQueued: rowStillQueued) {
+            return .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。")
+        }
+        if retryableReason { return .requeueUnchanged(reason: reason) }
+        return .humanRequired(reason: "\(reason)，已转为人工确认")
+    }
+
     func deliveryStillPermitted(queueId: UUID?, logId: Int64?) -> Bool {
         Self.mayStillDeliver(
             paused: isPaused,
@@ -1550,13 +1573,14 @@ actor AutopilotService {
         }
         var retained = item
         let failureReason = lastSendFailureMessage ?? "发送结果无法确认"
-        let pausedMidFlight = Self.withheldByPause(
+        let disposition = Self.sendFailureDisposition(
             paused: isPaused,
             sessionOpen: sessionId != nil,
-            rowStillQueued: store.hasPendingSend(id: item.id)
+            rowStillQueued: store.hasPendingSend(id: item.id),
+            reason: failureReason,
+            retryableReason: Self.isRetryableSendBusy(failureReason)
         )
-        let busy = pausedMidFlight || Self.isRetryableSendBusy(failureReason)
-        if !busy {
+        if case .humanRequired = disposition {
             retained.autoSendAttempts += 1
             retained.manualOnlyReason = "\(failureReason)，请先检查微信，再手动处理"
         }
@@ -1566,13 +1590,13 @@ actor AutopilotService {
         // 'skipped' — a rejected draft must not resurrect for retry.
         guard sessionId != nil,
               store.autopilotLogTwinOpen(queueId: item.id) else {
-            return .blocked(busy ? failureReason : "\(failureReason)")
+            return .blocked(failureReason)
         }
         pendingSendQueue.append(retained)
         if let sid = sessionId {
             try? store.upsertPendingSend(retained, sessionId: sid)
         }
-        if !busy && item.manualOnlyReason == nil {
+        if case .humanRequired = disposition, item.manualOnlyReason == nil {
             // A failed send becomes human-required — same manual-only
             // conversion accounting as the cap/stale paths above. An item
             // that was already manual-only is already counted.
@@ -1582,10 +1606,10 @@ actor AutopilotService {
             )) ?? 0
             persistSessionCounts()
         }
-        if pausedMidFlight {
-            return .blocked("自动驾驶暂停，这条没有发出，仍留在队列里。")
+        switch disposition {
+        case .requeueUnchanged(let reason): return .blocked(reason)
+        case .humanRequired(let reason): return .blocked(reason)
         }
-        return .blocked(busy ? failureReason : "\(failureReason)，已转为人工确认")
     }
 
     private func stalePendingSendReason(_ item: PendingSend) async -> String? {

@@ -86,6 +86,28 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             "没暂停却失败 ⇒ 仍是发送失败，要转人工")
     }
 
+    /// The disposition is one function, so the truth table covers the case the
+    /// mutation used to slip through: a pause whose reason string is NOT one of
+    /// the retryable "another send is running" strings still must not consume
+    /// the draft.
+    func testSendFailureDispositionKeepsAPausedDraftAndConsumesARealFailure() {
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: true, sessionOpen: true, rowStillQueued: true,
+                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
+            .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。"))
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                reason: "发送结果无法确认", retryableReason: false),
+            .humanRequired(reason: "发送结果无法确认，已转为人工确认"))
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                reason: "已有发送正在进行", retryableReason: true),
+            .requeueUnchanged(reason: "已有发送正在进行"))
+    }
+
     func testFailureTailDecidesPauseBeforeStampingManualOnly() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -97,10 +119,14 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             // and must keep doing so; the ordering that matters is inside the
             // post-send failure tail.
             .components(separatedBy: "let failureReason = lastSendFailureMessage").last!
-        let pause = body.range(of: "Self.withheldByPause(")!.lowerBound
+        let decide = body.range(of: "let disposition = Self.sendFailureDisposition(")!.lowerBound
         let stamp = body.range(of: "retained.manualOnlyReason =")!.lowerBound
-        XCTAssertLessThan(pause, stamp,
-                          "必须先判「是不是暂停」，再决定要不要把这条转人工")
+        XCTAssertLessThan(decide, stamp,
+                          "必须先算出处置，再决定要不要把这条转人工")
+        XCTAssertTrue(body.contains("if case .humanRequired = disposition {"),
+                      "转人工的记账必须挂在那一个判定上，而不是挂在某个布尔的取反上")
+        XCTAssertTrue(body.contains("rowStillQueued: store.hasPendingSend(id: item.id)"),
+                      "处置判定漏掉「行还在不在」⇒ 暂停和撤回又会被混成一谈")
     }
 
     // MARK: - Gate driven by real actor + store state
