@@ -1060,3 +1060,187 @@ S4 never-ran 当刚跑过、S5 锚点回墙上时钟、S6 撤回不读框、S7 �
 `CompactInboxBar:155/159` 取不到 panel 时按假 notch 宽度排版（P2）；
 `Models.swift:90 case stale` 无生产方赋值（一旦出现，展开面板四处 switch 全漏 → 记为
 "下一轮要么补全要么删掉"的孤儿状态）。
+
+---
+
+# 第 3 轮判阴与修复（两路 diff 复攻 + 一路本地密钥审计）
+
+## §198 P0 快照失败时，「别毁掉不可再生的数据」保护的是已经没了的东西
+
+`ClipboardGuard.save()` 深拷贝剪贴板项；Finder/Preview/AirDrop/Office 的 promised
+file 项 `item.data(forType:)` 全 nil，拷贝出来 `types` 为空 → `saved=[]` →
+`items=nil`，而 `hadContent=true`。`restore()` 于是走那条「不擦除不可再生数据」的
+早退分支。
+
+量出来的事实：`WeChatLauncher` 在粘贴前就 `pasteboard.clearContents()`（:836），
+所以走到那一行时用户原内容已经没了 —— 这个分支保护不了任何东西，它唯一的效果是把
+AI 草稿（含对方聊天原文）永久留在 general pasteboard 上。剪贴板管理器随时可读，
+Universal Clipboard 还会同步到同账号的其他设备。
+
+修法不是「改成清空」就完事：清空会误伤「发送之后别人又复制了东西」这种情况，那时
+那份数据是可恢复的、且不是我们的。所以 `restore` 多带一个 `pastedText`，只擦与
+自己写过的那串完全相等的内容；认不出就不动。三处调用点（`openChat`、
+`sendMessageDetailed`、`AutopilotService` 的发送）都传了自己写的那串。
+
+判据：`ClipboardLeakOnFailedSnapshotTests` 5 条，注入私有 `NSPasteboard` 驱动真实
+`restore`，含「别人的内容不许删」「原本为空要清空」「能还原时照常还原」三个正例。
+变异：把新分支还原成早退 ⇒ 泄漏那条断言红。
+
+残留（定价不做）：进程在 `clearContents` 与 `restore` 之间被 kill，草稿同样留在
+剪贴板上。要覆盖它得在磁盘上放一个哨兵并记下那串文本 —— 那等于把聊天内容写进
+临时文件，比它要修的泄漏更糟。窗口约 0.2 s/次发送。
+
+## §199 P0 落键事实住在 actor 变量上，被下一次发送在 await 期间改写
+
+§191 我加的 `lastSendKeystrokesMayHaveLanded` 自己就是本轮的 P0，机制在
+`AutopilotService`：
+
+- 复位在 `serialSendWithRateLimit` 入口（外层），置位在 `serialSend` 内层，
+  而 `isSending` 的守卫在 `serialSend` 里 —— 于是外层入口的复位不受 `isSending` 保护；
+- 读取在 `executeSend`，位于 `await serialSendWithRateLimit(...)` 之后。
+
+A 落键后确认失败置 true，还要 `await ClipboardGuard.restore`；这期间用户点
+「确认发送」进 B：B 复位标记、把 `lastSendFailureMessage` 也清成
+「已有发送正在进行」，然后被 `isSending` 拒掉。A 回来读到 `false` + 一个属于 B 的
+原因串 → 走 `withheldByPause`/`conversationMuted` 分支 →
+`.requeueUnchanged("这条没有发出，仍留在队列里")` → 恢复后同一个人收到第二遍。
+
+两个共享变量、一条竞态。修法不是把复位挪个位置：读取点本身在 await 之后，只要事实
+存在 actor 上，挪到哪都还能被改写。改成 `SendAttempt(verified:failureMessage:
+keystrokesLanded:)` 随调用返回，两个 actor 变量删除 —— 于是这个竞态在结构上不再
+可表达。
+
+判据：`testLandedKeystrokeFactTravelsWithTheCall` 断言两个变量名不再存在 + 读取点
+用的是返回值 + 置位点贴着那条确认失败（400 字符窗口，不是「文件里有这个字符串」）。
+`testRefusedAttemptNeverClaimsLandedKeystrokes` 是类型的正例：拒绝路径不可能带
+landed=true。变异：把 actor 变量加回去 ⇒ 红。
+
+## §190 补记 → §200 审批只查一根 id 轴，且「查不到孪生」被当成「没有孪生」
+
+`approvePending` 的 gate 永远传 `queueId: nil`，所以 `mayStillDeliver` 里的
+`queueHeldHere` 对这只手不可见；而它 fallback 用的 `holdTwinLog` 在
+`autopilotLogIdForQueueId` 读不到时静默 return。两条凑齐 = 已落键的文本被第二次打出去。
+
+修法：领取判据加第三个事实 `twinKnown`，用会报错的 `autopilotLogQueueIdRead` 而不是
+fail-open 的 `autopilotLogQueueId`；`.unreadable` 当拒绝（人只损失一次重试），不当
+「没有孪生」。同时把 `twinQueueId` 传进 gate，队列轴第一次对审批可见。
+
+判据踩过的坑：`twinKnown` 加进判据后，把调用点改成 `twinKnown: true` 时纯函数测试
+全绿 —— 变异活着。补的 `testApprovalGateSeesBothIdAxes` 不只要求调用点出现该实参，
+还要求那三个入参里不许有字面量。
+
+## §201 审批回执用「句子里有没有『失败』两个字」决定图标和颜色
+
+`receipt.contains("失败")`。静音拒绝、`unreadableConfigNotice`、「草稿没有保存」、
+「队列项已不存在」、「结果待核对」全都不含那个词 ⇒ 每一条都渲染成绿色对勾 +
+checkmark.circle.fill。而 `Filter` 枚举里正好有 `case failed = "失败"`，这解释了
+作者为什么会想到用子串。
+
+改成 `Receipt(text:isFailure:)` 自带结论。同一轮把「确认发送」的四种拒绝从
+`sendUncertain`（「请先到微信查看，避免重复发送」）里拆出来：`approvePending` 现在
+返回 `SendAttempt`，UI 只在 `keystrokesLanded` 时才说「可能已发」，其余照实说
+「这条没有发出」+ 原因。这与 §179 给另外四个手动发送点立的规矩是同一件事。
+
+## §202 托管设置页的逃生舱，失败信息写在一个永远不显示的槽里
+
+`rebuildFromDefaults()` 失败时写 `saveError`，而渲染是
+`if let loadError { … } else if let saveError { … }` —— 这个按钮只在
+`loadIsCorrupt`（即 `loadError` 非空）时出现，所以那句话永远出不来。五处发送侧拒绝
+话术都把人指到这一页，而这一页唯一的出口表现为「点了没反应」。
+
+改法不是复用 `saveError`：新增 `rebuildError`，渲染在 `loadIsCorrupt` 分支内，入口
+先清（否则第二次成功之后旧失败还会带着「重试保存设置」浮出来）。判据从「函数里出现
+过某个错误变量」升级成「该变量在 loadError 分支里被渲染」+「入口第一句是清它」。
+
+顺带把按钮文案说全：`.corrupt` 的重建会把本页从不显示的 `sensitiveKeywords` /
+`maxSendsPerSession` / `proactive*` 一并归零，那行损坏 JSON 是用户自己配置的最后一
+份副本。二次确认对话框仍未做（判阴：只有读不懂的行才走这条路，代价是没有别的出口）。
+
+## §203 「时间待定」补到第三份词汇表；到期列不再印 0
+
+§196 只在岛和收件箱说了「时间待定」。`MessageInfo.formatRelative` 对负差值仍返回
+「刚刚」，而它喂 4 处模型上下文（ChatAnalyzer / ContextWindowBuilder /
+RecallAnalyzer / AutopilotService）—— 界面说「说不清」，prompt 里说「新鲜」。
+字面量收进 `RelativeTimeFormatter.unknown`，两处各自实现的都引用它。
+
+`DailyReportCommandCenterView.deadlineText` 同一族：逾期 30 秒读作
+「0 分钟前到期」，未来 30 秒读作「0 分钟后」。改成「刚到期」/「即将到期」，
+两侧正常档位留正例。顺带把它提成 `nonisolated static` + 注入 `now`（之前没法测）。
+
+## §204 明文快照：目录要有主人，孤儿要有人收
+
+`.temporary`（默认档）把整库解密明文放在 `$TMPDIR/wechat_hud_cache`，而
+`purgeEphemeralCache()` 开头 `guard cacheStrategy == .memory` —— 默认档上它是个空
+函数；`applicationWillTerminate` 也不清。被 kill 的运行既到不了 terminate 也到不了
+`deinit`，macOS 只按「数天未访问」清 $TMPDIR。
+
+关键约束是不能「启动就清空整个目录」：预览版与正式版共用同一个 $TMPDIR，那会删掉
+另一个活实例正在读的文件。所以目录改成带 pid（跨进程本来就不共享句柄，各开各的
+只读连接，共享没有收益），于是「上一次留下的」和「别人正在用的」第一次可区分：
+启动扫孤儿（`kill(pid,0)` 且 ESRCH 才删），退出清自己的。旧的不带 pid 的目录名当作
+无人认领直接收。
+
+判据：`SnapshotReclaimTests` 5 条，`ownerIsAlive` 做成注入参数 —— 测试造不出一个
+指定 pid 的死进程，而破坏性最大的正是那一支。含「活着的实例不许删」「别人的临时
+目录不许碰」「自己的快照不许删（否则每次扫描重新解密）」。
+
+## §205 迁移把 key 从行里搬走，没从文件里搬走
+
+`migratePlaintextAPIKeysToKeychain` 改写 `settings.ai`，但库开着 WAL 且没有
+`secure_delete`：被释放的页和 WAL 里旧 key 照旧 `strings` 可得。修法是迁移成功后
+`wal_checkpoint(TRUNCATE)` + `VACUUM` 一次，且只在真搬走过秘密时付这个代价。
+
+`PlaintextKeyReclaimTests` 是本轮少见的直接量到磁盘的行为测试：先断言迁移前
+db+wal 字节里读得到 canary（夹具真的建立了泄漏），再断言迁移后读不到。canary 每次
+随机，避免上一次运行的残留让「读不到」假绿。变异：删掉 `reclaimFreedPages()` ⇒ 红。
+
+## §206 launcher.log：无界增长，和一行抄输入框内容的诊断
+
+`log()` 没有尺寸帽；`dumpAX` 那行带 `val=<前 40 字符>` —— 而搜索失败时的 dump 里，
+输入框在粘贴之后装的就是 AI 草稿。改成只记长度（role/identifier/title 才是找节点
+需要的东西），日志按 `cap/2` 留尾部。
+
+策略抽成 `logRewrite(existing:adding:cap:)` 纯函数：真实日志目录不能拿来测。写第一
+版时是「减掉 cap/2」，被自己的测试问出破绽 —— 崩溃循环或把 cap 调小时，超出的倍数
+会原样留在文件里；改成「留最后 cap/2」。
+
+## §207 转人工的四处记账并成一处
+
+`processPendingQueue` 的积压退役把草稿转成「需人工」却没做另外三处都做的记账。而
+「对方不再回话」正是让草稿变陈旧的那个条件 —— 这条分支是每条闲置草稿必走的，于是
+徽标和 log 孪生长期低于真实队列。四处收敛成 `countAsAwaitingHuman`。
+
+行为测试直接驱动 `processPendingQueue`，断言的是**持久化后**的 `totalPending`
+（徽标读的就是它）+ log 孪生翻成 pending。变异：删掉那一行调用 ⇒ 两条断言同时红。
+
+## §208 内存态 hold 活不过它要防的那次重启（§199 同族的另一半）
+
+三个 hold 集合都是内存态，而 `resume` 从 DB 重新水合队列时不读它们。修法是把同一个
+事实写进行上的 `manual_only_reason`：这一行不再自动发射，而看到它的人被告知为什么
+不能直接确认。
+
+自己引入的回归，被已有测试抓到：第一版在 `!deleteLanded || !logLanded` 两支都写行，
+于是「队列删成功、审计行写失败」那条路上 `upsertPendingSend` 把用户已取消的草稿又
+造了回来。`testFailedCancelWriteHoldsBothIdAxes` 当场变红。修成只在 `!deleteLanded`
+时落盘，并把前置条件写进函数注释（「行还在盘上」不是显然的）。
+
+`ON CONFLICT DO UPDATE` 不触发 BEFORE DELETE 触发器 —— 这点先量过再依赖，否则这条
+测试会因为夹具而不是因为代码通过。
+
+## §209 本轮判阴与定价
+
+- `persistRawText`：文件头两句都不成立（不是 debug 专属；保留期是普通 14 天不是
+  0 天）。**改说法不改行为**：这个 app 一辈子以 release 运行，只留 debug 后门等于
+  没有后门。要改的是「打开它意味着把未脱敏 prompt 落盘两周」这句得写在脸上。
+- `InsightRadar.buildFindings` 默认 `limit=6` 与 `InsightRadarBadge.visibleLimit=6`
+  是两个必须相等的 6，其中一个没人钉。合并成服务侧一个常量。第 7 条起无处可看是产品
+  判断（徽标已如实说「显示 6 · 共 9」），不做展开。
+- `partialReadChats` 的三处不自洽（递归重试不清自己那轮、驱逐被随后的写回撤销、
+  旁路读会把不相干分片的失败记到被扫页头上）：量下来都只造成一轮延迟，不丢数据。
+  正确形态是随页返回 `partial: Bool`，改动面覆盖 4 个读取路径 + 2 条喂入，单独一轮做。
+- codex refresh token 明文落 `~/.wechat-hud/codex-tokens.json`（0600）。API key 已经
+  走 Keychain 且库里只留 `keychainItemRef`，这个不对称是真的；但 `CodexTokenStore`
+  的轮换/单例去重逻辑与文件缓存耦合较深，且需要一次真账号验证，未在本轮动。
+- `stop()` 缺代际门（僵尸草稿）、心跳 `Timer` 在 `.default` 模式、
+  `autopilot_log`/`vip_traces`/`commitment_scans` 的保留阈值需要一个负责人给的数：
+  均维持前轮定价。
