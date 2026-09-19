@@ -394,6 +394,11 @@ private struct ApprovalPendingSendRow: View {
     let onCancel: () async -> Void
     @State private var busy = false
     @State private var error: String?
+    /// Sending here replaces a message the peer is waiting on and cannot be
+    /// taken back, and the queue row truncates the draft to two lines — so
+    /// the click opens the same confirmation the detail pane uses, with the
+    /// recipient and the whole text.
+    @State private var showConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -432,13 +437,7 @@ private struct ApprovalPendingSendRow: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(busy)
-                Button("立即发送") {
-                    Task {
-                        busy = true
-                        error = await onSendNow()
-                        busy = false
-                    }
-                }
+                Button("立即发送") { showConfirm = true }
                 .tint(CompanionPalette.jade)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -452,5 +451,32 @@ private struct ApprovalPendingSendRow: View {
         }
         .padding(10)
         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .companionDialogBackdrop(showConfirm) {
+            if showConfirm {
+                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showConfirm = false }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(CompanionProductCopy.sendConfirmMessage(name: item.chatName, text: item.replyText))
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Spacer()
+                            Button(CompanionProductCopy.sendConfirmBack) { showConfirm = false }
+                            Button(CompanionProductCopy.sendConfirmAction) {
+                                showConfirm = false
+                                Task {
+                                    busy = true
+                                    error = await onSendNow()
+                                    busy = false
+                                }
+                            }
+                            .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(busy)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

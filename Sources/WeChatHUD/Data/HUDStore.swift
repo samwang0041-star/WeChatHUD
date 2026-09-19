@@ -885,29 +885,39 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         )
     }
 
+    /// Un-following a chat clears everything derived from that scope at once.
+    /// These statements used to run one by one under `try?`, so a failure in
+    /// the middle left the chat un-followed while its commitments kept firing
+    /// and its todos stayed in the list — a half-applied state the UI had no
+    /// way to show. One transaction means either the scope change is complete
+    /// or nothing moved.
     func removeFromWhitelist(username: String) throws {
-        try exec("DELETE FROM whitelist WHERE username=?", params: [username])
-        try? deleteContact(username: username)
-        // Also clear this chat's baseline — otherwise re-adding the
-        // same contact to the whitelist later would reuse the stale
-        // watermark and silently swallow every message that arrived
-        // while it was off the list.
-        try? exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
-        // Drop any snooze/silence state too: "removed from whitelist"
-        // is the strongest reset signal we have, and leaving those
-        // behind would make a re-added chat come back already muted.
-        try? exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
-        // Derived artifacts die with the scope change — otherwise a removed
-        // chat's pending commitments keep firing overdue alerts and its
-        // discussion items / memory rows persist until the model overwrites.
-        try? exec(
-            "UPDATE commitments SET status='cancelled' WHERE chat_username=? AND status IN ('pending','overdue')",
-            params: [username])
-        try? exec(
-            "UPDATE discussion_items SET status='dismissed' WHERE chat_username=? AND status='pending'",
-            params: [username])
-        try? exec("DELETE FROM pending_asks WHERE chat_username=?", params: [username])
-        try? exec("DELETE FROM discussion_queue WHERE chat_username=?", params: [username])
+        try withTransaction {
+            try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+            try deleteContact(username: username)
+            // Also clear this chat's baseline — otherwise re-adding the
+            // same contact to the whitelist later would reuse the stale
+            // watermark and silently swallow every message that arrived
+            // while it was off the list.
+            try exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
+            // Drop any snooze/silence state too: "removed from whitelist"
+            // is the strongest reset signal we have, and leaving those
+            // behind would make a re-added chat come back already muted.
+            try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
+            // Derived artifacts die with the scope change — otherwise a removed
+            // chat's pending commitments keep firing overdue alerts and its
+            // discussion items / memory rows persist until the model overwrites.
+            try exec(
+                "UPDATE commitments SET status='cancelled' WHERE chat_username=? AND status IN ('pending','overdue')",
+                params: [username])
+            try exec(
+                "UPDATE discussion_items SET status='dismissed' WHERE chat_username=? AND status='pending'",
+                params: [username])
+            try exec("DELETE FROM pending_asks WHERE chat_username=?", params: [username])
+            // The discussion queue table is created on first use, so the raw
+            // DELETE would fail on a database that never queued anything.
+            try clearDiscussionMessages(chatUsername: username)
+        }
     }
 
     func isWhitelisted(_ username: String) -> Bool {

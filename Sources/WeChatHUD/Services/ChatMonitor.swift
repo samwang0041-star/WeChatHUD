@@ -989,7 +989,14 @@ final class ChatMonitor: ObservableObject {
     }
 
     func untrackInboxItem(_ item: InboxItem) {
-        try? store.removeFromWhitelist(username: item.chatUsername)
+        // The store applies the whole scope change in one transaction; on
+        // failure nothing moved, so the in-memory lists must not move either —
+        // otherwise the row disappears while the chat is still followed, and
+        // the next scan brings it back as if nothing had happened.
+        guard (try? store.removeFromWhitelist(username: item.chatUsername)) != nil else {
+            print("[WCHUD] untrack failed for \(item.chatUsername), keeping it followed")
+            return
+        }
         dismissedInbox.removeValue(forKey: item.chatUsername)
         snoozedInbox.removeValue(forKey: item.chatUsername)
         silencedInbox.remove(item.chatUsername)

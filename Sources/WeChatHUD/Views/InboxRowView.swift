@@ -18,6 +18,10 @@ struct InboxRowView: View {
     @State private var showSnoozeMenu = false
     @State private var snoozeHoverClose: DispatchWorkItem?
     @State private var renamingChat: InboxItem?
+    /// Un-following clears the chat's commitments, todos, mute and snooze
+    /// state with it and cannot be undone from here, so the menu item only
+    /// arms the confirmation.
+    @State private var confirmUntrack = false
     /// The inbox often opens under the pointer (menu "查看新消息", hover
     /// expand). Treating that as hover puts clock/✕ on the first row and
     /// reads as a stuck notification banner. Wait until a later hover event.
@@ -104,6 +108,18 @@ struct InboxRowView: View {
                     memberNames: reader.groupMemberNames(for: target.chatUsername)
                 )
                 .onAppear { panelState.islandTextInputActive = true }
+            }
+            .confirmationDialog(
+                "取消关注「\(item.chatName)」",
+                isPresented: $confirmUntrack,
+                titleVisibility: .visible
+            ) {
+                Button("取消关注并清空", role: .destructive) {
+                    monitor.untrackInboxItem(item)
+                }
+                Button("先不", role: .cancel) {}
+            } message: {
+                Text("同时清掉这个对话的承诺、待办、静音和稍后提醒设置，无法撤销。")
             }
 
             if showSnoozeMenu {
@@ -208,7 +224,7 @@ struct InboxRowView: View {
                 }
             }
             Button("取消关注此对话", role: .destructive) {
-                monitor.untrackInboxItem(item)
+                confirmUntrack = true
             }
         } else {
             Button(item.isGroup ? "关注此群聊" : "关注此联系人") {
