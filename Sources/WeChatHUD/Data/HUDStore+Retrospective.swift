@@ -212,6 +212,20 @@ extension HUDStore {
         }
     }
 
+    /// Newest run of ANY status, including the rows `latestCompletedRun()`
+    /// filters out. A crashed or reaped run persists `status='failed'`; without
+    /// this accessor the only run the view can see is an older successful one,
+    /// and it renders that as 「已完成」 for the current period.
+    nonisolated func latestReviewRunAnyStatus() -> ReviewRun? {
+        let sql = """
+            SELECT id, range_start, range_end, generated_at, summary_top3, summary_risk,
+                   summary_missed, chat_count, progress_chat_count, msg_count, failed_chats, status
+            FROM review_runs
+            ORDER BY generated_at DESC, id DESC LIMIT 1;
+        """
+        return queryOne(sql, bind: { _ in }, decode: decodeReviewRun)
+    }
+
     nonisolated func latestCompletedRun() -> ReviewRun? {
         let sql = """
             SELECT id, range_start, range_end, generated_at, summary_top3, summary_risk,

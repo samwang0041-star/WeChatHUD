@@ -6,6 +6,10 @@ struct RetrospectiveTabView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     @State private var latestRun: ReviewRun?
+    /// The newest `failed` row, if one is newer than any successful run. Only
+    /// the live job carried failure info, so after a relaunch a dead run left
+    /// the page showing an older period under 「已完成」.
+    @State private var abandonedRun: ReviewRun?
     @State private var highlights: [ReviewHighlight] = []
     @State private var todos: [ReviewTodo] = []
     @State private var currentState: RetrospectiveJob.State = .idle
@@ -348,10 +352,31 @@ struct RetrospectiveTabView: View {
     }
 
     private var statusLine: String {
+        Self.statusLine(
+            isRunning: isRunning, runningText: runningText, errorText: errorText,
+            abandoned: abandonedRun, latest: latestRun
+        )
+    }
+
+    /// A run that died leaves a `failed` row and no live job to report it, so
+    /// without this the page labels an older period 已完成 after a relaunch and
+    /// the user reads today's review as already done.
+    static func statusLine(
+        isRunning: Bool, runningText: String, errorText: String?,
+        abandoned: ReviewRun?, latest: ReviewRun?
+    ) -> String {
+        func stamp(_ date: Date) -> String {
+            date.formatted(date: .abbreviated, time: .shortened)
+        }
         if isRunning { return runningText }
-        if let run = latestRun {
-            let status = run.status == .partial ? "部分完成" : "已完成"
-            return "\(status) · \(run.generatedAt.formatted(date: .abbreviated, time: .shortened))"
+        if let abandoned, errorText == nil {
+            return latest == nil
+                ? "最近一次回顾（\(stamp(abandoned.generatedAt))）没有完成"
+                : "最近一次回顾（\(stamp(abandoned.generatedAt))）没有完成 · 下面是上次成功的结果"
+        }
+        if let latest {
+            let status = latest.status == .partial ? "部分完成" : "已完成"
+            return "\(status) · \(stamp(latest.generatedAt))"
         }
         return "从你关注的对话生成回顾"
     }
@@ -428,6 +453,8 @@ struct RetrospectiveTabView: View {
     }
 
     private func refreshLatestRun() {
+        let newest = monitor.hudStore.latestReviewRunAnyStatus()
+        abandonedRun = newest?.status == .failed ? newest : nil
         guard let run = monitor.hudStore.latestCompletedRun() else {
             latestRun = nil
             highlights = []
@@ -439,6 +466,7 @@ struct RetrospectiveTabView: View {
 
     private func load(runID: Int) {
         guard let run = monitor.hudStore.runByID(runID) else { return }
+        abandonedRun = nil
         latestRun = run
         highlights = monitor.hudStore.highlights(for: runID)
         todos = monitor.hudStore.todos(for: runID)
