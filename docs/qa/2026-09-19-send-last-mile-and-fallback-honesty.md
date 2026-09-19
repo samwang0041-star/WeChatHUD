@@ -483,3 +483,45 @@ injection channel」）。回源码验实三处：
 云同步文件夹。两条路径现在共用 `ChatMonitor.makeExportPrivate(url:)`，
 `testBothExportPathsMakeTheFilePrivate` 一半数接线（两处调用）、一半真写一个
 临时文件读回权限位。
+
+## §151 「读不到」被当成「用户已经取消了」—— 一条草稿因此在整个会话里消失
+
+来源：游标/存储那一路代理的 P0 之一。回源码验实在 `executeSend` 的失败尾巴：
+
+```swift
+guard sessionId != nil, store.autopilotLogTwinOpen(queueId: item.id) else {
+    return .blocked(failureReason)
+}
+pendingSendQueue.append(retained)
+```
+
+`autopilotLogTwinOpen` 是 `queryOne(...) ?? false`，而 `queryOne` 用 `try?` 吞掉错误
+—— 于是"这条 log 行查不动"和"这条草稿已经被用户拒掉"是同一个返回值。走
+`return .blocked` 分支意味着不再把草稿放回 `pendingSendQueue`，而收件箱的
+「待确认」列表正是从那个内存数组渲染的（`ChatMonitor.swift:558/1427/2340`）。
+结果：SQLite 一次读失败（关库与后台扫描抢跑、磁盘写满）就把一条还没发出的回复
+从界面上抹掉，`autopilot_pending_sends` 里那行还留在库里，下次启动又被捞回来 ——
+一条用户从没取消过的草稿在界面上消失了整个会话。
+
+这道闸门的方向本来就该是 fail-closed（拒掉的不能复活），所以不能简单把
+`?? false` 改成 `?? true`：那会让"用户已经点了拒绝"和"读不到"都变成"重新排队并
+允许自动发出"，那是更坏的一侧。改成三态：
+
+- `HUDStore.AutopilotTwinState`：`open` / `resolved` / `unreadable`，用已有的
+  `queryOneThrowing` 才能把三种情况分开（`autopilotLogTwinOpen` 只有一个生产调用点，
+  直接换掉，不留兼容壳）；
+- 判定收成纯函数 `retainedDraftAction(sessionOpen:twin:)`：会话关了 ⇒ 丢弃，
+  twin 已解决 ⇒ 丢弃，读不到 ⇒ 留下但强制转人工（`manualOnlyReason` 一挂，
+  自动发送资格就没了，而它仍然在界面上、仍然只能由人点确认）；
+- 批准那条路本来就 fail-closed（`autopilotLogPendingReply` 读失败时拒绝批准），
+  所以"读失败但实际已被拒绝"的草稿也发不出去 —— 两个方向都堵住了。
+
+测试分三层：库里真 `DROP TABLE autopilot_log` 证明 `.unreadable` 与"行不存在
+⇒ `.resolved`"不是一回事（`testTwinStateSeparatesUnreadableFromResolved`）；
+真值表四条；再加一条接线判据，要求 `retainedDraftAction` 出现在
+`pendingSendQueue.append(retained)` 之前（第一次写这条判据时用错了切片 ——
+`executeSend` 之后的函数里也有一处 `append(retained)`，测试直接把顺序判反了，
+改成只在决定点之后搜索才对）。
+
+变异：M8 把 `catch` 改回 `return .resolved` ⇒ 库层那条失败；
+M9 把 `.unreadable` 判成 `.drop` ⇒ 真值表那条失败。

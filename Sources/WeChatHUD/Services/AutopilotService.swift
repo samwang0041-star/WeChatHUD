@@ -347,6 +347,24 @@ actor AutopilotService {
         return .humanRequired(reason: Self.joinSendFailure(reason, "已转为人工确认"))
     }
 
+    enum RetainedDraftAction: Equatable {
+        case drop
+        /// Re-queue the draft; `forceManualOnly` when the queue's own state
+        /// could not be read, so it stays visible but can never go out alone.
+        case keep(forceManualOnly: Bool)
+    }
+
+    nonisolated static func retainedDraftAction(
+        sessionOpen: Bool, twin: HUDStore.AutopilotTwinState
+    ) -> RetainedDraftAction {
+        guard sessionOpen else { return .drop }
+        switch twin {
+        case .resolved: return .drop
+        case .open: return .keep(forceManualOnly: false)
+        case .unreadable: return .keep(forceManualOnly: true)
+        }
+    }
+
     func deliveryStillPermitted(queueId: UUID?, logId: Int64?) -> Bool {
         Self.mayStillDeliver(
             paused: isPaused,
@@ -1601,9 +1619,23 @@ actor AutopilotService {
         // leave an in-memory zombie plus a 'pending' log row that can never
         // be approved. Likewise a reject mid-flight resolved the twin to
         // 'skipped' — a rejected draft must not resurrect for retry.
-        guard sessionId != nil,
-              store.autopilotLogTwinOpen(queueId: item.id) else {
+        let action = Self.retainedDraftAction(
+            sessionOpen: sessionId != nil,
+            twin: store.autopilotLogTwinState(queueId: item.id)
+        )
+        switch action {
+        case .drop:
             return .blocked(failureReason)
+        case .keep(let forceManualOnly):
+            // An unreadable twin keeps the draft visible — a disk error is not
+            // evidence that the user cancelled — but it loses automatic
+            // eligibility, because nobody can prove they didn't.
+            if forceManualOnly, retained.manualOnlyReason == nil {
+                retained.autoSendAttempts += 1
+                retained.manualOnlyReason = Self.joinSendFailure(
+                    failureReason, "队列状态读不到，只能人工确认"
+                )
+            }
         }
         pendingSendQueue.append(retained)
         if let sid = sessionId {

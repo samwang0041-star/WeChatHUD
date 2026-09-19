@@ -3567,22 +3567,39 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                  decode: { _ in 1 }) != nil
     }
 
-    /// True while the queue item's log twin is still unresolved — i.e.
-    /// 'pending' or an unverified send claim. A resolved twin ('skipped',
-    /// stamped 'sent', 'failed') means the item was cancelled/rejected/stopped
-    /// and must not be re-queued.
-    func autopilotLogTwinOpen(queueId: UUID) -> Bool {
+    /// A queue item's log twin read three ways, because the one caller has to
+    /// tell "the user took this back" apart from "we could not read whether
+    /// they did". Collapsing the third case into either of the first two either
+    /// retires a draft over a disk error or re-arms a rejected one.
+    nonisolated enum AutopilotTwinState: Equatable {
+        /// Still awaiting a human or an unverified send.
+        case open
+        /// Cancelled, rejected, or actually delivered.
+        case resolved
+        /// The query itself failed; neither of the above is known.
+        case unreadable
+    }
+
+    /// The twin's state, or `.unreadable` when the row cannot be read.
+    func autopilotLogTwinState(queueId: UUID) -> AutopilotTwinState {
         let qid = queueId.uuidString
-        return queryOne(
-            "SELECT action, sent_at FROM autopilot_log WHERE queue_id=? LIMIT 1",
-            bind: { sqlite3_bind_text($0, 1, qid, -1, Self.sqliteTransient) },
-            decode: { stmt -> Bool in
-                guard let c = sqlite3_column_text(stmt, 0) else { return false }
-                let action = String(cString: c)
-                return action == "pending" || action == "stall"
-                    || (action == "sent" && sqlite3_column_type(stmt, 1) == SQLITE_NULL)
-            }
-        ) ?? false
+        let action: Bool?
+        do {
+            action = try queryOneThrowing(
+                "SELECT action, sent_at FROM autopilot_log WHERE queue_id=? LIMIT 1",
+                bind: { sqlite3_bind_text($0, 1, qid, -1, Self.sqliteTransient) },
+                decode: { stmt -> Bool in
+                    guard let c = sqlite3_column_text(stmt, 0) else { return false }
+                    let action = String(cString: c)
+                    return action == "pending" || action == "stall"
+                        || (action == "sent" && sqlite3_column_type(stmt, 1) == SQLITE_NULL)
+                }
+            )
+        } catch {
+            return .unreadable
+        }
+        guard let action else { return .resolved }
+        return action ? .open : .resolved
     }
 
     /// A queued-but-unverified send claim: 'sent' written at enqueue time

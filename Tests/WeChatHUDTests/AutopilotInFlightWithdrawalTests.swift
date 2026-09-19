@@ -139,6 +139,43 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
 
     // MARK: - Gate driven by real actor + store state
 
+    /// A twin read that failed answered `false`, which the guard behind it read
+    /// as "the user already took this back": the draft left `pendingSendQueue`
+    /// — which is what the 待确认 list renders from — while its DB row stayed
+    /// pending until the next launch. Unknown is now its own answer.
+    func testRetainedDraftActionSeparatesUnknownFromCancelled() {
+        XCTAssertEqual(
+            AutopilotService.retainedDraftAction(sessionOpen: false, twin: .open), .drop,
+            "a stopped session must not leave an in-memory zombie"
+        )
+        XCTAssertEqual(
+            AutopilotService.retainedDraftAction(sessionOpen: true, twin: .resolved), .drop)
+        XCTAssertEqual(
+            AutopilotService.retainedDraftAction(sessionOpen: true, twin: .open),
+            .keep(forceManualOnly: false))
+        XCTAssertEqual(
+            AutopilotService.retainedDraftAction(sessionOpen: true, twin: .unreadable),
+            .keep(forceManualOnly: true))
+    }
+
+    func testFailureTailRoutesTheQueueThroughTheAction() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let body = try String(contentsOf: url, encoding: .utf8)
+            .components(separatedBy: "private func executeSend").last!
+        // The action has to be what decides, and it has to decide before the
+        // queue is touched: an `if` that only logs would keep the old behaviour.
+        let decide = try XCTUnwrap(body.range(of: "let action = Self.retainedDraftAction(")).lowerBound
+        let append = try XCTUnwrap(
+            body.range(of: "pendingSendQueue.append(retained)", range: decide..<body.endIndex)
+        ).lowerBound
+        XCTAssertLessThan(decide, append, "the queue append must be downstream of the twin read")
+        XCTAssertTrue(body.contains("case .drop:\n            return .blocked(failureReason)"))
+        XCTAssertTrue(body.contains("if forceManualOnly, retained.manualOnlyReason == nil {"))
+    }
+
     func testGateTracksPauseStopAndTheRowItself() async throws {
         let queued = item()
         await service.testingEnqueue(queued)

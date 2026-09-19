@@ -1138,19 +1138,47 @@ final class HUDStoreTests: XCTestCase {
             aiReasoning: nil, sentAt: nil, createdAt: Date(),
             queueId: qid.uuidString
         ))
-        XCTAssertTrue(store.autopilotLogTwinOpen(queueId: qid))
+        XCTAssertEqual(store.autopilotLogTwinState(queueId: qid), .open)
         let flipped = try store.markAutopilotLogPending(
             queueId: qid, chatUsername: "wxid_stall2", replyText: "好的"
         )
         XCTAssertEqual(flipped, 1)
         XCTAssertEqual(store.loadAutopilotLog(sessionId: sessionId)[0].action, .pending)
-        XCTAssertTrue(store.autopilotLogTwinOpen(queueId: qid))
+        XCTAssertEqual(store.autopilotLogTwinState(queueId: qid), .open)
         // Skip resolves it — no longer open.
         _ = try store.markAutopilotLogSkipped(
             queueId: qid, chatUsername: "wxid_stall2", replyText: "好的"
         )
         XCTAssertEqual(store.loadAutopilotLog(sessionId: sessionId)[0].action, .skipped)
-        XCTAssertFalse(store.autopilotLogTwinOpen(queueId: qid))
+        XCTAssertEqual(store.autopilotLogTwinState(queueId: qid), .resolved)
+    }
+
+    /// The gate that decides whether a failed send keeps its draft in the queue
+    /// read `Bool` off a `try?`, so "the user rejected this" and "we could not
+    /// read the row" were the same answer — and the draft vanished from the
+    /// 待确认列表 for the rest of the session while its DB row stayed pending.
+    func testTwinStateSeparatesUnreadableFromResolved() throws {
+        let sessionId = try store.startAutopilotSession()
+        let qid = UUID()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId,
+            chatUsername: "wxid_twin", chatName: "Twin",
+            senderUsername: "s", senderName: "S",
+            triggerMsgUID: "mT", triggerText: "hi",
+            generatedReply: "好的", confidence: 0.9,
+            riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: qid.uuidString
+        ))
+        XCTAssertEqual(store.autopilotLogTwinState(queueId: qid), .open)
+        // No twin row at all is a known answer, not an unreadable one.
+        XCTAssertEqual(store.autopilotLogTwinState(queueId: UUID()), .resolved)
+
+        try store.exec("DROP TABLE autopilot_log")
+        XCTAssertEqual(
+            store.autopilotLogTwinState(queueId: qid), .unreadable,
+            "a failed query must not be reported as 'the user resolved this'"
+        )
     }
 
     /// Legacy sent-claim stamping is bounded to ONE row — a same-text legacy
