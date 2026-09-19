@@ -70,6 +70,19 @@ final class UntrackScopeAtomicityTests: XCTestCase {
         XCTAssertEqual(store.loadCommitments().first?.status, .pending)
     }
 
+    /// The recall cascade is the same shape as the untrack cascade but has no
+    /// retry: the scan watermark moves past the revokemsg row whether or not
+    /// this succeeded, so a half-applied tombstone would leave a withdrawn
+    /// commitment nagging forever.
+    func testRecallTombstoneIsAllOrNothing() throws {
+        try store.exec("DROP TABLE discussion_items")
+        XCTAssertThrowsError(try store.tombstoneForRecall(originalMsgUID: "c1"))
+        XCTAssertEqual(
+            store.loadCommitments().first?.status, .pending,
+            "a failed cascade must not have cancelled anything either"
+        )
+    }
+
     @MainActor
     func testMonitorKeepsTheRowWhenTheClearFails() throws {
         try store.exec("DROP TABLE chat_actions")

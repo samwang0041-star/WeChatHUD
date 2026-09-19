@@ -1120,7 +1120,14 @@ enum ScanEngine {
         // The original's derived artifacts die with it — a withdrawn
         // commitment must not keep nagging, a recalled ask must not anchor.
         if let originalID = original?.id {
-            store.tombstoneForRecall(originalMsgUID: originalID)
+            do {
+                try store.tombstoneForRecall(originalMsgUID: originalID)
+            } catch {
+                // The recall row is still worth recording — the user must see
+                // that something was withdrawn — but a half-applied cascade
+                // has to leave a trace instead of passing as success.
+                print("[WCHUD] recall tombstone failed for \(originalID): \(error)")
+            }
         }
         do {
             try store.insertRecalledMessage(

@@ -2067,3 +2067,138 @@ P2/闸门类：默认签名身份 `WeChatHD-DevCert` 走无 hardened runtime 分
 另有本轮自查发现的 3 条同类缺陷（群聊未读口径、被 §96 打断的测试、§99 的窗口口径）
 一并收口。全量 `swift test` 与 release 构建的结果以本轮收尾运行为准，写在上面各节的
 commit 里。
+
+---
+
+## 第 29 轮：四路复扫（出网掩码形状 / 托管护栏可达 / 常驻成本 / 数据完整）
+
+派单口径：四路只读代理，各自一个不重叠的轴，每条结论回源码复核后才动手。
+
+### §108 出网掩码只认「连续 ASCII 数字」——分组、全角、零宽一律原样出网（commit ccf59f67）
+
+两路代理（AI 出网轴、隐私轴）独立收敛到同一条：`maskDirectIdentifiers` 的四条
+正则要求数字**连续且为 ASCII**，而 `sanitizeForAI` 调的就是同一个函数，所以
+「忘了在调用点 sanitize 还有出口兜底」这句话在号码形状上根本不存在第二层网。
+
+回源码 + 变异实测坐实（关掉形状归一后，测试直接把原文印了出来）：
+
+| 输入 | 修前 | 修后 |
+|---|---|---|
+| `138 0013 8000` / `138-0013-8000` | 原样出网 | `[手机]` |
+| `１３８００１３８０００`（全角键盘） | 原样出网 | `[手机]` |
+| `1380<200B>0138000`（零宽隔断） | 原样出网 | `[手机]` |
+| `+8613800138000` / `86 138 0013 8000` | 原样出网 | `[手机]` |
+| `6222 0202 1234 5678` | 原样出网 | `[卡号]` |
+| `someone<FEFF>@example.com` | 原样出网 | `[邮箱]` |
+
+中文聊天里带空格/破折号的号码是常态写法，不是对抗样本。
+
+修法没有继续堆正则：分隔符一放开，`会议 2026-09-19 2026-09-20`（16 位）就会被
+当成卡号吃掉，而「用户正在问的数字不能动」是这条边界自己写明的契约。改成按
+**位数 + 分组**判定（分组每段 ≥3 位，唯一的 2 位例外是前导 `86`），日期段是
+2 位分组所以天然出局；`.` 与 `,` 刻意不算分隔符，`1,380,013,800` 这类金额保持
+原样。变异验证：放开分组约束后测试立刻报 `会议 [卡号]`。
+
+定价未做：卡号 13/15 位（Visa-13/AmEx-15）仍不掩——13 位会吃掉毫秒时间戳，
+16-19 位维持原样；20 位以上长数字串里内嵌的手机号仍漏（修前也漏，`(?!\d)` 决
+定的）；固话、wxid、姓名/群名不在掩码范围（已把这句写进函数注释，别让下一轮
+把「兜底」读成「全覆盖」）。
+
+### §109 解析不出的 action 会被当成发送许可（commit ccf59f67）
+
+护栏轴报的这条链子在源码里逐跳坐实：prompt 词表只有
+`send|stall|read_no_reply|skip`，解码器把**任何词表外的 action** 折叠成
+`pending=true`（兼容 v1-v3 布尔字段），而 `AutopilotService` 的注释写着
+「AI says pending or stall → treat as stall（自动发一句缓兵之计）」——于是
+`"hold"`、`"confirm"`、JSON 截断半个词这类普通模型抖动，等于把它自带的
+`reply` 文本排进自动发送队列。
+
+变异验证打出来的实物就是证据：
+
+```
+PendingSend(replyText: "周末安排还不确定，周五再定", confidence: 0.99,
+            manualOnlyReason: nil)   ← 定时器到点即真发
+```
+
+`AutopilotSafetyTests.testUnknownAutopilotActionForcesPending` 早就存在，但它断言
+的是**解码器**把 pending 置真，恰好把这条错误折叠当成了正确行为钉住；消费者一侧
+零覆盖。现在解码器多带一个 `actionUnrecognized`，消费者在安全表之后强制降为
+`.pending`（发送意图闸门拒收），且空 reply 时不再落到「已读不回」——那条分支会
+真的去打开微信窗口，等于给一个读不懂的响应批了外发副作用。
+
+同轴第二处：`evidence_quote` 回查原先只在 `action == "send"` 时执行，注释写着
+「stall 什么都不发」——而 stall 的定义就是发一句缓兵之计。改为 send/stall 都要
+回查原话。
+
+### §110 不可读 sync 的拒绝发生在删除 legacy 副本之后（commit ccf59f67）
+
+上一轮我为了让「坏 blob 不被当成未设置」而加了拒绝，但拒绝点在
+`deleteSetting` 之后：首次引导时五个共享 key 先被原样拷进 `device-settings.json`，
+legacy 表里的那份随即被删，然后才抛出。此后每次启动都抛，而唯一的出路（删
+device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去。改成先判断再删，
+并补测试钉住「拒绝不得消耗它正在保护的那四份设置」。
+
+### §111 洞察页把每次扫描当成一次全库重算（commit ccf59f67）
+
+`ChatInsightView` 挂着 `.onChange(of: monitor.stats.lastSyncAt) → reload`，而
+`lastSyncAt` 每次扫描完成都会打新时间戳（有无新消息都一样），`stats` 又是无条件
+赋值 ⇒ 默认 30s 一次。一次 reload 是 `bulkMessageStats` 的全库归并（代码里留着
+本机实测：4648 个分片/表组合、约 28.8 万行）。上一轮只是把它从主线程挪到后台，
+没动频率——挪走之后它不再卡窗口，但会一直占住 reader actor 与解密锁，让扫描排队。
+
+现在扫描 tick 走 `ReloadTrigger.newData`：300s 限速、正在跑就不叠加、且**不清空
+页面**（每几分钟闪一次加载态会被读成崩了）；用户主动开页/换窗口/换范围/换日期仍是
+`.userInitiated` 即时生效，若正好有一次全库归并在跑，则记一次重跑，避免页面标题
+写「近 30 天」而数字还是「今天」。闸门测试在 `ResidentCostGatesTests`。
+
+同轴另两处已修：`dfsAX` 原先只有深度上限、没有节点上限（一节点 1-4 次阻塞跨进程
+读），且全仓没有 `AXUIElementSetMessagingTimeout` —— 这些遍历全跑在画岛的主线程
+上；补 0.5s 超时 + 2000 节点预算。
+
+### §112 我上一轮引入的两处退化（自查）
+
+- `AIClassifier.interpolate` 现在对 `{message_body}` 做 `sanitizeForAI`，纯图片消息
+  于是变成**空正文**，而 `classifier_v4.txt:107` 还在教模型处理字面量 `"[图片]"`
+  ——那个输入已经永远到不了。分类链路上也没有媒体预过滤，等于让人名当锚点盲判。
+  改为：净化后无正文的消息直接确认、不出网（prompt 本来就规定图片不是 ask，
+  决策等价，省一次调用）。
+- `AIInboxSummarizer.renderMessageBody` 先 sanitize 再 `isMediaPlaceholder(sanitized)`
+  ——占位符正是被 sanitize 删掉的东西，该判断恒 false，媒体快路径是死代码，目前
+  只是靠后面两次 fallthrough 侥幸得到正确答案。改为对未净化的原文判断。
+
+### §113 联系人页的删除漏掉连带清理（commit aef6aba8）
+
+`removeFromWhitelist` 上一轮收成一个事务并清了承诺/待办/静音/稍后提醒，但它的同类
+项 `deleteContactAndTracking`（联系人页的删除）走的是另一个私有 helper，只清
+`whitelist/sync_state/chat_actions` 三张表：承诺、待办、讨论消息全部活下来，用户在
+那里已经看不到它们，却仍会被「承诺到期」提醒。抽出一个 `clearDerivedArtifacts`
+让两条显式取消关注路径共用同一个作用域；**灰名单降级仍不清理**（可逆的等级变化，
+界面也没给这份连带提示），这个不对称单独用测试钉住。
+
+### 本轮判阴（别在下一轮重复上报）
+
+- 「坏 `ai` blob 会让下一次开关把 API key 从 Keychain 删掉」：不成立。
+  `hydrateAPIKey` 在 `keychainItemRef` 为空时回落到默认账号，密钥会被重新读回来，
+  于是那次保存走的是「非空 → 重写」分支。已写的防御改动**退回**，只把这条链路
+  本身钉成回归用例（含「用户仍可主动清除」这一侧）。
+- 「岛内 `.confirmationDialog` 在 borderless nonactivating panel 里可能根本不出现」
+  ：实测出现。探针把 `confirmUntrack` 置真后，面板 `attachedSheet` 被挂上，
+  `_NSAlertPanel` 以 level=101、frame 260×173 存在且 2.5s 后仍在；harness 的
+  overlay 分支能拍到它（520×346px）。**但位图里只有 SwiftUI 那颗红色按钮，
+  AppKit 画的标题/正文不在 contentView 截图内**（明/暗两档都一样，而 173pt 的高
+  度正是给这两行文本留的）——这是 harness 的覆盖面限制，不是产品没画。
+
+### §114 打开「自动发送」会一次放出整条历史积压（commit 待补）
+
+`handleNewMessages` 从不看 `autoSendEnabled`，只有 `processPendingQueue` 看 ⇒ 开关
+关着时排进来的草稿一直 `manualOnlyReason == nil`、一直"到点即发"；而
+`stalePendingSendReason` 只找"排队之后有没有新消息"，对方就此安静下来时它反而放行。
+结果：用户某天打开自动发送，几小时甚至几天前的草稿会一次性发进早已翻篇的会话。
+现在队列在处理前先做一次退役：超过自身延时窗口（10 分钟，真人延时上限是 300s）
+的草稿转为人工确认并落库，仍在待批工作台里可见、可手动发送，只是不再无人值守。
+
+### §115 撤回的连带清理原先是三条 `try?`（commit 待补）
+
+`tombstoneForRecall` 与取消关注同形，但它没有重试机会——扫描水位线无论成败都会
+越过 revokemsg 行。三条语句改成 `withTransaction` + 抛出，调用点记录失败而不当
+成功；半应用状态（承诺已取消而 pending_asks 还在）不再可能出现。

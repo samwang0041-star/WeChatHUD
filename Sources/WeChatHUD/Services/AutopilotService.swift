@@ -1361,6 +1361,19 @@ actor AutopilotService {
     func processPendingQueue(config: AutopilotConfig) async {
         guard config.autoSendEnabled, !isPaused, sessionId != nil else { return }
         let now = Date()
+        // Retire the backlog before releasing it. `handleNewMessages` never
+        // consults the master switch, so every draft queued while 自动发送 was
+        // off stayed eligible indefinitely, and the staleness check only looks
+        // for *newer* messages — a peer who simply went quiet fails it open.
+        // Flipping the switch on therefore used to fire days of old drafts at
+        // once, into conversations that had already moved on.
+        for item in pendingSendQueue where Self.isStaleForAutomaticSend(item, now: now) {
+            guard let index = pendingSendQueue.firstIndex(where: { $0.id == item.id }) else { continue }
+            pendingSendQueue[index].manualOnlyReason = Self.staleBacklogHoldReason
+            if let sid = sessionId {
+                try? store.upsertPendingSend(pendingSendQueue[index], sessionId: sid)
+            }
+        }
         let expired = pendingSendQueue.filter { Self.isEligibleForAutomaticSend($0, now: now) }
         for item in expired {
             let removed = pendingSendQueue.firstIndex(where: { $0.id == item.id })
@@ -1876,6 +1889,19 @@ actor AutopilotService {
 
     static func isEligibleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {
         item.scheduledSendTime <= now && item.manualOnlyReason == nil
+    }
+
+    /// How long past its own send time a draft still counts as a reply to that
+    /// conversation turn. The human-like delay is capped at 300s, so anything
+    /// older than this has been sitting for another reason — the switch was
+    /// off, the app was closed, or the session was paused.
+    static let autoSendFreshnessWindow: TimeInterval = 600
+
+    static let staleBacklogHoldReason = "排队已超过 10 分钟，转为人工确认"
+
+    static func isStaleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {
+        guard item.manualOnlyReason == nil, item.scheduledSendTime <= now else { return false }
+        return now.timeIntervalSince(item.scheduledSendTime) > autoSendFreshnessWindow
     }
 
     /// Safety holds, keyword hits, and other safety downgrades must never

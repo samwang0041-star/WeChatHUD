@@ -227,6 +227,51 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         XCTAssertEqual(sent, 50)
     }
 
+    /// Turning 自动发送 on used to release the entire backlog at once:
+    /// `handleNewMessages` never consults the master switch, so drafts queued
+    /// while it was off stayed eligible indefinitely, and the staleness check
+    /// only looks for *newer* messages — a peer who simply went quiet fails it
+    /// open. They must become human-required, not fire into conversations that
+    /// have moved on.
+    func testBacklogDraftIsRetiredInsteadOfReleased() async throws {
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+        let stale = PendingSend(
+            chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "好的，我看一下", confidence: 0.95, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-7_200)
+        )
+        await pipeline.testingEnqueue(stale)
+        await pipeline.processPendingQueue(config: pipelineConfig())
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1, "the retired draft stays for the user")
+        XCTAssertEqual(queue.first?.manualOnlyReason, AutopilotService.staleBacklogHoldReason)
+        let sent = await pipeline.sessionSent
+        XCTAssertEqual(sent, 0, "a two-hour-old draft must not go out unattended")
+        try? await pipeline.stop()
+    }
+
+    /// The same rule must not catch a draft that is merely waiting out its own
+    /// human-like delay (capped at 300s).
+    func testFreshDraftStillPassesTheStalenessWindow() {
+        let now = Date()
+        let fresh = PendingSend(
+            chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "好的", confidence: 0.95, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: now.addingTimeInterval(-300)
+        )
+        XCTAssertFalse(AutopilotService.isStaleForAutomaticSend(fresh, now: now))
+        XCTAssertTrue(AutopilotService.isEligibleForAutomaticSend(fresh, now: now))
+
+        var held = fresh
+        held.manualOnlyReason = "群聊消息，请人工确认后发送"
+        XCTAssertFalse(
+            AutopilotService.isStaleForAutomaticSend(held, now: now.addingTimeInterval(86_400)),
+            "an already manual-only item has nothing left to retire"
+        )
+    }
+
     // MARK: - Pipeline helpers
 
     private func pipelineConfig() -> AutopilotConfig {

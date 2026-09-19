@@ -2270,17 +2270,23 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// withdrawn "我明天把合同发你" stays a live commitment forever, and a
     /// recalled ask keeps anchoring discussion items. Tombstone by the
     /// ORIGINAL message's uid (not the recall row's).
-    func tombstoneForRecall(originalMsgUID: String) {
+    /// The withdrawn message's derived artifacts die with it, all three at
+    /// once: the scan watermark moves past the revokemsg row whether or not
+    /// this succeeded, so a cascade that half-applied would never be retried
+    /// and the withdrawn commitment would keep nagging forever.
+    func tombstoneForRecall(originalMsgUID: String) throws {
         // An empty uid would match every malformed row ever written —
         // the cascade must no-op on it, not wipe the boards.
         guard !originalMsgUID.isEmpty else { return }
-        try? exec(
-            "UPDATE commitments SET status='cancelled' WHERE msg_uid=? AND status IN ('pending','overdue')",
-            params: [originalMsgUID])
-        try? exec(
-            "UPDATE discussion_items SET status='dismissed' WHERE anchor_msg_uid=? AND status='pending'",
-            params: [originalMsgUID])
-        try? exec("DELETE FROM pending_asks WHERE msg_uid=?", params: [originalMsgUID])
+        try withTransaction {
+            try exec(
+                "UPDATE commitments SET status='cancelled' WHERE msg_uid=? AND status IN ('pending','overdue')",
+                params: [originalMsgUID])
+            try exec(
+                "UPDATE discussion_items SET status='dismissed' WHERE anchor_msg_uid=? AND status='pending'",
+                params: [originalMsgUID])
+            try exec("DELETE FROM pending_asks WHERE msg_uid=?", params: [originalMsgUID])
+        }
     }
 
     func insertRecalledMessage(
