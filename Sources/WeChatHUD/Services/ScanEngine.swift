@@ -115,19 +115,14 @@ enum ScanEngine {
             let unreadSessions = sessions.filter { $0.unreadCount > 0 }
             let unreadBatch = (try? await readerActor.messagesBatch(
                 unreadSessions.map { session in
-                    // Private chats fetch 20, not 5: `latestSelfTime` feeds the
-                    // live-exchange suppression — with 5, a rapid-fire reply
+                    // Private chats fetch a window, not 5: `latestSelfTime` feeds
+                    // the live-exchange suppression — with 5, a rapid-fire reply
                     // burst (peer sends 6 within the window) pushed your last
                     // outbound out of view and alerts fired while you were
-                    // literally typing in that chat.
-                    // Groups fetch with headroom: unreadCount counts INBOUND
-                    // rows, but the fetch window mixes in self rows — a lively
-                    // group where you replied mid-burst would otherwise fetch
-                    // fewer than `unreadCount` inbound rows and drop the
-                    // oldest unread from the feed.
-                    let fetchLimit = session.isGroup
-                        ? min(max(session.unreadCount * 2, 20), 60)
-                        : 20
+                    // literally typing in that chat. The window also has to cover
+                    // the whole unanswered tail, because the folded row reports
+                    // 「有 N 条还没回」 — a fixed 20 made 26 DMs read as 20.
+                    let fetchLimit = Self.unreadFetchLimit(session)
                     return WeChatReader.MessageBatchRequest(
                         chatUsername: session.username,
                         limit: fetchLimit
@@ -194,7 +189,7 @@ enum ScanEngine {
                         !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
                     }
                     guard let msg = inboundMsgs.first else { continue }
-                    let item = makeItem(
+                    var item = makeItem(
                         msg,
                         kind: .privateChat,
                         // Without this the row looks like "1 message", and the
@@ -204,6 +199,12 @@ enum ScanEngine {
                             $0.createTime > latestSelfTime
                         }.count
                     )
+                    // Honest floor: WeChat's own unread count says more arrived
+                    // than the page could hold, and every row in the page was
+                    // inbound (so nothing was dropped to self-message padding).
+                    // Below that the count is exact — 26 fetched out of 26 is 26.
+                    item.unansweredCountIsFloor = inboundMsgs.count == recentMsgs.count
+                        && session.unreadCount > recentMsgs.count
                     let decision = admissionRules.decide(
                         chatUsername: session.username,
                         isGroup: false,
@@ -1002,6 +1003,20 @@ enum ScanEngine {
     /// unread and never classify them.
     static func firstScanFetchLimit(unreadCount: Int, defaultLimit: Int = 100, hardCap: Int = 500) -> Int {
         max(defaultLimit, min(max(0, unreadCount), hardCap))
+    }
+
+    /// Hard ceiling on the per-chat unread page. A private chat's single folded
+    /// row reports how many messages it stands for, so this is also the largest
+    /// 「有 N 条还没回」 the app can state as exact — beyond it the row marks the
+    /// number as a floor (see `UnreadItem.unansweredCountIsFloor`).
+    static let unreadWindowCap = 60
+
+    /// The page size one session's unread feed fetches. Group rooms need
+    /// headroom because `unreadCount` counts inbound rows while the page mixes
+    /// in self rows; private chats need at least the whole unanswered tail.
+    static func unreadFetchLimit(_ session: SessionInfo) -> Int {
+        let wanted = session.isGroup ? session.unreadCount * 2 : session.unreadCount
+        return min(max(wanted, 20), unreadWindowCap)
     }
 
     /// Extra backward pages one scan may fetch to cover over-cap unread

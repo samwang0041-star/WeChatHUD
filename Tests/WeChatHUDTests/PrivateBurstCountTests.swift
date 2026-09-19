@@ -235,6 +235,64 @@ final class PrivateBurstCountTests: XCTestCase {
         XCTAssertEqual(received.first?.body, "小王 有 3 条消息还没回")
     }
 
+    // MARK: - The fetch window must not masquerade as the count
+
+    /// A 26-message flood used to read as 「有 20 条还没回」 because the private
+    /// page was fixed at 20. The window now follows `unreadCount` up to the cap.
+    func testTwentySixDMsReportTwentySixNotTheOldWindowOfTwenty() async throws {
+        let (fixture, store) = try makeFixture(
+            rows: (1...26).map { inbound($0, text: "第 \($0) 条") },
+            unreadCount: 26
+        )
+        defer { fixture.cleanup(); store.close() }
+
+        let scanned = try await scan(fixture.reader, store: store)
+        let outcome = try XCTUnwrap(scanned)
+        let row = try XCTUnwrap(outcome.unreadItems.first { $0.chatUsername == chat })
+        XCTAssertEqual(row.unansweredInboundCount, 26)
+        XCTAssertFalse(row.unansweredCountIsFloor, "26 fits inside the window; it is exact")
+    }
+
+    /// Past the cap the number is a floor and has to be said as one.
+    func testBeyondTheWindowTheCountIsMarkedAFloor() async throws {
+        let (fixture, store) = try makeFixture(
+            rows: (1...75).map { inbound($0, text: "第 \($0) 条") },
+            unreadCount: 75
+        )
+        defer { fixture.cleanup(); store.close() }
+
+        let scanned = try await scan(fixture.reader, store: store)
+        let outcome = try XCTUnwrap(scanned)
+        let row = try XCTUnwrap(outcome.unreadItems.first { $0.chatUsername == chat })
+        XCTAssertEqual(row.unansweredInboundCount, ScanEngine.unreadWindowCap)
+        XCTAssertTrue(row.unansweredCountIsFloor)
+    }
+
+    @MainActor
+    func testFlooredCountIsAlertedAsAtLeast() async {
+        let start = Date(timeIntervalSince1970: 5_400_000)
+        var received: [(title: String, body: String, identifier: String)] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { start },
+            sendNotification: { title, body, identifier, completion in
+                received.append((title, body, identifier))
+                completion(nil)
+            }
+        )
+        var item = makeUnread(
+            chatUsername: chat, senderUsername: "wxid_peer", senderName: "小王",
+            waiting: ScanEngine.unreadWindowCap
+        )
+        item.unansweredCountIsFloor = true
+
+        engine.evaluate(
+            unreadItems: [item], replyDebtItems: [], commitments: [], recentNotifications: []
+        )
+        await Task.yield()
+        XCTAssertEqual(received.first?.body, "小王 有 60 条以上消息还没回")
+    }
+
     // MARK: - The two consumers share one definition
 
     /// Both read the same property, so 日报 and the alert cannot disagree about
@@ -246,4 +304,5 @@ final class PrivateBurstCountTests: XCTestCase {
         XCTAssertEqual(row.unansweredInboundCount, 0)
         XCTAssertEqual(row.inboundMessageCount, 1)
     }
+
 }

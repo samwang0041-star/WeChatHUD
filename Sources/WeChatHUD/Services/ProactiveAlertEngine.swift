@@ -151,10 +151,12 @@ final class ProactiveAlertEngine {
         // into a single row, so the old `+= 1` meant the rule could only ever
         // fire for group members — a colleague firing off five DMs produced one.
         var senderCounts: [String: Int] = [:]
+        var senderFloors: [String: Bool] = [:]
         var displayNames: [String: String] = [:]
         for item in alertable {
             let key = Self.burstBucketKey(senderUsername: item.senderUsername, senderName: item.senderName)
             senderCounts[key, default: 0] += item.inboundMessageCount
+            senderFloors[key, default: false] = (senderFloors[key] ?? false) || item.unansweredCountIsFloor
             // First display name wins for the body text; the key already
             // carries the identity, so only readability depends on this.
             if displayNames[key] == nil { displayNames[key] = item.senderName }
@@ -165,9 +167,10 @@ final class ProactiveAlertEngine {
             // unanswered alertable item from that sender, across chats and with
             // no adjacency check, so three replies-old messages qualify too.
             // What is actually true — and what the alert is for — is the count.
+            let unit = (senderFloors[key] ?? false) ? "条以上" : "条"
             pushAlert(
                 title: "多条未回",
-                body: "\(displayName) 有 \(count) 条消息还没回",
+                body: "\(displayName) 有 \(count) \(unit)消息还没回",
                 identifier: "burst-\(key)"
             )
         }

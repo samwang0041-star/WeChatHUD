@@ -270,6 +270,11 @@ struct UnreadItem: Identifiable {
     /// than defaulted: every construction site has to state which unit it means.
     let unansweredInboundCount: Int
 
+    /// True when the count is a floor, not an exact figure: the fetch window
+    /// was fully consumed by inbound messages, so older unanswered messages
+    /// exist beyond what was read. The 「多条未回」 alert says 「N 条以上」 then.
+    var unansweredCountIsFloor = false
+
     /// What this row contributes wherever messages, rather than rows, are
     /// counted (the 「多条未回」 alert, 日报's 「未读 N 条」).
     ///
