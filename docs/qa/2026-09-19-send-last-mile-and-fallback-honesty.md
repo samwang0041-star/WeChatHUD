@@ -183,3 +183,72 @@ themselves」是空的 —— 全项目没有任何地方真的算出过等待�
 
 按「生产不可达的死 UI 直接删」处理。要恢复它得先回答它和侧栏那一行的分工，
 而不是留一份和真实入口互相矛盾的代码。
+
+## §138 截图把我上一条修复证伪了（P1，本轮修）
+
+§132 的判据写成 `item.source == chatName`。跑 `--preview-tab=insight` 拍总览，
+等待行仍然是「林晓 · 产品同事 ／ 依据：林晓」——
+因为对话的显示名带角色后缀（`「名字 · 角色」`，见 `AdmissionSettingsView.swift:183`
+等三处 `joined(separator: " · ")` 的约定），精确相等对私聊永远不成立。
+
+改成 `chatName.hasPrefix(item.source)`，并给测试补上带后缀的那一种形状
+（`InsightRadarTests.testWaitingEvidenceDoesNotEchoTheChatName` 里新增一段）。
+群聊那一行仍然保留「依据：林晓」—— 图里也确认了：群名不含人名时，这是新信息。
+
+顺带补了缺的治具：`--preview-tab=<tab>`（`PreviewRuntime.requestedLaunchTab` →
+`SettingsView.selectedTab` 初值）。在此之前脚本启动永远落在「今天」，
+`--preview-insight-overview` 只能保证「进了洞察页就停在总览」，
+所以那一页从来没被自动拍到过 —— 这也是 §132 当初只做了字符串级验证的真实原因。
+
+**教训**：判据用「相等」还是「包含」，要看渲染侧的字符串是谁拼的。
+我按数据字段想当然，而界面拿到的是拼好的显示名。
+
+## §139 桌面导出的权限位、QA 产物的权限位、以及打进系统日志的群名（P1）
+
+导出轴的代理报了 P0「导出绕过脱敏政策」。回源码判阴一半、成立一半：
+
+- **判阴的部分**：`Redactor` 的文件头写得很清楚 —— 它是 RetrospectiveJob 的
+  代号映射，「The map lives only in memory — never persisted to disk」，
+  管的是**出网**。桌面导出是用户主动导自己的报告，把人名和原文打码会让这个
+  功能失去意义。代理把一条出网政策当成了普适政策。
+- **成立的部分（已修）**：
+  1. `ChatMonitor+DailyReport.swift` 写 `~/Desktop/WeChatHUD-<date>.md` 用默认的
+     0644，而 macOS 默认把桌面同步进 iCloud；同一个仓库里密钥文件是 0o600
+     （`AccountStoreCoordinator.swift:262`）。改成写完 chmod 0600。
+  2. `AccessibilityAudit.swift:240` 把每个控件的 AX `label`/`help` 落到 `$TMPDIR`
+     且 0644 —— 那里面会有联系人名字和消息派生文本。同样补 0600。
+  3. `ChatAnalyzer.swift` 三处 `print` 把真实 `chatName` 打进 stdout（进统一日志，
+     其他进程可读）。消息正文那里已经 `sanitizeForAI`，名字这里漏了；
+     改成只报计数。
+
+## §140 两个设置在替算法许愿（P1，改文案 + 让文案咬住调用点）
+
+- 「回复最长写多少」「写得更随意一些」的注释写着
+  「这是平时**写摘要和草稿**的习惯」。实际：`AIInboxSummarizer.swift:124` 传
+  `temperature: 0.1, maxTokens: 2048`，`AIReplySuggester.swift:208` 传
+  `temperature: 0.4, maxTokens: 512` —— 被点名的两条路径恰好都不读这两个滑杆，
+  它们只影响没传 options 的调用。另外 `AIService.swift:154` 对
+  `responseFormatJSON` 强制关思考，所以「慢慢想清楚再答」对草稿也不成立（对摘要成立）。
+- 「发现后自动安装」：`installIfEnabled: true` 全项目只有一处，
+  在 `scheduleLaunchCheck` 里，而它又被 `config.autoCheckEnabled` 挡着。
+  三个用户会点的「检查更新」按钮全都传 `false`。
+  所以这个开关的生效条件是「启动 + 开了自动检查」，面上一个字没提。
+
+改法选文案不选行为：那两个固定参数是调出来的（摘要要确定、草稿要短），
+把它们交给用户滑杆是一次产品改动，不该由质检顺手做。
+新增 `SettingsScopeHonestyTests`：一条锁文案不再声称摘要/草稿，
+一条锁**调用点仍然传字面量** —— 哪天真接上滑杆，这条会红，逼着回来重写文案。
+
+## §141 判阴：已提交的 31 张 workspace-audit 截图不是真实对话
+
+导出轴另报一条 P1：「`docs/qa/2026-09-08/workspace-audit/` 的截图没有来源声明，
+而这个仓库是公开的」。它找的是 `acceptance.md`（那里只声明了 `design/` 那批）。
+
+我自己打开 `01-today.png` 看了：窗口顶部有常驻横幅
+「交互演示 · 全部为虚构数据，不读取或操作微信」，人名是 fixture 的
+「项目协作群 / 林晓 · 产品同事」，与我这一轮预览拍到的完全同一套。
+`workspace-audit/audit.md:3` 也写了「截图来自原生演示包，全部为虚构对话」。
+
+判阴，但这条值得留在记录里：**公开仓库里的截图必须自带可见的虚构声明**，
+声明在 markdown 里不算，图上有才算 —— 这次代理只能从文档找证据，
+而文档恰好没覆盖那一个目录，看起来就像泄漏。
