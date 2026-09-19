@@ -2188,7 +2188,7 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
   AppKit 画的标题/正文不在 contentView 截图内**（明/暗两档都一样，而 173pt 的高
   度正是给这两行文本留的）——这是 harness 的覆盖面限制，不是产品没画。
 
-### §114 打开「自动发送」会一次放出整条历史积压（commit 待补）
+### §114 打开「自动发送」会一次放出整条历史积压（commit b9b5dde9）
 
 `handleNewMessages` 从不看 `autoSendEnabled`，只有 `processPendingQueue` 看 ⇒ 开关
 关着时排进来的草稿一直 `manualOnlyReason == nil`、一直"到点即发"；而
@@ -2197,7 +2197,7 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
 现在队列在处理前先做一次退役：超过自身延时窗口（10 分钟，真人延时上限是 300s）
 的草稿转为人工确认并落库，仍在待批工作台里可见、可手动发送，只是不再无人值守。
 
-### §115 撤回的连带清理原先是三条 `try?`（commit 待补）
+### §115 撤回的连带清理原先是三条 `try?`（commit b9b5dde9）
 
 `tombstoneForRecall` 与取消关注同形，但它没有重试机会——扫描水位线无论成败都会
 越过 revokemsg 行。三条语句改成 `withTransaction` + 抛出，调用点记录失败而不当
