@@ -28,6 +28,10 @@ enum ScanEngine {
         /// watching. Consumers (banner, proactive alerts) should not
         /// re-interrupt for these chats.
         let activeConversations: Set<String>
+        /// `contact.db` moved during this scan's prep, so persisted display
+        /// names may be stale. Carried out here because deciding that requires
+        /// the reader's DB lock, which the main actor must not take.
+        let contactsChanged: Bool
     }
 
     /// Run a full scan of WeChat's databases and produce an atomic update
@@ -48,7 +52,7 @@ enum ScanEngine {
             // whitelist paging go through WeChatReaderActor. ReplyDebt and a
             // few helpers still take the lock-backed `reader` directly.
             let readerActor = WeChatReaderActor(reader)
-            try await readerActor.prepareForScan()
+            let contactsChanged = try await readerActor.prepareForScan()
 
             let chatActions = store.loadChatActions()
             let nowEpoch = Int(Date().timeIntervalSince1970)
@@ -972,6 +976,12 @@ enum ScanEngine {
                 }
             }
 
+            // Ephemeral-cache hygiene belongs to this side of the scan: it
+            // takes the reader's DB lock and removes files, and the main-actor
+            // apply used to pay for it once per scan — while a background
+            // decrypt could be holding that same lock.
+            reader.purgeEphemeralCache()
+
             return ScanOutcome(
                 stats: HUDStats(
                     unreadCount: totalUnread + debugUnreadExtra,
@@ -990,7 +1000,8 @@ enum ScanEngine {
                 newInboundForClassifier: newInboundForClassifier,
                 vipTraceMessages: vipTraceMessages,
                 selfOutgoingMessages: selfOutgoingMessages,
-                activeConversations: activeConversations
+                activeConversations: activeConversations,
+                contactsChanged: contactsChanged
             )
         } catch {
             print("[WCHUD] performScan error: \(error)")

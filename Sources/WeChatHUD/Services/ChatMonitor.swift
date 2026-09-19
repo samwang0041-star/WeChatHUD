@@ -1372,9 +1372,11 @@ final class ChatMonitor: ObservableObject {
         }
         // Build unified inbox from scan results
         rebuildInbox()
-        reader.purgeEphemeralCache()
-        let contactsChanged = (try? reader.refreshContactsIfChanged()) ?? false
-        _ = repairPersistedChatDataIfNeeded(contactsChanged: contactsChanged)
+        // Both of these used to run here, on the main actor, every scan: the
+        // cache purge takes the reader's DB lock, and the contact-change check
+        // takes it too — which is the lock a background shard decrypt is
+        // holding. The scan now reports what it already knows.
+        _ = repairPersistedChatDataIfNeeded(contactsChanged: o.contactsChanged)
         reloadAIData()
         runPostScanAI(o)
 

@@ -39,6 +39,18 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// methods (e.g. getDecryptedDB) internally.
     private let lock = NSRecursiveLock()
 
+    /// Guards the three naming caches below (`contactCache`,
+    /// `contactIdentityIndex`, `groupMemberNamesCache`) for readers that never
+    /// touch a database — the name every inbox row renders.
+    ///
+    /// Those lookups used to take `lock`, which `getDecryptedDB` holds across a
+    /// whole-shard read plus a page-by-page AES pass. A background scan
+    /// therefore froze the island mid-animation for as long as that shard took,
+    /// for a lookup that reads no database at all. Readers take `namingLock`
+    /// and nothing else; writers take `lock` first and then `namingLock`, so no
+    /// path can hold `namingLock` while waiting for `lock`.
+    private let namingLock = NSRecursiveLock()
+
     private var keys: [String: Data] = [:]           // relative path → 32-byte key
 
     /// Precomputed candidate sets for `findKey(for:)`, keyed by file name.
@@ -769,9 +781,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             throw ReaderError.sqlError("Cannot finish reading contacts")
         }
         let identityIndex = ContactIdentityIndex.build(records: contactRecords)
-        contactIdentityIndex = identityIndex
-        contactCache = identityIndex.displayNameByUsername
-        loadGroupMemberNames(db: db, knownNames: identityIndex.displayNameByUsername)
+        // One critical section for the whole publish: a reader must never see
+        // the new index without the group labels promoted into `contactCache`,
+        // or an unnamed room flickers to its placeholder mid-refresh.
+        namingLock.withLock {
+            contactIdentityIndex = identityIndex
+            contactCache = identityIndex.displayNameByUsername
+            loadGroupMemberNames(db: db, knownNames: identityIndex.displayNameByUsername)
+        }
 
         // Rebuild self-name aliases. Merge the base set (wxid + legacy
         // short ID + contact.db display name) WITH any group-chat
@@ -844,20 +861,22 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             if !names.contains(name), names.count < 8 { names.append(name) }
             result[room] = names
         }
-        groupMemberNamesCache = result
+        namingLock.withLock {
+            groupMemberNamesCache = result
 
-        // `contactCache` holds the placeholder for these rooms, and
-        // `displayName(for:)` returns the first cache hit — so promote the
-        // member-derived label into the cache, otherwise the placeholder
-        // would keep winning.
-        for (room, members) in result {
-            guard let label = ContactIdentityIndex.memberDerivedGroupLabel(memberNames: members) else { continue }
-            contactCache[room] = label
+            // `contactCache` holds the placeholder for these rooms, and
+            // `displayName(for:)` returns the first cache hit — so promote the
+            // member-derived label into the cache, otherwise the placeholder
+            // would keep winning.
+            for (room, members) in result {
+                guard let label = ContactIdentityIndex.memberDerivedGroupLabel(memberNames: members) else { continue }
+                contactCache[room] = label
+            }
         }
     }
 
     func displayName(for username: String) -> String {
-        lock.withLock {
+        namingLock.withLock {
             if let exact = contactCache[username] {
                 return exact
             }
@@ -883,40 +902,40 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
     /// Names WeChat's own search can match: current remark, then nickname, then username.
     func weChatSearchNames(for username: String) -> [String] {
-        lock.withLock { contactIdentityIndex.searchNames(for: username) }
+        namingLock.withLock { contactIdentityIndex.searchNames(for: username) }
     }
 
     func weChatRemark(for username: String) -> String? {
-        lock.withLock { contactIdentityIndex.remarkByUsername[username] }
+        namingLock.withLock { contactIdentityIndex.remarkByUsername[username] }
     }
 
     func weChatNickName(for username: String) -> String? {
-        lock.withLock { contactIdentityIndex.nickNameByUsername[username] }
+        namingLock.withLock { contactIdentityIndex.nickNameByUsername[username] }
     }
 
     /// Member display names recovered for an unnamed group, if any.
     func groupMemberNames(for username: String) -> [String] {
-        lock.withLock { groupMemberNamesCache[username] ?? [] }
+        namingLock.withLock { groupMemberNamesCache[username] ?? [] }
     }
 
     /// True when WeChat itself has no name for this chat — `contact.db`
     /// carries the row but with an empty `nick_name`/`remark`. Whatever the
     /// UI shows for such a chat is a placeholder or a member-derived guess.
     func hasWeChatName(for username: String) -> Bool {
-        lock.withLock {
+        namingLock.withLock {
             guard let name = contactIdentityIndex.weChatNameByUsername[username] else { return false }
             return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
     func canonicalContactUsername(for usernameOrAlias: String) -> String? {
-        lock.withLock {
+        namingLock.withLock {
             contactIdentityIndex.canonicalUsername(for: usernameOrAlias)
         }
     }
 
     func normalizeContactMentions(in text: String) -> String {
-        lock.withLock {
+        namingLock.withLock {
             contactIdentityIndex.normalizeMentions(in: text)
         }
     }

@@ -15,9 +15,14 @@ actor WeChatReaderActor {
         self.reader = reader
     }
 
-    func prepareForScan() throws {
+    /// - Returns: whether `contact.db` actually changed, i.e. whether a peer
+    /// could have been renamed. The scan-apply tail uses this instead of
+    /// asking again on the main actor, which would take the reader's DB lock
+    /// there.
+    @discardableResult
+    func prepareForScan() throws -> Bool {
         try reader.loadKeys()
-        try reader.refreshContactsIfChanged()
+        return try reader.refreshContactsIfChanged()
     }
 
     func sessions() throws -> [SessionInfo] {
