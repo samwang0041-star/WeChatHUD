@@ -296,6 +296,13 @@ extension ChatMonitor {
 
         do {
             try md.write(to: desktop, atomically: true, encoding: .utf8)
+            // The report carries real contact names and message bodies by
+            // design — it is the user's own export, not an egress path, so the
+            // AI masking policy does not apply here. What must not apply is the
+            // default 0644: ~/Desktop is iCloud-synced on a default macOS
+            // setup, and every other chat-derived file this app writes is 0600.
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: desktop.path)
             return desktop
         } catch {
             print("[WCHUD] export failed: \(error)")

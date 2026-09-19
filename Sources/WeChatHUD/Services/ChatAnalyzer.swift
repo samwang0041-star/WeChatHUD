@@ -157,7 +157,7 @@ actor ChatAnalyzer {
             anchoredPrompt = userPrompt
         }
 
-        print("[WCHUD] ChatAnalyzer: group analysis starting for \(chatName), \(readableMessages.count)/\(messages.count) readable messages")
+        print("[WCHUD] ChatAnalyzer: group analysis starting, \(readableMessages.count)/\(messages.count) readable messages")
 
         let result = await pipeline.execute(
             prompt: anchoredPrompt,
@@ -180,11 +180,11 @@ actor ChatAnalyzer {
         )
 
         guard let (parsed, _) = result else {
-            print("[WCHUD] ChatAnalyzer: group analysis failed for \(chatName)")
+            print("[WCHUD] ChatAnalyzer: group analysis failed")
             return (nil, "AI 返回空内容或解析失败")
         }
 
-        print("[WCHUD] ChatAnalyzer: group analysis success for \(chatName)")
+        print("[WCHUD] ChatAnalyzer: group analysis success")
         return (parsed, nil)
     }
 

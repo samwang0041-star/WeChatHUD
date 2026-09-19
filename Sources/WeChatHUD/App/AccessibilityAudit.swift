@@ -238,6 +238,11 @@ enum AccessibilityAudit {
             .appendingPathComponent("wechathud-hig-audit.json")
         guard let data = try? encoder.encode(report) else { return }
         try? data.write(to: url)
+        // `label`/`help` are read off live controls, so this file can carry
+        // contact names and message-derived text. $TMPDIR is per-user but the
+        // mode is not: 0644 makes a QA artifact world-readable.
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: url.path)
 
         let live = report.controls.filter(\.enabled)
         // Two different rules, deliberately not merged.
