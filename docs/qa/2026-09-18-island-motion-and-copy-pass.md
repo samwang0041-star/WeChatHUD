@@ -1647,14 +1647,14 @@ KPI 卡片的**视口证据这轮没拿到**：`--preview-insight-overview` 那�
 
 ### 已核实、建任务未修（按严重度）
 
-- **#15 P1**：右键菜单「隐藏这条更新」是单条语义，`dismissInboxItem:2610` 写的却是
+- **#15 P1**（下一轮自查后撤回，判据与触发器见 §94 之后的 §95）：右键菜单「隐藏这条更新」是单条语义，`dismissInboxItem:2610` 写的却是
   `store.silenceChat(chatUsername:silencedAt:)` —— 会话级水印。点掉一条，同会话里
   时间戳不晚于它的所有消息一起消失，且没有任何提示。（自己读过两处源码确认）
 - **#16 P1**（下一轮已收口，见 §94）：README:135 列的「多条未回」对**私聊不可达**。规则 3 数 `unreadItems`
   行数（≥3），而 `ScanEngine.swift:185-190` 对非群聊只取
   `recentMsgs.first(where: !isFromSelf)` —— 一个私聊永远只贡献 1 行。
   三条未回私聊 = 1 行 = 永不触发。（自己读过确认）
-- **#17 P1**：通知设置三颗「弹出」开关的消费者只有浮窗路径
+- **#17 P1**（下一轮拆成两半：前半撤回，后半已修，见 §96）：通知设置三颗「弹出」开关的消费者只有浮窗路径
   （`ScanEngine:610-611`、`AppDelegate:593`），引擎从不读 `NotificationConfig`；
   三颗全关，紧急待回复（且不占每小时预算）/多条未回/VIP 升档/跨群 VIP 照样进通知中心，
   而文案写的是「关掉只是不弹」。同一条里还有「已安排在X提醒」：所有
@@ -1725,3 +1725,88 @@ AGENTS.md 说的「VIP 升档 1h 档只有视觉提示不发系统通知」**是
 要不要给它一个「5 条」的小角标，是把 `UnreadItem` 的口径接到 `InboxItem`
 （要过 `InboxBuilder`）的产品选项，不是正确性缺口 —— 微信自己的会话列表
 也是一行一对话。撤销路径：`unansweredInboundCount` 已经在链路上，加角标只是读它。
+
+## §95（第 26 轮）撤回 §93 的 #15：「隐藏这条更新」没有抹掉别的消息
+
+`dismissInboxItem:2614` 写的是会话级水印（`store.silenceChat(chatUsername:silencedAt:)`），
+这一点 §93 记得没错。但由它推出来的"点掉一条，同会话里其他消息一起消失，且没有提示"
+是错的 —— 我没有先看水印作用在哪个表面上。三条证据：
+
+1. **收件箱一行就是一个对话**：`InboxBuilder.build` 用 `seen: Set<String>` 按
+   `chatUsername` 去重（债务项优先，通知项 `guard !seen.contains`）。同一会话根本
+   不存在"另一行"可被抹掉。所以「隐藏这条更新」和它的粒度是一致的。
+2. **水印的另一半作用面没有 View 消费者**：`silencedAt` 还在
+   `ScanEngine:214/238` 抑制 `unreadItems`，而 `unreadItems` 的消费者只有
+   `ProactiveAlertEngine.evaluate` 与 `recomputeStatsFromItems`（全仓 grep 无任何 View 读它）。
+   也就是说被水印压掉的那部分只影响"还要不要提醒"，而"我处理过了别再提醒"正是点它的意图。
+3. **不是无提示、也不是不可逆**：`dismissedInbox` 命中的行进 `handled`，
+   收件箱渲染 `已处理 (N)` 页脚（`InboxView:475`）、行上有「恢复显示」（`:520` →
+   `restoreInboxItem`），今日页还有「撤销」（`AssistantTodayView:231`）。
+
+### 这条为什么值得写下来（触发器）
+
+判断本身是可复用的：**看到"作用域比文案宽"的水印，先问它作用的那个表面有没有
+更细的粒度可失去**。收件箱按对话去重，所以会话级水印无损；
+而 §94 刚给 `UnreadItem` 加了"一行代表几条"，如果哪天收件箱改成一条消息一行
+（每消息一行会更像微信聊天列表），这个水印就会真的开始一次点掉一片 ——
+到那时 #15 从假阳性变成真 bug，修法是把水印从 `chatUsername` 键改成
+`(chatUsername, senderIdentifier)` 或按消息 id 存集合（需要先给行一个稳定 id）。
+
+## §96（第 27 轮）#17 拆成两半：一半是假阳性，一半是真的空承诺
+
+### 先撤回一半
+
+§93 记的「三颗『弹出』开关关不掉系统提醒」，读源码复核后**不成立**：
+
+- 这三颗的消费者是 `NotificationConfig.shouldPresent`，落在 `AppDelegate:593`
+  （`panelState.showNotification`）与 `ScanEngine:630`（是否进通知面），
+  管的是**浮窗**；主动提醒四条规则走的是另一条路
+  （`ProactiveAlertEngine.systemNotificationSender` → `UNUserNotificationCenter`）。
+  两条路本来就不是一个开关能关的。
+- 而且这页**自己就声明了作用域**：页面副标题是「只管顶部浮窗」
+  （`SettingsView:87`）。所以这不是"文案与副作用不符"，是我没看页头就下了判断。
+
+### 真的那一半：「已安排在X 提醒」什么都没排
+
+`snoozeReceipt`（`CompanionProductCopy:109`）在四个生产表面上挂着
+（收件箱撤销条 ×2、横幅 toast、今日页回执卡），文案承诺"在某个时间点提醒"。
+全仓只有两处构造 `UNNotificationRequest`，两处都是 `trigger: nil`
+（`ProactiveAlertEngine:408`、`AutopilotService:1902`）—— **没有任何东西被排期**。
+到点后真实发生的是：水印过期 → 下一次心跳扫描把行放回收件箱。
+
+改成说这件事：「\(clockLabel) 后回到收件箱」。刻意不写"1 分钟内"：
+`safetyScanInterval` 默认 60 秒，但它是 `max(10, syncCfg.intervalSeconds)`
+算出来的用户可配置值，写死数字就是下一个假话。
+
+### 顺手把作用域那行补齐（并给它上一道防漂闸门）
+
+页脚原来只写「承诺到期等系统通知由 macOS 通知设置管理」——"等"字掩盖了
+另外三类同样关不掉的系统通知。现在按引擎真能发出的标题族列全：
+VIP / 承诺 / 多条未回 / 紧急待回复。
+`testNotificationSettingsScopeLineCoversEveryAlertTitle` 扫
+`ProactiveAlertEngine.swift` 里 `title: "` / `title = "` 的字面量，
+要求每一个都落在这四族里，且页脚逐族点名 —— 以后加第五类规则不改这行就红。
+变异检验：把页脚换成「承诺到期等」，三条 `the scope line omits …` 立刻报红。
+
+### 像素质检这一轮真的抓到了东西
+
+`--preview-activate --preview-tab=notifications --preview-capture=9` 拍到的是
+**工作台窗口**（`writeSurfaceBitmaps` 按 `window.title == brandName` 认它；
+只给 `--preview-tab` 不给 `--preview-activate` 时工作台区不出图，只出 320×32 的岛）。
+第一张图上看：页头已经写着「只管顶部浮窗」，而我新加的页脚又以
+「这些开关只管浮窗。」开头 —— **同一屏把同一句话说两遍**。删掉重复的前半句，
+重拍确认剩下的那句单行不折行、不挤。这就是"检查多余文案"在像素层的样子。
+
+两张图之间还有两处看着像回归的差异（开关轨道由绿变灰、「3 秒」选择器变灰），
+是窗口 key/非 key 态的标准渲染，与 §22 那条 md5 抖动同源，不是改动。
+
+### 留在原地的（已定价）
+
+要让「已安排在X提醒」变成真话，得真的排一次提醒。两条路：
+① `UNCalendarNotificationRequest` —— 系统代排，但**到点无法复核**：
+你早就回过那条消息了，它照样弹，这是拿一个错承诺换另一个错承诺；
+② 应用内定时器 + 到点前重扫校验 —— 能做到"只对还没回的提醒"，
+代价是 `restoreInboxItem` / 再次 snooze / 静音 / 退出登录四条路径都要撤销排程，
+再加一个可注入时钟的测试面。判据：只有当"离开电脑也要被提醒"成为需求时才值。
+另一个证据缺口：撤销条/toast 上的回执文案没有预览开关，本轮没截到像素
+（改动是 12→13 字符、在带 Spacer 的 HStack 里，布局风险为零）。

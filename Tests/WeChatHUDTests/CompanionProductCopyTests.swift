@@ -52,12 +52,74 @@ final class CompanionProductCopyTests: XCTestCase {
         let now = calendar.date(from: components)!
         components.hour = 11
         let today = calendar.date(from: components)!
-        XCTAssertEqual(CompanionProductCopy.snoozeReceipt(until: today, now: now, calendar: calendar), "已安排在今天 11:00 提醒")
+        XCTAssertEqual(CompanionProductCopy.snoozeReceipt(until: today, now: now, calendar: calendar), "今天 11:00 后回到收件箱")
         let choices = CompanionProductCopy.snoozeChoices(now: now, calendar: calendar)
         XCTAssertEqual(choices.map(\.label), ["30 分钟后", "1 小时后", "明天上午 9:00"])
         XCTAssertEqual(choices[0].whenLabel, "今天 11:30")
         XCTAssertEqual(choices[1].whenLabel, "今天 12:00")
         XCTAssertEqual(choices[2].whenLabel, "明天 09:00")
+    }
+
+    /// 「已安排在X提醒」 promised a scheduled notification the app never
+    /// schedules — every `UNNotificationRequest` here is `trigger: nil`, so the
+    /// only thing that happens at X is the row coming back on the next scan.
+    /// The receipt now says that, and must not slide back into promising a
+    /// reminder.
+    func testSnoozeReceiptDescribesTheResurfacingNotAReminder() {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 9, hour: 11))!
+        let receipt = CompanionProductCopy.snoozeReceipt(
+            until: now.addingTimeInterval(1800), now: now, calendar: calendar
+        )
+        XCTAssertTrue(receipt.contains("回到收件箱"), receipt)
+        XCTAssertFalse(receipt.contains("提醒"), receipt)
+    }
+
+    /// The 弹出 switches gate the floating panel only; the proactive rules post
+    /// macOS notifications the switches cannot silence. The page header carries
+    /// the scope ("只管顶部浮窗") and the footer has to name every family the
+    /// engine can actually post — a new rule with a new title fails here.
+    func testNotificationSettingsScopeLineCoversEveryAlertTitle() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+
+        let engine = try String(
+            contentsOf: root.appendingPathComponent("Services/ProactiveAlertEngine.swift"),
+            encoding: .utf8
+        )
+        var stems: [String] = []
+        for marker in ["title: \"", "title = \""] {
+            for chunk in engine.components(separatedBy: marker).dropFirst() {
+                guard let quote = chunk.firstIndex(of: "\"") else { continue }
+                stems.append(String(chunk[..<quote]))
+            }
+        }
+        XCTAssertGreaterThanOrEqual(stems.count, 6, "the engine's titles stopped looking like titles: \(stems)")
+
+        let families = ["VIP", "承诺", "多条未回", "紧急待回复"]
+        for stem in stems {
+            XCTAssertTrue(
+                families.contains { stem.hasPrefix($0) },
+                "alert title 「\(stem)」 is a family the settings page has never heard of"
+            )
+        }
+
+        let settings = try String(
+            contentsOf: root.appendingPathComponent("Views/Settings/NotificationSettingsView.swift"),
+            encoding: .utf8
+        )
+        let line = settings.components(separatedBy: "\n")
+            .first { $0.contains("macOS 的通知设置") }
+        let scope = try XCTUnwrap(line, "the settings page no longer scopes the 弹出 switches")
+        for family in families {
+            XCTAssertTrue(scope.contains(family), "the scope line omits \(family)")
+        }
+        // What the switches *do* govern is stated once, in the page header —
+        // the footer repeating it would be the same sentence twice on one screen.
+        XCTAssertEqual(SettingsView.Tab.notifications.subtitle, "只管顶部浮窗")
     }
 
     /// The banner shares the panel's relative vocabulary ("12 分钟前" /

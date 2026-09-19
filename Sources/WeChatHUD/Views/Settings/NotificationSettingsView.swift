@@ -32,7 +32,7 @@ struct NotificationSettingsView: View {
             }
             SettingsRowDivider()
             VStack(alignment: .leading, spacing: 8) {
-                Text("承诺到期等系统通知由 macOS 通知设置管理。")
+                Text("主动提醒发出的系统通知（VIP、承诺、多条未回、紧急待回复）在 macOS 的通知设置里管理。")
                     .font(.caption).foregroundStyle(.secondary)
                 if let error {
                     HStack {

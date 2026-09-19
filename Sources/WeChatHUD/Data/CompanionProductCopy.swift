@@ -106,8 +106,11 @@ enum CompanionProductCopy {
         return formatter.string(from: date)
     }
 
+    /// What a snooze actually does, phrased so it can't be read as a scheduled
+    /// notification: nothing is handed to the system — the row comes back to the
+    /// inbox on the next heartbeat scan once the mark passes.
     static func snoozeReceipt(until: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        "已安排在\(clockLabel(until, now: now, calendar: calendar)) 提醒"
+        "\(clockLabel(until, now: now, calendar: calendar)) 后回到收件箱"
     }
 
     /// Arrival stamp for the notification banner's identity line.
