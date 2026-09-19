@@ -163,6 +163,17 @@ final class InsightRadarTests: XCTestCase {
         let row = direct.first { $0.kind == .waiting }
         XCTAssertNil(row?.evidence, "行头已经写着「张三」，依据不能再写一遍")
 
+        // The real display name carries the role suffix, so equality alone was
+        // not enough — this is the shape the 总览 screenshot actually showed.
+        let suffixed = InsightRadar.buildFindings(
+            chatInsights: ["wxid_lin": makeInsight(waitingForMe: [
+                WaitingItem(source: "林晓", what: "确认待办责任人的展示规则")
+            ])],
+            chatNames: ["wxid_lin": "林晓 · 产品同事"]
+        )
+        XCTAssertNil(suffixed.first { $0.kind == .waiting }?.evidence,
+                     "「林晓 · 产品同事」这一行的依据不能再写「林晓」")
+
         let group = InsightRadar.buildFindings(
             chatInsights: ["room@chatroom": makeInsight(waitingForMe: [
                 WaitingItem(source: "李四", what: "等排期答复")

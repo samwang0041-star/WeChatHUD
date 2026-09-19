@@ -173,10 +173,12 @@ enum InsightRadar {
                 kind: .waiting,
                 source: chatName,
                 title: item.what,
-                // The only thing left to say is *who* — and in a 1:1 chat that
-                // is the chat name the row header already prints, so echoing it
-                // would spend the evidence slot on a duplicate.
-                evidence: item.source == chatName ? nil : item.source,
+                // The only thing left to say is *who* — and in a 1:1 chat the
+                // header already prints that person (the display name is
+                // 「名字 · 角色」, so a bare-equality check missed it and the
+                // 总览 rendered 「林晓 · 产品同事 ／ 依据：林晓」). Say it only
+                // when it is new — a group chat naming one of its members.
+                evidence: chatName.hasPrefix(item.source) ? nil : item.source,
                 reason: "对方在等你给答复或推进",
                 actionLabel: "打开对话",
                 chatUsername: chatUsername,

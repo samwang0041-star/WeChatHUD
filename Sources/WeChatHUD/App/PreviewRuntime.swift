@@ -9,6 +9,17 @@ enum PreviewRuntime {
     static let directory = NSTemporaryDirectory() + "wechathud-product-preview"
     static var pendingAITestFailure = false
     static var pendingAutoSendConfirm = false
+    /// `--preview-tab=insight` opens the workspace on a given sidebar row.
+    /// A scripted launch capture could otherwise only ever photograph 今天:
+    /// every other page is one click away, so the 洞察 overview had never been
+    /// screenshotted even though a flag claimed to hold it on screen.
+    static var requestedLaunchTab: String? {
+        guard isEnabled else { return nil }
+        let prefix = "--preview-tab="
+        return CommandLine.arguments.first { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+    }
+
     /// Holds the 洞察 page on its overview instead of auto-selecting a chat, so
     /// the overview dashboard can be screenshotted on a repeatable launch.
     static var opensInsightOverviewByDefault: Bool {
