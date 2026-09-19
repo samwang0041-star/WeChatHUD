@@ -157,7 +157,6 @@ final class WorkspaceAlignmentTests: XCTestCase {
             "InsightSidebarView.swift",  // a list column inside the split view
             "SettingsView.swift",        // the sidebar column
             "ContactsSettingsView.swift",// sub-pane fills behind cards
-            "AutopilotTabView.swift",    // in-island feed: dark ground either way
         ]
         for file in try swiftFiles(under: "Views") where !allowed.contains(file.name) {
             XCTAssertFalse(

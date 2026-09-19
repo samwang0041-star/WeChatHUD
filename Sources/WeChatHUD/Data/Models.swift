@@ -1833,8 +1833,13 @@ struct ReplyTimingProfile {
     var lateNight: DelayDistribution   // 23:00-7:00
     /// Whether user historically stays silent during late night (23:00-7:00).
     var silentAtNight: Bool
-    /// Late-night reply rate (0.0-1.0). Used for configurable threshold comparison.
-    var lateNightReplyRate: Double
+    /// Late-night reply rate (0.0-1.0), or nil when nothing was ever measured.
+    /// It used to be a plain `Double` that the loader rebuilt from the
+    /// `silent_at_night` bit as 0.0 / 1.0 — which made a failed history read look
+    /// like "this person never replies at night" (locking the guardrail for
+    /// 24 hours) and a real 0.35 look like 1.0 after a restart, so raising the
+    /// threshold silently un-armed the 3 a.m. hold.
+    var lateNightReplyRate: Double?
     /// Total reply pairs analyzed.
     var sampleCount: Int
     var lastUpdated: Date

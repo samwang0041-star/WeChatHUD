@@ -454,26 +454,38 @@ actor StyleProfiler {
            Date().timeIntervalSince(cached.refreshedAt) < 3600 {
             return cached.profile
         }
-        // Check DB cache (refreshed < 24h ago)
+        // Check DB cache (refreshed < 24h ago). A row with no rate is a
+        // pre-persistence row: it cannot answer the threshold question, so it is
+        // re-measured rather than trusted — the old loader answered it with a
+        // 0.0 / 1.0 rebuilt from the silent bit.
         if let stored = store.loadReplyTimingProfile(chatUsername: chatUsername),
+           stored.lateNightReplyRate != nil,
            Date().timeIntervalSince(stored.lastUpdated) < 86400 {
             timingCache[chatUsername] = (stored, Date())
             return stored
         }
 
-        let profile = buildTimingProfile(chatUsername: chatUsername)
+        guard let profile = buildTimingProfile(chatUsername: chatUsername) else {
+            // The history read failed (WeChat closed, key rotated, DB locked).
+            // That is not a measurement, so it is neither cached nor written:
+            // doing either used to lock the late-night hold for 24 hours on one
+            // transient error, and print 「回复率0%」 as if it had been measured.
+            return Self.unmeasuredTimingProfile(chatUsername: chatUsername)
+        }
         timingCache[chatUsername] = (profile, Date())
         try? store.upsertReplyTimingProfile(profile)
         return profile
     }
 
     /// Build timing profile by analyzing "peer sent → I replied" intervals.
-    private func buildTimingProfile(chatUsername: String) -> ReplyTimingProfile {
+    /// nil means the history could not be read at all — distinct from "read, and
+    /// there is nothing there".
+    private func buildTimingProfile(chatUsername: String) -> ReplyTimingProfile? {
         let messages: [MessageInfo]
         do {
             messages = try reader.getMessages(chatUsername: chatUsername, limit: 500)
         } catch {
-            return defaultTimingProfile(chatUsername: chatUsername)
+            return nil
         }
 
         let myUname = reader.myUsername()
@@ -551,7 +563,7 @@ actor StyleProfiler {
         )
     }
 
-    private func defaultTimingProfile(chatUsername: String) -> ReplyTimingProfile {
+    nonisolated static func unmeasuredTimingProfile(chatUsername: String) -> ReplyTimingProfile {
         let defaultDist = ReplyTimingProfile.DelayDistribution(p25: 30, p50: 60, p75: 180, count: 0)
         return ReplyTimingProfile(
             chatUsername: chatUsername,
@@ -560,7 +572,7 @@ actor StyleProfiler {
             weekend: defaultDist,
             lateNight: .zero,
             silentAtNight: true,
-            lateNightReplyRate: 0.0,
+            lateNightReplyRate: nil,
             sampleCount: 0,
             lastUpdated: Date()
         )

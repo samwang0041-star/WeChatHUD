@@ -254,7 +254,11 @@ enum WeChatLauncher {
             guard AXIsProcessTrustedWithOptions(opts) else { notifyUser(SendFailureReason.accessibilityDenied.userMessage); return }
             let saved = ClipboardGuard.save()
             defer {
-                ClipboardGuard.restore(saved)
+                // Every one of these sites is its own last line of defence: the
+                // autopilot path has an outer restore, but a send started from the
+                // analysis workbench reaches only this one.
+                // `restore` can only erase what it recognises as its own.
+                ClipboardGuard.restore(saved, pastedText: chatName)
                 finishClipboardRestore()
             }
             // When the caller supplied WeChat-resolved names, never append the
@@ -832,7 +836,7 @@ enum WeChatLauncher {
         let pasteboard = NSPasteboard.general
         let saved = ClipboardGuard.save()
         defer {
-            ClipboardGuard.restore(saved)
+            ClipboardGuard.restore(saved, pastedText: text)
             finishClipboardRestore()
         }
         let axApp = axApplication(processID: binding.processID)

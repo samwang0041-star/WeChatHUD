@@ -783,10 +783,14 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 weekend          TEXT NOT NULL DEFAULT '{}',
                 late_night       TEXT NOT NULL DEFAULT '{}',
                 silent_at_night  INTEGER NOT NULL DEFAULT 0,
+                late_night_reply_rate REAL NOT NULL DEFAULT -1,
                 sample_count     INTEGER NOT NULL DEFAULT 0,
                 last_updated     INTEGER NOT NULL DEFAULT 0
             )
         """)
+        // -1 means "never measured", which is what every pre-existing row really
+        // is. A 0.0 default would claim a person who never answers at night.
+        _ = try? exec("ALTER TABLE reply_timing_profiles ADD COLUMN late_night_reply_rate REAL NOT NULL DEFAULT -1")
 
         // Relationship profiles — AI-inferred + user-edited relationship metadata
         try exec("""
@@ -3405,14 +3409,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             (try? JSONEncoder().encode(dist)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         }
         try exec("""
-            INSERT INTO reply_timing_profiles(chat_username, work_hours, evening, weekend, late_night, silent_at_night, sample_count, last_updated)
-            VALUES(?,?,?,?,?,?,?,?)
+            INSERT INTO reply_timing_profiles(chat_username, work_hours, evening, weekend, late_night, silent_at_night, late_night_reply_rate, sample_count, last_updated)
+            VALUES(?,?,?,?,?,?,?,?,?)
             ON CONFLICT(chat_username) DO UPDATE SET
                 work_hours = excluded.work_hours,
                 evening = excluded.evening,
                 weekend = excluded.weekend,
                 late_night = excluded.late_night,
                 silent_at_night = excluded.silent_at_night,
+                late_night_reply_rate = excluded.late_night_reply_rate,
                 sample_count = excluded.sample_count,
                 last_updated = excluded.last_updated
         """, params: [
@@ -3422,6 +3427,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             encode(profile.weekend),
             encode(profile.lateNight),
             profile.silentAtNight ? "1" : "0",
+            String(profile.lateNightReplyRate ?? -1),
             String(profile.sampleCount),
             String(now)
         ])
@@ -3429,7 +3435,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     func loadReplyTimingProfile(chatUsername: String) -> ReplyTimingProfile? {
         queryOne("""
-            SELECT chat_username, work_hours, evening, weekend, late_night, silent_at_night, sample_count, last_updated
+            SELECT chat_username, work_hours, evening, weekend, late_night, silent_at_night, late_night_reply_rate, sample_count, last_updated
             FROM reply_timing_profiles WHERE chat_username=?
         """, bind: { stmt in
             sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
@@ -3440,6 +3446,8 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                     ?? .zero
             }
             let isSilent = sqlite3_column_int(stmt, 5) != 0
+            // Column 6 is the measured rate; -1 is the "never measured" sentinel.
+            let storedRate = sqlite3_column_double(stmt, 6)
             return ReplyTimingProfile(
                 chatUsername: Self.textColumn(stmt, 0),
                 workHours: decodeDist(1),
@@ -3447,9 +3455,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 weekend: decodeDist(3),
                 lateNight: decodeDist(4),
                 silentAtNight: isSilent,
-                lateNightReplyRate: isSilent ? 0.0 : 1.0,
-                sampleCount: Int(sqlite3_column_int(stmt, 6)),
-                lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 7)))
+                lateNightReplyRate: storedRate < 0 ? nil : storedRate,
+                sampleCount: Int(sqlite3_column_int(stmt, 7)),
+                lastUpdated: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 8)))
             )
         })
     }

@@ -483,6 +483,20 @@ actor AutopilotService {
         return "\(head)，\(suffix)"
     }
 
+    /// The late-night hold, decided in one place so 「没测到」 can never be printed
+    /// as a percentage. Both branches hold the send — a 3 a.m. message into a
+    /// real person's chat is the irreversible half of this choice — but only a
+    /// measurement may be reported to the user as one.
+    nonisolated static func lateNightHold(rate: Double?, threshold: Double)
+        -> (holds: Bool, reason: String)
+    {
+        guard let rate else {
+            return (true, "读不到历史消息，这一条的夜间回复率没有测量值")
+        }
+        return (rate < threshold,
+                "回复率\(String(format: "%.0f%%", rate * 100)) < 阈值\(String(format: "%.0f%%", threshold * 100))")
+    }
+
     enum SendFailureDisposition: Equatable {
         /// Keep the draft exactly as it was — it will be sent again.
         case requeueUnchanged(reason: String)
@@ -583,13 +597,22 @@ actor AutopilotService {
         ) ?? false
     }
 
-    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?) -> Bool {
+    /// - Parameter requiresQueueRow: whether the queue row is this send's
+    ///   credential. For the batch path it is (the row IS the work item, and a
+    ///   取消 deletes it), so a missing row must stop the keystrokes. For a manual
+    ///   确认发送 the credential is the 'pending' audit row, and the queue twin can
+    ///   legitimately be absent — an enqueue whose `upsertPendingSend` hit
+    ///   SQLITE_BUSY still inserts the audit row — so requiring it there locked the
+    ///   card permanently while blaming the user for withdrawing it.
+    ///   The queue-axis *hold* still applies either way.
+    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?,
+                                requiresQueueRow: Bool = true) -> Bool {
         let muted = chatUsername.map { conversationIsMuted($0) } ?? false
         return Self.mayStillDeliver(
             paused: isPaused,
             sessionOpen: sessionId != nil,
             conversationMuted: muted,
-            queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
+            queueRowLive: requiresQueueRow ? queueId.map { store.hasPendingSend(id: $0) } : nil,
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
             alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
             rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false,
@@ -642,7 +665,12 @@ actor AutopilotService {
                     reply: nil, confidence: 0, risk: .low,
                     reasoning: "暂停期间积压超过 \(Int(horizon / 60)) 分钟，不再回复"
                 )
-                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                guard record(entry) else {
+                    // Handled but unrecordable: ack so the retired backlog does not
+                    // come back, but publish nothing and count nothing.
+                    acked.append(msg.msgUID)
+                    continue
+                }
                 entries.append(entry)
                 acked.append(msg.msgUID)
             }
@@ -699,7 +727,10 @@ actor AutopilotService {
                     sessionId: sid, msg: msg, action: .skipped,
                     reply: nil, confidence: 0, risk: .low, reasoning: "排除联系人，跳过"
                 )
-                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                guard record(entry) else {
+                    ackedMsgUIDs.append(msg.msgUID)
+                    continue
+                }
                 immediateEntries.append(entry)
                 ackedMsgUIDs.append(msg.msgUID)
                 continue
@@ -711,7 +742,10 @@ actor AutopilotService {
                     sessionId: sid, msg: msg, action: .groupLogged,
                     reply: nil, confidence: 0, risk: .low, reasoning: "群消息仅记录"
                 )
-                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                guard record(entry) else {
+                    ackedMsgUIDs.append(msg.msgUID)
+                    continue
+                }
                 immediateEntries.append(entry)
                 ackedMsgUIDs.append(msg.msgUID)
                 continue
@@ -724,7 +758,10 @@ actor AutopilotService {
                         sessionId: sid, msg: msg, action: .skipped,
                         reply: nil, confidence: 0, risk: .low, reasoning: "表情包/贴纸，跳过"
                     )
-                    do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                    guard record(entry) else {
+                        ackedMsgUIDs.append(msg.msgUID)
+                        continue
+                    }
                     immediateEntries.append(entry)
                     ackedMsgUIDs.append(msg.msgUID)
                     continue
@@ -736,7 +773,10 @@ actor AutopilotService {
                         reply: nil, confidence: 0, risk: .high,
                         reasoning: "\(mediaType.rawValue)消息，需本人处理"
                     )
-                    do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                    guard record(entry) else {
+                        ackedMsgUIDs.append(msg.msgUID)
+                        continue
+                    }
                     immediateEntries.append(entry)
                     ackedMsgUIDs.append(msg.msgUID)
                     continue
@@ -758,7 +798,10 @@ actor AutopilotService {
                     reply: nil, confidence: 0, risk: .low,
                     reasoning: "消息已超过 \(Int(Self.batchReplyHorizon / 60)) 分钟，不再回复"
                 )
-                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                guard record(entry) else {
+                    ackedMsgUIDs.append(msg.msgUID)
+                    continue
+                }
                 immediateEntries.append(entry)
                 ackedMsgUIDs.append(msg.msgUID)
                 continue
@@ -853,17 +896,24 @@ actor AutopilotService {
                 if let savedStart { batchStartTimes[chatUsername] = savedStart }
                 continue
             }
-            do {
-                try store.insertAutopilotLog(entry)
-            } catch {
-                print("[WCHUD] Autopilot: log insert failed: \(error)")
-                // The queue twin was enqueued inside processBatch — without
-                // its log row it has no audit/approval surface at all. Drop
-                // it rather than leave an untracked sendable row.
+            if !record(entry) {
+                // The queue twin was enqueued inside processBatch — without its
+                // log row it has no audit/approval surface at all. Drop it rather
+                // than leave an untracked sendable row.
                 if let qid = entry.queueId, let uuid = UUID(uuidString: qid) {
                     pendingSendQueue.removeAll { $0.id == uuid }
                     try? store.deletePendingSend(id: uuid)
                 }
+                // The inbound message was still handled, so acking is what keeps
+                // the durable queue from raising the same draft every scan.
+                ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
+                // But nothing is left to approve: neither the log row nor its
+                // queue twin exists. Counting it anyway raised `sessionPending`,
+                // which is only ever decremented by resolving a row — so the
+                // 待确认 badge gained a permanent, unapprovable +1. Worse,
+                // `persistSessionCounts` writes it and `start()` reads it back,
+                // so the phantom survived restarts.
+                continue
             }
             batchEntries.append(entry)
             ackedMsgUIDs.append(contentsOf: batch.map(\.msgUID))
@@ -980,7 +1030,8 @@ actor AutopilotService {
             // thing checked before the send key.
             gate: { [weak self] in
                 await self?.deliveryStillPermitted(
-                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername
+                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername,
+                    requiresQueueRow: false
                 ) ?? false
             }
         )
@@ -1216,11 +1267,17 @@ actor AutopilotService {
         let currentPeriod = StyleProfiler.timePeriod(unixTime: Int(Date().timeIntervalSince1970))
         if currentPeriod == .lateNight {
             let timing = await styleProfiler.getTimingProfile(chatUsername: representative.chatUsername)
-            if timing.lateNightReplyRate < config.silentNightThreshold {
+            // nil is 「没测到」, not 「测到 0%」. Both still hold the send — the 3 a.m.
+            // message is the irreversible half of this choice — but only a real
+            // measurement may be reported to the user as one.
+            let (holdsForSilence, silenceReason) = Self.lateNightHold(
+                rate: timing.lateNightReplyRate, threshold: config.silentNightThreshold
+            )
+            if holdsForSilence {
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .skipped,
                     reply: nil, confidence: 1.0, risk: .low,
-                    reasoning: "深夜静默模式（23:00-7:00），回复率\(String(format: "%.0f%%", timing.lateNightReplyRate * 100)) < 阈值\(String(format: "%.0f%%", config.silentNightThreshold * 100))"
+                    reasoning: "深夜静默模式（23:00-7:00），\(silenceReason)"
                 )
             }
         }
@@ -2467,7 +2524,13 @@ actor AutopilotService {
                 aiReasoning: "主动发起(待确认): \(reason)",
                 sentAt: nil, createdAt: Date()
             )
-            try? store.insertAutopilotLog(logEntry)
+            guard record(logEntry) else {
+                // `proactiveContactsSent` was already marked, so a broken database
+                // does not retry this contact every tick — but a draft with no row
+                // is nothing to approve, and counting it would raise the same
+                // permanent, unapprovable +1 the ingest path had.
+                continue
+            }
             // The row is 'pending' — it awaits a human, so it must count
             // toward sessionPending or the approval badge under-counts and
             // its eventual approve decrements a counter it never raised.
@@ -2824,6 +2887,26 @@ actor AutopilotService {
     /// Check if message is non-text media.
     private func isMediaMessage(_ text: String) -> Bool {
         classifyMedia(text) != nil
+    }
+
+    /// Write an audit row and report whether it actually landed.
+    ///
+    /// Every caller has to make the same two decisions off this one fact — ack the
+    /// inbound message, and whether the entry may raise 待确认 — so it returns
+    /// instead of swallowing. Before this existed three of the seven ingest sites
+    /// used `try?` / a `catch` that only printed, then counted the row as pending:
+    /// `sessionPending` is only decremented by resolving a row, and
+    /// `persistSessionCounts` writes the total for `start()` to read back, so a
+    /// single failed insert left an unapprovable badge that survived restarts.
+    @discardableResult
+    private func record(_ entry: AutopilotLogEntry) -> Bool {
+        do {
+            try store.insertAutopilotLog(entry)
+            return true
+        } catch {
+            print("[WCHUD] Autopilot: log insert failed: \(error)")
+            return false
+        }
     }
 
     private func makeLogEntry(

@@ -869,19 +869,22 @@ keystrokesMayHaveLanded: false,
                        "这里不许再用默认值兜底")
 
         var sites = 0
-        for name in ["Views/AutopilotTabView.swift",
-                     "Views/ApprovalWorkspaceView.swift",
+        for name in ["Views/ApprovalWorkspaceView.swift",
                      "Views/ConversationDetailView.swift"] {
             let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
             sites += text.components(separatedBy: "guard let config = monitor.loadAutopilotConfig()").count - 1
             XCTAssertFalse(text.contains("monitor.loadAutopilotConfig()."),
                            "\(name) 还在把可选读法当非可选直接用")
         }
-        XCTAssertEqual(sites, 4, "编辑后发送/立即发送/审批台/对话详情四处都要拦，少一处就是漏")
-        XCTAssertEqual(
-            try String(contentsOf: root.appendingPathComponent("Views/AutopilotTabView.swift"), encoding: .utf8)
-                .components(separatedBy: "ChatMonitor.unreadableConfigNotice").count - 1, 2,
-            "同一句拒绝话术要出现在这一页的两个按钮上")
+        XCTAssertEqual(sites, 2, "审批台与对话详情的两处手动发送都要拦，少一处就是漏")
+        var notices = 0
+        for name in ["Views/ApprovalWorkspaceView.swift",
+                     "Views/ConversationDetailView.swift"] {
+            let text = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+            notices += text.components(separatedBy: "ChatMonitor.unreadableConfigNotice").count - 1
+        }
+        XCTAssertEqual(notices, 2,
+                       "每个活页都要用同一句拒绝话术，而不是各写一份「发送结果待核对」")
     }
 
     /// The ghost-branch hold used to be registered `if let ghost`, i.e. only when

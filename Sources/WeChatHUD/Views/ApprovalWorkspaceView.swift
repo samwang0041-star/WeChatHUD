@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Shared filter so the approval surface and AutopilotTabView cannot disagree
-/// about which pending sends still need a human.
+/// Shared filter so every surface that lists pending sends agrees on which ones
+/// still need a human.
 enum ApprovalWorkspacePolicy {
     static func pendingSendsNeedingHuman(
         _ queue: [PendingSend],
