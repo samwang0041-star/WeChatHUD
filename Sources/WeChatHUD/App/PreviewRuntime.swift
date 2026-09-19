@@ -475,7 +475,8 @@ enum PreviewRuntime {
             decisions: ["评审范围已确认"],
             actionItems: [InsightActionItem(what: "确认评审时间", who: "我来做", deadline: "今天 15:00")],
             mentionsMe: 1,
-            waitingForMe: [WaitingItem(source: "林晓", what: "确认待办责任人的展示规则", waitingHours: 2)],
+            // 不带小时数：这个数现在只能由真实测过的一方产生，预览不能演一个生产到不了的分枝
+            waitingForMe: [WaitingItem(source: "林晓", what: "确认待办责任人的展示规则")],
             myCommitments: ["评审前确认展示规则"],
             needsMyAttention: true,
             overallMood: "推进中",

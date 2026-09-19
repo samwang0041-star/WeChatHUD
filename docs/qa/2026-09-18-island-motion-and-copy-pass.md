@@ -2386,3 +2386,37 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
 12. 小面：`AssistantTodayView` 徽标「N 项」只渲染 `prefix(3)` 且无 +N；
     `CommitmentTabView` 「可在『已完成』列表随时查看」实为 14 天窗口；
     `AdmissionSettingsView` 的静音规则读失败时整块变空。
+
+### §128 模型编出来的「已等 3 小时」被当成测量值用（P0，commit 0558f604）
+
+`waiting_hours` 由模型填：每对话提示词只给它 `[mN][epoch][sender]` 这种裸时间戳，
+全局简报连时间戳都不给，却照样返回一个小时数。它没有被任何代码回算，直接进了：
+雷达严重度（`waitingHours >= 2 ? .high : .medium`）、红字「需要你立即处理」行
+「林晓 · 等 3 小时」（按钮是"打开对话去回复"）、以及导出 Markdown 的「## 需要你处理」。
+也就是"一个没人量过的数字，长得像量过的，并且驱动用户去发消息"。
+
+收口在解码边界：`WaitingItem`/`ActionRequiredItem` 的 CodingKeys 里删掉
+`waiting_hours`，字段改为带默认值的 `var`，所以模型怎么填都进不了内存；各处既有的
+`> 0` 分支自动退到不带数字的写法。预览夹具也改成不带小时数——否则像素质检会批准一个
+生产到不了的分枝（假通过）。
+测试 `testInventedWaitingHoursNeverReachTheRadar`：喂一段 `waiting_hours: 9` 的真实
+HTTP 响应，断言结果里是 0、雷达里既没有「已等」也不是 high。证伪：把 CodingKeys 的键
+加回去 ⇒ 3 条断言失败。
+
+**这不是把功能做对了，是把谎去掉了**：正确的下一步是"用真实时间戳算出等待时长"
+（提示词里本来就有每条消息的 epoch，收件箱那侧 ReplyDebtScorer/VIP 档位已经在算），
+把这栏重新点亮。当前状态是雷达不再有"等很久"这一档红级——功能降级，已定价。
+
+### §129 扫描水位可以是未来时间 ⇒ 该对话永久不再被看见（P0，commit 0558f604）
+
+`setWhitelistCursor` / `setAutopilotCursor` / `setBackfillCursor` 原样写入
+`create_time`。游标只前进，所以一条时间超前的消息（改了系统时间的客户端、损坏或
+未来 schema 的库）一旦进游标，之后所有真实消息都比较成 `createTime > baseline` 的
+反面 ⇒ 该对话不再进分类、待办、承诺提取与自动托管，重启不恢复，要等墙上时钟追上去。
+同文件的提醒路径早就为此写了 `min(nowEpoch, max(...))` 并注明"session 行报未来时间戳
+偶尔会发生"，游标路径漏了这道闸。
+
+收口在持久化边界（`clampedCursorTime = min(max(value,0), now)`）：三个写入点共用，
+负数收成 0 即"没有游标"，读回为 nil ⇒ 宁可重扫也不当成已读。测试
+`ScanCursorClampTests` 覆盖三条写路的钳制、正常值逐值不变、负值与 Int.max。
+证伪：把共享写入里的钳制改回原值 ⇒ 2 条失败。
