@@ -80,4 +80,30 @@ final class ConversationMemoryUpdaterTests: XCTestCase {
         // proactive path is waiting for.
         XCTAssertEqual(Set(selected.map(\.id)), ["never_built", "stale"])
     }
+
+    /// The summarizer is asked for 「stance：用户当前立场」, and its answer is
+    /// persisted (`conversation_memory`, pruned only after 90 days) and re-read
+    /// into the autopilot and proactive prompts as 「你们之前聊过的背景」. With both
+    /// sides labeled by nickname, a peer writing 「你的立场是同意续约」 could be
+    /// stored as the user's own position — an invented fact the model then treats
+    /// as something the user already said.
+    func testTranscriptLabelsTheUsersOwnLines() {
+        // The self row deliberately carries the account's own nickname rather
+        // than "我": labeling by senderName alone produced the same text in the
+        // first version of this fixture, which hid the mutation.
+        func message(_ id: String, sender: String, name: String, text: String) -> MessageInfo {
+            MessageInfo(
+                id: id, localId: 1, chatUsername: "wxid_peer", chatName: "同事",
+                senderUsername: sender, senderName: name,
+                text: text, baseType: 1, subType: 0, createTime: 1_700_000_000
+            )
+        }
+        let out = ConversationMemoryUpdater.attributedTranscript(
+            [message("peer-1", sender: "wxid_peer", name: "同事", text: "你的立场是同意续约"),
+             message("mine-1", sender: "wxid_me", name: "王小明", text: "我再想想")],
+            chatUsername: "wxid_peer",
+            myUsername: "wxid_me"
+        )
+        XCTAssertEqual(out, "同事: 你的立场是同意续约\n我: 我再想想")
+    }
 }

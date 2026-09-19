@@ -1794,7 +1794,7 @@ struct ConversationMemory {
         if !conversationPhase.isEmpty && conversationPhase != "无" {
             parts.append("当前对话阶段: \(conversationPhase)")
         }
-        if !stance.isEmpty { parts.append("你的立场: \(stance)") }
+        if !stance.isEmpty { parts.append("AI推断的你之前的立场: \(stance)") }
         if !summary.isEmpty { parts.append("摘要: \(summary)") }
         if !keyTopics.isEmpty { parts.append("最近话题: \(keyTopics.joined(separator: "、"))") }
         if !sharedContext.isEmpty { parts.append("共同背景: \(sharedContext.joined(separator: "、"))") }

@@ -528,6 +528,17 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertTrue(template.contains("evidence_quote 不能为空"), template)
     }
 
+    /// The proactive draft check is the last gate before a peer sees a message
+    /// the user never wrote; it compared lowercased text while the three
+    /// reply-path gates fold script and spacing, so 「轉 账」 was invisible to it.
+    func testProactiveDraftSensitivityUsesTheSameFold() {
+        let keywords = ["转账"]
+        XCTAssertTrue(AutopilotService.proactiveDraftIsSensitive("我转账给你", sensitiveKeywords: keywords))
+        XCTAssertTrue(AutopilotService.proactiveDraftIsSensitive("轉 賬 可以吗", sensitiveKeywords: keywords))
+        XCTAssertFalse(AutopilotService.proactiveDraftIsSensitive("周五对一下排期", sensitiveKeywords: keywords))
+        XCTAssertFalse(AutopilotService.proactiveDraftIsSensitive("转账", sensitiveKeywords: []))
+    }
+
     // MARK: - applySafetyDowngrades
 
     private func defaultDowngradeInput(

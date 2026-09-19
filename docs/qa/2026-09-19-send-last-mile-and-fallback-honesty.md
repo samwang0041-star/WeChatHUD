@@ -414,3 +414,72 @@ low」就能全部清空。跳过条件写成"没引用就不查"，等于把这
 - M3 只在调用点写死 `groundsSend: false` → **只有两个 pipeline 测试失败，单元层
   全绿**。这正是 §144 那次没牙判据的形状，说明接线这次有自己独立的牙；
 - M4 `evidenceSource` 退回 `combinedText` → 图片那条失败 1 处。
+
+## §148 摘要把对方的话写成「你的立场」，再当作用户说过的话喂回模型
+
+来源：信任边界那一路代理的 P0（「the memory path is a persisted, fence-free
+injection channel」）。回源码验实三处：
+
+1. `ConversationMemoryUpdater` 造 `{recent_messages}` 时每行都写成
+   `senderName: text` —— 双方的行同一种标签，模型看不出哪句是用户本人说的；
+   而 `conversation_memory_v1.txt` 要它输出 `"stance":"用户当前立场(如有)"`。
+2. 摘要提示词没有任何"这段是数据不是指令"的围栏（`autopilot_reply_v4.txt` 有，
+   但只覆盖「最近几条消息」和「需要回复的消息」两块，`# 你们之前聊过的背景`
+   不在其中）。
+3. 落库后 `Models.formatForPrompt()` 把它渲染成 `你的立场: \(stance)`，
+   下一轮自动回复的提示词于是读到一句"用户已经表过的态"，而那句话可能出自
+   对方写的「你的立场是同意续约」。
+
+这不是理论风险：`conversation_memory` 只在 90 天后清理，一次错误归属会持续
+影响该对话之后每一次自动回复；而且 `evidence_quote` 只要求引用"消息或上下文"，
+所以被摘要污染的判断不会在 §146 那道回查上留下任何痕迹。
+
+修：三处分别收口，不新增机制。
+- 转写在进提示词前分行归属，复用已有的 `MessageHelpers.isFromSelf`
+  （`StyleProfiler`、`ChatInsightService` 早就用它，这次是摘要家族漏了），
+  用户本人的行写成 `我:`；判据收成纯函数 `attributedTranscript(...)` 便于测。
+- 摘要提示词补围栏，并明确 `stance` 只能从 `我:` 那些行推断、推不出就留空。
+  围栏同时覆盖「旧摘要」那三项 —— 它们是上一轮模型输出，属于二阶注入。
+- `你的立场:` 改名为 `AI推断的你之前的立场:`，`autopilot_reply_v4.txt` 的围栏
+  点名「你们之前聊过的背景」这一块。名字必须与渲染出来的字符串一致，
+  这条由 `testFencesNameBlocksThatActuallyExist` 钉住：围栏里点到的段落标题
+  必须真的出现在同一个模板里（第一版我在 commitment 里写了「这条消息」，
+  模板实际标题是「用户发出的消息」，被这条测试挡住）。
+
+同一轴顺带把 `commitment_v1`、`chat_insight_v3`、`autopilot_proactive_v1`
+三个"输出会被落库或变成外发消息"的模板补上围栏，并把这五个模板写成一份闭集
+清单（`testTemplatesThatPersistOrSendDeclareUntrustedData`）—— 新增一个会落库
+或会外发的模板时必须一起加进来，不能悄悄跳过。其余 8 个只把结果展示给人的
+模板暂不加围栏：那一句的成本是每次调用的 token，而它们的输出不进入任何决定。
+
+**同一份报告里判阴的一条**：代理说 `AIChatInsight` 的 `{messages}` 只过
+`oneLine` 不过 `sanitizeForAI`，因此手机号/卡号会不加掩码出网。回源码：
+`ChatInsightService` 在拼 `formatted` 时已经 `AIService.sanitizeForAI(message.text)`
+（`ChatInsightService.swift:61`），撤回内容那条路也过了（`:145`）。
+提示词函数拿到的是已经掩码过的文本 —— 假阳性，未改。判阴的理由记录在这里，
+因为"看得到一个函数没做净化"和"这条链路上没做净化"是两件事。
+
+## §149 主动发起的敏感词检查是唯一一处没做折叠的闸门
+
+`proactive` 那段用 `content.lowercased()` 比关键词，而回复链路上三处闸门
+（`autopilotSafetyHoldReason`、`automaticSendHoldReason`、`applySafetyDowngrades`）
+早就统一走 `normalizedForSafetyMatch`（简繁 + 全角 + 去空格）。结果「轉 账」
+在草稿闸门会被拦，在同一条链路的主动发起上不会。收成
+`proactiveDraftIsSensitive(_:sensitiveKeywords:)` 一个纯函数并复用同一个折叠；
+`testProactiveDraftSensitivityUsesTheSameFold` 三条断言分别钉住原文、简繁加空格、
+以及"关键词为空时不拦截"。
+
+## §150 桌面导出的两句承诺：一句是假的，另一句只管了半个函数
+
+`LocalDataRetrospection.exportCaption` 写「不是聊天原文」，而 `exportReport()`
+里逐条写的是 `- [P0] \(item.chatName): \(item.preview)` 和
+`- \(r.senderName) 撤回了: \(r.originalText.prefix(50))`。文案在告诉用户"这份
+文件可以留在别人能碰到的机器上"，内容却是对话原文片段（含对方已经撤回的话）。
+改成实话：明说包含原文片段。
+
+同一函数注释里立着一条不变量 —— "本应用写的每一个含聊天内容的文件都是 0600"
+—— 但日报页那个按钮走的是兄弟函数 `exportDailyReport()`，那里没有 chmod，
+落盘 0644。macOS 默认配置下 ~/Desktop 是 iCloud 同步目录，等于把日报原文放进
+云同步文件夹。两条路径现在共用 `ChatMonitor.makeExportPrivate(url:)`，
+`testBothExportPathsMakeTheFilePrivate` 一半数接线（两处调用）、一半真写一个
+临时文件读回权限位。

@@ -978,7 +978,7 @@ struct SyncSettingsView: View {
 /// use the same 14-day cutoff as 待办, not the whole sqlite history.
 enum LocalDataRetrospection {
     static let windowDays = DiscussionLiveWindow.pendingDays
-    static let exportCaption = "导出一份状态报告到桌面：未读、待回复、承诺等统计。不是聊天原文。"
+    static let exportCaption = "导出一份状态报告到桌面：统计数字之外，还包含待回复与撤回消息的原文片段。文件权限设为只有本账户可读。"
     static let windowCaption = "只看近 \(windowDays) 天整理过的记录。更早的已收起。"
     static let emptyRecalls = "近两周没有撤回记录"
     static let emptyCommitments = "近两周没有记下的承诺"

@@ -216,11 +216,20 @@ extension ChatMonitor {
 
         do {
             try md.write(to: url, atomically: true, encoding: .utf8)
+            Self.makeExportPrivate(url: url)
             return url
         } catch {
             print("[WCHUD] exportDailyReport failed: \(error)")
             return nil
         }
+    }
+
+    /// Chat-derived files land on ~/Desktop, which iCloud syncs by default on
+    /// macOS, so the default 0644 would put real conversation text in a
+    /// cloud-synced folder every other surface of this app keeps at 0600.
+    static func makeExportPrivate(url: URL) {
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
 
@@ -298,11 +307,9 @@ extension ChatMonitor {
             try md.write(to: desktop, atomically: true, encoding: .utf8)
             // The report carries real contact names and message bodies by
             // design — it is the user's own export, not an egress path, so the
-            // AI masking policy does not apply here. What must not apply is the
-            // default 0644: ~/Desktop is iCloud-synced on a default macOS
-            // setup, and every other chat-derived file this app writes is 0600.
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: desktop.path)
+            // AI masking policy does not apply here. What does apply is
+            // `makeExportPrivate`.
+            Self.makeExportPrivate(url: desktop)
             return desktop
         } catch {
             print("[WCHUD] export failed: \(error)")

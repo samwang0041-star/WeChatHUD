@@ -40,6 +40,41 @@ final class SettingsScopeHonestyTests: XCTestCase {
                       "草稿靠 JSON 格式强制关闭思考，思考开关的文案以此为前提")
     }
 
+    /// 「不是聊天原文」 was false: the same function writes each 待回复 row's
+    /// preview and the first 50 characters of a message the peer retracted. A
+    /// caption that denies what the file contains is worse than no caption — it
+    /// is the sentence the user relies on when deciding to leave the file on a
+    /// shared machine.
+    func testExportCaptionMatchesWhatTheFileHolds() throws {
+        XCTAssertTrue(LocalDataRetrospection.exportCaption.contains("原文片段"),
+                      LocalDataRetrospection.exportCaption)
+        XCTAssertFalse(LocalDataRetrospection.exportCaption.contains("不是聊天原文"))
+        let report = try source("Sources/WeChatHUD/Services/ChatMonitor+DailyReport.swift")
+        XCTAssertTrue(report.contains("item.preview"), "caption promises previews; the export must still write them")
+        XCTAssertTrue(report.contains("r.originalText.prefix(50)"), "same for the retracted-text line")
+    }
+
+    /// The 0600 rule was stated in one export function's comment and broken by
+    /// its sibling two lines away — the 日报 page's own button wrote 0644.
+    @MainActor
+    func testBothExportPathsMakeTheFilePrivate() throws {
+        let report = try source("Sources/WeChatHUD/Services/ChatMonitor+DailyReport.swift")
+        XCTAssertEqual(
+            report.components(separatedBy: "Self.makeExportPrivate(url:").count - 1, 2,
+            "两个导出函数各自都要收紧权限（日报页走的是 exportDailyReport）"
+        )
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wchud-export-perm-\(UUID().uuidString).md")
+        try "x".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+        ChatMonitor.makeExportPrivate(url: url)
+        let mode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        ).uint16Value
+        XCTAssertEqual(mode & 0o777, 0o600, String(format: "0%o", mode))
+    }
+
     func testAutoInstallStatesWhenItCanFire() throws {
         let view = try source("Sources/WeChatHUD/Views/Settings/AppUpdateSettingsView.swift")
         let controller = try source("Sources/WeChatHUD/Services/AppUpdateController.swift")

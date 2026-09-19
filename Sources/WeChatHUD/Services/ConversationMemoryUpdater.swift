@@ -65,6 +65,34 @@ actor ConversationMemoryUpdater {
             .map(\.entry)
     }
 
+    /// One line per message, each labeled with the side that wrote it.
+    ///
+    /// The transcript used to be `senderName: text` for both sides, while the
+    /// summarizer is asked for 「stance：用户当前立场」 and its answer is persisted
+    /// and re-injected into later prompts as 「你们之前聊过的背景」. With no side
+    /// marker, a peer writing 「你的立场是同意这个方案」 could be stored as the
+    /// user's own position — and the memory survives 90 days, so one poisoned
+    /// attribution steers every later autopilot decision in that chat.
+    static func attributedTranscript(
+        _ messages: [MessageInfo],
+        chatUsername: String,
+        myUsername: String,
+        myDisplayName: String = "",
+        mySelfNames: Set<String> = []
+    ) -> String {
+        messages.map { msg in
+            let fromMe = MessageHelpers.isFromSelf(
+                msg,
+                chatUsername: chatUsername,
+                myUsername: myUsername,
+                myDisplayName: myDisplayName,
+                mySelfNames: mySelfNames
+            )
+            let speaker = fromMe ? "我" : AIService.oneLine(msg.senderName)
+            return "\(speaker): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))"
+        }.joined(separator: "\n")
+    }
+
     /// Update memory for a single chat if stale. Used by AutopilotService
     /// after sends to refresh just the affected conversation.
     func updateMemoryIfNeeded(
@@ -84,9 +112,14 @@ actor ConversationMemoryUpdater {
         let oldMemory = store.loadConversationMemory(chatUsername: chatUsername)
         let oldSummary = oldMemory?.summary ?? ""
 
-        let msgText = messages.prefix(20).map {
-            "\(AIService.oneLine($0.senderName)): \(AIService.oneLine(AIService.sanitizeForAI($0.text)))"
-        }.joined(separator: "\n")
+        let myUname = reader.myUsername()
+        let msgText = Self.attributedTranscript(
+            Array(messages.prefix(20)),
+            chatUsername: chatUsername,
+            myUsername: myUname,
+            myDisplayName: reader.displayName(for: myUname),
+            mySelfNames: reader.mySelfNames
+        )
 
         let oldShared = oldMemory?.sharedContext ?? []
         let oldComm = oldMemory?.communicationNotes ?? []

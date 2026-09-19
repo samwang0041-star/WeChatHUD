@@ -1705,6 +1705,18 @@ actor AutopilotService {
         !skip && !readNoReply
     }
 
+    /// Whether a proactive draft is too sensitive to even offer for approval.
+    /// Uses the same fold as the three gates on the reply path: this one looks
+    /// at text nobody has reviewed yet, and a plain lowercase compare let
+    /// 「轉 账」 and full-width 转账 through untouched.
+    nonisolated static func proactiveDraftIsSensitive(
+        _ content: String, sensitiveKeywords: [String]
+    ) -> Bool {
+        guard !sensitiveKeywords.isEmpty else { return false }
+        let haystack = normalizedForSafetyMatch(content)
+        return sensitiveKeywords.contains { haystack.contains(normalizedForSafetyMatch($0)) }
+    }
+
     nonisolated static func autopilotSafetyHoldReason(
         triggerText: String,
         replyText: String?,
@@ -1845,11 +1857,8 @@ actor AutopilotService {
             guard !content.isEmpty, content.count <= 100 else { continue }
 
             // Fix 3: sensitive keyword check (proactive messages are higher risk)
-            if !config.sensitiveKeywords.isEmpty {
-                let lower = content.lowercased()
-                if config.sensitiveKeywords.contains(where: { lower.contains($0.lowercased()) }) {
-                    continue // silently skip — don't proactively send sensitive content
-                }
+            if Self.proactiveDraftIsSensitive(content, sensitiveKeywords: config.sensitiveKeywords) {
+                continue // silently skip — don't proactively send sensitive content
             }
 
             // Default: all proactive messages go to pending for user approval
