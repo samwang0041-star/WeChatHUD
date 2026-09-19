@@ -1686,34 +1686,6 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         return result
     }
 
-    func countNewMessages(relPath: String, tableName: String, sinceLocalId: Int) throws -> Int {
-        let decPath = try getDecryptedDB(relativePath: relPath)
-        lock.lock()
-        defer { lock.unlock() }
-        guard let db = try? acquireReadonly(path: decPath) else { return 0 }
-
-        let sql = "SELECT COUNT(*) FROM [\(tableName)] WHERE local_id > \(sinceLocalId)"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-
-        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
-    }
-
-    func maxLocalId(relPath: String, tableName: String) throws -> Int {
-        let decPath = try getDecryptedDB(relativePath: relPath)
-        lock.lock()
-        defer { lock.unlock() }
-        guard let db = try? acquireReadonly(path: decPath) else { return 0 }
-
-        let sql = "SELECT MAX(local_id) FROM [\(tableName)]"
-        var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
-        defer { sqlite3_finalize(stmt) }
-
-        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int64(stmt, 0)) : 0
-    }
-
     /// One candidate for smart whitelist import. All scoring inputs are
     /// preserved so the UI (and the user) can see *why* a contact ranked.
     struct ActiveContact {
@@ -1938,29 +1910,6 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
             .sorted { $0.score > $1.score }
             .prefix(limit)
             .map { $0 }
-    }
-
-    func listAllChatTables() throws -> [(relPath: String, tableName: String, chatUsername: String)] {
-        var results: [(String, String, String)] = []
-        let msgDBs = findMessageDBs()
-
-        for relPath in msgDBs {
-            let decPath = try getDecryptedDB(relativePath: relPath)
-            let tableNames = try withReadonlyDB(path: decPath) { db -> [String] in
-                var stmt: OpaquePointer?
-                let sql = "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'"
-                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-                defer { sqlite3_finalize(stmt) }
-                var names: [String] = []
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    names.append(columnText(stmt, 0))
-                }
-                return names
-            }
-            for tableName in tableNames { results.append((relPath, tableName, "")) }
-        }
-
-        return results
     }
 
     // MARK: - Memory-strategy cleanup
