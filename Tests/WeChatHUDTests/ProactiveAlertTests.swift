@@ -584,6 +584,60 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertEqual(titles.count, 2, "静默期真的过了就要再提醒，哪怕墙钟倒退了")
     }
 
+    /// A submission the notification centre discards is not a delivered alert,
+    /// but it used to consume an hourly budget slot and a cooldown of up to 24
+    /// hours — so a user who then went and allowed notifications heard nothing
+    /// for the rest of that window, while the settings page still read
+    /// 「接收待办提醒与重要更新」.
+    @MainActor
+    func testDeniedAuthorizationDeliversNothingAndChargesNothing() async {
+        var authorized = false
+        var mono: TimeInterval = 500_000
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: Date.init,
+            monotonic: { mono },
+            authorization: { authorized ? .authorized : .denied },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        let commitment = Commitment(
+            id: 1, msgUID: "late", chatUsername: "chat", chatName: "聊天",
+            content: "发报告", commitTo: "同事",
+            deadlineAt: Date(timeIntervalSinceNow: -3_600),
+            confidence: 0.9, status: .overdue, promptVersion: "v1",
+            createdAt: Date(timeIntervalSinceNow: -7_200), updatedAt: Date()
+        )
+
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertTrue(titles.isEmpty, "被拒时一次提交都不会送达，不该发出")
+
+        // The authorization cache is re-read on a cadence, not per push.
+        mono += ProactiveAlertEngine.authorizationRefreshInterval + 1
+        authorized = true
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(
+            titles, ["承诺已到期"],
+            "静默期不能被一次没人看到的提交扣掉：开启之后就该立刻提醒"
+        )
+    }
+
+    func testAuthorizationGateFailsOpenOnlyBeforeTheFirstRead() {
+        XCTAssertTrue(ProactiveAlertEngine.canSubmitNotification(authorization: nil),
+                      "启动后第一次读取还没落地之前，不能把 P0 提醒丢掉")
+        XCTAssertFalse(ProactiveAlertEngine.canSubmitNotification(authorization: .denied))
+        XCTAssertFalse(ProactiveAlertEngine.canSubmitNotification(authorization: .notDetermined))
+        XCTAssertTrue(ProactiveAlertEngine.canSubmitNotification(authorization: .authorized))
+        XCTAssertTrue(ProactiveAlertEngine.canSubmitNotification(authorization: .provisional),
+                      "静默进通知中心也算送达，该扣配额")
+    }
+
+
     // MARK: - Engine delivery state
 
     @MainActor

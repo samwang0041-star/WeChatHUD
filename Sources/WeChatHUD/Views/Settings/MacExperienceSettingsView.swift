@@ -76,7 +76,11 @@ struct MacExperienceSettingsView: View {
                 .padding(.horizontal, 16).padding(.bottom, 10)
             }
             SettingsRowDivider()
-            SettingsRow("系统通知", subtitle: "接收待办提醒与重要更新。", icon: "bell.badge", iconColor: .orange) {
+            // 「接收待办提醒与重要更新。」 described a promise the app cannot
+            // keep on its own, and it stayed on screen while the status was
+            // denied — the honest, status-specific sentence below already
+            // existed on this page and was never rendered by anything.
+            SettingsRow("系统通知", subtitle: notificationExplanation, icon: "bell.badge", iconColor: .orange) {
                 HStack(spacing: 8) {
                     if notificationStatus == .authorized {
                         Label("已允许", systemImage: "checkmark.circle.fill")

@@ -25,6 +25,20 @@ final class ProactiveAlertEngine {
     /// muted the whole reminder feature — including the P0 rule — until the
     /// clock caught up, while the settings page still said 提醒已开启.
     private let monotonic: () -> TimeInterval
+    /// Reads whether macOS will actually deliver a notification. The reader
+    /// owns the hop back to the main actor, so a test reader can complete
+    /// inline and the value is current for the rest of the same evaluation.
+    ///
+    /// `notificationAuthorization` is `nil` until a read lands, and `pushAlert`
+    /// fails open on `nil` — the first P0 reminder after launch must not be
+    /// dropped because an async read was still in flight.
+    private let readAuthorization: (@escaping (UNAuthorizationStatus) -> Void) -> Void
+    private(set) var notificationAuthorization: UNAuthorizationStatus?
+    private var lastAuthorizationRead: TimeInterval?
+    /// How often `evaluate` re-reads authorization. A user who grants or
+    /// revokes in System Settings while the app runs has to be noticed — this
+    /// is the only thing standing between them and a silently dead reminder.
+    static let authorizationRefreshInterval: TimeInterval = 30
     private let sendNotification: ProactiveAlertNotificationSender
     private var alertHistory: [TimeInterval] = []
     private let maxAlertsPerHour = 5
@@ -76,6 +90,12 @@ final class ProactiveAlertEngine {
         self.store = store
         self.now = Date.init
         self.monotonic = { MonotonicClock.seconds() }
+        self.readAuthorization = { done in
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                let status = settings.authorizationStatus
+                Task { @MainActor in done(status) }
+            }
+        }
         self.sendNotification = Self.systemNotificationSender
         requestNotificationPermission()
     }
@@ -86,17 +106,54 @@ final class ProactiveAlertEngine {
     /// `monotonic` defaults to the real uptime clock rather than to `now`, so a
     /// test that forgets it sees a window that does not expire instead of one
     /// that silently expires with the virtual clock. Tests that exercise an
-    /// elapsed window pass both.
+    /// elapsed window pass both. `authorization` defaults to `.authorized`
+    /// rather than reading macOS: `UNUserNotificationCenter.current()` is not
+    /// available in a test host, and a rule test should not be answering for
+    /// what the notification centre does with a submission.
     init(
         store: HUDStore,
         now: @escaping () -> Date,
         monotonic: @escaping () -> TimeInterval = { MonotonicClock.seconds() },
+        authorization: @escaping () -> UNAuthorizationStatus = { .authorized },
         sendNotification: @escaping ProactiveAlertNotificationSender
     ) {
         self.store = store
         self.now = now
         self.monotonic = monotonic
+        self.readAuthorization = { done in done(authorization()) }
         self.sendNotification = sendNotification
+    }
+
+    /// Whether a submission can reach the user right now.
+    ///
+    /// `.provisional` and `.ephemeral` count as deliverable: the banner is
+    /// quiet, but the notification does arrive, so it has earned its budget
+    /// slot and cooldown.
+    nonisolated static func canSubmitNotification(
+        authorization: UNAuthorizationStatus?
+    ) -> Bool {
+        guard let authorization else { return true }
+        switch authorization {
+        case .authorized, .provisional, .ephemeral: return true
+        case .denied, .notDetermined: return false
+        @unknown default: return true
+        }
+    }
+
+    /// Re-reads authorization when it is unknown or older than the refresh
+    /// interval. A test reader completes inline, so the value is current for
+    /// the rest of this evaluation.
+    private func refreshNotificationAuthorizationIfNeeded() {
+        let at = monotonic()
+        if notificationAuthorization != nil,
+           let last = lastAuthorizationRead,
+           at - last < Self.authorizationRefreshInterval {
+            return
+        }
+        lastAuthorizationRead = at
+        readAuthorization { [weak self] status in
+            self?.notificationAuthorization = status
+        }
     }
 
     /// Evaluate all rules against current state. Called after each scan.
@@ -113,6 +170,7 @@ final class ProactiveAlertEngine {
         recentNotifications: [HUDNotification],
         activeConversations: Set<String> = []
     ) {
+        refreshNotificationAuthorizationIfNeeded()
         let evaluationNow = now()
         pruneExpiredState()
         let alertable = unreadItems.filter {
@@ -224,6 +282,7 @@ final class ProactiveAlertEngine {
     /// The caller should load commitments directly from HUDStore, rather than
     /// using a potentially stale published UI snapshot.
     func evaluateCommitmentDeadlines(commitments: [Commitment], at date: Date? = nil) {
+        refreshNotificationAuthorizationIfNeeded()
         let evaluationNow = date ?? now()
         pruneExpiredState()
         // The mute list is the one promise every alert path has to keep:
@@ -395,6 +454,15 @@ final class ProactiveAlertEngine {
         ignoresBudget: Bool = false,
         onSuccess: (() -> Void)? = nil
     ) -> Bool {
+        // A submission the notification centre discards is not a delivered
+        // alert. Charging for one spent an hourly budget slot and a cooldown of
+        // up to 24 hours on a message nobody ever saw, so a user who allowed
+        // notifications afterwards heard nothing for the rest of the window —
+        // while 设置 still read 「接收待办提醒与重要更新」.
+        guard Self.canSubmitNotification(authorization: notificationAuthorization) else {
+            print("[WCHUD] Alert suppressed, 系统通知未获允许: \(identifier)")
+            return false
+        }
         pruneExpiredState()
         if !ignoresBudget {
             guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
@@ -456,9 +524,17 @@ final class ProactiveAlertEngine {
     }
 
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in
             if let error = error {
                 print("[WCHUD] Notification permission error: \(error)")
+            }
+            // The answer is what the whole alert path now keys off, so it is
+            // recorded rather than dropped: a declined prompt used to be
+            // indistinguishable from a delivered alert as far as this engine
+            // was concerned, and every rule kept burning cooldowns on
+            // submissions nobody received.
+            Task { @MainActor [weak self] in
+                self?.notificationAuthorization = granted ? .authorized : .denied
             }
         }
     }

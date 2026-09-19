@@ -102,4 +102,23 @@ final class SettingsScopeHonestyTests: XCTestCase {
         XCTAssertTrue(view.contains("启动时的自动检查"),
                       "「发现后自动安装」不说明只在启动检查生效，用户点手动检查会以为它坏了")
     }
+
+    /// 「接收待办提醒与重要更新。」 is a promise this app cannot keep on its own,
+    /// and it stayed on the page while macOS had notifications denied. The
+    /// status-specific sentence already existed on the same page
+    /// (`notificationExplanation`) and nothing rendered it.
+    func testNotificationRowSaysWhatTheSystemAllows() throws {
+        let view = try source("Sources/WeChatHUD/Views/Settings/MacExperienceSettingsView.swift")
+        let scope = view.components(separatedBy: "SettingsRow(\"系统通知\"").last?
+            .components(separatedBy: "SettingsRowDivider()").first ?? ""
+        XCTAssertFalse(scope.isEmpty, "找不到系统通知那一行，这条判据不能零命中")
+        XCTAssertTrue(scope.contains("subtitle: notificationExplanation"),
+                      "这一行要跟着真实授权状态说，不能只说好处")
+        XCTAssertFalse(scope.contains("接收待办提醒与重要更新"), "被拒时这句话是假的")
+        XCTAssertEqual(view.components(separatedBy: "notificationExplanation").count - 1, 2,
+                       "一处定义、一处渲染；少一处就说明它又变回了死代码")
+        let denied = view.components(separatedBy: "case .denied: return").last?
+            .components(separatedBy: "\n").first ?? ""
+        XCTAssertTrue(denied.contains("未获允许"), denied)
+    }
 }

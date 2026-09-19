@@ -140,3 +140,36 @@ busy_timeout=5000、磁盘满、`hardenTree` 之后文件不可写）时，`no s
 `?? AutopilotConfig()` 六处（含设置页的 merge-update 以默认值为基底覆写未暴露字段后仍显示
 「已保存」）。以及通知授权（`error == nil` 当成送达、不检查 authorization、
 `granted` 被丢弃、真话 `notificationExplanation` 是死代码）—— 那条单独一轮。
+
+## §162 「已提醒」原来是算出来的：系统通知被拒时，配额和 24 小时静默期照扣
+
+`ProactiveAlertEngine.pushAlert` 把 `completion(error == nil)` 当成「已送达」，
+`systemNotificationSender` 提交前不看授权，`requestAuthorization` 的 `granted` 直接丢弃。
+macOS 在通知被拒时 `add()` **不报错**，只是什么都不显示 —— 于是每条规则每次都：
+扣掉一格每小时配额、给这个标识符记上静默期（到期承诺是 24 小时）。
+用户后来去系统设置里打开通知，那一整段时间里仍然一条提醒都收不到，
+而设置页写的是「接收待办提醒与重要更新。」——一句只有 macOS 同意才算数的话。
+
+同页其实早就有一句按授权状态说实话的 `notificationExplanation`（`.denied` 分支写着
+「通知未获允许，顶部浮窗和窗口仍可使用。」），**全仓零引用**，是死代码。
+
+修法：
+- 纯谓词 `canSubmitNotification(authorization:)`：`.authorized/.provisional/.ephemeral` 可提交
+  （静默进通知中心也算送达，该扣配额），`.denied/.notDetermined` 不提交、**不扣任何账**，
+  下一次评估就能补上；读取还没落地时 `nil` 失败打开，启动后第一条 P0 提醒不能因为
+  一个还没回来的异步读被丢掉。
+- 授权状态按 30 秒的节奏在 `evaluate` / `evaluateCommitmentDeadlines` 入口刷新，
+  读的操作者自带回主 actor 的一跳（测试里同步完成）。生产 init 读真值，
+  测试 init 默认 `.authorized`：`UNUserNotificationCenter.current()` 在测试宿主里不可用，
+  而规则测试不该替通知中心回答「这条会不会显示」。
+- 设置页那一行的副标题改成 `notificationExplanation`，删掉那句无条件的好处。
+
+判据：`testDeniedAuthorizationDeliversNothingAndChargesNothing`（被拒不发 → 开启后**立刻**能发）、
+`testAuthorizationGateFailsOpenOnlyBeforeTheFirstRead`、
+`testNotificationRowSaysWhatTheSystemAllows`（钉住「一处定义、一处渲染」，
+再少一处就是它又变回死代码）。变异 M19（闸门只看返回值不放行）→ 第一条断言红；
+M20（`nil` 当不能提交）→ 纯谓据红，并且整套提醒测试一起红（说明「失败打开」是承重的）；
+M21（被拒时仍记静默期）→ 「开启之后就该立刻提醒」那条红。
+
+未覆盖面（本轮没查）：`RetrospectiveJob` 与其他直接 `add()` 的通知生产者是否有同形问题、
+点击横幅的回跳路由、以及在 HUD 里处理完之后通知中心里的旧横幅是否还在说话。已另派一路。
