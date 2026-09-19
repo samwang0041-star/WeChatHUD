@@ -542,8 +542,15 @@ final class ChatMonitor: ObservableObject {
                 // at the 10 s countdown cadence whenever something is queued
                 // (see adaptSafetyTickCadence), which is what the countdown
                 // accuracy needs.
-                let config = self.store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
-                await self.autopilotService?.processPendingQueue(config: config)
+                // Both the send queue and proactive outreach take their guardrails
+                // from this config, so a `?? AutopilotConfig()` used to widen two
+                // guards on a busy lock: 敏感词二级拦截 fell back to the built-in
+                // list and 每会话上限 rose to its default of 50. Skipping a tick
+                // costs one countdown interval; a wrong send cannot be unsent.
+                let config = self.store.autopilotConfigForSendGate()
+                if let config {
+                    await self.autopilotService?.processPendingQueue(config: config)
+                }
                 // A live service can resolve log rows (sent / skipped) inside
                 // processPendingQueue; without this the gated reload in
                 // reloadAIData would keep serving the pre-send snapshot until
@@ -572,7 +579,8 @@ final class ChatMonitor: ObservableObject {
                 }
                 // Proactive outreach every ~10 minutes (wall-clock, so the
                 // cadence is independent of the tick rate).
-                if Date().timeIntervalSince(self.lastProactiveOutreachAt ?? .distantPast) >= Self.proactiveOutreachInterval {
+                if Date().timeIntervalSince(self.lastProactiveOutreachAt ?? .distantPast) >= Self.proactiveOutreachInterval,
+                   let config {
                     self.lastProactiveOutreachAt = Date()
                     await self.autopilotService?.evaluateProactiveOutreach(config: config)
                 }
@@ -1417,9 +1425,15 @@ final class ChatMonitor: ObservableObject {
                     seenMsgUIDs.insert(msg.msgUID)
                     return true
                 }
-            let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+            // Every guardrail `handleNewMessages` applies — 敏感词二级拦截、置信度
+            // 阈值、每会话上限 — comes from this config, so a `?? AutopilotConfig()`
+            // here used to run the whole batch against the built-in keyword list
+            // instead of the user's own. Bailing leaves the durable inbound rows
+            // alone, so the next scan retries rather than silently losing them.
+            let config = store.autopilotConfigForSendGate()
             let myUname = reader.myUsername()
             Task {
+                guard let config else { return }
                 let result = await service.handleNewMessages(msgs, config: config, myUsername: myUname)
                 if !result.ackedMsgUIDs.isEmpty {
                     try? self.store.deleteAutopilotInbound(msgUIDs: result.ackedMsgUIDs)

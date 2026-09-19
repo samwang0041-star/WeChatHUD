@@ -56,19 +56,26 @@ final class SettingsScopeHonestyTests: XCTestCase {
 
     /// The 0600 rule was stated in one export function's comment and broken by
     /// its sibling two lines away — the 日报 page's own button wrote 0644.
+    ///
+    /// This test existed and was green while `makeExportPrivate` was
+    /// `try? setAttributes(...)` with the result thrown away and both callers
+    /// returned the URL regardless: the assertion below only ever proved the
+    /// success path on this machine, never that a *failed* chmod is reported.
+    /// `PrivateExportTests` carries the failure half now.
     @MainActor
     func testBothExportPathsMakeTheFilePrivate() throws {
         let report = try source("Sources/WeChatHUD/Services/ChatMonitor+DailyReport.swift")
         XCTAssertEqual(
-            report.components(separatedBy: "Self.makeExportPrivate(url:").count - 1, 2,
-            "两个导出函数各自都要收紧权限（日报页走的是 exportDailyReport）"
+            report.components(separatedBy: "Self.writePrivateExport(").count - 1, 2,
+            "两个导出函数各自都要走先写后收紧的那一个入口（日报页是 exportDailyReport）"
         )
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("wchud-export-perm-\(UUID().uuidString).md")
         try "x".write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: url) }
-        ChatMonitor.makeExportPrivate(url: url)
+        XCTAssertTrue(ChatMonitor.makeExportPrivate(url: url),
+                      "收紧成功要由读回来的权限说话，不是由调用没抛错说话")
         let mode = try XCTUnwrap(
             FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
         ).uint16Value

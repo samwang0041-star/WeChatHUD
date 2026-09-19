@@ -863,11 +863,27 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return .value(value)
     }
 
+    /// The config as read for a *send guard*. `nil` means 「这次读不到」, and the
+    /// caller must not send.
+    ///
+    /// Most fields are safe to fall back on: `autoSendEnabled` defaults to off,
+    /// the confidence threshold defaults high. Two only ever widen a guard when
+    /// the read collapses into `?? AutopilotConfig()` — `sensitiveKeywords`
+    /// (an empty list lets 转账/红包 through the second-level interceptor) and
+    /// `maxSendsPerSession` (the default 50 overrules a user who set 5). Those
+    /// two reads go through here, so one busy lock cannot open either gate.
+    func autopilotConfigForSendGate() -> AutopilotConfig? {
+        switch readSettingJSON("autopilot", as: AutopilotConfig.self) {
+        case .value(let config): return config
+        case .absent: return AutopilotConfig()
+        case .unreadable: return nil
+        }
+    }
+
     /// Merge-update the autopilot config, refusing to write over a config that
     /// could not be read. `false` means nothing was touched.
     @discardableResult
-    func updateAutopilotConfig(_ mutate: (inout AutopilotConfig) -> Void) throws -> Bool {
-        var config: AutopilotConfig
+    func updateAutopilotConfig(_ mutate: (inout AutopilotConfig) -> Void) throws -> Bool {        var config: AutopilotConfig
         switch readSettingJSON("autopilot", as: AutopilotConfig.self) {
         case .value(let stored): config = stored
         case .absent: config = AutopilotConfig()

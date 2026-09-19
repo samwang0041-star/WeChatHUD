@@ -55,6 +55,12 @@ enum WeChatLauncher {
         /// The reply was withdrawn (停止 / 暂停 / 取消本条) while this send's
         /// keystrokes were still being queued, so nothing reached WeChat.
         case withdrawnBeforeSend
+        /// The input box already held text the user had not sent. Selecting all
+        /// and pasting would have destroyed it, so nothing was typed at all.
+        case inputHasUnsentDraft
+        /// The box no longer held only what the assistant pasted into it, so the
+        /// send key was not pressed and the text is left there for the human.
+        case pastedBoxChanged
         /// No floating-panel process to read account evidence from — a test
         /// runner, or the helper binary rather than the app.
         case automationHostMissing
@@ -66,6 +72,8 @@ enum WeChatLauncher {
             case .accountMismatch: return "微信当前账号与助手数据账号不一致，已停止自动操作。请保留回复内容并核对账号。"
             case .operationInProgress: return "另一条回复正在处理，当前内容仍保留。请稍后重试。"
             case .withdrawnBeforeSend: return "这条回复在按下发送前已经停住，微信没有收到。"
+            case .inputHasUnsentDraft: return "微信输入框里有你还没发送的内容，助手没有覆盖它，这条回复也未发出。请先清掉输入框里的文字，再重试。"
+            case .pastedBoxChanged: return "粘贴之后输入框的内容又变了，助手没有按下发送。请在微信里核对输入框，再决定要不要发。"
             case .automationHostMissing: return "浮窗主程序没有运行，已停止自动操作，微信不会收到任何内容。"
             case .weChatNotRunning:
                 return "微信未运行"
@@ -806,7 +814,12 @@ enum WeChatLauncher {
         if let failure = await accountFailure(binding) { return .failed(failure) }
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
+        // Read the box immediately before pressing `Cmd+A`: everything after
+        // this point types over whatever the human had written there.
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        guard inputBoxIsSafeToOverwrite(readValue: axString(input, kAXValueAttribute)) else {
+            return .failed(.inputHasUnsentDraft)
+        }
         postCmdKey(kVK_ANSI_A)
         guard await pause(0.05) else { return .failed(.accountUnverified) }
         // Check again after the asynchronous gap before any reply text is pasted.
@@ -814,6 +827,12 @@ enum WeChatLauncher {
         guard isWeChatFrontmost(app) else { return .failed(.lostForeground) }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else { return .failed(.chatMismatch) }
         guard await sendStillAllowed(abortCheck) else { return .failed(.withdrawnBeforeSend) }
+        // Re-read at the last moment before anything is typed: the checks above
+        // all sit behind awaits, and a human typing in that gap is exactly the
+        // case the first read was meant to catch.
+        guard inputBoxIsSafeToOverwrite(readValue: axString(input, kAXValueAttribute)) else {
+            return .failed(.inputHasUnsentDraft)
+        }
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
         postCmdKey(kVK_ANSI_V)
@@ -839,6 +858,15 @@ enum WeChatLauncher {
             retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
             return .failed(.withdrawnBeforeSend)
         }
+        // The last thing between us and a real recipient: press the send key
+        // only while the box still holds exactly what we put there. No
+        // `retractPastedDraft` on this path — clearing the box would delete the
+        // human's own words together with ours.
+        guard pastedBoxStillHoldsOnlyTheReply(
+            readValue: axString(input, kAXValueAttribute), expecting: text
+        ) else {
+            return .failed(.pastedBoxChanged)
+        }
         switch sendKey {
         case .cmdEnter: postCmdKey(kVK_Return)
         case .enter: postKey(kVK_Return)
@@ -854,6 +882,40 @@ enum WeChatLauncher {
     ) async -> Bool {
         guard let abortCheck else { return true }
         return await abortCheck()
+    }
+
+    /// Whether select-all + paste would destroy something the user wrote.
+    /// The paste path has always pressed `Cmd+A` first, so a half-typed
+    /// message sitting in WeChat's input box was silently replaced by the
+    /// assistant's reply and only the reply got sent — unrecoverable text in
+    /// another app, in the one mode where the user is standing right there.
+    ///
+    /// A nil read fails *open*: refusing because WeChat did not answer would
+    /// turn a visibility problem into auto-send never working again after a
+    /// WeChat update. Only a confirmed non-empty box blocks, and whitespace
+    /// counts as empty because replacing it loses nothing.
+    static func inputBoxIsSafeToOverwrite(readValue: String?) -> Bool {
+        guard let readValue else { return true }
+        return readValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// …and the answer is only good for the instant it was read. Between the
+    /// gate and the paste sit a 0.05 s sleep, an account-evidence read and
+    /// three actor hops; a human typing in that window leaves their words in
+    /// the box, `Cmd+A` has already selected nothing, and the paste *inserts*
+    /// the reply into their draft — the send key would then deliver the
+    /// concatenation to a real person. So the box is re-read once more before
+    /// `Cmd+V`, and again before the send key, where "still ours" is the test.
+    ///
+    /// After the paste the box must hold exactly the reply, or nothing. An
+    /// empty box means the paste never landed and pressing Return is a no-op;
+    /// anything other than our own text means someone else is in there and the
+    /// combined content is not what was approved.
+    static func pastedBoxStillHoldsOnlyTheReply(readValue: String?, expecting text: String) -> Bool {
+        guard let readValue else { return true }
+        if readValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return readValue.replacingOccurrences(of: "\r\n", with: "\n")
+            == text.replacingOccurrences(of: "\r\n", with: "\n")
     }
 
     /// Every navigation step is awaited while the shared automation lock is held.

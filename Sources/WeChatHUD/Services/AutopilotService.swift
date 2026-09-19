@@ -705,6 +705,19 @@ actor AutopilotService {
             let savedStart = batchStartTimes.removeValue(forKey: chatUsername)
 
             let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
+            if sid != sessionId {
+                // `stop()` (or a restart into a new session id) landed while the
+                // model was running. Everything this call produced belongs to a
+                // session that no longer exists: the queue twin was skipped
+                // because :1419 re-reads the live property, so inserting the log
+                // row would put a 待确认 card on screen whose 确认发送 can never
+                // find a draft, and counting it would publish a receipt for a
+                // reply no keystroke carried. Undo the enqueue and record nothing.
+                if let qid = entry.queueId, let uuid = UUID(uuidString: qid) {
+                    pendingSendQueue.removeAll { $0.id == uuid }
+                }
+                continue
+            }
             if entry.action == .skipped, entry.aiReasoning?.contains("已暂停") == true {
                 // Re-queue AHEAD of anything appended while the batch was
                 // in flight — replacing would drop the newer messages.
@@ -768,7 +781,14 @@ actor AutopilotService {
             print("[WCHUD] Autopilot: approval blocked — paused or no session")
             return false
         }
-        let config = store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()
+        // A human pressed the button, so refusing costs them nothing but a
+        // retry — while `?? AutopilotConfig()` would answer an unreadable
+        // 每会话上限 with the default 50 and wave through a draft the user
+        // capped out of.
+        guard let config = store.autopilotConfigForSendGate() else {
+            print("[WCHUD] Autopilot: approval blocked — autopilot config unreadable")
+            return false
+        }
         guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
             print("[WCHUD] Autopilot: approval blocked — session cap reached")
             return false

@@ -127,6 +127,73 @@ final class WeChatParserTests: XCTestCase {
         XCTAssertTrue(WeChatParser.parseAppMsg(xml).title.isEmpty)
     }
 
+    /// …and the whole guard only covered `parseAppMsg`. A baseType-10000 row
+    /// reached `SimpleXMLParser` through `parseSysMsg` with no check at all, so
+    /// the amplification primitive was still reachable on one of the two
+    /// message surfaces. The document here is deliberately tiny: if the guard
+    /// regresses, the assertion has to fail on expanded text rather than the
+    /// runner dying on a real bomb.
+    func testSysmsgEntityDocumentIsNotExpanded() {
+        let bomb = """
+        <?xml version="1.0"?><!DOCTYPE sysmsg [<!ENTITY a "AAAA"> \
+        <!ENTITY b "&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;"> \
+        <!ENTITY d "&c;&c;&c;&c;">]><sysmsg><content>&d;</content></sysmsg>
+        """
+        let result = WeChatParser.renderMessage(content: bomb, baseType: 10000, isGroup: false)
+        XCTAssertEqual(result.text, "[系统消息]", "内部实体被展开了：这道闸只管 appmsg 时这里是通的")
+        XCTAssertFalse(result.text.contains("AAAA"))
+    }
+
+    func testSysmsgOversizedDocumentIsNotParsed() {
+        let xml = "<sysmsg><content>" + String(repeating: "很长", count: 600_000) + "</content></sysmsg>"
+        let result = WeChatParser.renderMessage(content: xml, baseType: 10000, isGroup: false)
+        XCTAssertEqual(result.text, "[系统消息]")
+    }
+
+    /// The size check has to sit ahead of the `type=` regex, not just ahead of
+    /// the DOM pass — `parse()` refusing is not enough when the work already
+    /// spent a copy and a scan over the blob. `sysKind` is only ever set by
+    /// that regex, so an empty one is the observable proof of the ordering.
+    func testSysmsgOversizedDocumentIsRejectedBeforeTheRegexPass() {
+        let xml = "<sysmsg type=\"revokemsg\"><revokemsg><replacemsg>"
+            + String(repeating: "很", count: 1_000_000)
+            + "</replacemsg></revokemsg></sysmsg>"
+        let result = WeChatParser.renderMessage(content: xml, baseType: 10000, isGroup: false)
+        XCTAssertTrue(result.sysKind.isEmpty, "sysKind 有值就说明正则已经跑过这个大文本")
+        XCTAssertEqual(result.text, "[系统消息]")
+    }
+
+    /// A healthy system notice still parses — otherwise the two assertions
+    /// above are just proving that nothing parses.
+    func testSysmsgStillParsesAfterTheGuards() {
+        let xml = "<sysmsg type=\"normal\"><content><![CDATA[你已添加了对方]]></content></sysmsg>"
+        let result = WeChatParser.renderMessage(content: xml, baseType: 10000, isGroup: false)
+        XCTAssertTrue(result.text.contains("你已添加了对方"))
+    }
+
+    /// The checks live on the parser, not only at the call sites, so a third
+    /// caller cannot forget them. This drives `SimpleXMLParser` directly, which
+    /// is the only way to tell the inner guard apart from the outer ones.
+    func testSimpleXMLParserRefusesDangerousInputOnItsOwn() {
+        let dangerous = Data("""
+        <!DOCTYPE r [<!ENTITY a "XXXX"><!ENTITY b "&a;&a;">]><r><title>&b;</title></r>
+        """.utf8)
+        let parser = SimpleXMLParser(data: dangerous)
+        parser.parse()
+        XCTAssertNil(parser.value(for: "title"), "parse() 自己要是不拦，调用方忘了就是漏点")
+
+        let bigDocument = "<r><title>" + String(repeating: "x", count: 1_000_001) + "</title></r>"
+        let oversized = Data(bigDocument.utf8)
+        let bigParser = SimpleXMLParser(data: oversized)
+        bigParser.parse()
+        XCTAssertNil(bigParser.value(for: "title"))
+
+        let healthy = Data("<r><title>ok</title></r>".utf8)
+        let okParser = SimpleXMLParser(data: healthy)
+        okParser.parse()
+        XCTAssertEqual(okParser.value(for: "title"), "ok")
+    }
+
     /// baseType-10000 rows carry `<sysmsg>` XML — rendering the raw blob
     /// leaked markup into previews and AI context, and revokemsg rows fed
     /// nothing to the recall pipeline.

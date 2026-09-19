@@ -484,3 +484,136 @@ RAISE(ABORT)` 只让日志写失败（队列 DELETE 照常），先确认「日�
 再分别按两根轴问闸门。变异 P1（不跨轴记账）、P2（把 cancelled 记到 sent 集合）、
 P3（approve 路径又不记队列轴）全红；P3 第一版是活的，因为接线判据只数了 `= hold` 那两处 ——
 补了第三条字面句才红。
+
+## §174 一条谓词只喂了一个消费者：`parseSysMsg` 少两道闸，而闸本来就该在解析器里
+
+`parseAppMsg` 有 `<!doctype`/`<!entity` 拒绝 + 1MB 长度上限（第 96–101 行，历史上是
+修 XXE/放大时加的），`parseSysMsg` 一道都没有 —— 而两者构造的是同一个 `SimpleXMLParser`。
+`renderMessage` 有两个 XML 入口（:230 appmsg、:236 sysmsg），所以 baseType 10000 那条
+一直是唯一能带着未检查文本进解析器的消息面。
+
+修法没有停在「给 sysmsg 补两行」：`hasEntityRisk(_:)` / `isTooLarge(_:)` 提到
+`SimpleXMLParser` 上，`parse()` 自己先核对再交给 `XMLParser`，两个调用方问同样两个问题。
+第三个人将来加 XML 分支时，忘记问也会被内层拦下 —— 这就是这一整轮的形状：
+**一条判断放在调用方，等于只保护了记得问的那一个。**
+
+sysmsg 侧的闸放在 `type=` 正则**之前**：内层 `parse()` 拒绝并不够，正则和 `lowercased()`
+已经在那 1MB 上跑过一遍了。判据用 `sysKind` 是否为空来区分两种顺序 —— `sysKind` 只有那条
+正则写得进，所以它是「有没有跑过正则」的唯一可观测证据。
+
+判据：`testSysmsgEntityDocumentIsNotExpanded`、`testSysmsgOversizedDocumentIsRejectedBeforeTheRegexPass`、
+`testSimpleXMLParserRefusesDangerousInputOnItsOwn`（直接构造解析器，唯一能把内层闸和外层闸
+分开的办法）、以及 `testSysmsgStillParsesAfterTheGuards` —— 没有这条对照组，前三条只是在证明
+「什么都不解析」。变异 Q1（去掉外层）红在正则顺序那条，Q2（去掉 `parse()` 内层）红在直接构造那条。
+实体的可达性要说清楚：对端要能往 XML 结构里注入标记（而不是元素文本）才谈得上放大，
+本轮没能从一条普通消息构造出这种注入，所以**长度那一半是实的，实体那一半按 P1 记**。
+
+## §175 复检三路攻出来的三条：导出的 `try?` chmod、静音不管无人值守、停在生成中途的一批
+
+派出去的三路只查本轮之前没查过的轴（并发/检查-生效间隙、界面承诺 vs 代码、输入合成）。
+三条按源码复核成立：
+
+**1）`makeExportPrivate` 是 `try?` + 丢弃返回值，两处导出照样 `return url`。**
+设置页写着「文件权限设为只有本账户可读」，日报页收到绿色「已导出」。`chmod` 失败时文件是
+0644，落在 iCloud 默认同步的桌面上，里面是真实联系人姓名和消息正文。同文件里
+`SecureFileManager.ensureFilePermissions` 早就有会抛的写法 —— 一处定义没被用的那句。
+修法不是「把 `try?` 换成 `do/catch`」：`setAttributes` 在不支持 POSIX 权限的卷上会**成功**
+而什么都不做，所以判据是**读回来核对** `posixPermissions == 0o600`；核对不过就删掉文件并
+报失败（留下文件是这道承诺存在的唯一理由）。变异 R1（读回来但不核对）红。
+
+**2）「静音此对话」只压住收件箱行和横幅，压不住无人值守回复。**
+`ScanEngine` 里 `silencedAt` 被用了三次（:219、:252 隐藏行；:679 压横幅），而**两处**交给
+回复管线的投递（:727 白名单路径、:978 联系人路径）一次都没查它。用户静音一个人，恰好移除了
+唯一能看到「他来了消息」的地方，而 AI 继续给对方起草、开着自动发送时继续发出去。
+两处都补，第二处连 `isSilenced` 这个变量都还没有。判据：
+`testPermanentlySilencedPeerNeverReachesThatFeed` + 对照组 + 过期静音不得拦
+（`testExpiredSilenceDoesNotBlockTheFeed` 那一半防的是把 silencedAt 一律当长期静音），
+另一处投递用 `testEveryAutopilotFeedChecksTheMute` 的下限守住（投递点数 ≥ 静音判断数）。
+变异 R3/R4/R5 分别红。
+
+**3）`stop()` 落在模型调用中间，这一批仍然被记成上一次会话的决定。**
+`handleNewMessages` 在第一个 await 前抓 `sid`，`processBatch` 的日志行用**参数** `sessionId`
+盖章，而队列孪干行用的是**活的** `self.sessionId`（:1419）。停止之后孪干行写不进去，日志行
+却带着已经结束的会话 id 落了库，内存里还多一条没有孪干的幽灵草稿。
+代理把这条报成 P0（理由含「ack 会删掉持久 inbound 行」）—— 那半不成立：`stop()` 自己在
+:364 就 `clearAutopilotInboundQueue()` 了。剩下的实害是**一张永远批不动的待确认卡 + 一条
+幽灵草稿**，按 P1 记。修法沿用上一轮 §517621ed 的形态：await 之后、记账之前重读会话，
+不一致就撤掉内存 enqueue 并且什么都不记。
+同轮扫出第四处 `?? AutopilotConfig()`：`approvePending` 每会话上限、队列 tick 的
+`processPendingQueue`/`evaluateProactiveOutreach`、生成的 `handleNewMessages` 都是**闸门读**，
+读不到时用默认值就是**把闸门开宽**（敏感词退回内置表、上限退回 50）。新增
+`HUDStore.autopilotConfigForSendGate()`（`.absent`→默认值安全，`.unreadable`→nil 不发），
+三处改走它。变异 R6/R7 红。`AutopilotService:1520` 的 `sendKey` 读法仍用默认值，定价见 §177。
+
+## §176 粘贴前那次 `Cmd+A` 一直在清掉用户没发完的话；而我第一版的闸门自己也不够
+
+`performTextAction` 的顺序是 全选 → 粘贴 → 发送键，从来没有读过输入框。于是：
+
+- 无人值守发送：用户在微信里打了一半的话被整段选中、被 AI 回复覆盖，然后**只有 AI 那句**发出去。
+  他那半句在别的 app 里、没有草稿箱、不可恢复。
+- 「只填不演」（`sendKey == nil`，人在微信窗口里站着）同样覆盖 —— 而这正是最不该动的模式。
+
+修法分三层，因为**一次读不够**（这一半是代理回攻我第一版时找出来的）：
+1. 全选前读一次；非空就不碰。读不到（`nil`）**放行** —— 把「看不见」当成「有人写了」会让
+   微信某次改版之后自动发送永久失灵。空白按空处理。
+2. 粘贴前再读一次。全选与粘贴之间隔着 `pause(0.05)` + 账号核验 + 三次 actor 跳转，人在这段
+   里打字的话，`Cmd+A` 选中的是空，粘贴就变成**插入**，发送键会把「人的半句 + AI 的回复」
+   一起发给真人。
+3. 发送键前回读，要求框里恰好是我们粘进去的那段（`\r\n` 归一后再比，换行写法不该变成拒发理由）。
+   这一层故意**不**调 `retractPastedDraft`：清空会把用户自己的字一起删掉。
+
+两个新理由都写清楚「这条没发出去」。`isRetryableSendBusy` 只匹配「已有发送正在进行」，
+所以 `.inputHasUnsentDraft` 落到 `humanRequired`：草稿进待确认卡并带上可行动的理由，
+不会被反复重试打爆。
+
+判据：`testInputBoxWithUnsentTextIsNeverSelectedAndOverwritten`（两层谓词各 5–6 个输入，
+含 nil 失败打开、`\r\n` 等价、拼接必须拒）、`testDraftGateRunsBeforeTheFirstSelectAll`
+（数到 2 次读框，第一次早于全选、第二次紧贴粘贴；发送键前回读落在粘贴之后、发送键之前）、
+`testBothBoxRefusalsSayNothingWasSent`。变异 R8（去掉第二次读框）、R9（去掉发送键前回读）红。
+
+未覆盖面，明写：
+- 这三层闸门的**真实**行为只有连着微信才验得动 —— `axString(input, kAXValueAttribute)`
+  在微信输入框上到底返回什么，本轮没有实测过（历次「最后一公里」都没做过 live 验证）。
+  若某版微信不暴露 value，三层都会失败打开、回到今天的行为，不会更糟。
+- `writePrivateExport` 里「核对不过就删文件」那条分支没有判据：在 APFS 上造不出
+  「写成功但 chmod 失败」的条件（变异 R2 因此存活，属于已知缺口而非误报）。
+- §175 第 3 条那个 stop 落在生成中途的竞态，只有位置判据，没有真竞态测试：
+  `generator` 是具体类型 `AutoReplyGenerator`，测试里没法让那次 await 停住。
+
+## §177 本轮已复核成立、定价未修的（含三条派单里剩下的 P1）
+
+按「值不值得单独一轮」排，不是按严重度：
+
+1. **`mayStillDeliver` 不重读 `autoSendEnabled`**（`AutopilotService:481-491`，消费点
+   `WeChatLauncher:825/847`）。闸门读暂停/会话/队列行/日志行/三种 hold，就是没有那颗开关本身。
+   发送一条要花 2–8 秒导航，其间用户关掉「自动发送」（`AutopilotSettingsView:114` 只写设置，
+   不 pause 服务，`isPaused` 也不看它），两次闸门读都还是绿的，这一条照发。
+   修法要给闸门区分「无人值守」和「人工点了确认」（后者本来就在关着自动发送时工作），
+   不是一个参数能糊过去的，单独一轮。
+2. **`lastSendFailureMessage` 当成返回值用的共享状态**（写在 :1480/:1484/:1521/:1543/:1575，
+   读在 :1946）。B 因为 `isSending` 被弹回、原因是「已有发送正在进行」，它的续体排在 actor
+   邮箱后面；A 随后失败并覆写这个变量，B 醒来把 A 的失败安到自己那条从没试过的草稿上 →
+   `humanRequired` → 永久 `manualOnlyReason`。这条是**跨条串话**，判据现在只钉了源码顺序。
+   修法是让 `executeSend` 把 reason 走返回通道。
+3. **`stalePendingSendReason` 只在发送前一次读**（:1875 vs 闸门 :1902）。对端又追问了一句、
+   或者用户已经自己在微信里回了 —— 自动化刚聚焦的那个窗口里人打的字，8 秒内被
+   `postWillOpenWeChat` 的暂停抑制吃掉 —— 机器人随后用用户的口吻补一句过期回答。
+   闸门从不重读消息表。
+4. **`rejectPending` 删孪干行用 `try?`、失败不留 hold**（:957），与 §171 修过的
+   `cancelPendingSend` 不对称：日志行翻成 skipped 成功、队列行还活着，而队列轴的闸门
+   传的是 `logId: nil`，看不见那次 skip。同形缺陷的最后一个消费者。
+5. `ApprovalWorkspaceView:59` `?? AutopilotConfig()`：读不到时整页说「当前未开启自动发送，
+   这条回复尚未发出」，而自动发送可能开着并在发。与 §164 同一形状，这次在**确认工作台**上。
+6. 同一页 `:178/:338` 与 `AutopilotTabView:42` 把「自动发送已关」时的队列标成**即将发送**，
+   而 `executeSend` 在关着时一条都不会发（:1809）——用户会去点「立即发送」发自己没读过的草稿。
+7. `ApprovalWorkspaceView:299` 的 `n / 500` 计数没有任何一端执行 500。
+8. `DailyReportTabView:128/336` 在周报页导出的是**日报**，拿不到时把原因说成桌面写入权限。
+9. `NotificationSettingsView:50` / `AISettingsView:1031` 仍是 `?? Defaults()` 灌进去再整块写回，
+   和 §164 修掉的托管页同形，只是那两处不驱动发送。
+10. 心跳 tick 体没有在飞保护（`ChatMonitor:526-581`），`queue`/`stats`/`manuallyPaused`
+    三次 hop 之后才 `publishAutopilotHeartbeat`，旧三元组可能后落地；badge 又被绝对值和
+    增量两条路写。
+11. `AutopilotService:1520` 的 `sendKey` 读法仍用默认值（读不到时可能按错组合键，最坏是
+    把该发的留在框里，不会把不该发的发出去）。
+12. `approvePending` 的陈旧校验只在 `if let createdAt` 里跑（参数默认 `nil`）：两个现存的
+    调用点都传了值，所以这是陷阱不是活 bug —— 要把参数改成非可选。

@@ -93,12 +93,11 @@ struct WeChatParser {
         // Reject potentially dangerous XML — case-insensitive: XMLParser
         // expands internal general entities, so a `<!doctype`/`<!entity`
         // written in any case is the same amplification vector.
-        let lowered = xml.lowercased()
-        guard !lowered.contains("<!doctype") && !lowered.contains("<!entity") else {
+        guard !SimpleXMLParser.hasEntityRisk(xml) else {
             result.text = xml
             return result
         }
-        guard xml.count < 1_000_000 else {
+        guard !SimpleXMLParser.isTooLarge(xml) else {
             result.text = String(xml.prefix(500))
             return result
         }
@@ -181,6 +180,15 @@ struct WeChatParser {
             result.text = body.isEmpty ? "[系统消息]" : String(body.prefix(200))
             return result
         }
+        // Same two questions parseAppMsg asks, and before anything else
+        // touches the blob: a system notice was the one XML surface a message
+        // could reach the parser through unchecked. The fallback stays a
+        // placeholder — raw sysmsg markup is exactly what this function exists
+        // to strip.
+        guard !SimpleXMLParser.isTooLarge(body), !SimpleXMLParser.hasEntityRisk(body) else {
+            result.text = "[系统消息]"
+            return result
+        }
         // `type` is an attribute — outside SimpleXMLParser's element-text
         // model — so it is lifted by regex before the element pass.
         if let match = body.range(of: #"type\s*=\s*"([^"]+)""#, options: .regularExpression) {
@@ -254,7 +262,25 @@ class SimpleXMLParser: NSObject, XMLParserDelegate {
         self.data = data
     }
 
+    /// Message XML is text that reached us through another app's database, and
+    /// libxml2 expands internal general entities before Foundation's
+    /// external-entity default applies — so a `<!entity` document is an
+    /// amplification primitive, not a malformed message. These two questions
+    /// live on the parser rather than at each call site because every caller
+    /// here parses the same kind of input; `parse()` refuses regardless of
+    /// whether a caller remembered to ask.
+    static func hasEntityRisk(_ xml: String) -> Bool {
+        let lowered = xml.lowercased()
+        return lowered.contains("<!doctype") || lowered.contains("<!entity")
+    }
+
+    static func isTooLarge(_ xml: String) -> Bool {
+        xml.count >= 1_000_000
+    }
+
     func parse() {
+        let text = String(decoding: data, as: UTF8.self)
+        guard !Self.hasEntityRisk(text), !Self.isTooLarge(text) else { return }
         let parser = XMLParser(data: data)
         parser.delegate = self
         parser.parse()

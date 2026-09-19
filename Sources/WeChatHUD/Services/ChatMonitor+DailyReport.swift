@@ -214,22 +214,49 @@ extension ChatMonitor {
             .appendingPathComponent("Desktop")
         let url = desktop.appendingPathComponent(filename)
 
-        do {
-            try md.write(to: url, atomically: true, encoding: .utf8)
-            Self.makeExportPrivate(url: url)
-            return url
-        } catch {
-            print("[WCHUD] exportDailyReport failed: \(error)")
-            return nil
-        }
+        return Self.writePrivateExport(md, to: url)
     }
 
     /// Chat-derived files land on ~/Desktop, which iCloud syncs by default on
     /// macOS, so the default 0644 would put real conversation text in a
     /// cloud-synced folder every other surface of this app keeps at 0600.
-    static func makeExportPrivate(url: URL) {
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: url.path)
+    /// The report carries contact names and message bodies by design — it is
+    /// the user's own export, not an egress path, so the AI masking policy does
+    /// not apply here. This does.
+    ///
+    /// It used to be `try?` with the result thrown away, and both callers still
+    /// returned a URL — so a failed `chmod` produced a world-readable chat
+    /// transcript behind a green 「已导出」. The mode is read back rather than
+    /// trusted: a volume that ignores POSIX permissions makes `setAttributes`
+    /// succeed at exactly the thing that did not happen.
+    static func makeExportPrivate(url: URL) -> Bool {
+        let fm = FileManager.default
+        do {
+            try fm.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o600)], ofItemAtPath: url.path)
+        } catch {
+            print("[WCHUD] export chmod failed: \(error)")
+        }
+        let attributes = try? fm.attributesOfItem(atPath: url.path)
+        let mode = (attributes?[.posixPermissions] as? NSNumber)?.int16Value
+        return mode == 0o600
+    }
+
+    /// Write-then-harden, with no path that leaves an unreadable-to-nobody
+    /// file behind: a failure to restrict is a failure to export.
+    static func writePrivateExport(_ markdown: String, to url: URL) -> URL? {
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            print("[WCHUD] export write failed: \(error)")
+            return nil
+        }
+        guard makeExportPrivate(url: url) else {
+            print("[WCHUD] export aborted: permissions could not be restricted")
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return url
     }
 
 
@@ -303,18 +330,7 @@ extension ChatMonitor {
 
         md += "---\n*由 WeChatHUD 自动生成*\n"
 
-        do {
-            try md.write(to: desktop, atomically: true, encoding: .utf8)
-            // The report carries real contact names and message bodies by
-            // design — it is the user's own export, not an egress path, so the
-            // AI masking policy does not apply here. What does apply is
-            // `makeExportPrivate`.
-            Self.makeExportPrivate(url: desktop)
-            return desktop
-        } catch {
-            print("[WCHUD] export failed: \(error)")
-            return nil
-        }
+        return Self.writePrivateExport(md, to: desktop)
     }
 
 

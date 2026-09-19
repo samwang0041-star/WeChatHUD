@@ -421,6 +421,148 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertTrue(body.contains("return .failed(.withdrawnBeforeSend)"))
     }
 
+    /// The paste path pressed `Cmd+A` before `Cmd+V` — which selects whatever
+    /// the human had typed and not yet sent and throws it away. Nothing else in
+    /// the app can undo that, and it happened in exactly the mode where the user
+    /// is standing in WeChat. The predicate is the decision; the wiring gate is
+    /// the proof it runs before the first keystroke that can destroy anything.
+    func testInputBoxWithUnsentTextIsNeverSelectedAndOverwritten() {
+        XCTAssertTrue(WeChatLauncher.inputBoxIsSafeToOverwrite(readValue: nil),
+                      "读不到不能当成『有人写了东西』——那会让托管在微信改版后永久失灵")
+        XCTAssertTrue(WeChatLauncher.inputBoxIsSafeToOverwrite(readValue: ""))
+        XCTAssertTrue(WeChatLauncher.inputBoxIsSafeToOverwrite(readValue: "  \n\t "))
+        XCTAssertFalse(WeChatLauncher.inputBoxIsSafeToOverwrite(readValue: "半句话没打完"))
+
+        // The paste-side re-read has a different question: after `Cmd+V` the box
+        // is *supposed* to hold our text, so "matches what we pasted" is the
+        // test, and an empty box (paste never landed) must still let Return
+        // through — it does nothing.
+        XCTAssertTrue(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: nil, expecting: "回复"))
+        XCTAssertTrue(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: "", expecting: "回复"))
+        XCTAssertTrue(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: "回复", expecting: "回复"))
+        XCTAssertTrue(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: "回复\r\n第二行", expecting: "回复\n第二行"),
+                      "换行符的写法不该变成拒绝发送的理由")
+        XCTAssertFalse(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: "我的半句回复", expecting: "回复"),
+                       "人和助手的内容拼在一起发出去，是最坏的一种")
+        XCTAssertFalse(WeChatLauncher.pastedBoxStillHoldsOnlyTheReply(readValue: "回复 还有我加的一句", expecting: "回复"))
+    }
+
+    /// …and the gate is on the real keystroke sequence, not just defined.
+    func testDraftGateRunsBeforeTheFirstSelectAll() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/WeChatLauncher.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let body = try XCTUnwrap(
+            source.components(separatedBy: "private static func performTextAction").last,
+            "锚点没了：这条判据不能对整篇文件断言")
+        // `postCmdKey(kVK_ANSI_A)` also appears later in this slice (navigation
+        // and retraction live below), so pin the order against the *first* one.
+        let firstSelectAll = try XCTUnwrap(
+            body.range(of: "postCmdKey(kVK_ANSI_A)"),
+            "找不到全选")
+        let paste = try XCTUnwrap(body.range(of: "postCmdKey(kVK_ANSI_V)"), "找不到粘贴")
+        let sendKey = try XCTUnwrap(body.range(of: "switch sendKey {"), "找不到发送键")
+
+        // Twice, not once: the box can gain text in the awaits between the
+        // select-all and the paste, and a `Cmd+A` over an empty selection makes
+        // the paste *insert* into whatever the human typed in that gap.
+        // `guard ` prefix so the predicate's own definition does not count.
+        let emptyBoxChecks = body.components(separatedBy: "guard inputBoxIsSafeToOverwrite(readValue:").count - 1
+        XCTAssertEqual(emptyBoxChecks, 2, "全选前和粘贴前各要读一次输入框")
+        var cursor = body.startIndex
+        for index in 0..<2 {
+            let found = try XCTUnwrap(
+                body.range(of: "guard inputBoxIsSafeToOverwrite(readValue:", range: cursor..<body.endIndex),
+                "只有 \(index) 处读输入框")
+            if index == 0 {
+                XCTAssertLessThan(found.lowerBound, firstSelectAll.lowerBound,
+                                  "第一次必须早于全选，否则读到的是已经被自己清掉的东西")
+            } else {
+                XCTAssertLessThan(found.lowerBound, paste.lowerBound,
+                                  "第二次必须紧贴粘贴，否则中间那段 await 里人打的字会被拼进去")
+                XCTAssertGreaterThan(found.lowerBound, firstSelectAll.lowerBound)
+            }
+            cursor = found.upperBound
+        }
+        // Third question, at the last moment before a real recipient sees it.
+        let finalCheck = try XCTUnwrap(
+            body.range(of: "guard pastedBoxStillHoldsOnlyTheReply("),
+            "发送键前没有回读输入框")
+        XCTAssertLessThan(finalCheck.lowerBound, sendKey.lowerBound)
+        XCTAssertGreaterThan(finalCheck.lowerBound, paste.lowerBound)
+        XCTAssertTrue(body.contains("return .failed(.inputHasUnsentDraft)"),
+                      "拦下来要给出可行动的理由，而不是笼统的失败")
+        XCTAssertTrue(body.contains("return .failed(.pastedBoxChanged)"))
+        XCTAssertLessThan(paste.lowerBound, sendKey.lowerBound, "粘贴本身要在发送键之前")
+    }
+
+    /// Both refusals have to say the reply did *not* go out — a user who reads
+    /// 「没有覆盖它」 and assumes the draft was sent anyway is the failure this
+    /// whole axis exists to prevent.
+    func testBothBoxRefusalsSayNothingWasSent() {
+        let draft = WeChatLauncher.SendFailureReason.inputHasUnsentDraft.userMessage
+        XCTAssertTrue(draft.contains("没有覆盖"), draft)
+        XCTAssertTrue(draft.contains("未发出"), draft)
+        let changed = WeChatLauncher.SendFailureReason.pastedBoxChanged.userMessage
+        XCTAssertTrue(changed.contains("没有按下发送"), changed)
+    }
+
+    /// `handleNewMessages` captures the session id before its first await and
+    /// `processBatch` stamps the log row from that parameter while the queue
+    /// twin is written from the *live* property — so a 停止 landing during the
+    /// model call used to record a 待确认 card for a session that no longer
+    /// exists, backed by no draft.
+    ///
+    /// Priced honestly: the interleaving itself has no test, because
+    /// `generator` is a concrete `AutoReplyGenerator` and nothing in the tree
+    /// can make that await hang on purpose. This gate pins where the re-check
+    /// sits; it does not prove the race is closed.
+    func testStoppedSessionCannotRecordABatchItNeverOwned() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let fromAwait = try XCTUnwrap(
+            source.components(separatedBy: "let entry = await processBatch(").last,
+            "锚点没了")
+        let upToInsert = fromAwait.components(separatedBy: "try store.insertAutopilotLog(entry)").first ?? ""
+        XCTAssertFalse(upToInsert.isEmpty, "切片不能为空")
+        XCTAssertTrue(upToInsert.contains("if sid != sessionId"),
+                      "await 之后、记账之前要重读会话，否则记的是上一个会话的决定")
+        XCTAssertEqual(
+            upToInsert.components(separatedBy: "pendingSendQueue.removeAll { $0.id == uuid }").count - 1, 1,
+            "跳过记账的同时要把内存里那条幽灵草稿撤掉")
+    }
+
+    /// 「读不到配置」 is not an answer a send guard may guess at: the default
+    /// keyword list drops whatever the user added, and the default cap of 50
+    /// overrules a user who set 5.
+    func testSendGuardsReadTheConfigThroughOneHonestHelper() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let files = ["Services/AutopilotService.swift", "Services/ChatMonitor.swift"]
+        var sites = 0
+        for name in files {
+            let source = try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+            sites += source.components(separatedBy: "autopilotConfigForSendGate()").count - 1
+        }
+        XCTAssertGreaterThanOrEqual(sites, 3,
+                                    "队列 tick、生成、人工确认三处发送闸门都要走同一个读法")
+        let service = try String(contentsOf: root.appendingPathComponent(files[0]), encoding: .utf8)
+        let approval = try XCTUnwrap(
+            service.components(separatedBy: "func approvePending(logId:").last
+        ).components(separatedBy: "func retryUnresolvedSendWrites").first ?? ""
+        // The *call*, not the phrase: the comment above the guard spells out
+        // what used to be there, and matching that made this gate red on the fix.
+        XCTAssertFalse(approval.contains("getSettingJSON(\"autopilot\""),
+                       "确认发送这段里不许再出现「读不到就用默认值」")
+    }
+
     /// The gate can only refuse what it is handed: after a failed write-back the
     /// database row is still 'pending', so a second 确认发送 passes every row
     /// check and sends a duplicate to a real person. The local set is the only

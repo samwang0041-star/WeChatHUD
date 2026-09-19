@@ -719,7 +719,8 @@ enum ScanEngine {
                             messageType: msg.baseType,
                             appType: msg.appType
                         )
-                        if autopilotActive && Self.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: isFirstWhitelistScan) {
+                        if autopilotActive && !isSilenced
+                            && Self.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: isFirstWhitelistScan) {
                             // Persist this queue row together with the
                             // whitelist cursor below. A failed insert must
                             // leave the cursor behind so the next scan retries.
@@ -968,6 +969,15 @@ enum ScanEngine {
                         messageType: msg.baseType,
                         appType: msg.appType
                     )
+                    // The second feed of the same decision, and it had no mute
+                    // check at all: 静音此对话 hid the inbox row and the banner
+                    // (:679) while this path kept handing the conversation to
+                    // the unattended reply pipeline — the one surface that used
+                    // to show the incoming message was hidden, and a reply still
+                    // went out to that peer.
+                    guard (chatActions[msg.chatUsername]?.silencedAt ?? 0) <= nowEpoch else {
+                        continue
+                    }
                     if autopilotActive {
                         // Persist this queue row together with the
                         // autopilot cursor below. A failed insert must
