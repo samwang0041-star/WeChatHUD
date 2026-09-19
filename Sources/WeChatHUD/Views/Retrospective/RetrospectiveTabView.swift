@@ -432,14 +432,16 @@ struct RetrospectiveTabView: View {
     private func apply(state: RetrospectiveJob.State) {
         currentState = state
         switch state {
-        case .completed(let runID):
+        case .completed:
             isRunning = false
             errorText = nil
-            load(runID: runID)
-        case .partial(let runID, let failedChats):
+            // The job's own run id is not threaded through on purpose: the row
+            // the page shows and the abandonment flag must come from one read.
+            refreshLatestRun()
+        case .partial(_, let failedChats):
             isRunning = false
             errorText = failedChats.isEmpty ? nil : "部分对话分析失败：\(failedChats.prefix(3).joined(separator: "、"))"
-            load(runID: runID)
+            refreshLatestRun()
         case .failed(let message):
             isRunning = false
             errorText = message
@@ -453,23 +455,35 @@ struct RetrospectiveTabView: View {
     }
 
     private func refreshLatestRun() {
-        let newest = monitor.hudStore.latestReviewRunAnyStatus()
-        abandonedRun = newest?.status == .failed ? newest : nil
-        guard let run = monitor.hudStore.latestCompletedRun() else {
+        let state = Self.runState(from: monitor.hudStore)
+        abandonedRun = state.abandoned
+        guard let run = state.displayed else {
             latestRun = nil
             highlights = []
             todos = []
             return
         }
-        load(runID: run.id)
+        latestRun = run
+        highlights = monitor.hudStore.highlights(for: run.id)
+        todos = monitor.hudStore.todos(for: run.id)
     }
 
-    private func load(runID: Int) {
-        guard let run = monitor.hudStore.runByID(runID) else { return }
-        abandonedRun = nil
-        latestRun = run
-        highlights = monitor.hudStore.highlights(for: runID)
-        todos = monitor.hudStore.todos(for: runID)
+    /// One function decides both fields on purpose: the flag used to be set
+    /// here and cleared again by `load()` one line later, which made the
+    /// honest status line unreachable whenever any successful run existed.
+    ///
+    /// The row the page can display is always a successful one, so "was the
+    /// current period reviewed?" has to be answered from the newest row of ANY
+    /// status: a `failed` run, or a `running` row whose job died with the app
+    /// (it is only reaped into `failed` after 35 minutes), means the newest
+    /// attempt never produced anything to show.
+    static func runState(from store: HUDStore) -> (displayed: ReviewRun?, abandoned: ReviewRun?) {
+        let displayed = store.latestCompletedRun()
+        guard let newest = store.latestReviewRunAnyStatus(),
+              newest.status == .failed || newest.status == .running else {
+            return (displayed, nil)
+        }
+        return (displayed, newest)
     }
 }
 

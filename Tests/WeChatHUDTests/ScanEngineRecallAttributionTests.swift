@@ -89,6 +89,21 @@ final class ScanEngineRecallAttributionTests: XCTestCase {
                        "and it must not claim someone else's message as the withdrawn one")
     }
 
+    /// 另一个同名的人这一小时没发言，也不构成"窗口里那条就是他"的证据。
+    func testQuietTwinOutsideTheMatchBandStillCounts() throws {
+        record(
+            recall: recallRow(text: "群主 撤回了 \"张伟\" 的一条消息"),
+            candidates: [
+                message(msgA, localId: 11, sender: "wxid_zhang_a", name: "张伟",
+                        text: "今晚把合同发你", offset: 10),
+                message(msgB, localId: 12, sender: "wxid_zhang_b", name: "张伟",
+                        text: "明天上午开会", offset: -3_600),
+            ]
+        )
+        XCTAssertEqual(liveCommitmentUIDs(), [msgA, msgB],
+                       "认领范围只数 10 分钟窗口会把潜水的同名者漏掉")
+    }
+
     func testUnambiguousNameStillCascades() throws {
         record(
             recall: recallRow(text: "群主 撤回了 \"张伟\" 的一条消息"),
@@ -114,6 +129,25 @@ final class ScanEngineRecallAttributionTests: XCTestCase {
             ]
         )
         XCTAssertEqual(liveCommitmentUIDs(), [msgB])
+    }
+
+    /// 「已处理到这条」的水位不能带上未来的时间：`rebuildInbox` 把超过永久静音
+    /// 阈值的 silencedAt 读成"这个对话永久静音"，一条时间戳超前的消息就能让对话
+    /// 再也不出现；而 Double(Int64.max) 会让 Int() 直接 trap 掉常驻进程。
+    func testWatermarkSecondsCannotDateAheadOfNow() throws {
+        let now = Int(Date().timeIntervalSince1970)
+        XCTAssertEqual(
+            MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: Double(now - 120))),
+            now - 120)
+        XCTAssertEqual(
+            MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: Double(now) + 3_153_600_000)),
+            now, "一年后的时间戳只能表示\"到此刻为止已处理\"")
+        XCTAssertEqual(
+            MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: Double(Int64.max))), now,
+            "2^63 的 Double 进 Int() 会 trap，这里必须在进 Int 之前收口")
+        XCTAssertEqual(MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: -1)), 0)
+        XCTAssertEqual(MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: .nan)), 0)
+        XCTAssertNoThrow(MessageHelpers.watermarkSeconds(Date(timeIntervalSince1970: .infinity)))
     }
 
     func testUnreadFetchLimitClampsBeforeDoubling() throws {

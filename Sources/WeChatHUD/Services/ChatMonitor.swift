@@ -1449,13 +1449,24 @@ final class ChatMonitor: ObservableObject {
                 // C1 fix: if there are still buffered batches, schedule a
                 // follow-up scan after the batch window so they get flushed.
                 let hasPending = await service.hasPendingBatches
-                if hasPending {
+                if Self.chasesPendingBatches(hasPending: hasPending, paused: paused) {
                     let delay = TimeInterval(config.batchWindowSeconds) + 1
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     await self.scan()
                 }
             }
         }
+    }
+
+    /// Whether an autopilot batch left in the buffer justifies another full
+    /// scan. While paused it does not: `allExpired` is forced empty, so the
+    /// batch can never drain and this follow-up used to re-enter `scan()` every
+    /// `batchWindowSeconds + 1` for as long as WeChat stayed frontmost — one
+    /// private text message armed an endless rescan loop (full DB read, inbox
+    /// rebuild, alert engine, AI prefetch each round). The safety heartbeat
+    /// flushes the batches once the pause ends.
+    nonisolated static func chasesPendingBatches(hasPending: Bool, paused: Bool) -> Bool {
+        hasPending && !paused
     }
 
     /// Reload commitments and recalled messages from store.
@@ -2574,7 +2585,7 @@ final class ChatMonitor: ObservableObject {
     /// messages remain eligible to surface normally.
     @discardableResult
     func dismissInboxItem(_ item: InboxItem) -> Bool {
-        let ts = Int(item.timestamp.timeIntervalSince1970)
+        let ts = MessageHelpers.watermarkSeconds(item.timestamp)
         do {
             try store.silenceChat(chatUsername: item.chatUsername, silencedAt: ts)
             dismissedInbox[item.chatUsername] = Int64(ts)
@@ -3005,7 +3016,7 @@ final class ChatMonitor: ObservableObject {
         guard !actionItems.isEmpty else { return [] }
         var latestTimestampByChat: [String: Int] = [:]
         for item in actionItems {
-            let ts = Int(item.timestamp.timeIntervalSince1970)
+            let ts = MessageHelpers.watermarkSeconds(item.timestamp)
             latestTimestampByChat[item.chatUsername] = max(latestTimestampByChat[item.chatUsername] ?? ts, ts)
         }
         // One row per chat — its newest trigger generation.
@@ -3037,7 +3048,7 @@ final class ChatMonitor: ObservableObject {
         guard !items.isEmpty else { return }
 
         for item in items {
-            let ts = Int(item.timestamp.timeIntervalSince1970)
+            let ts = MessageHelpers.watermarkSeconds(item.timestamp)
             // Skip if we already have a fully-materialized entry
             // for this exact trigger generation.
             if let existing = actionPrefetch[item.chatUsername],

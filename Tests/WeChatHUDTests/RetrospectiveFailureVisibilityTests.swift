@@ -73,15 +73,40 @@ final class RetrospectiveFailureVisibilityTests: XCTestCase {
                        "页面已经横幅报过一次，状态行不能再报一遍")
     }
 
-    /// The store can see the dead run; the view has to read it from the
-    /// database rather than only from this session's job.
-    func testRefreshReadsTheFailureFromTheDatabase() throws {
-        let source = try Self.read(
-            "Sources/WeChatHUD/Views/Retrospective/RetrospectiveTabView.swift")
-        let refresh = Self.slice(source, from: "private func refreshLatestRun", max: 500)
-        XCTAssertTrue(refresh.contains("latestReviewRunAnyStatus()"),
-                      "刷新必须从库里读到那次没跑完的回顾")
-        XCTAssertTrue(refresh.contains("abandonedRun"), refresh)
+    /// The decision the header is built from. This is where the bug actually
+    /// lived: the flag was set by the refresh and cleared again by the load
+    /// one line later, so the honest branch never ran while any successful
+    /// run existed.
+    func testRunStateKeepsTheDeadAttemptAlongsideTheDisplayedRun() throws {
+        let (older, crashed) = try seedCompletedThenCrashed()
+        let state = RetrospectiveTabView.runState(from: store)
+        XCTAssertEqual(state.displayed?.id, older, "页面能显示的只有成功那一期")
+        XCTAssertEqual(state.abandoned?.id, crashed, "但更早的失败不能因此被抹掉")
+
+        // A job that died with the app stays 'running' until the 35-minute
+        // reap; that is not a completed review either.
+        try store.exec("UPDATE review_runs SET status='running' WHERE id=\(crashed)")
+        let stuck = try XCTUnwrap(RetrospectiveTabView.runState(from: store).abandoned)
+        XCTAssertEqual(stuck.status, .running)
+
+        // A newer success supersedes it.
+        let revived = try XCTUnwrap(
+            store.insertReviewRun(rangeStart: day(172_800), rangeEnd: day(259_200), chatCount: 2))
+        try store.exec("UPDATE review_runs SET status='completed' WHERE id=\(revived)")
+        let after = RetrospectiveTabView.runState(from: store)
+        XCTAssertNil(after.abandoned)
+        XCTAssertEqual(after.displayed?.id, revived)
+
+        // What the header then says for the stuck state, end to end.
+        try store.exec("DELETE FROM review_runs WHERE id=\(revived)")
+        let stuckState = RetrospectiveTabView.runState(from: store)
+        XCTAssertEqual(stuckState.abandoned?.id, crashed, "删掉更新的成功那次后，卡住的那次要重新可见")
+        let line = RetrospectiveTabView.statusLine(
+            isRunning: false, runningText: "正在生成回顾", errorText: nil,
+            abandoned: stuckState.abandoned, latest: stuckState.displayed
+        )
+        XCTAssertFalse(line.contains("已完成"), line)
+        XCTAssertTrue(line.contains("没有完成"), line)
     }
 
     // MARK: - Source reading

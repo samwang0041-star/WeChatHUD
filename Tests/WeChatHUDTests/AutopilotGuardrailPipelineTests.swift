@@ -204,6 +204,26 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         try? await pipeline.stop()
     }
 
+    /// 用户正在用微信时批处理永远不到期，这条"还有批次没排空"的追扫分支以前会
+    /// 无限自我续期，一次私聊文本就能让常驻浮窗整段读取全文重扫。
+    func testPausedAutopilotDoesNotChaseBatchesWithFullScans() throws {
+        XCTAssertTrue(ChatMonitor.chasesPendingBatches(hasPending: true, paused: false))
+        XCTAssertFalse(ChatMonitor.chasesPendingBatches(hasPending: true, paused: true),
+                       "暂停时再扫也排空不了批次，只会自造第三路扫描触发")
+        XCTAssertFalse(ChatMonitor.chasesPendingBatches(hasPending: false, paused: false))
+
+        // The follow-up scan must actually consult it.
+        let url = URL(fileURLWithPath: String(#filePath))
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/ChatMonitor.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        let site = src.range(of: "let hasPending = await service.hasPendingBatches")
+            .map { String(src[$0.lowerBound...].prefix(220)) } ?? ""
+        XCTAssertTrue(
+            site.contains("chasesPendingBatches(hasPending: hasPending, paused: paused)"),
+            "追扫分支必须走这条判据，否则暂停期间的无限重扫会回来")
+    }
+
     /// Session cap 50 is enforced in `executeSend` before WeChat/AX work.
     func testSessionCapBlocksExecuteSendAndKeepsManualHold() async {
         await service.testingSetSessionSent(50)

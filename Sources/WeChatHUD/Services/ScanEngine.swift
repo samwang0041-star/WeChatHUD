@@ -1114,13 +1114,15 @@ enum ScanEngine {
                 && $0.createTime >= recall.createTime - 600
         }
         // WeChat names the owner with a display name, and two members of one
-        // group can carry the same display name. Claiming the newest same-
-        // named row would then tombstone the OTHER member's message — a
-        // live commitment cancelled and a pending ask deleted, which the scan
-        // watermark never redoes. Ambiguous name: record the recall, cascade
-        // nothing.
-        let ownerClaimants = Set(window.compactMap { row in
-            row.senderName == owner && !row.senderUsername.isEmpty
+        // group can carry the same one. Claiming the newest same-named row
+        // would then tombstone the OTHER member's message — a live commitment
+        // cancelled and a pending ask deleted, which the scan watermark never
+        // redoes. Ambiguous name: record the recall, cascade nothing.
+        // Claimants are counted over the whole fetched page, not just the
+        // 10-minute match band: the other 张伟 being quiet for an hour is not
+        // evidence that the one in the window is his.
+        let ownerClaimants = Set(candidates.compactMap { row in
+            row.sysKind == nil && row.senderName == owner && !row.senderUsername.isEmpty
                 ? row.senderUsername : nil
         })
         let ownerNameIsAmbiguous = !ownerIsSelf && ownerClaimants.count >= 2

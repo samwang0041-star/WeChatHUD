@@ -445,15 +445,27 @@ struct ConversationDetailView: View {
 
     private static let transcriptLimit = 20
 
+    /// Routing between chats reuses this view, and two transcript reads can
+    /// finish in either order: each hops to a freshly built reader actor, and
+    /// the @-focus jump spawns an unstructured `Task` that `.task(id:)` cannot
+    /// cancel. Cancellation alone is not enough either — the awaited reads never
+    /// observe it, so the loser still wrote its rows. Without a token the older
+    /// chat's bubbles render inside the newer chat's pane, under the newer
+    /// chat's name, and the user composes to B off A's text.
+    @State private var transcriptToken = UUID()
+
     /// Load newest-first rows via actor helper, then flip into WeChat order
     /// (oldest at top). Sync `recentMessages` stays for WhitelistScan.
     private func loadTranscriptAndIdentity() async {
+        let token = UUID()
+        transcriptToken = token
         // Clear stale rows when routing between chats before the async hop returns.
         transcriptRows = []
         hasTranscriptFocus = false
         let focus = panelState.consumeTranscriptFocus(for: chatUsername)
         async let identityTask = monitor.selfMessageIdentity()
         let loaded: [(sender: String, body: String)]
+        let identity = await identityTask.selfNames
         if let focus {
             loaded = await monitor.messagesAroundFocus(chatUsername: chatUsername, timestamp: focus.timestamp)
         } else {
@@ -465,7 +477,8 @@ struct ConversationDetailView: View {
                 visible: Self.transcriptLimit
             )
         }
-        selfNames = await identityTask.selfNames
+        guard token == transcriptToken else { return }
+        selfNames = identity
         transcriptRows = FocusedTranscript.assemble(loaded: loaded, focus: focus)
         hasTranscriptFocus = transcriptRows.contains { $0.isFocus }
     }

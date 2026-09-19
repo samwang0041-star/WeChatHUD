@@ -58,4 +58,40 @@ final class StaleViewShapeGatesTests: XCTestCase {
             "the weekly catalog must be re-read when the rows it counts change"
         )
     }
+    /// The detail pane reads its transcript through a freshly built reader actor
+    /// per call, and the @-focus jump spawns an unstructured Task that
+    /// `.task(id:)` cannot cancel — so the losing read published chat A's
+    /// bubbles inside chat B's pane under B's title, and the user composed to B
+    /// off A's text.
+    func testTranscriptPublishesOnlyForItsOwnRequest() {
+        let file = source("Views/ConversationDetailView.swift")
+        XCTAssertFalse(file.isEmpty, "ConversationDetailView not found")
+        let body = file.range(of: "private func loadTranscriptAndIdentity")
+            .map { String(file[$0.lowerBound...].prefix(1_800)) } ?? ""
+        let guardAt = body.range(of: "guard token == transcriptToken")?.lowerBound
+        let lastAwait = body.range(of: "monitor.recentMessagesAsync")?.lowerBound
+        let write = body.range(of: "transcriptRows = FocusedTranscript")?.lowerBound
+        XCTAssertNotNil(guardAt, "换对话时晚到的读必须被 token 拦住")
+        XCTAssertNotNil(lastAwait)
+        XCTAssertNotNil(write)
+        if let g = guardAt, let a = lastAwait {
+            XCTAssertTrue(g > a, "守卫要在最后一次 await 之后，否则拦不住晚到的回填")
+        }
+        if let g = guardAt, let w = write {
+            XCTAssertTrue(g < w, "守卫必须挡在写 transcriptRows 前面")
+        }
+    }
+    /// A persisted inbox watermark must not be a bare `Int(date)`: a Date built
+    /// from WeChat's `create_time` can be 2^63 (traps the conversion) or dated
+    /// ahead of now, and `rebuildInbox` reads a `silencedAt` past the permanent
+    /// threshold as "this chat is muted forever".
+    func testWatermarksGoThroughTheClampedConversion() {
+        let file = source("Services/ChatMonitor.swift")
+        XCTAssertFalse(file.isEmpty, "ChatMonitor not found")
+        XCTAssertFalse(
+            file.contains("Int(item.timestamp.timeIntervalSince1970)"),
+            "水位写入必须走 MessageHelpers.watermarkSeconds"
+        )
+        XCTAssertTrue(file.contains("MessageHelpers.watermarkSeconds("))
+    }
 }

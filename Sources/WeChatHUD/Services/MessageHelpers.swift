@@ -3,6 +3,18 @@ import Foundation
 /// Pure utility functions shared across the monitoring pipeline.
 /// Extracted from ChatMonitor to keep the coordinator small.
 enum MessageHelpers {
+    /// Epoch seconds from a Date derived from WeChat's `create_time`, safe to
+    /// persist as a watermark. Two hazards in one: `Double(Int64.max)` rounds up
+    /// to 2^63 and `Int()` traps on it (the resident process dies), and a row
+    /// dated ahead of now written as「已处理到这条」lands past the
+    /// permanent-silence threshold — `rebuildInbox` then treats that chat as
+    /// muted forever and it never resurfaces. Both collapse to "now".
+    static func watermarkSeconds(_ date: Date) -> Int {
+        let now = Int(Date().timeIntervalSince1970)
+        let seconds = date.timeIntervalSince1970
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return seconds >= Double(now) ? now : Int(seconds)
+    }
 
     /// Multi-party chats are not only `xxx@chatroom`: WeChat also uses
     /// `@openim` (work/open groups) and `@im.chatroom`. Anything that is not
