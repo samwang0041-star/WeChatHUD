@@ -242,7 +242,14 @@ final class ProductWorkspaceTests: XCTestCase {
 
     func testLocalDataRetrospectionUsesFourteenDayWindow() {
         XCTAssertEqual(LocalDataRetrospection.windowDays, 14)
-        XCTAssertTrue(LocalDataRetrospection.exportCaption.contains("不是聊天原文"))
+        // This asserted 「不是聊天原文」 until the copy was measured against the
+        // file it describes: `exportReport()` writes each 待回复 preview and the
+        // first 50 characters of retracted messages. A caption that denies the
+        // content is the one sentence the user relies on when leaving the file
+        // on a shared machine, so the expectation moved to the new contract
+        // (see SettingsScopeHonestyTests for the content/copy pairing).
+        XCTAssertTrue(LocalDataRetrospection.exportCaption.contains("原文片段"))
+        XCTAssertFalse(LocalDataRetrospection.exportCaption.contains("不是聊天原文"))
         XCTAssertTrue(LocalDataRetrospection.windowCaption.contains("14"))
         XCTAssertTrue(LocalDataRetrospection.emptyPendingAsks.contains("近两周"))
         XCTAssertTrue(LocalDataRetrospection.emptyRecalls.contains("近两周"))
