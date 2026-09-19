@@ -161,6 +161,62 @@ final class AutopilotSafetyTests: XCTestCase {
         XCTAssertNil(hold)
     }
 
+    func testSendWithoutAnyQuoteIsHeld() {
+        // The guard used to be `if let quote = evidenceQuote { check }`: a model
+        // that omitted the field skipped the only check answered about the
+        // source rather than by the model itself. Peer text is attacker-writable,
+        // so disarming it then cost nothing.
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "周末一起爬山吗", replyText: "去！我把装备带上",
+                risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+                evidenceQuote: nil, evidenceSource: "周末一起爬山吗", groundsSend: true
+            ),
+            "AI 没有引用对方原话，需人工确认"
+        )
+    }
+
+    func testWhitespaceOnlyQuoteCountsAsNoQuote() {
+        XCTAssertEqual(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "周末一起爬山吗", replyText: "去",
+                risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+                evidenceQuote: " \t\n", evidenceSource: "周末一起爬山吗", groundsSend: true
+            ),
+            "AI 没有引用对方原话，需人工确认"
+        )
+    }
+
+    func testDecisionThatSendsNothingIsExemptFromQuoting() {
+        XCTAssertNil(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "嗯嗯", replyText: nil,
+                risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+                evidenceQuote: nil, evidenceSource: "嗯嗯", groundsSend: false
+            )
+        )
+    }
+
+    func testGroundedQuotePassesEvenWhenTheSendRequiresOne() {
+        XCTAssertNil(
+            AutopilotService.autopilotSafetyHoldReason(
+                triggerText: "周末一起爬山吗", replyText: "去！我把装备带上",
+                risk: .low, reasonCode: "routine_ack", sensitiveKeywords: [],
+                evidenceQuote: "周末一起爬山吗", evidenceSource: "周末一起爬山吗", groundsSend: true
+            )
+        )
+    }
+
+    /// The exemption is written as "which actions put nothing on the wire", not
+    /// "which actions are named send/stall": the decoder also folds `pending`
+    /// and an absent action into a stall that *does* queue text.
+    func testGroundsSendOnlyExemptsActionsThatSendNothing() {
+        XCTAssertTrue(AutopilotService.groundsSend(skip: false, readNoReply: false))
+        XCTAssertFalse(AutopilotService.groundsSend(skip: true, readNoReply: false))
+        XCTAssertFalse(AutopilotService.groundsSend(skip: false, readNoReply: true))
+        XCTAssertFalse(AutopilotService.groundsSend(skip: true, readNoReply: true))
+    }
+
     func testNonHanziMoneyCuesHoldWithoutKeywords() {
         // Emoji and pinyin spellings cannot live in the keyword list as
         // Hanzi, so they are built-in tripwires on the incoming text.
@@ -461,6 +517,15 @@ final class AutopilotSafetyTests: XCTestCase {
                 "autopilot_reply_v4 missing placeholder \(placeholder)"
             )
         }
+    }
+
+    /// The guard holds any send that cites nothing, so the prompt has to ask for
+    /// the citation: without the instruction every reply would silently pile up
+    /// in 待确认草稿, and the only clue would be a hold label the user cannot act
+    /// on.
+    func testPromptAsksForTheQuoteASendIsHeldTo() throws {
+        let template = try PromptLoader().load(version: "autopilot_reply_v4")
+        XCTAssertTrue(template.contains("evidence_quote 不能为空"), template)
     }
 
     // MARK: - applySafetyDowngrades

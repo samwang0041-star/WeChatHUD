@@ -106,6 +106,14 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 reason: "已有发送正在进行", retryableReason: true),
             .requeueUnchanged(reason: "已有发送正在进行"))
+        // The real reason strings are complete sentences ending in 。; the
+        // concatenation this replaces printed
+        // 「…，微信没有收到。，已转为人工确认」 on the approval card.
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
+            .humanRequired(reason: "这条回复在按下发送前已经停住，微信没有收到，已转为人工确认"))
     }
 
     func testFailureTailDecidesPauseBeforeStampingManualOnly() throws {

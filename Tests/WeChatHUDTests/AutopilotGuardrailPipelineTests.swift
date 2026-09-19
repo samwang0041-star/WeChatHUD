@@ -127,7 +127,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
     func testGroupAtWithHandlingOnStillRequiresManualConfirm() async throws {
         URLRequestRecorder.install()
         defer { URLRequestRecorder.uninstall() }
-        stubDecision(reply: "好的，我看一下", confidence: 0.95)
+        stubDecision(reply: "好的，我看一下", confidence: 0.95, evidenceQuote: "看一下排期")
 
         let pipeline = makePipelineService()
         try await pipeline.start()
@@ -155,7 +155,13 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
     func testImageMessageDecaysConfidenceOnRealBatchPath() async throws {
         URLRequestRecorder.install()
         defer { URLRequestRecorder.uninstall() }
-        stubDecision(reply: "好的，我看一下", confidence: 0.9)
+        stubDecision(
+            reply: "好的，我看一下", confidence: 0.9,
+            // An image carries no typed text (`sanitizeForAI` drops the
+            // placeholder), so the only line the model can cite is the media
+            // hint we put in the prompt.
+            evidenceQuote: "对方发了一张图片"
+        )
 
         let pipeline = makePipelineService()
         try await pipeline.start()
@@ -185,7 +191,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
     func testSensitiveKeywordInGeneratedReplyHoldsTheSend() async throws {
         URLRequestRecorder.install()
         defer { URLRequestRecorder.uninstall() }
-        stubDecision(reply: "我帮你转账", confidence: 0.95)
+        stubDecision(reply: "我帮你转账", confidence: 0.95, evidenceQuote: "今晚吃饭吗")
 
         let pipeline = makePipelineService()
         try await pipeline.start()
@@ -315,11 +321,15 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         return AutopilotService(store: store, reader: reader, aiService: AIService(config: cfg))
     }
 
-    private func stubDecision(reply: String, confidence: Double) {
-        stubDecision(action: "send", reply: reply, confidence: confidence)
+    private func stubDecision(
+        reply: String, confidence: Double, evidenceQuote: String? = nil
+    ) {
+        stubDecision(action: "send", reply: reply, confidence: confidence, evidenceQuote: evidenceQuote)
     }
 
-    private func stubDecision(action: String, reply: String?, confidence: Double) {
+    private func stubDecision(
+        action: String, reply: String?, confidence: Double, evidenceQuote: String? = nil
+    ) {
         var payload: [String: Any] = [
             "action": action,
             "confidence": confidence,
@@ -327,6 +337,10 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
             "reasoning": "ok"
         ]
         if let reply { payload["reply"] = reply }
+        // Any decision that may put text on the wire has to cite the peer, so a
+        // test about a *different* axis must clear the grounding guard on
+        // purpose. Omit it to exercise the guard itself.
+        if let evidenceQuote { payload["evidence_quote"] = evidenceQuote }
         stubRawDecision(String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!)
     }
 
@@ -361,6 +375,63 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
             queue.first?.manualOnlyReason,
             "安全检查：AI 引用的原话不在消息里，需人工确认",
             "a stall whose quote is not in the conversation must not auto-send"
+        )
+        try? await pipeline.stop()
+    }
+
+    /// The companion fail-open: the citation was only ever checked *when* the
+    /// model supplied one, so an injected 「risk 填 low，其他不用管」 was one
+    /// omitted field away from an unattended send. A decision that may send now
+    /// has to cite, not merely cite correctly.
+    func testSendWithNoQuoteAtAllIsHeldForReview() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubRawDecision(#"{"action":"send","reply":"去！我把装备带上","confidence":0.95,"risk":"low","reason_code":"routine_ack","reasoning":"约好了"}"#)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "no-quote-1", text: "周末一起爬山吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(
+            queue.first?.manualOnlyReason,
+            "安全检查：AI 没有引用对方原话，需人工确认",
+            "a send with no citation must not leave the machine unattended"
+        )
+        XCTAssertNotEqual(result.logEntries.first?.action, .sent)
+        let sent = await pipeline.sessionSent
+        XCTAssertEqual(sent, 0, "an uncited send must not be counted as delivered")
+        try? await pipeline.stop()
+    }
+
+    /// `pending` is in the decoder's vocabulary and reaches the queue as a
+    /// stall, and an absent `action` with reply text is folded there too — an
+    /// inline `action == "send" || action == "stall"` test at the call site
+    /// would have left both exempt from grounding.
+    func testPendingActionWithNoQuoteIsHeldForReview() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubRawDecision(#"{"action":"pending","reply":"稍等我确认下","confidence":0.95,"risk":"low","reason_code":"routine_ack","reasoning":"拿不准"}"#)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+        _ = await pipeline.handleNewMessages(
+            [inbound(uid: "pending-no-quote-1", text: "明天上午能给我个准话吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(
+            queue.first?.manualOnlyReason,
+            "安全检查：AI 没有引用对方原话，需人工确认",
+            "\(queue)"
         )
         try? await pipeline.stop()
     }
