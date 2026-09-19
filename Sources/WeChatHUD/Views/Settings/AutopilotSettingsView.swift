@@ -454,6 +454,13 @@ struct AutopilotSettingsView: View {
             loadError = "读不到当前的托管设置，这一页暂时不接受改动。请点「重新读取设置」再试一次。"
             saved = false
             return
+        case .corrupt:
+            // Same refusal, different sentence: this one will not fix itself by
+            // retrying, and hydrating the page from defaults would let the next
+            // 保存 write the defaults over whatever the user had set.
+            loadError = "托管设置的内容读不懂（可能被上次写入打断）。这一页暂时不接受改动，保存一次会重建默认设置。"
+            saved = false
+            return
         }
         loadError = nil
         autoSendEnabled = cfg.autoSendEnabled

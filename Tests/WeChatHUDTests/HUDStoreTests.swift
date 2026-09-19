@@ -1731,12 +1731,19 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertEqual(read.sensitiveKeywords, ["转账", "合同金额"])
         XCTAssertEqual(read.maxSendsPerSession, 3)
 
-        // Undecodable garbage is 「没有可合并的值」, not a read failure: refusing
-        // to write then would leave the page unable to save anything, ever.
+        // Undecodable garbage is a third answer. For the *write* side it behaves
+        // like `.absent` — refusing there would leave the page unable to save
+        // anything, ever — but it must not be reported as 「没存过」, because a send
+        // guard that believes that uses the built-in 敏感词表 and a cap of 50 in
+        // place of whatever the user had stored.
         try store.setSetting("autopilot", value: "{ not json")
-        if case .absent = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {
-            XCTFail("读得回来但解不开时，不许当成读失败把设置页锁死")
+        if case .corrupt = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {
+            XCTFail("存着但解不开要报 corrupt，不能与 absent 混成一个答案")
         }
+        XCTAssertNil(store.autopilotConfigForSendGate(),
+                     "发送闸门不许把解不开的存盘当成「用户没设过，用默认值」")
+        XCTAssertTrue(try store.updateAutopilotConfig { $0.autoSendEnabled = true },
+                      "但设置页必须还能救得回来，不然这一页永远锁死")
 
         try store.exec("DROP TABLE settings")
         if case .unreadable = store.readSettingJSON("autopilot", as: AutopilotConfig.self) {} else {

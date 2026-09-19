@@ -602,11 +602,11 @@ sysmsg 侧的闸放在 `type=` 正则**之前**：内层 `parse()` 拒绝并不�
 4. **`rejectPending` 删孪干行用 `try?`、失败不留 hold**（:957），与 §171 修过的
    `cancelPendingSend` 不对称：日志行翻成 skipped 成功、队列行还活着，而队列轴的闸门
    传的是 `logId: nil`，看不见那次 skip。同形缺陷的最后一个消费者。
-5. `ApprovalWorkspaceView:59` `?? AutopilotConfig()`：读不到时整页说「当前未开启自动发送，
+5. [已修 §179] `ApprovalWorkspaceView:59` `?? AutopilotConfig()`：读不到时整页说「当前未开启自动发送，
    这条回复尚未发出」，而自动发送可能开着并在发。与 §164 同一形状，这次在**确认工作台**上。
-6. 同一页 `:178/:338` 与 `AutopilotTabView:42` 把「自动发送已关」时的队列标成**即将发送**，
+6. [已修 §179] 同一页 `:178/:338` 与 `AutopilotTabView:42` 把「自动发送已关」时的队列标成**即将发送**，
    而 `executeSend` 在关着时一条都不会发（:1809）——用户会去点「立即发送」发自己没读过的草稿。
-7. `ApprovalWorkspaceView:299` 的 `n / 500` 计数没有任何一端执行 500。
+7. [已修 §179] `ApprovalWorkspaceView:299` 的 `n / 500` 计数没有任何一端执行 500。
 8. `DailyReportTabView:128/336` 在周报页导出的是**日报**，拿不到时把原因说成桌面写入权限。
 9. `NotificationSettingsView:50` / `AISettingsView:1031` 仍是 `?? Defaults()` 灌进去再整块写回，
    和 §164 修掉的托管页同形，只是那两处不驱动发送。
@@ -617,3 +617,89 @@ sysmsg 侧的闸放在 `type=` 正则**之前**：内层 `parse()` 拒绝并不�
     把该发的留在框里，不会把不该发的发出去）。
 12. `approvePending` 的陈旧校验只在 `if let createdAt` 里跑（参数默认 `nil`）：两个现存的
     调用点都传了值，所以这是陷阱不是活 bug —— 要把参数改成非可选。
+
+## §178 回攻上一轮的修法：五处不成立，其中三处是我自己写的闸门
+
+第三轮派单里专门有一路「只许攻击最近三个提交」。结论：**上一轮我修的东西有一半只修了一半**，
+形状仍是同一类 —— 判断放在一处、消费者各有各的写法。
+
+**1）静音只拦投递，不拦已经排队的那条。**（P0，我 §175 那句话说过头了）
+`ScanEngine` 两处 feed 拦住了新消息进管线，但用户点「静音此对话」时，倒计时里的草稿
+（`replyDelay` 5–300 秒）早就在 `pendingSendQueue` / `autopilot_pending_sends` 里了，
+`executeSend` 从头到尾没看过 `silencedAt`。用户刚静音的那个人，随后照样收到一条回复。
+修法把静音做成**撤回**：`mayStillDeliver` 多一条 `conversationMuted`，
+`deliveryStillPermitted` 多收 `chatUsername`（两处生产调用点都必须传，判据里钉了
+「不许再出现不传对话名的调用」）。同时把 `silencedAt > now` 这个判断收进
+`ChatActionState.isPermanentlySilenced(nowEpoch:)` —— 收件箱行、横幅、两处投递、发送闸门
+读的是同一个事实，此前是五种写法。判据：
+`testMutingAConversationWithdrawsWhatIsAlreadyQueued`（对照组 + 永久静音 + 过期水印三态）、
+`testMayStillDeliverTreatsMutedAsWithdrawn`、`testPermanentSilenceSentinelHasOneReader`。
+
+**2）回攻自己那条闸门：全选前的读框，管不到粘贴那一刻。**（P1）
+读框与 `Cmd+V` 之间隔着 `pause(0.05)`、账号核验和三次 actor 跳转。人在这一段打字，
+`Cmd+A` 选中的是空，粘贴就变成**插入**，发送键会把「人的半句 + AI 的回复」一起发出去。
+所以补了粘贴前第二次读框、发送键前「框里必须恰好是我们那段」，以及第五处：
+`retractPastedDraft`（撤回也按 `Cmd+A`+Delete）此前**根本不读框**，会在同样的间隙里把用户
+自己刚打的话和我们的那一段一起删掉 —— 现在只撤回「仍然只有我们那段」的框，否则留着不动。
+
+**3）`stop()` 落在生成中途，我上一轮的丢弃只删内存、不删 DB。**（P0）
+`processBatch` 写孪干行用的是**活着的** `self.sessionId`，所以 stop→start 之间醒来会把这条
+草稿记到**新**会话名下：`start()` 再水化它、`processPendingQueue` 在 `scheduledSendTime`
+已过的情况下把它发出去 —— 我上一轮的 `continue` 恰好制造了这个「界面说不发、DB 里排着发」。
+现在丢弃分支同时 `deletePendingSend`，删不掉时按 §171 的形态挂 `unresolvedQueueWrites[.cancelled]`。
+顺带修一句我自己写的假话注释：`stop()` 在 :365 就清了 inbound 队列，所以「下一轮会重试」
+在这条路上不成立，批次是真没了（这是 stop 的既有语义，不是本次改动引入的）。
+
+**4）`.absent` 被当成一个答案，其实是两个。**（P1）
+`readSettingJSON` 把「解不开」折叠成 `.absent`，而 `autopilotConfigForSendGate()` 对
+`.absent` 给默认值 —— 于是半写入的一行让敏感词表退回内置、每会话上限退回 50，正是这个
+helper 声称要挡的那件事。新增 `SettingRead.corrupt`：写侧仍按 absent 处理（不然这一页永远
+存不回去），闸门侧一律不发。设置页拿到的是另一句实话。
+判据 `testCorruptStoredConfigRefusesTheSendGate` + 改了 `testSettingReadSeparatesAbsentFromUnreadable`
+—— 后者原本钉住的就是那个错的折叠，这是本轮唯一一处「老测试在保护缺陷」的复写。
+
+**5）静音清单由 20 条一圈的通知环驱动，取消静音的按钮会自己消失。**（P1，且被本轮改重）
+`ContactsSettingsView` 读 `monitor.silencedItems ← handledItems ← recentNotifications`，
+而 `chat_actions.silenced_at` 是永久水印。环一转过去，清单显示「没有静音的对话」，
+数据库里那条还在，界面四处都不提醒、也不再自动回复。本轮把静音升级成撤回之后，
+这个洞从「看不到」变成「这条对话死了且应用内回不来」。改成读 `loadChatActions()`，
+取消走 `clearChatAction`，并把那句「不会出现在收件箱中」补全成它实际做的三件事。
+
+**代理报的两条 P0 判阴**：① 三处读框「读不到就失败打开」是刻意选择，理由写在谓词注释里
+—— 反过来会让微信某次 AX 改版后自动发送永久失灵；本轮补的是**可观测性**（读不到时写一行
+日志，生产里能被证伪）。② 「静音清单不可达」的另一半（用户改昵称后 `searchNames` 不匹配）
+与本轮无关，未采纳。
+
+变异 S1–S7 全部先确认改到了才判红（S1 静音当撤回、S2 corrupt 又当 absent、S3 丢弃不删 DB、
+S4 never-ran 当刚跑过、S5 锚点回墙上时钟、S6 撤回不读框、S7 静音判据反向）。
+
+## §179 心跳自己的节拍还在墙上时钟上；确认工作台的三句话有一件不存在
+
+**心跳三处锚点是本轮时钟轴漏掉的最后一块。** `lastSafetyScanAt`、`lastProactiveOutreachAt`、
+`lastAutomationActivationAt` 都是 `Date()` 写、`Date()` 比 —— 而它们是「这个进程看着发生的两件事
+之间过了多久」，按仓库自己定的规则属于单调轴。反向修正（时区变更唤醒后 macOS 正在做的事）会让
+差值变负，于是兜底扫描和**全部**主动提醒（VIP 升档／承诺到期／多条未回）停止触发，时长等于
+回拨量，而岛上的外观一切正常；`lastAutomationActivationAt` 反方向失效 —— 8 秒窗口一直开着，
+把**用户自己**切回微信这次激活也吞掉，正是那条注释自己警告的「用户在微信里打字时托管还在发」。
+新增 `ChatMonitor.windowElapsed(since:now:interval:)`（`nil` = 从没跑过 = 到点）+ 可注入的
+`monotonicNow`。判据：纯谓据三条 + 三条字面锚点不许再出现 `= Date()` / `timeIntervalSince(...)`。
+
+**确认工作台的「即将发送」和「/500」。** 三处：
+① `autoSendOn ? "需人工确认" : "即将发送"` —— 自动发送**关着**的时候标成「即将发送」，
+而 `executeSend` 在关着时一条都不会发（:1809），用户于是会去点「立即发送」发自己没读过的草稿；
+② 同一页在设置读不到时说「当前未开启自动发送，这条回复尚未发出」—— 把一次 SQLITE_BUSY
+说成一条安全保证；③ `n / 500` 计数，全仓没有任何一端执行 500。
+现在这三句都改到与代码一致：`autoSendState: Bool?`（读不到就说读不到）、关着时叫「等你确认」、
+超过建议长度改成明说的红字「仍会原样发出」。`AutopilotTabView:42` 同一处误标同修。
+
+**删掉一处从未被调用、且注释撒谎的出网原语。** `LinkExtractor.fetchWebContent(url:)` 拿对端
+消息里的 `<url>` 直接 `URLSession` 请求：无 scheme 白名单、无响应体上限，注释说「由 ChatMonitor
+另行调用」—— 全仓零调用点。死代码里留一条「按对方给的地址发请求」不值得，删。
+
+判阴一条：`isAtMe` 把纯文本 `@所有人`/`@all` 也算「提到我」。看着像放大入口，但
+`MessageHelpers.swift:140-142` 下面紧跟着的注释写明这是有意的分工（「should this interrupt me?」
+与「是否只 @ 了全组」是两个问题），且群聊一律人工确认（`AutopilotService:2460`）—— 不改。
+
+未修但已定性的常驻问题（§177 之外新增）：`analysis_cache` 只按整键惰性删、`autopilot_log`
+无任何保留策略、所有 housekeeping 只在开库时跑一次（对 24/7 进程等于「14 天 + 整个在线时长」）、
+心跳 tick 体无在飞保护、timer 装在 `.default` 模式（菜单跟踪期间不响）。

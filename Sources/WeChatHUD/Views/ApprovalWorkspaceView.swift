@@ -55,8 +55,37 @@ struct ApprovalWorkspaceView: View {
         monitor.autopilotLog.filter { $0.action == .pending }.count
     }
 
-    private var autoSendOn: Bool {
-        (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).autoSendEnabled
+    /// `nil` means 「这一页读不到托管设置」, which is a different fact from
+    /// 「自动发送没开」 — and this page uses the value to tell the user a reply
+    /// has not gone out yet. A busy lock used to flip every sentence on this
+    /// page to the "off" wording while sends were continuing.
+    private var autoSendState: Bool? {
+        store.autopilotConfigForSendGate()?.autoSendEnabled
+    }
+
+    private var autoSendOn: Bool { autoSendState == true }
+
+    private var autoSendToolbarText: String {
+        switch autoSendState {
+        case .some(true): return "自动发送开启"
+        case .some(false): return "自动发送关闭"
+        case nil: return "自动发送状态暂时读不到"
+        }
+    }
+
+    /// Nothing in the app enforces a maximum length on a reply — the counter
+    /// used to read 「n / 500」, which is a cap the user would believe and that
+    /// does not exist. It now says what happens past it: it goes out as typed.
+    private static let suggestedReplyLength = 500
+
+    private var replyOverSuggestedLength: Bool {
+        editedReply.count > Self.suggestedReplyLength
+    }
+
+    private var replyLengthHint: String {
+        replyOverSuggestedLength
+            ? "\(editedReply.count) 字 · 已超过建议 \(Self.suggestedReplyLength) 字，仍会原样发出"
+            : "\(editedReply.count) / \(Self.suggestedReplyLength)"
     }
 
     private var humanNeededSends: [PendingSend] {
@@ -130,7 +159,7 @@ struct ApprovalWorkspaceView: View {
                     Image(systemName: monitor.autopilotActive ? "arrow.triangle.2.circlepath" : "pause.circle")
                     Text(monitor.autopilotActive ? "正在整理" : "尚未开始整理")
                     Text("·")
-                    Text(autoSendOn ? "自动发送开启" : "自动发送关闭")
+                    Text(autoSendToolbarText)
                     if monitor.autopilotActive {
                         Button(monitor.autopilotManuallyPaused ? "恢复" : "暂停") {
                             Task {
@@ -175,7 +204,7 @@ struct ApprovalWorkspaceView: View {
             LazyVStack(spacing: 8) {
                 if !humanNeededSends.isEmpty {
                     HStack {
-                        Text(autoSendOn ? "需人工确认" : "即将发送")
+                        Text(autoSendOn ? "需人工确认" : "等你确认")
                             .font(.system(size: 12, weight: .semibold))
                         Text("\(humanNeededSends.count)")
                             .font(.system(size: 11, weight: .medium))
@@ -291,14 +320,16 @@ struct ApprovalWorkspaceView: View {
                         .scrollContentBackground(.hidden)
                     HStack {
                         if !autoSendOn {
-                            Label("当前未开启自动发送，这条回复尚未发出。", systemImage: "info.circle")
+                            Label(autoSendState == nil
+                                ? "暂时读不到自动发送设置，这条是否已经发出请在微信里核对。"
+                                : "当前未开启自动发送，这条回复尚未发出。", systemImage: "info.circle")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(editedReply.count) / 500")
+                        Text(replyLengthHint)
                             .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(replyOverSuggestedLength ? Color.red : Color.secondary)
                     }
                 }
 
@@ -335,7 +366,7 @@ struct ApprovalWorkspaceView: View {
             .padding(.vertical, 12)
         } else if !humanNeededSends.isEmpty {
             ContentUnavailableView(
-                autoSendOn ? "这些回复需要你确认后再发" : "自动发送已关，左侧是即将发送的回复",
+                autoSendOn ? "这些回复需要你确认后再发" : (autoSendState == nil ? "暂时读不到自动发送设置，先别假定这些已经发出" : "自动发送已关，这些都要你点一下才会发出去"),
                 systemImage: "paperplane",
                 description: Text("立即发送或取消都可以在左侧完成。草稿仍在待确认列表里。")
             )

@@ -393,12 +393,18 @@ actor AutopilotService {
     /// window used to be typed out anyway.
     nonisolated static func mayStillDeliver(
         paused: Bool, sessionOpen: Bool,
+        conversationMuted: Bool = false,
         queueRowLive: Bool?, approvalRowPending: Bool?,
         alreadySentHere: Bool = false,
         rejectedHere: Bool = false,
         queueHeldHere: Bool = false
     ) -> Bool {
         if paused || !sessionOpen { return false }
+        // 「静音此对话」 hides the row, the banner and the ingest feed; if the
+        // countdown draft that was already queued still went out, the user
+        // muted the conversation and got a reply to it anyway — from the one
+        // surface where they can no longer see that it happened.
+        if conversationMuted { return false }
         // These two are not about the row's state but about what this process
         // already decided: the database still calls the row 'pending' because the
         // write-back failed, so no row read can rule out either a second send of
@@ -478,10 +484,18 @@ actor AutopilotService {
         }
     }
 
-    func deliveryStillPermitted(queueId: UUID?, logId: Int64?) -> Bool {
-        Self.mayStillDeliver(
+    /// Whether a reply may still be typed into WeChat. `chatUsername` is what
+    /// makes 静音此对话 a withdrawal: the mute is applied to the durable
+    /// `chat_actions` row, while the draft this decision guards may already be
+    /// sitting in the queue from a message that arrived before the mute.
+    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?) -> Bool {
+        let muted = chatUsername.map { name in
+            (store.loadChatActions()[name]?.silencedAt ?? 0) > Int(Date().timeIntervalSince1970)
+        } ?? false
+        return Self.mayStillDeliver(
             paused: isPaused,
             sessionOpen: sessionId != nil,
+            conversationMuted: muted,
             queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
             alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
@@ -707,14 +721,26 @@ actor AutopilotService {
             let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
             if sid != sessionId {
                 // `stop()` (or a restart into a new session id) landed while the
-                // model was running. Everything this call produced belongs to a
-                // session that no longer exists: the queue twin was skipped
-                // because :1419 re-reads the live property, so inserting the log
-                // row would put a 待确认 card on screen whose 确认发送 can never
-                // find a draft, and counting it would publish a receipt for a
-                // reply no keystroke carried. Undo the enqueue and record nothing.
+                // model was running. Inserting this row would put a 待确认 card on
+                // screen for a session that no longer exists and publish a
+                // receipt for a reply no keystroke carried, so record nothing.
+                let ghost = pendingSendQueue.first { $0.id == UUID(uuidString: entry.queueId ?? "") }
                 if let qid = entry.queueId, let uuid = UUID(uuidString: qid) {
                     pendingSendQueue.removeAll { $0.id == uuid }
+                    // The DB twin is the dangerous half: :1419 re-reads the
+                    // *live* sessionId, so a stop→start inside this await wrote
+                    // the row under the NEW session. Removing only the in-memory
+                    // copy leaves a row that start() rehydrates and
+                    // processPendingQueue fires with a send time already past —
+                    // the draft the user stopped sending itself.
+                    do {
+                        try store.deletePendingSend(id: uuid)
+                    } catch {
+                        if let ghost {
+                            unresolvedQueueWrites[uuid] = .cancelled(
+                                chatUsername: ghost.chatUsername, replyText: ghost.replyText)
+                        }
+                    }
                 }
                 continue
             }
@@ -819,7 +845,7 @@ actor AutopilotService {
             // mid-flight flips it out of 'pending', and that must be the last
             // thing checked before the send key.
             gate: { [weak self] in
-                await self?.deliveryStillPermitted(queueId: nil, logId: logId) ?? false
+                await self?.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: chatUsername) ?? false
             }
         )
         if success {
@@ -1920,7 +1946,7 @@ actor AutopilotService {
             text: item.replyText, config: config, typingDelay: typingDelay,
             peerLastMessage: item.peerLastMessage, topic: item.topic,
             gate: { [weak self] in
-                await self?.deliveryStillPermitted(queueId: item.id, logId: nil) ?? false
+                await self?.deliveryStillPermitted(queueId: item.id, logId: nil, chatUsername: item.chatUsername) ?? false
             }
         )
         if success {

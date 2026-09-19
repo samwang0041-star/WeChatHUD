@@ -817,7 +817,7 @@ enum WeChatLauncher {
         // Read the box immediately before pressing `Cmd+A`: everything after
         // this point types over whatever the human had written there.
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        guard inputBoxIsSafeToOverwrite(readValue: axString(input, kAXValueAttribute)) else {
+        guard inputBoxIsSafeToOverwrite(readValue: readInputBoxValue(input)) else {
             return .failed(.inputHasUnsentDraft)
         }
         postCmdKey(kVK_ANSI_A)
@@ -830,7 +830,7 @@ enum WeChatLauncher {
         // Re-read at the last moment before anything is typed: the checks above
         // all sit behind awaits, and a human typing in that gap is exactly the
         // case the first read was meant to catch.
-        guard inputBoxIsSafeToOverwrite(readValue: axString(input, kAXValueAttribute)) else {
+        guard inputBoxIsSafeToOverwrite(readValue: readInputBoxValue(input)) else {
             return .failed(.inputHasUnsentDraft)
         }
         pasteboard.clearContents()
@@ -838,24 +838,24 @@ enum WeChatLauncher {
         postCmdKey(kVK_ANSI_V)
         // Keep the reply on the pasteboard until the queued paste event is consumed.
         guard await pause(0.15) else {
-            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames, expecting: text)
             return .failed(.accountUnverified)
         }
         guard let sendKey else { return .completed }
         if let failure = await accountFailure(binding) {
-            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames, expecting: text)
             return .failed(failure)
         }
         guard isWeChatFrontmost(app) else {
-            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames, expecting: text)
             return .failed(.lostForeground)
         }
         guard isCurrentChat(axApp: axApp, searchNames: searchNames) else {
-            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames, expecting: text)
             return .failed(.chatMismatch)
         }
         guard await sendStillAllowed(abortCheck) else {
-            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames)
+            retractPastedDraft(axApp: axApp, app: app, searchNames: searchNames, expecting: text)
             return .failed(.withdrawnBeforeSend)
         }
         // The last thing between us and a real recipient: press the send key
@@ -863,7 +863,7 @@ enum WeChatLauncher {
         // `retractPastedDraft` on this path — clearing the box would delete the
         // human's own words together with ours.
         guard pastedBoxStillHoldsOnlyTheReply(
-            readValue: axString(input, kAXValueAttribute), expecting: text
+            readValue: readInputBoxValue(input), expecting: text
         ) else {
             return .failed(.pastedBoxChanged)
         }
@@ -907,6 +907,19 @@ enum WeChatLauncher {
     /// concatenation to a real person. So the box is re-read once more before
     /// `Cmd+V`, and again before the send key, where "still ours" is the test.
     ///
+    /// Read the message input, and say out loud when WeChat did not answer.
+    /// Every guard below fails *open* on a nil — that is a deliberate choice,
+    /// but it also means an AX-schema change in some WeChat build would turn
+    /// 「不会覆盖你没发完的话」 into a claim nobody could see failing. This line
+    /// is what makes the gate falsifiable in the field.
+    @MainActor private static func readInputBoxValue(_ input: AXUIElement) -> String? {
+        let value = axString(input, kAXValueAttribute)
+        if value == nil {
+            log("input-box AX value unreadable — 覆盖/发送闸门本轮失败打开（未拦任何内容）")
+        }
+        return value
+    }
+
     /// After the paste the box must hold exactly the reply, or nothing. An
     /// empty box means the paste never landed and pressing Return is a no-op;
     /// anything other than our own text means someone else is in there and the
@@ -991,13 +1004,24 @@ enum WeChatLauncher {
     /// leaves a draft; typing into the wrong app destroys content, so a
     /// failed check must mean *don't type*.
     @MainActor private static func retractPastedDraft(
-        axApp: AXUIElement, app: NSRunningApplication, searchNames: [String]
+        axApp: AXUIElement, app: NSRunningApplication, searchNames: [String], expecting text: String
     ) {
         guard isWeChatFrontmost(app), isCurrentChat(axApp: axApp, searchNames: searchNames) else {
             log("skipped draft retraction — WeChat not frontmost or chat changed; draft may remain")
             return
         }
         guard let input = findMessageInput(in: axApp) else { return }
+        // A human can have typed after our paste landed. Select-all + Delete
+        // would then remove their words together with ours, which is the exact
+        // loss the three overwrite guards exist to prevent — so retract only a
+        // box still holding nothing but what we pasted. Leaving a draft behind
+        // is the failure this path can afford.
+        guard pastedBoxStillHoldsOnlyTheReply(
+            readValue: readInputBoxValue(input), expecting: text
+        ) else {
+            log("skipped draft retraction — box no longer holds only the pasted reply; left as typed")
+            return
+        }
         _ = AXUIElementSetAttributeValue(input, kAXFocusedAttribute as CFString, kCFBooleanTrue)
         postCmdKey(kVK_ANSI_A)
         postKey(kVK_Delete)

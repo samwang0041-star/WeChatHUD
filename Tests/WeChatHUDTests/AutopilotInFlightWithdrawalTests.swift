@@ -97,7 +97,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
         ))
         let openId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sessionId).first?.id)
-        let openStillAllowed = await service.deliveryStillPermitted(queueId: nil, logId: openId)
+        let openStillAllowed = await service.deliveryStillPermitted(queueId: nil, logId: openId, chatUsername: nil)
         XCTAssertTrue(openStillAllowed, "没被取消过的待确认行不该被这条闸门拦住")
 
         // 让 UPDATE 失败而 SELECT 照常：整张表没了的话，闸门会因为「读不到 pending
@@ -109,7 +109,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertEqual(store.autopilotLogPendingReply(id: openId), "我下午给你结论",
                        "行必须仍是 pending，否则这条测试又在验另一个信号")
         await service.rejectPending(logId: openId, chatUsername: "wxid_peer", replyText: "我下午给你结论")
-        let cancelledHeld = await service.deliveryStillPermitted(queueId: nil, logId: openId)
+        let cancelledHeld = await service.deliveryStillPermitted(queueId: nil, logId: openId, chatUsername: nil)
         XCTAssertFalse(cancelledHeld, "写回失败的取消也必须拦住发送")
     }
 
@@ -139,7 +139,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             scheduledSendTime: Date().addingTimeInterval(-1)
         )
         try store.upsertPendingSend(twin, sessionId: sid)
-        let control = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        let control = await service.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: nil)
         XCTAssertTrue(control, "没被取消过的行不该被拦住")
 
         try store.exec("""
@@ -151,9 +151,9 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertFalse(store.hasPendingSend(id: queueId), "这条路径上队列行删掉了")
         XCTAssertEqual(store.autopilotLogPendingReply(id: logId), "我下午给你结论",
                        "日志行仍是 pending —— 待确认那颗按钮还活着")
-        let viaQueueAxis = await service.deliveryStillPermitted(queueId: queueId, logId: nil)
+        let viaQueueAxis = await service.deliveryStillPermitted(queueId: queueId, logId: nil, chatUsername: nil)
         XCTAssertFalse(viaQueueAxis, "队列轴上必须记着")
-        let viaLogAxis = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        let viaLogAxis = await service.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: nil)
         XCTAssertFalse(viaLogAxis, "确认发送只读 logId 轴，跨轴也必须拦住")
     }
 
@@ -167,7 +167,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             "start() 没建出会话 ⇒ 这条测试什么都没验")
         let pending = item("我下午给你结论")
         try store.upsertPendingSend(pending, sessionId: sid)
-        let control = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        let control = await service.deliveryStillPermitted(queueId: pending.id, logId: nil, chatUsername: nil)
         XCTAssertTrue(control, "没被动过手脚的队列行不该被这条闸门拦住")
 
         try store.exec("""
@@ -182,7 +182,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             "删除失败必须被记下来，而不是只 print 一行"
         )
         XCTAssertTrue(store.hasPendingSend(id: pending.id), "盘上这行确实还在 —— 所以才需要拦")
-        let afterCancel = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        let afterCancel = await service.deliveryStillPermitted(queueId: pending.id, logId: nil, chatUsername: nil)
         XCTAssertFalse(afterCancel, "写回失败的取消必须拦住发送")
 
         // 先验一次「重试仍然失败」：这时集合必须仍然拦着。上一版只验了成功那次，
@@ -191,7 +191,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         let stillHeld = await service.unresolvedQueueWritesSnapshot[pending.id]
         XCTAssertNotNil(stillHeld, "写还没成就不能放掉这条")
         XCTAssertTrue(store.hasPendingSend(id: pending.id))
-        let afterFailedRetry = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        let afterFailedRetry = await service.deliveryStillPermitted(queueId: pending.id, logId: nil, chatUsername: nil)
         XCTAssertFalse(afterFailedRetry, "重试失败的这一轮也照样不许发")
 
         try store.exec("DROP TRIGGER break_queue_delete")
@@ -320,16 +320,16 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         // though no WeChat is running to receive it.
         _ = await service.testingExecuteSend(item: queued, config: config)
 
-        let live = await service.deliveryStillPermitted(queueId: queued.id, logId: nil)
+        let live = await service.deliveryStillPermitted(queueId: queued.id, logId: nil, chatUsername: nil)
         XCTAssertTrue(live, "an untouched in-flight row must stay sendable")
 
         await service.manualPause()
-        let paused = await service.deliveryStillPermitted(queueId: queued.id, logId: nil)
+        let paused = await service.deliveryStillPermitted(queueId: queued.id, logId: nil, chatUsername: nil)
         XCTAssertFalse(paused)
         await service.manualResume()
 
         try store.deletePendingSend(id: queued.id)
-        let withdrawn = await service.deliveryStillPermitted(queueId: queued.id, logId: nil)
+        let withdrawn = await service.deliveryStillPermitted(queueId: queued.id, logId: nil, chatUsername: nil)
         XCTAssertFalse(withdrawn, "the row is the user's withdrawal — it is gone, so stop")
     }
 
@@ -352,11 +352,11 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertEqual(store.autopilotLogPendingReply(id: logId), reply,
                        "行必须处于 pending，否则闸门没有理由打开")
 
-        let open = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        let open = await service.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: nil)
         XCTAssertTrue(open, "人还没撤回 ⇒ 允许发送")
 
         await service.rejectPending(logId: logId, chatUsername: "wxid_peer", replyText: reply)
-        let closed = await service.deliveryStillPermitted(queueId: nil, logId: logId)
+        let closed = await service.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: nil)
         XCTAssertFalse(closed, "取消本条把行翻出 pending ⇒ 闸门必须关掉")
     }
 
@@ -377,7 +377,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         await service.cancelPendingSend(id: flying.id)
 
         XCTAssertFalse(store.hasPendingSend(id: flying.id))
-        let after = await service.deliveryStillPermitted(queueId: flying.id, logId: nil)
+        let after = await service.deliveryStillPermitted(queueId: flying.id, logId: nil, chatUsername: nil)
         XCTAssertFalse(after, "a canceled row must not press keys")
     }
 
@@ -490,6 +490,12 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         let finalCheck = try XCTUnwrap(
             body.range(of: "guard pastedBoxStillHoldsOnlyTheReply("),
             "发送键前没有回读输入框")
+        // The withdrawal path (`retractPastedDraft`) presses Cmd+A + Delete too,
+        // and it runs *after* the paste — so a human who typed in the gap loses
+        // their words to the retraction that was meant to undo only ours.
+        let boxReads = body.components(separatedBy: "readInputBoxValue(input)").count - 1
+        XCTAssertGreaterThanOrEqual(boxReads, 4,
+                                    "全选前/粘贴前/发送键前/撤回前，每一处按键前都要先读框")
         XCTAssertLessThan(finalCheck.lowerBound, sendKey.lowerBound)
         XCTAssertGreaterThan(finalCheck.lowerBound, paste.lowerBound)
         XCTAssertTrue(body.contains("return .failed(.inputHasUnsentDraft)"),
@@ -532,9 +538,21 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertFalse(upToInsert.isEmpty, "切片不能为空")
         XCTAssertTrue(upToInsert.contains("if sid != sessionId"),
                       "await 之后、记账之前要重读会话，否则记的是上一个会话的决定")
+        // 只看字面存在会被「重读了但没跳过」满足 —— 那条分支必须真的 continue。
+        let branch = try XCTUnwrap(
+            upToInsert.components(separatedBy: "if sid != sessionId").last
+        ).components(separatedBy: "\n            }").first ?? ""
+        XCTAssertTrue(branch.contains("continue"),
+                      "重读到了却不跳过记账，等于什么都没拦")
         XCTAssertEqual(
-            upToInsert.components(separatedBy: "pendingSendQueue.removeAll { $0.id == uuid }").count - 1, 1,
+            branch.components(separatedBy: "pendingSendQueue.removeAll { $0.id == uuid }").count - 1, 1,
             "跳过记账的同时要把内存里那条幽灵草稿撤掉")
+        // 内存之外还有 DB 那一半：:1419 用的是活着的 sessionId，stop→start 会把
+        // 这条草稿记到**新**会话下，start() 再水化后就自己发出去了。
+        XCTAssertTrue(branch.contains("try store.deletePendingSend(id: uuid)"),
+                      "只删内存不删 DB 孪干 = 停掉的那条草稿在新会话里等着发")
+        XCTAssertTrue(branch.contains("unresolvedQueueWrites[uuid] = .cancelled"),
+                      "删不掉的时候要按 §171 的形态挂住，而不是当没事发生")
     }
 
     /// 「读不到配置」 is not an answer a send guard may guess at: the default
@@ -561,6 +579,12 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         // what used to be there, and matching that made this gate red on the fix.
         XCTAssertFalse(approval.contains("getSettingJSON(\"autopilot\""),
                        "确认发送这段里不许再出现「读不到就用默认值」")
+        // 两处投递闸门都要真的把「这是哪条对话」交给 gate，否则静音那条输入永远是 nil。
+        let gateWired = service.components(
+            separatedBy: "deliveryStillPermitted(queueId:").count - 1
+        XCTAssertGreaterThanOrEqual(gateWired, 2, "队列与人工确认两条路都要问闸门")
+        XCTAssertFalse(service.contains("deliveryStillPermitted(queueId: nil, logId: logId)"),
+                       "人工确认那条要带上对话名，否则静音拦不住它")
     }
 
     /// The gate can only refuse what it is handed: after a failed write-back the
@@ -605,5 +629,65 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertTrue(source.contains("case .delivered: unresolvedSentLogWrites.insert(logId)"))
         XCTAssertTrue(source.contains("case .cancelled: unresolvedSkippedLogWrites.insert(logId)"))
         XCTAssertTrue(source.contains("queueHeldHere: queueId.map { unresolvedQueueWrites[$0] != nil }"))
+    }
+
+    /// 「静音此对话」 is a withdrawal, not just an invisibility cloak. Gating the
+    /// two ingest feeds is one half of that; a draft already queued when the
+    /// user mutes is the other half, and `deliveryStillPermitted` is the last
+    /// place that can still stop it. The expired-watermark case is what keeps
+    /// this from turning every one-time silence into a permanent one.
+    @MainActor
+    func testMutingAConversationWithdrawsWhatIsAlreadyQueued() async throws {
+        let sessionId = try store.startAutopilotSession()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId, chatUsername: "wxid_muted", chatName: "同事乙",
+            senderUsername: "wxid_muted", senderName: "同事乙",
+            triggerMsgUID: "shard/Msg_g/9", triggerText: "在吗",
+            generatedReply: "在的", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        let logId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sessionId).first?.id)
+        let now = Int(Date().timeIntervalSince1970)
+
+        let before = await service.deliveryStillPermitted(
+            queueId: nil, logId: logId, chatUsername: "wxid_muted")
+        XCTAssertTrue(before, "对照组：没静音时这一行是允许发的")
+
+        try store.silenceChat(chatUsername: "wxid_muted", silencedAt: now + 10 * 365 * 24 * 3600)
+        let muted = await service.deliveryStillPermitted(
+            queueId: nil, logId: logId, chatUsername: "wxid_muted")
+        XCTAssertFalse(muted, "刚静音的对话仍然被回一条，而且那正是唯一能看见它的界面")
+
+        try store.silenceChat(chatUsername: "wxid_muted", silencedAt: now - 60)
+        let expired = await service.deliveryStillPermitted(
+            queueId: nil, logId: logId, chatUsername: "wxid_muted")
+        XCTAssertTrue(expired, "过期的 silencedAt 不是静音")
+    }
+
+    /// The pure half of the same rule, so a caller that cannot pass a username
+    /// cannot accidentally read "muted" as "not muted".
+    func testMayStillDeliverTreatsMutedAsWithdrawn() {
+        XCTAssertTrue(AutopilotService.mayStillDeliver(
+            paused: false, sessionOpen: true, queueRowLive: true, approvalRowPending: nil))
+        XCTAssertFalse(AutopilotService.mayStillDeliver(
+            paused: false, sessionOpen: true, conversationMuted: true,
+            queueRowLive: true, approvalRowPending: nil),
+                       "静音必须和「已发过」「已取消」同级")
+    }
+
+    /// `.absent` and `.corrupt` used to be one answer, and for a send guard the
+    /// two are opposite: 「没存过」 means the safe defaults, 「存着但读不懂」 must
+    /// mean 不发 —— otherwise a half-written row opens the two gates the doc
+    /// says this helper exists to close.
+    @MainActor
+    func testCorruptStoredConfigRefusesTheSendGate() throws {
+        let fresh = store.autopilotConfigForSendGate()
+        XCTAssertNotNil(fresh, "从没存过 → 用默认值是安全的")
+        try store.setSetting("autopilot", value: "{这不是 JSON")
+        XCTAssertNil(store.autopilotConfigForSendGate(),
+                     "存着但解不开，不能当成「用户没设过，用默认敏感词表和上限 50」")
+        // The settings page still has to be able to save its way out of that.
+        XCTAssertTrue(try store.updateAutopilotConfig { $0.autoSendEnabled = true })
+        XCTAssertEqual(store.autopilotConfigForSendGate()?.autoSendEnabled, true)
     }
 }

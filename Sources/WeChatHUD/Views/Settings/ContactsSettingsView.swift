@@ -825,25 +825,29 @@ private struct SilencedChatsSubView: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
-        let silenced = monitor.silencedItems
+        let silenced = monitor.silencedConversations
         VStack(alignment: .leading, spacing: 8) {
             if silenced.isEmpty {
                 emptyState(icon: "speaker.slash", text: "没有静音的对话", hint: "在收件箱中右键点击消息，选择“静音此对话”")
             } else {
-                Text("已静音的对话不会出现在收件箱中")
+                // The old sentence only claimed the inbox half. A mute also
+                // suppresses the banner and — since this round — stops the
+                // conversation reaching the assistant and withdraws a draft that
+                // was already queued, which is the part worth saying out loud.
+                Text("已静音的对话不会出现在收件箱、不会弹提醒，助手也不会替你回复它。")
                     .font(.system(size: 11)).foregroundColor(.secondary)
 
                 SettingsSection {
                     ForEach(Array(silenced.enumerated()), id: \.element.id) { idx, item in
                         if idx > 0 { SettingsRowDivider() }
                         SettingsRow(
-                            item.chatName,
-                            subtitle: item.aiSummary ?? item.preview,
+                            item.displayName,
+                            subtitle: "静音中 · 助手不会回复这条对话",
                             icon: "speaker.slash.fill",
                             iconColor: .red.opacity(0.5)
                         ) {
                             Button("取消静音") {
-                                monitor.unsilenceInboxItem(item)
+                                monitor.unsilenceConversation(username: item.username)
                             }
                             .controlSize(.small)
                         }

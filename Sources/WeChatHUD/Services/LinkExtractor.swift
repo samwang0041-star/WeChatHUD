@@ -1,7 +1,12 @@
 import Foundation
 
 /// Extracts link metadata from WeChat app messages (baseType=49).
-/// Also fetches webpage content for AI analysis when needed.
+///
+/// There used to be a `fetchWebContent(url:)` here that took the `<url>` out of
+/// a peer's message and asked URLSession for it — no scheme allowlist, no
+/// response-size cap, and nothing in the app ever called it. A dead sink for
+/// "fetch whatever the other party typed" is not worth keeping on the strength
+/// of a comment claiming a caller exists.
 enum LinkExtractor {
 
     struct LinkMetadata {
@@ -32,62 +37,6 @@ enum LinkExtractor {
             url: url,
             appType: appType
         )
-    }
-
-    /// Fetch webpage content for AI analysis.
-    /// Returns the first ~2000 chars of extracted body text, or nil on failure.
-    /// Timeout: 5 seconds.
-    static func fetchWebContent(url: String) async -> String? {
-        guard let requestURL = URL(string: url) else { return nil }
-
-        var request = URLRequest(url: requestURL)
-        request.timeoutInterval = 5
-        request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36", forHTTPHeaderField: "User-Agent")
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  http.statusCode == 200,
-                  let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .ascii) else {
-                return nil
-            }
-            return extractBodyText(from: html)
-        } catch {
-            print("[WCHUD] LinkExtractor: fetch failed for \(url): \(error.localizedDescription)")
-            return nil
-        }
-    }
-
-    /// Strip HTML tags and extract readable text. Returns first ~2000 chars.
-    private static func extractBodyText(from html: String) -> String? {
-        // Remove script, style, nav, header, footer tags and their content
-        var text = html
-        let removePatterns = [
-            "<script[^>]*>[\\s\\S]*?</script>",
-            "<style[^>]*>[\\s\\S]*?</style>",
-            "<nav[^>]*>[\\s\\S]*?</nav>",
-            "<header[^>]*>[\\s\\S]*?</header>",
-            "<footer[^>]*>[\\s\\S]*?</footer>"
-        ]
-        for pattern in removePatterns {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                text = regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
-            }
-        }
-
-        // Remove all remaining HTML tags
-        if let tagRegex = try? NSRegularExpression(pattern: "<[^>]+>") {
-            text = tagRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " ")
-        }
-
-        // Clean up whitespace
-        text = text.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        return String(trimmed.prefix(2000))
     }
 
     /// Simple XML tag extraction. Not a full parser — just grabs content between <tag> and </tag>.

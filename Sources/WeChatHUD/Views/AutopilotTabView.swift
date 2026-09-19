@@ -39,7 +39,14 @@ struct AutopilotTabView: View {
             } else {
                 // ── Sending queue (countdown) ──
                 if !monitor.autopilotPendingSendQueue.isEmpty {
-                    sectionHeader("即将发送", icon: "arrow.up.circle.fill", color: .cyan, count: monitor.autopilotPendingSendQueue.count)
+                    // 「即将发送」 is only true while 自动发出去 is on: executeSend
+                    // returns early when it is off, so with it off this list is a
+                    // set of drafts waiting for a click — and the same page says
+                    // exactly that five lines below in `autoSendSummary`.
+                    sectionHeader(store.autopilotConfigForSendGate()?.autoSendEnabled == true
+                                  ? "即将发送" : "等你确认",
+                                  icon: "arrow.up.circle.fill", color: .cyan,
+                                  count: monitor.autopilotPendingSendQueue.count)
                     ForEach(monitor.autopilotPendingSendQueue) { item in
                         PendingSendRow(item: item, monitor: monitor)
                     }

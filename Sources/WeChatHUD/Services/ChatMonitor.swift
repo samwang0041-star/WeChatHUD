@@ -368,16 +368,36 @@ final class ChatMonitor: ObservableObject {
     @Published var actionPrefetch: [String: PrefetchedAction] = [:]
 
     private var safetyTimer: Timer?
-    private var lastSafetyScanAt: Date?
+    /// These three cadences are process-observed windows, not calendar facts,
+    /// so they live on `MonotonicClock` like every other window in the app.
+    /// On `Date()` a backward correction — which is exactly what macOS applies
+    /// on resume after a timezone change — made each delta negative and
+    /// silenced the fallback scan and *every* proactive reminder (VIP 升档 /
+    /// 承诺到期 / 多条未回) for the size of the step, hours or days, while the
+    /// island chrome kept reading normal. A forward jump fired them back to back.
+    private var lastSafetyScanAt: TimeInterval?
     /// Scan interval from sync settings, captured at start() so the heartbeat
     /// body (which now lives in scheduleSafetyTimer) can compare against it.
     private var safetyScanInterval: TimeInterval = 60
-    /// Wall-clock stamp of the last proactive-outreach evaluation. Replaced
-    /// the old "every 60th tick" counter: once the idle heartbeat slows to
-    /// 30 s, counting ticks silently stretches a 10-minute cadence to 30.
-    private var lastProactiveOutreachAt: Date?
+    /// Monotonic stamp of the last proactive-outreach evaluation. Replaced the
+    /// old "every 60th tick" counter: once the idle heartbeat slows to 30 s,
+    /// counting ticks silently stretches a 10-minute cadence to 30.
+    private var lastProactiveOutreachAt: TimeInterval?
     /// ~10 minutes, matching the historical "every 60th 10-second tick".
     static let proactiveOutreachInterval: TimeInterval = 600
+    /// Injectable so a test can move elapsed time without waiting real minutes.
+    var monotonicNow: MonotonicSeconds = { MonotonicClock.seconds() }
+
+    /// One definition for 「这段进程内时间到没到」. `nil` means never ran, which is
+    /// the branch that must fire: with a `Date()` anchor a backward clock
+    /// correction made the delta negative and this returned false for hours,
+    /// silently stopping the fallback scan and every proactive reminder.
+    nonisolated static func windowElapsed(
+        since anchor: TimeInterval?, now: TimeInterval, interval: TimeInterval
+    ) -> Bool {
+        guard let anchor else { return true }
+        return now - anchor >= interval
+    }
     private var scanInProgress = false
 
     /// Set when an FSEvent or timer tick requests a scan while one is
@@ -423,7 +443,11 @@ final class ChatMonitor: ObservableObject {
     /// WeChat themselves — without this marker the activation observer pauses
     /// the queue on every send, and nothing ever un-pauses it (WeChat stays
     /// frontmost), so autopilot could send exactly once per app switch.
-    private var lastAutomationActivationAt = Date.distantPast
+    /// Same axis as the cadences above, and the failure direction here is the
+    /// worse one: a backward `Date()` step made this delta negative, so the
+    /// window stayed open and the *user's own* activation into WeChat was
+    /// swallowed — autopilot then kept sending while they were typing there.
+    private var lastAutomationActivationAt: TimeInterval = 0
     /// (chatUsername|messageID) keys whose banner already popped — prevents
     /// the same message re-interrupting when it's re-admitted by a stuck
     /// cursor or a shard move.
@@ -501,11 +525,12 @@ final class ChatMonitor: ObservableObject {
         let syncCfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
         let scanInterval = TimeInterval(max(10, syncCfg.intervalSeconds))
         safetyScanInterval = scanInterval
-        lastSafetyScanAt = Date()
-        // The proactive-outreach cadence is anchored to wall-clock time (see
-        // the tick body) instead of counting ticks, so throttling the idle
-        // heartbeat to 30 s cannot stretch an "every 10 minutes" job to 30.
-        lastProactiveOutreachAt = Date()
+        lastSafetyScanAt = monotonicNow()
+        // The proactive-outreach cadence is anchored to elapsed time since a
+        // process-observed event (see the tick body) instead of counting ticks,
+        // so throttling the idle heartbeat to 30 s cannot stretch an
+        // "every 10 minutes" job to 30.
+        lastProactiveOutreachAt = monotonicNow()
         scheduleSafetyTimer(Self.safetySchedule(countdownActive: false))
     }
 
@@ -573,15 +598,17 @@ final class ChatMonitor: ObservableObject {
                 // Full scan once the configured interval has elapsed. Checked
                 // against wall-clock time, so the slower idle tick can never
                 // skip a due scan.
-                if Date().timeIntervalSince(self.lastSafetyScanAt ?? .distantPast) >= self.safetyScanInterval {
-                    self.lastSafetyScanAt = Date()
+                if Self.windowElapsed(since: self.lastSafetyScanAt, now: self.monotonicNow(),
+                                      interval: self.safetyScanInterval) {
+                    self.lastSafetyScanAt = self.monotonicNow()
                     await self.scan()
                 }
                 // Proactive outreach every ~10 minutes (wall-clock, so the
                 // cadence is independent of the tick rate).
-                if Date().timeIntervalSince(self.lastProactiveOutreachAt ?? .distantPast) >= Self.proactiveOutreachInterval,
+                if Self.windowElapsed(since: self.lastProactiveOutreachAt, now: self.monotonicNow(),
+                                      interval: Self.proactiveOutreachInterval),
                    let config {
-                    self.lastProactiveOutreachAt = Date()
+                    self.lastProactiveOutreachAt = self.monotonicNow()
                     await self.autopilotService?.evaluateProactiveOutreach(config: config)
                 }
                 // Drop back to the idle cadence as soon as nothing is queued.
@@ -1177,7 +1204,7 @@ final class ChatMonitor: ObservableObject {
             // and nothing re-fires the missed pause.
             guard (notif.userInfo?["automation"] as? Bool) ?? true else { return }
             Task { @MainActor [weak self] in
-                self?.lastAutomationActivationAt = Date()
+                self?.lastAutomationActivationAt = self?.monotonicNow() ?? 0
             }
         }
 
@@ -1195,7 +1222,7 @@ final class ChatMonitor: ObservableObject {
                 // user returning to WeChat — pausing here wedges the queue
                 // permanently, because nothing re-activates the user's
                 // previous app after the send.
-                if Date().timeIntervalSince(self.lastAutomationActivationAt) < 8 {
+                if self.monotonicNow() - self.lastAutomationActivationAt < 8 {
                     return
                 }
                 await self.autopilotService?.onUserBecameActive()
@@ -2675,6 +2702,45 @@ final class ChatMonitor: ObservableObject {
     @discardableResult
     func unsilenceInboxItem(_ item: InboxItem) -> Bool {
         restoreInboxItem(item)
+    }
+
+    struct SilencedConversation: Identifiable, Equatable {
+        let username: String
+        let displayName: String
+        var id: String { username }
+    }
+
+    /// 静音清单的真相来源。It used to be `handledItems`, which `InboxBuilder`
+    /// derives from the ~20-item notification ring: mute a chat, let the ring
+    /// roll past it, and the only 「取消静音」 button disappears while
+    /// `chat_actions.silenced_at` stays in the database. That was already wrong
+    /// when a mute only hid a row; now that a mute also withdraws a queued draft
+    /// and stops the conversation reaching the assistant at all, an unreachable
+    /// unmute means "that peer is dead, with no way back from inside the app".
+    var silencedConversations: [SilencedConversation] {
+        let now = Int(Date().timeIntervalSince1970)
+        var names: [String: String] = [:]
+        for entry in store.getWhitelist() { names[entry.id] = entry.displayName }
+        return store.loadChatActions()
+            .filter { $0.value.isPermanentlySilenced(nowEpoch: now) }
+            .map { SilencedConversation(username: $0.key, displayName: names[$0.key] ?? $0.key) }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    @discardableResult
+    func unsilenceConversation(username: String) -> Bool {
+        do {
+            try store.clearChatAction(chatUsername: username)
+            dismissedInbox.removeValue(forKey: username)
+            snoozedInbox.removeValue(forKey: username)
+            silencedInbox.remove(username)
+            inboxActionError = nil
+            rebuildInbox()
+            return true
+        } catch {
+            inboxActionError = "未能取消静音，这条对话仍然保持静音。请重试。"
+            return false
+        }
     }
 
     /// Rebuild the inbox from current state. Used by all inbox mutation methods.

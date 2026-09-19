@@ -840,7 +840,19 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// rebuilds the record from defaults, and the `INSERT OR REPLACE` below
     /// swaps it in — so one busy lock during 保存 silently reset 敏感词、每会话上限、
     /// 主动提醒开关 and everything else the page does not show.
-    enum SettingRead<T> { case absent, unreadable, value(T) }
+    enum SettingRead<T> {
+        case absent
+        /// A value is stored but does not decode. Distinct from `.absent`: for a
+        /// merge-write the two are the same (there is nothing to merge into), but
+        /// for a *send guard* `.absent` is 「用户还没存过，用默认值」 — safe — while
+        /// `.corrupt` is 「用户存过的东西我读不懂」, and answering that with the
+        /// built-in 敏感词表 and a cap of 50 is the widening this whole axis is
+        /// about. Collapsing the two is what let a half-written row look like a
+        /// fresh install.
+        case corrupt
+        case unreadable
+        case value(T)
+    }
 
     func readSettingJSON<T: Decodable>(_ key: String, as type: T.Type) -> SettingRead<T> {
         let raw: String?
@@ -856,10 +868,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             } catch { return .unreadable }
         }
         guard let raw, !raw.isEmpty, let data = raw.data(using: .utf8) else { return .absent }
-        // Undecodable is deliberately not a read failure: there is nothing left
-        // to merge into, and refusing to write here would leave the settings page
-        // unable to save anything, ever.
-        guard let value = try? JSONDecoder().decode(type, from: data) else { return .absent }
+        guard let value = try? JSONDecoder().decode(type, from: data) else { return .corrupt }
         return .value(value)
     }
 
@@ -872,21 +881,28 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// (an empty list lets 转账/红包 through the second-level interceptor) and
     /// `maxSendsPerSession` (the default 50 overrules a user who set 5). Those
     /// two reads go through here, so one busy lock cannot open either gate.
+    ///
+    /// The approval views read through here for the same reason: a page that
+    /// says 「这条回复尚未发出」 because the setting could not be read is turning
+    /// a missing value into a safety claim.
     func autopilotConfigForSendGate() -> AutopilotConfig? {
         switch readSettingJSON("autopilot", as: AutopilotConfig.self) {
         case .value(let config): return config
         case .absent: return AutopilotConfig()
-        case .unreadable: return nil
+        case .corrupt, .unreadable: return nil
         }
     }
 
     /// Merge-update the autopilot config, refusing to write over a config that
     /// could not be read. `false` means nothing was touched.
     @discardableResult
-    func updateAutopilotConfig(_ mutate: (inout AutopilotConfig) -> Void) throws -> Bool {        var config: AutopilotConfig
+    func updateAutopilotConfig(_ mutate: (inout AutopilotConfig) -> Void) throws -> Bool {
+        var config: AutopilotConfig
         switch readSettingJSON("autopilot", as: AutopilotConfig.self) {
         case .value(let stored): config = stored
-        case .absent: config = AutopilotConfig()
+        // Rebuilding from defaults is the only way out of a row this app cannot
+        // decode; the alternative is a settings page that can never save again.
+        case .absent, .corrupt: config = AutopilotConfig()
         case .unreadable: return false
         }
         mutate(&config)
@@ -1235,6 +1251,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     struct ChatActionState {
         let silencedAt: Int    // unix seconds; items with ts ≤ this are hidden
         let snoozedUntil: Int  // unix seconds; entire chat suppressed until this
+
+        /// 「永久静音」 is stored as a watermark ten years out, so whether a chat is
+        /// muted can only be answered against a moment — and every consumer must
+        /// answer it the same way. The inbox row, the banner, both autopilot feeds
+        /// and the send gate are five readings of one fact; each spelling that
+        /// used to be its own comparison.
+        func isPermanentlySilenced(nowEpoch: Int) -> Bool {
+            silencedAt > nowEpoch
+        }
     }
 
     static func senderIdentifier(senderUsername: String, senderName: String) -> String {

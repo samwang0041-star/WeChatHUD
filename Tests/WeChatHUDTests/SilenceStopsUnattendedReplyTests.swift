@@ -122,4 +122,50 @@ final class SilenceStopsUnattendedReplyTests: XCTestCase {
             muteGuards, appends,
             "投递点比静音判断多：有一处投递没查静音")
     }
+
+    /// One sentinel, read one way. The 「永久」 watermark is `now + 10 years`, so
+    /// "is this chat muted" is only answerable against a moment — and every one
+    /// of the five consumers used to spell that comparison itself.
+    func testPermanentSilenceSentinelHasOneReader() {
+        let now = 1_800_000_000
+        func state(_ silencedAt: Int) -> HUDStore.ChatActionState {
+            HUDStore.ChatActionState(silencedAt: silencedAt, snoozedUntil: 0)
+        }
+        XCTAssertFalse(state(now - 1).isPermanentlySilenced(nowEpoch: now), "过期水印不是静音")
+        XCTAssertFalse(state(now).isPermanentlySilenced(nowEpoch: now), "正好等于现在也不算")
+        XCTAssertTrue(state(now + 10 * 365 * 24 * 3600).isPermanentlySilenced(nowEpoch: now))
+    }
+
+    /// The escape hatch has to be durable. The list used to be
+    /// `monitor.silencedItems`, i.e. rows the InboxBuilder could only produce from
+    /// the ~20-item notification ring — so a mute stayed in the database while the
+    /// only 取消静音 button scrolled out of existence.
+    func testUnmuteListReadsTheDurableTable() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let view = try String(
+            contentsOf: root.appendingPathComponent("Views/Settings/ContactsSettingsView.swift"),
+            encoding: .utf8)
+        XCTAssertTrue(view.contains("monitor.silencedConversations"),
+                      "静音清单要读持久状态")
+        XCTAssertFalse(view.contains("monitor.silencedItems"),
+                       "读回收件箱行 = 那个行一消失，用户就没法取消静音了")
+
+        let monitor = try String(
+            contentsOf: root.appendingPathComponent("Services/ChatMonitor.swift"),
+            encoding: .utf8)
+        let list = try XCTUnwrap(
+            monitor.components(separatedBy: "var silencedConversations:").last
+        ).components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertTrue(list.contains("loadChatActions"), "清单的来源必须是 chat_actions")
+        XCTAssertTrue(list.contains("isPermanentlySilenced"),
+                      "要用那一条共用的静音判据，而不是第六种写法")
+        let unmute = try XCTUnwrap(
+            monitor.components(separatedBy: "func unsilenceConversation(username:").last
+        ).components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertTrue(unmute.contains("clearChatAction(chatUsername: username)"),
+                      "取消要真的把那行持久状态清掉")
+    }
 }
