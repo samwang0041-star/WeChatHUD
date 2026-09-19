@@ -1004,14 +1004,27 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return (row.time, row.localId)
     }
 
+    /// A scan watermark must never sit ahead of the wall clock. `create_time` is
+    /// WeChat's column: one future-dated row (clock-jacked client, corrupt or
+    /// future-schema DB) written into the cursor makes every later real message
+    /// look already seen, and the cursor only moves forward — that chat stops
+    /// feeding classification, todos, commitments and autopilot with no retry
+    /// and no self-heal until wall time catches up. The notification path already
+    /// caps at `now` for the same reason; the persisted cursors must too.
+    nonisolated static func clampedCursorTime(_ value: Int, now: Int) -> Int {
+        min(max(value, 0), now)
+    }
+
     func setBackfillCursor(username: String, lastCreateTime: Int, lastLocalId: Int) throws {
+        let cursorTime = Self.clampedCursorTime(
+            lastCreateTime, now: Int(Date().timeIntervalSince1970))
         try exec("""
             INSERT INTO sync_state(source_key, backfill_create_time, backfill_local_id)
             VALUES(?, ?, ?)
             ON CONFLICT(source_key) DO UPDATE SET
                 backfill_create_time = excluded.backfill_create_time,
                 backfill_local_id    = excluded.backfill_local_id
-        """, params: ["wl/\(username)", "\(lastCreateTime)", "\(lastLocalId)"])
+        """, params: ["wl/\(username)", "\(cursorTime)", "\(lastLocalId)"])
     }
 
     func clearBackfillCursor(username: String) throws {
@@ -1035,6 +1048,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     private func setMessageCursor(sourceKey key: String, lastCreateTime: Int, lastLocalId: Int, lastShard: String) throws {
         let now = Int(Date().timeIntervalSince1970)
+        let cursorTime = Self.clampedCursorTime(lastCreateTime, now: now)
         try exec("""
             INSERT INTO sync_state(source_key, last_local_id, last_check_at, last_create_time, last_shard)
             VALUES(?, ?, ?, ?, ?)
@@ -1043,7 +1057,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
                 last_create_time = excluded.last_create_time,
                 last_check_at    = excluded.last_check_at,
                 last_shard       = excluded.last_shard
-        """, params: [key, "\(lastLocalId)", "\(now)", "\(lastCreateTime)", lastShard])
+        """, params: [key, "\(lastLocalId)", "\(now)", "\(cursorTime)", lastShard])
     }
 
     // MARK: - Chat actions (HUD-side triage state)

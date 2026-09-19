@@ -399,4 +399,69 @@ final class ChatInsightEngineTests: XCTestCase {
         XCTAssertTrue(result?.headline.contains("lilei") == false)
         XCTAssertTrue(result?.suggestion.contains("我 应") == true)
     }
+    /// `waiting_hours` is a number the model invents (the prompt gives it bare
+    /// epoch stamps, and the global briefing gives it no timestamps at all), yet
+    /// it rendered as 「同事 已等 3 小时」 inside a red 「需要你立即处理」 row whose
+    /// button opens the chat to reply. The parse boundary must not carry it.
+    func testInventedWaitingHoursNeverReachTheRadar() async throws {
+        let tmp = NSTemporaryDirectory() + "test_wait_hours_\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: tmp)
+        try store.open()
+        defer { store.close() }
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(content: """
+        {
+          "headline": "张三在等排期",
+          "topics": [],
+          "decisions": [],
+          "action_items": [],
+          "mentions_me": 0,
+          "waiting_for_me": [{"source": "张三", "what": "等排期答复", "waiting_hours": 9}],
+          "my_commitments": [],
+          "needs_my_attention": true,
+          "overall_mood": "正常",
+          "signal_noise_ratio": 0.5,
+          "decision_efficiency": "正常",
+          "importance_to_me": {"level": "中", "reason": "在等"},
+          "cross_chat_topics": [],
+          "insight": "张三在等",
+          "suggestion": "回复张三"
+        }
+        """)
+
+        var cfg = AIConfig()
+        cfg.provider = AIProviderSlot(
+            providerID: "custom", baseURL: "http://localhost:9999",
+            model: "m", apiKey: "sk-test"
+        )
+        cfg.summaryEnabled = true
+        let insight = AIChatInsight(store: store, aiService: AIService(config: cfg))
+        let analyzed = await insight.analyzeChat(
+            chatUsername: "chat-a", chatName: "项目群", chatType: "private",
+            category: "work", selfName: "我", selfAliases: ["我"],
+            timeRange: "今天",
+            messages: [(sender: "张三", body: "排期定了吗", time: 1000)],
+            recalledMessages: [], memory: ""
+        )
+        let result = try XCTUnwrap(analyzed)
+
+        XCTAssertEqual(result.waitingForMe.first?.what, "等排期答复", "定性内容仍然保留")
+        XCTAssertEqual(result.waitingForMe.first?.waitingHours, 0,
+                       "模型自己编的小时数不能当测量值带出来")
+
+        let findings = InsightRadar.buildFindings(
+            chatInsights: ["chat-a": result], chatNames: ["chat-a": "项目群"]
+        )
+        let waiting = findings.filter { $0.kind == .waiting }
+        XCTAssertFalse(waiting.isEmpty, "这件事本身还要出现在雷达里")
+        for finding in waiting {
+            XCTAssertNotEqual(finding.severity, .high,
+                              "编出来的小时数不能把一行抬成红色紧急：\(finding.evidence ?? "")")
+            XCTAssertNil(
+                finding.evidence?.range(of: "已等"),
+                "没有测量过就不该出现\(finding.evidence ?? "")"
+            )
+        }
+    }
 }

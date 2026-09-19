@@ -345,7 +345,17 @@ actor AIChatInsight {
             },
             mentionsMe: result.mentionsMe,
             waitingForMe: result.waitingForMe.map {
-                WaitingItem(source: s($0.source), what: s($0.what), waitingHours: $0.waitingHours)
+                // `waiting_hours` is a number the model invents: the per-chat
+                // prompt hands it bare epoch stamps with no "now" anchor, and
+                // the global briefing sends no timestamps at all yet still
+                // returns one. It drove a red 「需要你立即处理」 row reading
+                // 「同事 已等 3 小时」 and the radar's high/medium severity —
+                // a measured-looking fact nobody measured. Every consumer has a
+                // `> 0` branch, so 0 means "not measured" and the rows fall
+                // back to their non-numeric form. Real waiting times live in
+                // the inbox (ReplyDebtScorer / VIP tiers), where they are
+                // computed from the messages themselves.
+                WaitingItem(source: s($0.source), what: s($0.what), waitingHours: 0)
             },
             myCommitments: result.myCommitments.map(s),
             needsMyAttention: result.needsMyAttention,
