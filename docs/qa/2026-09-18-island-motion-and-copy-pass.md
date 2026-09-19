@@ -2202,3 +2202,99 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
 `tombstoneForRecall` 与取消关注同形，但它没有重试机会——扫描水位线无论成败都会
 越过 revokemsg 行。三条语句改成 `withTransaction` + 抛出，调用点记录失败而不当
 成功；半应用状态（承诺已取消而 pending_asks 还在）不再可能出现。
+
+---
+
+## 第 30 轮：六路复扫（撤回归因 / 外源数值 / 自破的掩码 / 发送簿记 / 生命周期 / 界面承诺）
+
+### §116 同名群友会互相顶掉撤回墓碑（P0，commit dbdc0336）
+
+`recordRecall` 用 revokemsg 文本里的人名去 10 分钟窗口内认领原消息
+（`$0.senderName == owner || $0.senderUsername == owner`），拿到 id 就直接
+`tombstoneForRecall`：承诺→cancelled、待办→dismissed、pending_asks 删除。微信的
+撤回提示只给**显示名**，而同一个群里两个成员叫同一个名字是常态；管理员撤回其中
+一个人的消息时，`first(where:)` 会认领到另一个人的那条，把他的承诺和待回连根删
+掉。这条路径没有重试——扫描水位线无论对错都越过 revokemsg 行，所以错删是永久的。
+
+现在先数窗口内该名字被几个不同 `senderUsername` 认领，≥2 就只记录撤回事件、不做
+任何连带清理，也不把别人的原文写成"被撤回的那条"。私聊与"自己撤回"不受影响
+（后者走 `isFromSelf` 的 id 判定，不依赖名字）。
+
+测试 `ScanEngineRecallAttributionTests`：同名两人 ⇒ 两条承诺都活着、撤回行的
+`original_text` 为空；唯一同名 ⇒ 照常墓碑并带上原文；自己撤回 ⇒ 不受新闸门影响。
+证伪：把 `>= 2` 改成 `>= 99` ⇒ 2 条断言失败。
+
+残留（已知、无法在此调用点消除）：同名的两个人里只有一个在窗口内发过言时，仍然
+只有名字可依据。要真正分辨需要群成员名单，reader 的 `name2id` 只在单次查询内部
+可见。宁可少删不可错删，所以这种情况仍会墓碑——但它要求"另一个同名者这条窗口内
+没发言"，比原来的"任意同名"已经窄得多。
+
+### §117 `unread_count` 先乘 2 再钳制，坏值直接 trap 掉常驻进程（commit dbdc0336）
+
+`unreadFetchLimit` 的群聊分支是 `session.unreadCount * 2`，而 `unreadCount` 来自
+`Int(sqlite3_column_int64(...))`——微信自己写的列，本仓不写也不校验。超过
+`Int.max/2` 的值（损坏库或未来 schema）会在钳制之前触发溢出 trap，进程消失。改为
+先把 unread 钳进 `[0, unreadWindowCap]` 再翻倍；私聊分支的页大小逐值不变（40 仍
+是 40，测试钉住）。证伪：把乘法移回钳制之前 ⇒ 测试进程直接死掉而不是报失败，这
+正是原缺陷的形态。
+
+### §118 上一轮收紧分组规则时，把最常见的身份证写法放行了（自查回归，commit dbdc0336）
+
+§107 为了不吃掉 `2026-09-01~2026-09-30` 这类日期段，把分组判据收到"每组 3-4 位"。
+但 18 位身份证人手抄时最常见的是**印刷分节 6-8-4**（地址 6 + 出生 8 + 顺序 4），这
+个形状在收紧后整条不匹配 ⇒ 原文直发配置好的 AI 端点，而 `maskDirectIdentifiers`
+是全仓唯一的标识符清洗器、没有第二层。补回该形状：仅当恰好 3 组 6/8/4、且中间 8
+位能读成合理生日时才判 `[证件]`，因此 8-8 的日期段与 8-8-4 的流水号照旧不动。
+
+同一处还有一个自造的代价：贪心下探从"当前组一直到行尾"构造窗口，对端发一串 500
+段 8 位数字就能让每次掩码做 2·10⁵ 次构造。改成按"任何标签都不超过 19 位、外加
+`86` 前缀"设宽度上限（`maxClassifiableDigits = 21`）。
+
+测试：`AIOutboundPrivacyBoundaryTests` 新增 6-8-4 三种写法（空格/连字符/带 X 校验
+位）都被掩掉、8-8 与 20 位墙仍原样保留、数字风暴之后的手机号照样被掩。证伪：删
+掉 `isIDCardChunking` 分支 ⇒ 3 条失败；把上限设成 0 ⇒ 风暴后的手机号漏出。
+
+### §119 已核实送达的回复仍留在"待确认"上，再点一次就是第二次真实发送（commit dbdc0336）
+
+`executeSend` 成功后的簿记是两条独立的 `try?`：先删 `autopilot_pending_sends` 行，
+再翻 `autopilot_log` 孪生行。第二步失败被吞掉时，队列行已经没了而日志仍是
+'pending' ⇒ 审批工作台继续提供「确认发送」，点下去对方就收到第二遍。同理
+`markAutopilotLogSent` 自己是 2-4 条语句（unverified 声明、skipped 翻回、pending
+翻回、legacy 兜底），半应用会让同一条回复既是 'sent' 又仍在等人确认，
+`sessionPending` 也跟着算错。
+
+改为一条 `resolveVerifiedSend`（删行 + 翻孪生行同一个事务），三个 `markAutopilot*`
+函数整体收进 `withTransaction`。失败时回滚成"队列行还在"，这条退化路径由两道既
+有闸门兜住：内容闸门 `stalePendingSendReason` 会在会话里读到我自己那条已发出的
+消息而拒绝，时间闸门 `isStaleForAutomaticSend` 让它过 10 分钟后转人工。
+
+测试 `VerifiedSendResolveAtomicityTests`：注入 `BEFORE UPDATE ON autopilot_log` 的
+触发器让第二步必败 ⇒ 队列行必须还在、孪生行仍是 pending（回滚），成功路径则两条
+一起消失。证伪：把事务拆开 ⇒ 失败即复现"行被删了而状态没翻"。
+
+### §120 「等待微信重新登录」的 2 秒轮询没有终点（commit dbdc0336）
+
+`awaitFreshWeChatRelogin` 是 `while !Task.isCancelled`，而它跑在一个句柄被丢弃的
+`Task { }` 里，`stop()`/`.onDisappear`/`deinit` 都碰不到它；每一 tick 会 spawn 一
+次 `/usr/sbin/lsof`。用户放着不管（关掉设置、也不重开微信）时，常驻浮窗就整会话
+每 2 秒起一个子进程。加 10 分钟截止并在到期时把阶段改成「已停止等待」——原来超时
+只会悄悄返回 nil，页面停在 `.waitingForWeChatRelogin` 上继续承诺一个已经不存在
+的等待。
+
+### §121 回顾页把"崩掉的那次"显示成「已完成」（commit 5941c22b）
+
+`latestCompletedRun()` 只取 completed/partial，失败信息只在本次会话的 job 状态里
+渲染过。一次跑挂的回顾会留下 `status='failed'` 的行，重开应用后页面于是拿更早一
+期的内容顶着「已完成 · <旧日期>」显示，用户以为这一期已经看过、里面没有风险项。
+新增 `latestReviewRunAnyStatus()`，状态行先看有没有"最近一次其实没跑完"，有就写
+「最近一次回顾（时间）没有完成 · 下面是上次成功的结果」，并且当页面已经横幅报错
+时不重复播报。状态行抽成纯函数，测试直接对三种输入断言措辞（含"不许再出现已经完
+成"）。证伪：短路掉该分支 ⇒ 2 条断言失败。
+
+### §122 洞察 reload 的排空尾巴从 `if` 改 `if`→`while`（无测试）
+
+尾巴是 `if userReloadWhileBusy` 时，若用户在**尾巴那次重算进行中**再点一次刷新，
+标志会留到下一次 5 分钟的自动 pass 才排空，而那一 pass 用 `clearsView: true` ⇒ 用
+户没碰任何东西却看到整页转圈。改成 `while` 后标志在同一趟里被重新读到。理由来自
+读控制流（`:135-137` 的早退 + 尾巴的位置），没有配套测试：要复现得让
+`performReload` 中途可悬挂，得先给 walk 注入钩子。留作下一轮的治具项。
