@@ -5,7 +5,7 @@ final class InsightRadarTests: XCTestCase {
     func testBuildFindingsPrioritizesWaitingBeforeSoftSignals() {
         let result = makeInsight(
             waitingForMe: [
-                WaitingItem(source: "张三", what: "等我确认排期", waitingHours: 3)
+                WaitingItem(source: "张三", what: "等我确认排期")
             ]
         )
 
@@ -15,7 +15,11 @@ final class InsightRadarTests: XCTestCase {
         )
 
         XCTAssertEqual(findings.first?.kind, .waiting)
-        XCTAssertEqual(findings.first?.severity, .high)
+        // Waiting rows sort first, but they are no longer 现在处理: the badge
+        // used to be driven by `waiting_hours`, which is a duration the model
+        // invents (see `WaitingItem`). Without a measurement nothing may be
+        // promoted on the strength of a wait time.
+        XCTAssertEqual(findings.first?.severity, .medium)
         XCTAssertEqual(findings.first?.chatUsername, "project@chatroom")
         XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
     }
@@ -68,7 +72,7 @@ final class InsightRadarTests: XCTestCase {
         let briefing = GlobalBriefing(
             date: "2026-05-04",
             actionRequired: [
-                ActionRequiredItem(source: "项目群", what: "确认周报口径", waitingHours: 2, urgency: "高")
+                ActionRequiredItem(source: "项目群", what: "确认周报口径", urgency: "高")
             ],
             headline: "有事项等待确认",
             stats: BriefingStats(
@@ -114,6 +118,23 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertEqual(findings.first?.actionLabel, "看处理建议")
     }
 
+    /// 依据 and 意义 are two lines of the same card. The 依据 fallback used to
+    /// interpolate `finding.reason` into 「按多条消息或近期互动推断：…」, so a card
+    /// with no evidence printed the same sentence twice. After `waiting_hours`
+    /// went away that was every waiting and every briefing card.
+    func testEvidenceFallbackNeverRepeatsTheInterpretation() throws {
+        let findings = InsightRadar.buildFindings(
+            chatInsights: [:],
+            briefing: makeBriefing(actionSource: "陌生群", action: "确认周报口径")
+        )
+        let row = try XCTUnwrap(findings.first {
+            $0.evidence == nil && !($0.reason ?? "").isEmpty
+        }, "需要一张没有依据的卡来验这段回落文案")
+        let text = InsightRadarSection.radarInterpretationOnlyText(row)
+        XCTAssertFalse(text.contains(row.reason!), "依据不能把意义再念一遍：\(text)")
+        XCTAssertFalse(text.isEmpty)
+    }
+
     func testNonConcreteGlobalBriefingSourcesAreSuppressed() {
         let briefing = makeBriefing(actionSource: "全局", action: "今日有 248 个请求待处理")
 
@@ -127,10 +148,35 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertTrue(findings.isEmpty)
     }
 
+    /// The evidence slot must not spend itself repeating the row's own header.
+    ///
+    /// Once `waiting_hours` was removed the waiting branch fell back to
+    /// `item.source` unconditionally — and in a 1:1 chat the model puts the
+    /// peer's name there, which is the chat name the header already prints.
+    func testWaitingEvidenceDoesNotEchoTheChatName() {
+        let direct = InsightRadar.buildFindings(
+            chatInsights: ["wxid_zhang": makeInsight(waitingForMe: [
+                WaitingItem(source: "张三", what: "等排期答复")
+            ])],
+            chatNames: ["wxid_zhang": "张三"]
+        )
+        let row = direct.first { $0.kind == .waiting }
+        XCTAssertNil(row?.evidence, "行头已经写着「张三」，依据不能再写一遍")
+
+        let group = InsightRadar.buildFindings(
+            chatInsights: ["room@chatroom": makeInsight(waitingForMe: [
+                WaitingItem(source: "李四", what: "等排期答复")
+            ])],
+            chatNames: ["room@chatroom": "项目群"]
+        )
+        XCTAssertEqual(group.first { $0.kind == .waiting }?.evidence, "李四",
+                       "群里说得出是谁在等，这才是依据")
+    }
+
     func testPlaceholderOnlyFindingsAreFiltered() {
         let result = makeInsight(
             waitingForMe: [
-                WaitingItem(source: "张三", what: "[消息]", waitingHours: 2)
+                WaitingItem(source: "张三", what: "[消息]")
             ]
         )
 
@@ -267,7 +313,7 @@ final class InsightRadarTests: XCTestCase {
         GlobalBriefing(
             date: "2026-05-04",
             actionRequired: [
-                ActionRequiredItem(source: actionSource, what: action, waitingHours: 2, urgency: "高")
+                ActionRequiredItem(source: actionSource, what: action, urgency: "高")
             ],
             headline: "有事项等待确认",
             stats: BriefingStats(

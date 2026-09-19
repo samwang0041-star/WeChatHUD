@@ -447,8 +447,10 @@ final class ChatInsightEngineTests: XCTestCase {
         let result = try XCTUnwrap(analyzed)
 
         XCTAssertEqual(result.waitingForMe.first?.what, "等排期答复", "定性内容仍然保留")
-        XCTAssertEqual(result.waitingForMe.first?.waitingHours, 0,
-                       "模型自己编的小时数不能当测量值带出来")
+        // The stub response carries a `"waiting_hours": 3` the model invented.
+        // The decoded row keeps its words and loses that number — the field no
+        // longer exists on the model at all, so no view can print it.
+        XCTAssertEqual(result.waitingForMe.count, 1, "这件事本身还要留在结果里")
 
         let findings = InsightRadar.buildFindings(
             chatInsights: ["chat-a": result], chatNames: ["chat-a": "项目群"]

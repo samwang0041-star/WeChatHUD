@@ -166,7 +166,7 @@ struct InsightOverviewDashboard: View {
                 .filter { isConcreteFocusSource($0.source) }
             if !aiItems.isEmpty {
                 ForEach(Array(aiItems.prefix(3).enumerated()), id: \.offset) { _, item in
-                    decisionCard(title: item.source, subtitle: item.what, meta: item.waitingHours > 0 ? "等待 \(formatHoursShort(item.waitingHours)) · \(item.urgency)" : item.urgency, color: item.urgency == "高" ? .red : item.urgency == "中" ? .orange : .blue, icon: "arrowshape.turn.up.right.fill", action: { onSelectChat(item.source) })
+                    decisionCard(title: item.source, subtitle: item.what, meta: item.urgency, color: item.urgency == "高" ? .red : item.urgency == "中" ? .orange : .blue, icon: "arrowshape.turn.up.right.fill", action: { onSelectChat(item.source) })
                 }
             }
 

@@ -164,7 +164,7 @@ final class RelationshipRadarTests: XCTestCase {
             decisions: ["周五给"],
             actionItems: [],
             mentionsMe: 1,
-            waitingForMe: [WaitingItem(source: "张三", what: "排期", waitingHours: 2)],
+            waitingForMe: [WaitingItem(source: "张三", what: "排期")],
             myCommitments: ["周五给"],
             needsMyAttention: true,
             overallMood: "正式",

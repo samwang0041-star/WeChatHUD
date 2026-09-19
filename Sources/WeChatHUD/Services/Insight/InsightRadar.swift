@@ -98,7 +98,7 @@ enum InsightRadar {
                 kind: .action,
                 source: item.source,
                 title: item.what,
-                evidence: item.waitingHours > 0 ? "已等待 \(formatHours(item.waitingHours))" : nil,
+                evidence: nil,
                 reason: "总结从聊天里标出了一个需要确认的事项",
                 actionLabel: chatUsername == nil ? "看处理建议" : "打开对话",
                 chatUsername: chatUsername,
@@ -167,11 +167,16 @@ enum InsightRadar {
         for (idx, item) in result.waitingForMe.enumerated() {
             findings.append(InsightRadarFinding(
                 id: "wait-\(chatUsername)-\(idx)-\(item.source)",
-                severity: item.waitingHours >= 2 ? .high : .medium,
+                // No duration is measured (see `WaitingItem`), so nothing here
+                // can be promoted to 现在处理 on the strength of a wait time.
+                severity: .medium,
                 kind: .waiting,
                 source: chatName,
                 title: item.what,
-                evidence: item.waitingHours > 0 ? "\(item.source) 已等 \(formatHours(item.waitingHours))" : item.source,
+                // The only thing left to say is *who* — and in a 1:1 chat that
+                // is the chat name the row header already prints, so echoing it
+                // would spend the evidence slot on a duplicate.
+                evidence: item.source == chatName ? nil : item.source,
                 reason: "对方在等你给答复或推进",
                 actionLabel: "打开对话",
                 chatUsername: chatUsername,
@@ -261,13 +266,6 @@ enum InsightRadar {
     /// bounded before any `Int(_:)`: a reply of `1e30` would otherwise trap
     /// while formatting. A year is past the point where the exact figure
     /// means anything to the reader.
-    private static func formatHours(_ rawHours: Double) -> String {
-        let hours = SafeNumber.clamped(rawHours, to: 0...8_760)
-        if hours < 1 { return "\(Int(hours * 60)) 分钟" }
-        if hours < 24 { return "\(Int(hours)) 小时" }
-        return "\(Int(hours / 24)) 天"
-    }
-
     private static func sanitizedFinding(_ finding: InsightRadarFinding) -> InsightRadarFinding? {
         guard let source = readableTrimmed(finding.source),
               let title = readableTrimmed(finding.title) else {

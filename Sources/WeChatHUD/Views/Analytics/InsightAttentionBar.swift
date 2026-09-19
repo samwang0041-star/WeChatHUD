@@ -29,7 +29,6 @@ struct InsightAttentionBar: View {
                         actionItemRow(
                             source: item.source,
                             what: item.what,
-                            hours: item.waitingHours,
                             urgency: item.urgency
                         )
                     }
@@ -68,7 +67,7 @@ struct InsightAttentionBar: View {
         }
     }
 
-    private func actionItemRow(source: String, what: String, hours: Double, urgency: String) -> some View {
+    private func actionItemRow(source: String, what: String, urgency: String) -> some View {
         Button(action: { onJumpToChat(source) }) {
             HStack(alignment: .top, spacing: 8) {
                 Circle()
@@ -79,11 +78,6 @@ struct InsightAttentionBar: View {
                     HStack(spacing: 4) {
                         Text(source)
                             .font(.system(size: 12, weight: .semibold))
-                        if hours > 0 {
-                            Text("· 等 \(formatHoursShort(hours))")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
                     }
                     Text(what)
                         .font(.system(size: 11))
@@ -114,12 +108,4 @@ struct InsightAttentionBar: View {
         }
     }
 
-    /// Bounded before the `Int(_:)` conversions — `hours` is the model's
-    /// `waiting_hours`, and `Int(1e30)` traps rather than returning garbage.
-    private func formatHoursShort(_ rawHours: Double) -> String {
-        let hours = SafeNumber.clamped(rawHours, to: 0...8_760)
-        if hours < 1 { return "\(Int(hours * 60))m" }
-        if hours < 24 { return "\(Int(hours))h" }
-        return "\(Int(hours / 24))d"
-    }
 }

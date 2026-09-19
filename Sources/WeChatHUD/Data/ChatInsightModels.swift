@@ -67,14 +67,13 @@ struct InsightActionItem: Codable {
 struct WaitingItem: Codable {
     let source: String
     let what: String
-    /// Deliberately not decodable. `waiting_hours` is a duration the model
-    /// invents — the per-chat prompt hands it bare epoch stamps with no "now"
-    /// anchor, and the global briefing sends no timestamps at all yet it still
-    /// returns a number — and it rendered as 「同事 已等 3 小时」 inside a red
-    /// 「需要你立即处理」 row whose button opens the chat to reply. A number
-    /// nobody measured must not be presented as one. Callers that compute a real
-    /// wait (the inbox does, from the messages themselves) can still pass it.
-    var waitingHours: Double = 0
+    // `waiting_hours` is NOT a field of this model. The key is still in the
+    // prompt and the model still answers it, but it is a duration nobody
+    // measured: the per-chat prompt hands out bare epoch stamps with no "now"
+    // anchor and the global briefing sends no timestamps at all. Decoding it
+    // rendered as 「同事 已等 3 小时」 inside a red 「需要你立即处理」 row whose
+    // button opens the chat to reply. A number nobody measured must not be
+    // presented as one, so it is dropped at the decode boundary.
 
     enum CodingKeys: String, CodingKey {
         case source, what
@@ -114,8 +113,6 @@ struct GlobalBriefing: Codable {
 struct ActionRequiredItem: Codable {
     let source: String
     let what: String
-    /// Same reason as `WaitingItem.waitingHours`: never decoded from the model.
-    var waitingHours: Double = 0
     let urgency: String
 
     enum CodingKeys: String, CodingKey {

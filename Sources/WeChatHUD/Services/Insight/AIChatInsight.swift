@@ -355,7 +355,7 @@ actor AIChatInsight {
                 // back to their non-numeric form. Real waiting times live in
                 // the inbox (ReplyDebtScorer / VIP tiers), where they are
                 // computed from the messages themselves.
-                WaitingItem(source: s($0.source), what: s($0.what), waitingHours: 0)
+                WaitingItem(source: s($0.source), what: s($0.what))
             },
             myCommitments: result.myCommitments.map(s),
             needsMyAttention: result.needsMyAttention,

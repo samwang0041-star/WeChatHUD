@@ -139,7 +139,7 @@ final class CrossTopicRadarTests: XCTestCase {
         let briefing = GlobalBriefing(
             date: seeded.date,
             actionRequired: (1...5).map {
-                ActionRequiredItem(source: "对话\($0)", what: "确认第 \($0) 件事", waitingHours: 1, urgency: "中")
+                ActionRequiredItem(source: "对话\($0)", what: "确认第 \($0) 件事", urgency: "中")
             },
             headline: seeded.headline,
             stats: seeded.stats,

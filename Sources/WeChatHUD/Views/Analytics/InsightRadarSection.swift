@@ -122,7 +122,7 @@ struct InsightRadarSection: View {
                         if let evidence = finding.evidence, !evidence.isEmpty {
                             radarInfoLine(label: "依据", icon: "quote.bubble", text: evidence)
                         } else {
-                            radarInfoLine(label: "依据", icon: "lightbulb", text: radarInterpretationOnlyText(finding))
+                            radarInfoLine(label: "依据", icon: "lightbulb", text: Self.radarInterpretationOnlyText(finding))
                         }
                         if isExpanded, let reason = finding.reason, !reason.isEmpty {
                             radarInfoLine(label: "意义", icon: "lightbulb", text: reason)
@@ -201,10 +201,12 @@ struct InsightRadarSection: View {
         return isExpanded ? "收起" : finding.actionLabel
     }
 
-    private func radarInterpretationOnlyText(_ finding: InsightRadarFinding) -> String {
-        if let reason = finding.reason, !reason.isEmpty {
-            return "按多条消息或近期互动推断：\(reason)"
-        }
+    /// Shown in the 依据 slot when the finding carries no quotable evidence.
+    ///
+    /// It must not fall back to `finding.reason`: that string already renders
+    /// one line below as 意义, so echoing it filled the evidence slot with the
+    /// interpretation twice and hid the one thing the row could say honestly.
+    static func radarInterpretationOnlyText(_ finding: InsightRadarFinding) -> String {
         switch finding.kind {
         case .pressure:
             return "来自待回、待办或承诺统计，不是单句原话。"

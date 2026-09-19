@@ -249,8 +249,7 @@ enum InsightOverviewReport {
                 lines.append("")
                 lines.append("## 需要你处理")
                 for item in actions {
-                    let waiting = item.waitingHours > 0 ? "（已等 \(Int(item.waitingHours)) 小时）" : ""
-                    lines.append("- \(item.source)：\(item.what)\(waiting)")
+                    lines.append("- \(item.source)：\(item.what)")
                 }
             }
             let topics = briefing.crossTopics.filter { !$0.name.isEmpty && $0.chats.count >= 2 }
