@@ -575,3 +575,59 @@ sync」，但全仓库找不到生产点，于是收起态的"微信连不上"�
 另一条流程教训：本轮我按"单改只跑相关测试"跑了四五个套件，全绿；假文案那条
 断言所在的 `ProductWorkspaceTests` 不在筛选里。**改到用户可见字符串时，
 收尾必须有一次全量**，不能只跑同族的套件 —— 这条已经写进交付前的门禁。
+
+## §155 「已读不回」是这条链路上唯一不看安全闸门的外发动作
+
+攻破本轮提交的那一路代理指出来：`skip` 与 `read_no_reply` 两个早退分支里
+**`safetyHold` 算出来了却从没被读**。前者确实无副作用，但后者会
+`WeChatLauncher.openChat` —— 本仓库自己的注释把这件事称作
+"an outward action, gated exactly like a send"，而它过的门比 send 少三道：
+风险等级、敏感词、引用回查全部作废。对方把模型诱导成
+`action=read_no_reply`（一句话就够，不需要我们读懂），HUD 就会替用户把那条
+消息标成已读，而屏幕上所有闸门都在闪红。
+
+修：把 `safetyHold` 送进那道本来就存在的门。
+
+```swift
+static func shouldOpenChatForReadReceipt(
+    autoSendEnabled: Bool, isGroup: Bool, safetyHold: String? = nil
+) -> Bool
+```
+
+两个调用点（已读不回分支、以及"重复缓兵之计改为已读"分支）都从同一个函数拿结论，
+回执说明也一并带上是哪条安全检查拦的（`readReceiptHoldReason(safetyHold:)`），
+这样审计日志里能看到"为什么这条没打开对话"。`groundsSend` 的注释同时改口：
+豁免的是"不产生回复文本"，不是"没有任何外发效果"。
+
+测试两条一起上：纯函数三条断言 + 一条真实链路（stub `action=read_no_reply`，
+入站文本含「转账」，断言日志里出现「未打开对话」且队列里没有草稿）。
+变异 M10（把 `safetyHold` 忽略掉）两条各红一处。
+
+同一轮由这次自查带出的四个小收口：
+- `editAndSend` 的敏感词比较还是裸 `lowercased()`，而主动发起那条已经折叠过；
+  两处合成 `matchedSensitiveKeyword`（返回命中的词，让回执说得出是哪一条）。
+  「转账」被拦、「轉 账」放行这种"同一个词两个答案"不再存在。
+- 承诺屏蔽匹配里的 `!personForm.isEmpty` 是恒真守卫（`senderIdentifier` 永远带前缀），
+  真正需要的判据是"这一半身份存不存在"：对话名为空 ⇒ 不做 wxid 匹配，
+  承诺对象为空 ⇒ 不做名字匹配。变异 M12（去掉 nil 判断）让
+  `commitment("", to:"")` + 一条空规则被误判成静音，两条断言各红一次。
+- `attributedTranscript` 里昵称为空的对方行会写成 `": …"`，
+  与摘要提示词承诺的"每行以「我:」或对方昵称开头"不符 ⇒ 回退成「对方:」。
+- `autopilot_reply_v4.txt` 的 `evidence_quote` 那句只写了 send/stall，
+  而代码按 §146 豁免的是 skip/read_no_reply —— 按提示照做的 `pending` 必被拦。
+  措辞改成与代码同一口径。
+
+## §156 岛的空态借用了今日页那句话，还顺手把三个判据写成假
+
+`InboxView.islandEmptyDetail` 直接调 `FirstLaunchGuide.todayEmpty`，
+`hasOpenTasks` / `hasOtherInboxItems` 两个参数走默认值 `false`。后果有两条：
+用户有待办或承诺未了时，岛仍然说「没有待处理的事 / 没有新消息。」；
+而走到"有待办"那支时，那句话是「答应过的事在右侧」—— 一个 36px 高的横条上
+没有左右两栏。这是同一个根因的两面：**一句话同时被两个界面共用，
+而它描述的是其中一个界面的布局**。
+
+处置不再借文案：岛的判据顺序照抄（未同步 → 未选对话 → 未配 AI → 未测通 →
+有待办），句子换成岛自己说得出的；待办的口径不重定义，
+调的是今日页同一批静态判据（`TodayFeed.mineTasks` / `waitingTasks` +
+`monitor.commitments` 里未了结的）。`aiReadiness` 也收成一个属性，
+不再每次 body 求值读两遍 SQLite。

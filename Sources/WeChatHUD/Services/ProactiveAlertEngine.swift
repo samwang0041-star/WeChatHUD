@@ -249,18 +249,21 @@ final class ProactiveAlertEngine {
         _ commitment: Commitment,
         rules: [IgnoredSenderRule]
     ) -> Bool {
-        let personForm = HUDStore.senderIdentifier(
+        // Each leg is tried only when the commitment actually carries that half
+        // of the identity. An empty counterparty folds to the sentinel "name:",
+        // which any nameless rule would match — one malformed rule would then
+        // silence every nameless commitment in the app.
+        let trimmedChat = commitment.chatUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chatForm = trimmedChat.isEmpty ? nil : HUDStore.senderIdentifier(
             senderUsername: commitment.chatUsername, senderName: ""
         )
-        let nameForm = HUDStore.senderIdentifier(
+        let trimmedName = commitment.commitTo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameForm = trimmedName.isEmpty ? nil : HUDStore.senderIdentifier(
             senderUsername: "", senderName: commitment.commitTo
         )
-        // "name:" is what an empty counterparty folds to; matching it against
-        // another empty name would mute every nameless commitment off one rule.
-        let nameFormIsUsable = nameForm != "name:"
         for rule in rules where rule.scope == .global || rule.chatUsername == commitment.chatUsername {
-            if !personForm.isEmpty, rule.senderIdentifier == personForm { return true }
-            guard nameFormIsUsable else { continue }
+            if let chatForm, rule.senderIdentifier == chatForm { return true }
+            guard let nameForm else { continue }
             let ruleNameForm = HUDStore.senderIdentifier(
                 senderUsername: "", senderName: rule.senderName
             )

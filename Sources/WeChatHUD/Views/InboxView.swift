@@ -595,19 +595,40 @@ struct InboxView: View {
         )
     }
 
+    /// Whether anything is still open in 待办 or 承诺. This reached
+    /// `todayEmpty` as a default `false`, so the island answered
+    /// 「没有待处理的事」 while work was sitting in the user's own list.
+    /// The predicates are the 今日 page's own statics — the island does not
+    /// get to decide a second time what "open" means.
+    private var hasOpenWorkForIsland: Bool {
+        let strictness = monitor.discussionStrictness
+        let items = monitor.discussionItems
+        return TodayFeed.hasOpenWork(
+            mine: TodayFeed.mineTasks(items, strictness: strictness),
+            waiting: TodayFeed.waitingTasks(items, strictness: strictness),
+            upcoming: monitor.commitments.filter { $0.status == .pending || $0.status == .overdue }
+        )
+    }
+
+    /// The island's own second line. It used to borrow
+    /// `FirstLaunchGuide.todayEmpty`, whose sentences describe the 今日 page
+    /// (「…在右侧」, the 我要做/等对方 tab names) — true there, false on a 36px
+    /// bar. Same order of checks, per-surface wording, and no claim the island
+    /// cannot verify.
     private var islandEmptyDetail: String? {
         switch monitor.stats.syncStatus {
         case .syncing, .error, .waitingForWeChat, .accountSwitched:
             return nil
         default:
-            return FirstLaunchGuide.todayEmpty(
-                wechatConnected: monitor.stats.lastSyncAt != nil,
-                hasTrackedConversations: monitor.store.hasWhitelistEntries(),
-                aiConfigured: aiReadiness.configured,
-                aiTested: aiReadiness.tested,
-                searching: false
-            ).detail
+            break
         }
+        if monitor.stats.lastSyncAt == nil { return "连上微信之后才会开始整理消息。" }
+        if !monitor.store.hasWhitelistEntries() { return "先选一个联系人或群聊，只整理你选中的对话。" }
+        let ai = aiReadiness
+        if !ai.configured { return "没有 AI 也能看微信原文；配上服务之后才会出摘要和回复建议。" }
+        if !ai.tested { return "AI 配置已填，测通一次才会出摘要和草稿。" }
+        if hasOpenWorkForIsland { return "待办和答应过的事还没清完。" }
+        return nil
     }
 
     private var islandStatusBannerShowsCopy: Bool {

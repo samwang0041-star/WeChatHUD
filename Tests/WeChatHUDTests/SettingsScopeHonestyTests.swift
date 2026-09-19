@@ -75,17 +75,21 @@ final class SettingsScopeHonestyTests: XCTestCase {
         XCTAssertEqual(mode & 0o777, 0o600, String(format: "0%o", mode))
     }
 
-    /// The island's empty-state detail branches on two AI facts that were
-    /// hardcoded `true` at the call site, so one of the four branches in
-    /// `FirstLaunchGuide.todayEmpty` could never render there.
-    func testIslandEmptyCopyReadsTheRealAIState() throws {
+    /// The island's empty state borrowed the 今日 page's sentence, which points
+    /// at a layout that only exists there (「答应过的事在右侧」、两个 tab 名), and it
+    /// hardcoded the two AI flags plus the open-work flags, so three of
+    /// `todayEmpty`'s branches were unreachable from the island.
+    func testIslandEmptyStateSaysOnlyWhatTheIslandCanSee() throws {
         let view = try source("Sources/WeChatHUD/Views/InboxView.swift")
-        let call = try XCTUnwrap(view.range(of: "FirstLaunchGuide.todayEmpty("))
-        let block = view[call.lowerBound...].components(separatedBy: ").detail").first ?? ""
-        XCTAssertFalse(block.contains("aiConfigured: true"), "岛上那句空态又写成常量了")
-        XCTAssertFalse(block.contains("aiTested: true"), "同上")
-        XCTAssertTrue(block.contains("aiReadiness.configured"))
-        XCTAssertTrue(block.contains("aiReadiness.tested"))
+        let detail = try XCTUnwrap(
+            view.range(of: "private var islandEmptyDetail: String?").map { view[$0.lowerBound...] }
+        ).components(separatedBy: "private var islandStatusBannerShowsCopy").first ?? ""
+        XCTAssertFalse(detail.contains("FirstLaunchGuide.todayEmpty"), "岛又去借今日页那句话了")
+        XCTAssertFalse(detail.contains("右侧"), "岛上没有左右栏")
+        XCTAssertFalse(detail.contains("我要做"), "那是待办页的 tab 名")
+        XCTAssertFalse(detail.contains("aiConfigured: true") || detail.contains("aiTested: true"))
+        XCTAssertTrue(detail.contains("hasOpenWorkForIsland"), "有待办时不能再报『没有待处理的事』")
+        XCTAssertTrue(detail.contains("aiReadiness"), "AI 未配置要在岛上说得出")
     }
 
     func testAutoInstallStatesWhenItCanFire() throws {

@@ -47,7 +47,7 @@
 - confidence<0.4 或 risk=high → action=read_no_reply（reply 必须为空）
 - 涉及钱、关键决定、感情承诺、法律责任的，即使 confidence 很高也必须 action=stall，不能 action=send
 - evidence_quote 必须来自"需要回复的消息"或最近上下文，不能编
-- action=send 或 stall 时 evidence_quote 不能为空：没有引用原话的回复不会被自动发出，会转成待人工确认的草稿
+- 除了 skip 和 read_no_reply，其他 action 的 evidence_quote 都不能为空：没有引用原话的回复不会被自动发出，会转成待人工确认的草稿
 - 不要输出 skip/stall/read_no_reply 旧布尔字段；只用 action 表示互斥动作
 
 只输出 JSON，不要任何其他内容。

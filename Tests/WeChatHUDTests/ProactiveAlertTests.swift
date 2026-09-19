@@ -810,5 +810,14 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertTrue(ProactiveAlertEngine.isMutedForCommitment(
             commitment("chat-a", to: "同事"), rules: [rule("wxid_tongshi", "同事", global: false)]
         ))
+        // A commitment with neither a conversation nor a counterparty must not
+        // be captured by a rule that has neither either: `senderIdentifier`
+        // always prefixes, so both sides fold to the same sentinel.
+        XCTAssertFalse(ProactiveAlertEngine.isMutedForCommitment(
+            commitment("", to: ""), rules: [rule("", "")]
+        ))
+        XCTAssertFalse(ProactiveAlertEngine.isMutedForCommitment(
+            commitment("", to: "同事"), rules: [rule("", "")]
+        ))
     }
 }

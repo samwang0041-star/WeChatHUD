@@ -891,12 +891,15 @@ actor AutopilotService {
             // with the user.
             guard Self.shouldOpenChatForReadReceipt(
                 autoSendEnabled: config.autoSendEnabled,
-                isGroup: representative.isGroup
+                isGroup: representative.isGroup,
+                safetyHold: safetyHold
             ) else {
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .readNoReply,
                     reply: nil, confidence: decision.confidence, risk: risk,
-                    reasoning: Self.readReceiptHoldReason(isGroup: representative.isGroup)
+                    reasoning: Self.readReceiptHoldReason(
+                        isGroup: representative.isGroup, safetyHold: safetyHold
+                    )
                 )
             }
             // Full-auto mode: read-no-reply executes directly, no human confirmation needed.
@@ -999,12 +1002,15 @@ actor AutopilotService {
                 // group or with autopilot disabled.
                 guard Self.shouldOpenChatForReadReceipt(
                     autoSendEnabled: config.autoSendEnabled,
-                    isGroup: representative.isGroup
+                    isGroup: representative.isGroup,
+                    safetyHold: safetyHold
                 ) else {
                     return makeLogEntry(
                         sessionId: sessionId, msg: representative, action: .skipped,
                         reply: nil, confidence: decision.confidence, risk: risk,
-                        reasoning: Self.readReceiptHoldReason(isGroup: representative.isGroup)
+                        reasoning: Self.readReceiptHoldReason(
+                            isGroup: representative.isGroup, safetyHold: safetyHold
+                        )
                     )
                 }
                 let readDelay = Double.random(in: 3...10)
@@ -1401,12 +1407,9 @@ actor AutopilotService {
     /// Edit and send a pending message.
     func editAndSend(id: UUID, newText: String, config: AutopilotConfig) async -> ManualSendOutcome {
         // Fix 1: sensitive keyword check on edited text
-        if !config.sensitiveKeywords.isEmpty {
-            let lower = newText.lowercased()
-            if let keyword = config.sensitiveKeywords.first(where: { lower.contains($0.lowercased()) }) {
-                print("[WCHUD] Autopilot: editAndSend blocked — contains sensitive keyword '\(keyword)'")
-                return .blocked("命中敏感词「\(keyword)」")
-            }
+        if let keyword = Self.matchedSensitiveKeyword(newText, sensitiveKeywords: config.sensitiveKeywords) {
+            print("[WCHUD] Autopilot: editAndSend blocked — contains sensitive keyword")
+            return .blocked("命中敏感词「\(keyword)」")
         }
         guard !isPaused else {
             print("[WCHUD] Autopilot: editAndSend blocked — user is active")
@@ -1728,8 +1731,11 @@ actor AutopilotService {
     ]
 
     /// Whether a decision's text may leave the machine, and therefore owes the
-    /// model a quotation. Written fail-closed: only the two actions that
-    /// provably put nothing on the wire are exempt. Matching on
+    /// model a quotation. Written fail-closed: only the two actions that put no
+    /// reply text on the wire are exempt. `read_no_reply` is exempt from the
+    /// citation but NOT from the rest of the gate — opening the chat is still an
+    /// outward effect, which is why `shouldOpenChatForReadReceipt` takes
+    /// `safetyHold`. Matching on
     /// `action == "send" || action == "stall"` instead would miss the legacy
     /// `action: "pending"` path — the decoder also folds an unrecognized action
     /// into `pending`, and both reach the send queue as a stall.
@@ -1737,16 +1743,16 @@ actor AutopilotService {
         !skip && !readNoReply
     }
 
-    /// Whether a proactive draft is too sensitive to even offer for approval.
-    /// Uses the same fold as the three gates on the reply path: this one looks
-    /// at text nobody has reviewed yet, and a plain lowercase compare let
-    /// 「轉 账」 and full-width 转账 through untouched.
-    nonisolated static func proactiveDraftIsSensitive(
+    /// First configured keyword a draft would trip, using the same fold as the
+    /// gates on the reply path. Two consumers: the proactive draft that is never
+    /// even offered, and `editAndSend`, where the user's own edit is blocked with
+    /// 「命中敏感词」. A plain lowercase compare made the second one arbitrary —
+    /// 「转账」 blocked, 「轉 账」 not.
+    nonisolated static func matchedSensitiveKeyword(
         _ content: String, sensitiveKeywords: [String]
-    ) -> Bool {
-        guard !sensitiveKeywords.isEmpty else { return false }
+    ) -> String? {
         let haystack = normalizedForSafetyMatch(content)
-        return sensitiveKeywords.contains { haystack.contains(normalizedForSafetyMatch($0)) }
+        return sensitiveKeywords.first { haystack.contains(normalizedForSafetyMatch($0)) }
     }
 
     nonisolated static func autopilotSafetyHoldReason(
@@ -1889,7 +1895,7 @@ actor AutopilotService {
             guard !content.isEmpty, content.count <= 100 else { continue }
 
             // Fix 3: sensitive keyword check (proactive messages are higher risk)
-            if Self.proactiveDraftIsSensitive(content, sensitiveKeywords: config.sensitiveKeywords) {
+            if Self.matchedSensitiveKeyword(content, sensitiveKeywords: config.sensitiveKeywords) != nil {
                 continue // silently skip — don't proactively send sensitive content
             }
 
@@ -2057,16 +2063,26 @@ actor AutopilotService {
     /// decision and the duplicate-stall suppression) must consult this before
     /// `WeChatLauncher.openChat`. Pure so tests can pin the policy without
     /// driving the UI.
-    static func shouldOpenChatForReadReceipt(autoSendEnabled: Bool, isGroup: Bool) -> Bool {
-        autoSendEnabled && !isGroup
+    static func shouldOpenChatForReadReceipt(
+        autoSendEnabled: Bool, isGroup: Bool, safetyHold: String? = nil
+    ) -> Bool {
+        guard autoSendEnabled, !isGroup else { return false }
+        // A read receipt is an outward effect the peer sees, so it inherits the
+        // same holds a send does. The `read_no_reply` branch used to be the one
+        // outward action that never consulted `safetyHold`: risk, sensitive
+        // keywords and the citation check were all computed and thrown away on
+        // that path, so steering the model into `action=read_no_reply` marked
+        // messages read while every gate above was refusing the reply itself.
+        // (`skip` sends and opens nothing, so it has nothing to hold.)
+        return safetyHold == nil
     }
 
     /// Human-readable reason logged when the read-receipt open-chat gate above
     /// declines to act. Kept as a function so the two branches cannot drift.
-    static func readReceiptHoldReason(isGroup: Bool) -> String {
-        isGroup
-            ? "群聊消息，请人工确认"
-            : "未开启自动发送，已读不回需人工确认"
+    static func readReceiptHoldReason(isGroup: Bool, safetyHold: String? = nil) -> String {
+        if isGroup { return "群聊消息，请人工确认" }
+        if let safetyHold { return "安全检查：\(safetyHold)，未打开对话" }
+        return "未开启自动发送，已读不回需人工确认"
     }
 
     static func isEligibleForAutomaticSend(_ item: PendingSend, now: Date) -> Bool {

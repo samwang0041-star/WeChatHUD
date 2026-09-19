@@ -525,18 +525,39 @@ final class AutopilotSafetyTests: XCTestCase {
     /// on.
     func testPromptAsksForTheQuoteASendIsHeldTo() throws {
         let template = try PromptLoader().load(version: "autopilot_reply_v4")
-        XCTAssertTrue(template.contains("evidence_quote 不能为空"), template)
+        XCTAssertTrue(template.contains("evidence_quote 都不能为空"), template)
     }
 
-    /// The proactive draft check is the last gate before a peer sees a message
-    /// the user never wrote; it compared lowercased text while the three
-    /// reply-path gates fold script and spacing, so 「轉 账」 was invisible to it.
-    func testProactiveDraftSensitivityUsesTheSameFold() {
+    /// One predicate now serves both draft gates. The proactive one folded
+    /// script and spacing while `editAndSend` compared `lowercased()` text, so
+    /// the user's own edit blocked 「转账」 and let 「轉 账」 through — same list,
+    /// same word, two answers.
+    func testDraftKeywordCheckIsOneFoldForBothGates() {
         let keywords = ["转账"]
-        XCTAssertTrue(AutopilotService.proactiveDraftIsSensitive("我转账给你", sensitiveKeywords: keywords))
-        XCTAssertTrue(AutopilotService.proactiveDraftIsSensitive("轉 賬 可以吗", sensitiveKeywords: keywords))
-        XCTAssertFalse(AutopilotService.proactiveDraftIsSensitive("周五对一下排期", sensitiveKeywords: keywords))
-        XCTAssertFalse(AutopilotService.proactiveDraftIsSensitive("转账", sensitiveKeywords: []))
+        XCTAssertEqual(AutopilotService.matchedSensitiveKeyword("我转账给你", sensitiveKeywords: keywords), "转账")
+        XCTAssertEqual(AutopilotService.matchedSensitiveKeyword("轉 賬 可以吗", sensitiveKeywords: keywords), "转账")
+        XCTAssertNil(AutopilotService.matchedSensitiveKeyword("周五对一下排期", sensitiveKeywords: keywords))
+        XCTAssertNil(AutopilotService.matchedSensitiveKeyword("转账", sensitiveKeywords: []))
+    }
+
+    /// `read_no_reply` sends no text, but it opens the chat — and the whole
+    /// safety table (risk, reason code, keywords, citation) was computed and
+    /// then never read on that branch. A peer who steered the model into
+    /// `action=read_no_reply` therefore got a real read receipt through a gate
+    /// that was already refusing the reply itself.
+    func testReadReceiptGateHonoursTheSameSafetyHold() {
+        XCTAssertTrue(
+            AutopilotService.shouldOpenChatForReadReceipt(autoSendEnabled: true, isGroup: false),
+            "no hold ⇒ full auto still reads the chat, as designed"
+        )
+        XCTAssertFalse(
+            AutopilotService.shouldOpenChatForReadReceipt(
+                autoSendEnabled: true, isGroup: false, safetyHold: "命中敏感词「转账」"),
+            "a held reply must not turn into an unheld read receipt"
+        )
+        XCTAssertTrue(
+            AutopilotService.readReceiptHoldReason(isGroup: false, safetyHold: "风险等级为中")
+                .contains("未打开对话"))
     }
 
     // MARK: - applySafetyDowngrades

@@ -88,7 +88,8 @@ actor ConversationMemoryUpdater {
                 myDisplayName: myDisplayName,
                 mySelfNames: mySelfNames
             )
-            let speaker = fromMe ? "我" : AIService.oneLine(msg.senderName)
+            let speaker = fromMe ? "我"
+                : (AIService.oneLine(msg.senderName).isEmpty ? "对方" : AIService.oneLine(msg.senderName))
             return "\(speaker): \(AIService.oneLine(AIService.sanitizeForAI(msg.text)))"
         }.joined(separator: "\n")
     }

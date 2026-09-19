@@ -105,5 +105,13 @@ final class ConversationMemoryUpdaterTests: XCTestCase {
             myUsername: "wxid_me"
         )
         XCTAssertEqual(out, "同事: 你的立场是同意续约\n我: 我再想想")
+
+        // The memory prompt tells the model every line starts with 「我:」 or a
+        // nickname, so a peer row with no display name must not open with ": ".
+        let anonymous = ConversationMemoryUpdater.attributedTranscript(
+            [message("peer-2", sender: "wxid_peer", name: "", text: "在吗")],
+            chatUsername: "wxid_peer", myUsername: "wxid_me"
+        )
+        XCTAssertEqual(anonymous, "对方: 在吗")
     }
 }
