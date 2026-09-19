@@ -131,7 +131,11 @@ actor AIInboxSummarizer {
 
     private func renderMessageBody(_ context: InboxContext) -> String {
         let sanitized = AIService.sanitizeForAI(context.triggerMessageText)
-        if let mediaType = context.mediaType, isMediaPlaceholder(sanitized) {
+        // The placeholder test has to run on the raw text: `sanitizeForAI`
+        // deletes "[图片]" itself, so the sanitized copy can never match it and
+        // this fast path was dead code that only reached the right answer by
+        // falling through twice.
+        if let mediaType = context.mediaType, isMediaPlaceholder(context.triggerMessageText) {
             return renderMediaBody(mediaType, context: context)
         }
         if MessageHelpers.isReadableAIContent(sanitized, allowMediaPlaceholder: false) {

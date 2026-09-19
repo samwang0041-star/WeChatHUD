@@ -764,9 +764,11 @@ actor AutopilotService {
             risk: risk,
             reasonCode: decision.reasonCode,
             sensitiveKeywords: config.sensitiveKeywords,
-            // Only an intended send needs to prove its quote; a stall or a skip
-            // sends nothing, so holding there would cost the user for nothing.
-            evidenceQuote: decision.action == "send" ? decision.evidenceQuote : nil,
+            // A stall sends text — that is the whole point of 缓兵之计 — so its
+            // grounding has to hold too. Only skip / read_no_reply send nothing
+            // and are exempt.
+            evidenceQuote: (decision.action == "send" || decision.action == "stall")
+                ? decision.evidenceQuote : nil,
             evidenceSource: "\(combinedText)\n\(contextText)"
         )
 
@@ -818,6 +820,17 @@ actor AutopilotService {
         // AI says pending or stall → treat as stall (send a stalling reply automatically)
         if decision.pending == true || decision.action == "stall" {
             guard let stallText = decision.reply, !stallText.isEmpty else {
+                // An unrecognized action must not take this branch either: a
+                // read-no-reply opens the chat, which is an outward side effect,
+                // and "the model said something we don't parse" is not a request
+                // to mark the user's messages as read.
+                guard !decision.actionUnrecognized else {
+                    return makeLogEntry(
+                        sessionId: sessionId, msg: representative, action: .skipped,
+                        reply: nil, confidence: decision.confidence, risk: risk,
+                        reasoning: "AI 返回无法识别的动作且无回复内容，不产生外发效果: \(decision.reasoning)"
+                    )
+                }
                 return makeLogEntry(
                     sessionId: sessionId, msg: representative, action: .readNoReply,
                     reply: nil, confidence: decision.confidence, risk: risk,
@@ -859,6 +872,16 @@ actor AutopilotService {
         if downgraded.action != .sent {
             finalAction = downgraded.action
             finalReasoning = downgraded.reasoning
+        }
+        // An `action` outside the prompt's vocabulary arrives here as
+        // `pending=true` (the decoder's legacy fold), which the closure above
+        // turned into `.stall` — so an ordinary model hiccup ("hold",
+        // "confirm", a value truncated mid-word) used to auto-send whatever
+        // text rode along with it. Place is deliberate: after the safety table,
+        // so no confidence or keyword result can promote it back to a send, and
+        // the send-intent guard below rejects `.pending` outright.
+        if decision.actionUnrecognized {
+            finalAction = .pending
         }
 
         // Stall deduplication: same contact shouldn't receive identical stall text within 10 min
@@ -919,7 +942,9 @@ actor AutopilotService {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .skipped,
                 reply: nil, confidence: decision.confidence, risk: risk,
-                reasoning: "AI未明确发送意图 (action=\(decision.action ?? "nil"))，不进入发送队列: \(decision.reasoning)"
+                reasoning: decision.actionUnrecognized
+                    ? "AI 返回了无法识别的动作「\(decision.action ?? "nil")」，不进入发送队列: \(decision.reasoning)"
+                    : "AI未明确发送意图 (action=\(decision.action ?? "nil"))，不进入发送队列: \(decision.reasoning)"
             )
         }
 
@@ -1491,10 +1516,12 @@ actor AutopilotService {
             dbDir: reader.dbDir
         )
         let result = ImageUnderstandingService.analyzeImage(at: imagePath)
+        // OCR text is the peer's pixels, not ours: a 名片/证件/票据 screenshot
+        // carries exactly the identifiers the typed path masks.
         if result.hasText {
-            return result.promptContext
+            return AIService.sanitizeForAI(result.promptContext)
         }
-        return "\(mediaType.promptContext)\n\(result.promptContext)"
+        return "\(mediaType.promptContext)\n\(AIService.sanitizeForAI(result.promptContext))"
     }
 
     /// Decision hold for one AI reply. Internal rather than private so the

@@ -110,6 +110,32 @@ final class PersistedConfigCompatibilityTests: XCTestCase {
         )
     }
 
+    /// The refusal has to come *before* the legacy copies are deleted.
+    /// Refusing after the delete left the user's other four settings in exactly
+    /// one place — the device file — and the only way out of the resulting
+    /// launch failure was to delete that file, which then reseeded factory
+    /// defaults from a legacy table that had already been emptied. One corrupt
+    /// blob must never be able to cost the rest of the configuration.
+    func testUnreadableSyncRefusalLeavesTheOtherLegacySettingsInPlace() throws {
+        let legacyPath = coordinator.supportDirectory.appendingPathComponent("hud.sqlite3").path
+        let old = HUDStore(dbPath: legacyPath)
+        try old.open()
+        try old.setSetting("sync", value: #"{"wechatDBPath":"#)
+        try old.setSetting("notification", value: #"{"atMention":false,"important":false}"#)
+        try old.addToWhitelist(username: "chat-1", displayName: "Alice", isGroup: false, category: .work)
+
+        XCTAssertThrowsError(try coordinator.bootstrap(databaseCandidates: [accountA, accountB]))
+
+        let reopened = HUDStore(dbPath: legacyPath)
+        try reopened.open()
+        defer { reopened.close() }
+        XCTAssertEqual(
+            reopened.getSetting("notification"),
+            #"{"atMention":false,"important":false}"#,
+            "the refusal must not have consumed the settings it was protecting"
+        )
+    }
+
     // MARK: - NotificationConfig
 
     func testNotificationBlobMissingANewerSwitchKeepsTheOnesTheUserSet() throws {

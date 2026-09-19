@@ -424,7 +424,7 @@ func completeWithMetadata(
     /// filters (e.g. Kimi returns HTTP 400 for "[表情]"). Returns the
     /// sanitized text — empty string if nothing remains.
     static func sanitizeForAI(_ text: String) -> String {
-        var t = text
+        var t = foldEvadedIdentifierShapes(text)
         let placeholders = [
             "[表情]", "[图片]", "[照片]", "[语音]", "[视频]",
             "[文件]", "[链接]", "[位置]", "[红包]", "[转账]",
@@ -436,6 +436,35 @@ func completeWithMetadata(
         return maskDirectIdentifiers(
             t.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+    }
+
+    /// Fullwidth digits and zero-width joiners are the two ways a real WeChat
+    /// message carries an identifier that no ASCII-digit regex can see: the
+    /// 全角 keyboard produces `１３８００１３８０００`, and copy-paste from another
+    /// app leaves U+200B/FEFF/soft-hyphen inside a number the human eye reads as
+    /// one run. Folding here — before the placeholder strip, so `[图​片]` still
+    /// counts as a placeholder — makes both shapes match.
+    private static func foldEvadedIdentifierShapes(_ text: String) -> String {
+        let zeroWidth: Set<Character> = [
+            "\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}"
+        ]
+        var out = String()
+        out.unicodeScalars.reserveCapacity(text.unicodeScalars.count)
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case let s where zeroWidth.contains(Character(s)):
+                continue
+            case "\u{FF10}"..."\u{FF19}":  // ０-９
+                out.unicodeScalars.append(UnicodeScalar(scalar.value - 0xFF10 + 0x30)!)
+            case "\u{FF0B}": out.unicodeScalars.append("+")
+            case "\u{FF0D}": out.unicodeScalars.append("-")
+            case "\u{FF20}": out.unicodeScalars.append("@")
+            case "\u{3000}": out.unicodeScalars.append(" ")  // ideographic space
+            default:
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
     }
 
     /// Mask uniquely-identifying tokens before chat text leaves the machine for
@@ -452,26 +481,143 @@ func completeWithMetadata(
     /// they are not uniquely identifying. The retrospective path layers
     /// stronger masking (also money + name→codename) on top for persisted
     /// aggregate analysis; this is the floor, not the ceiling.
+    ///
+    /// Not covered, by the same choice: person and group names, platform ids
+    /// (`wxid_…`, `…@chatroom`), landlines and IP/MAC. Those are either the
+    /// subject the user is asking about or carry no direct identifier on their
+    /// own; only the retrospective path codenames names, and it is the one path
+    /// that persists aggregates.
     static func maskDirectIdentifiers(_ text: String) -> String {
-        var out = text
-        // 18-digit mainland national ID (last digit may be X) — before the
-        // generic bank-card run so IDs get the right label.
-        out = out.replacingOccurrences(
-            of: #"(?<!\d)\d{17}[\dXx](?!\d)"#,
-            with: "[证件]", options: .regularExpression)
-        // 16-19 digit bank / credit card number.
-        out = out.replacingOccurrences(
-            of: #"(?<!\d)\d{16,19}(?!\d)"#,
-            with: "[卡号]", options: .regularExpression)
-        // 11-digit mainland mobile (1[3-9]xxxxxxxxx).
-        out = out.replacingOccurrences(
-            of: #"(?<!\d)1[3-9]\d{9}(?!\d)"#,
-            with: "[手机]", options: .regularExpression)
-        // Email address.
-        out = out.replacingOccurrences(
+        // The egress boundary calls this directly, so the shape fold has to live
+        // here too — otherwise the one place that is supposed to hold is the
+        // place that still only sees contiguous ASCII digits.
+        return maskEmail(maskDigitRuns(foldEvadedIdentifierShapes(text)))
+    }
+
+    private static func maskEmail(_ text: String) -> String {
+        text.replacingOccurrences(
             of: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
             with: "[邮箱]", options: .regularExpression)
-        return out
+    }
+
+    /// Mask phone / card / national-ID numbers by *digit count and grouping*,
+    /// not by regex shape. Three reasons the four-regex version could not hold:
+    /// an 11-digit mobile typed as `138 0013 8000` is invisible to `\d{9}`;
+    /// `+8613812345678` is a 13-digit run the `(?<!\d)` guard refuses; and any
+    /// separator-tolerant regex that fixes those two also eats
+    /// `2026-09-19 2026-09-20`, which is a date range and one of the numbers the
+    /// user is actually asking about. Grouping answers it: real numbers group in
+    /// 3-4 digit chunks, dates group in 2.
+    ///
+    /// `.` and `,` stay out of the separator set for the same reason —
+    /// "1.3800138000" and "1,380,013,800" read as amounts.
+    private static func maskDigitRuns(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        func isDigit(_ s: UnicodeScalar) -> Bool { s >= "0" && s <= "9" }
+        // One separator only, and only between digits. Two consecutive spaces is
+        // a sentence break, not a grouped number.
+        func isSeparator(_ s: UnicodeScalar) -> Bool { s == " " || s == "\u{00A0}" || s == "-" }
+        func isPlus(_ s: UnicodeScalar) -> Bool { s == "+" }
+        func isChecksumX(_ s: UnicodeScalar) -> Bool { s == "X" || s == "x" }
+
+        var out = String.UnicodeScalarView()
+        var i = 0
+        while i < scalars.count {
+            let runStart: Int
+            if isPlus(scalars[i]) && (i + 1 < scalars.count) && isDigit(scalars[i + 1]) {
+                runStart = i
+            } else if !isDigit(scalars[i]) {
+                out.append(scalars[i]); i += 1; continue
+            } else {
+                runStart = i
+            }
+            var end = runStart
+            let hasPlus = isPlus(scalars[end])
+            if hasPlus { end += 1 }
+            var groups: [[UnicodeScalar]] = []
+            var separators: [UnicodeScalar] = []
+            var current: [UnicodeScalar] = []
+            while end < scalars.count {
+                if isDigit(scalars[end]) {
+                    current.append(scalars[end]); end += 1
+                } else if !current.isEmpty, isSeparator(scalars[end]),
+                          end + 1 < scalars.count, isDigit(scalars[end + 1]) {
+                    groups.append(current); separators.append(scalars[end]); current = []
+                    end += 1
+                } else {
+                    break
+                }
+            }
+            if !current.isEmpty { groups.append(current) }
+            let digits = groups.flatMap { $0 }
+            // 18-digit ID with an X checksum: the X is not a digit, so it sits
+            // just past the run.
+            if digits.count == 17, end < scalars.count, isChecksumX(scalars[end]) {
+                out.append(contentsOf: "[证件]".unicodeScalars)
+                end += 1
+                i = end
+                continue
+            }
+            // A run can hold two numbers side by side ("我的号 13800138000 单号
+            // 88991234"). Masking only the whole run, or only nothing, would leak
+            // the phone in it, so consume the longest classifying window first
+            // and fall back to verbatim text group by group.
+            var groupIndex = 0
+            while groupIndex < groups.count {
+                var matched = 0
+                var label: String?
+                for length in stride(from: groups.count - groupIndex, through: 1, by: -1) {
+                    let window = Array(groups[groupIndex..<groupIndex + length])
+                    if let candidate = digitRunLabel(window) {
+                        matched = length; label = candidate; break
+                    }
+                }
+                if let label {
+                    out.append(contentsOf: label.unicodeScalars)
+                    groupIndex += matched
+                } else {
+                    if groupIndex == 0, hasPlus { out.append("+") }
+                    out.append(contentsOf: groups[groupIndex])
+                    if groupIndex < separators.count { out.append(separators[groupIndex]) }
+                    groupIndex += 1
+                }
+            }
+            i = end
+        }
+        return String(out)
+    }
+
+    /// nil means "leave these digits alone" — amounts, order numbers,
+    /// verification codes and dates are the numbers under discussion.
+    private static func digitRunLabel(_ groups: [[UnicodeScalar]]) -> String? {
+        let rendered = groups.map { String(String.UnicodeScalarView($0)) }
+        var body = rendered.joined()
+        let isGrouped = groups.count > 1
+        if isGrouped {
+            // Grouped numbers are only credible in 3+ digit chunks; a leading
+            // `86` country code is the one 2-digit group allowed. This is what
+            // keeps `2026 09 19` (and `2026-09-19-2026-09-20`, 16 digits) out of
+            // the card range.
+            var checked = rendered
+            if checked.first == "86" {
+                checked.removeFirst()
+                body = String(body.dropFirst(2))
+            }
+            guard checked.count > 1 else { return nil }
+            guard checked.allSatisfy({ $0.count >= 3 }) else { return nil }
+        }
+        let n = body.count
+        if n == 18 { return "[证件]" }
+        if (16...19).contains(n) { return "[卡号]" }
+        if n == 13, body.hasPrefix("86"), isMobile(String(body.dropFirst(2))) { return "[手机]" }
+        if n == 11, isMobile(body) { return "[手机]" }
+        return nil
+    }
+
+    private static func isMobile(_ number: String) -> Bool {
+        guard number.count == 11, number.hasPrefix("1"),
+              let second = number.dropFirst().first else { return false }
+        return ("3"..."9").contains(second)
     }
 
     /// Collapse newlines for fields embedded in "[ts] name: text" transcript

@@ -157,19 +157,19 @@ struct AccountStoreCoordinator {
         }
         try device.initializeIfNeeded(legacySettings: initialSettings,
                                       legacyAccountRoot: legacy == nil ? nil : validOriginal)
-        // Copied shared keys stay behind in the legacy settings table —
-        // some (like a pre-migration settings.ai) carry a plaintext API key
-        // that the device store now shadows, so migration code can never see
-        // or scrub it. Delete the legacy copies once the move succeeded.
-        if !initialSettings.isEmpty, let legacy {
-            for key in initialSettings.keys { try? legacy.deleteSetting(key) }
-        }
         // A stored-but-unreadable account setting is not the same as an unset
         // one. Defaulting it would resolve to `wechatDBPath == "auto"`, which
         // with more than one install on the machine means no identity, which
         // means opening a fresh empty store while the user's real data sits
         // untouched next door — the app looks wiped. Stop instead, exactly as
         // the other unreadable-state paths in this type do.
+        //
+        // Before the legacy copies are deleted, on purpose: refusing *after*
+        // the delete leaves the user's `ai`/`notification` settings in one
+        // place only (the device file), and the single escape from this throw
+        // is deleting that file — which then reseeds factory defaults from the
+        // now-empty legacy table. One corrupt blob must never be able to cost
+        // the other four.
         let storedSyncRaw = device.get("sync")
         let sync: SyncConfig
         if let storedSyncRaw, !storedSyncRaw.isEmpty {
@@ -179,6 +179,13 @@ struct AccountStoreCoordinator {
             sync = decoded
         } else {
             sync = oldSync
+        }
+        // Copied shared keys stay behind in the legacy settings table —
+        // some (like a pre-migration settings.ai) carry a plaintext API key
+        // that the device store now shadows, so migration code can never see
+        // or scrub it. Delete the legacy copies once the move succeeded.
+        if !initialSettings.isEmpty, let legacy {
+            for key in initialSettings.keys { try? legacy.deleteSetting(key) }
         }
         let root = Self.selectedRoot(configuredPath: sync.wechatDBPath, candidates: databaseCandidates)
         let identity = root.map(WeChatReader.accountCacheIdentity)

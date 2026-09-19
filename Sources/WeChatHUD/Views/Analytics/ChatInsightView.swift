@@ -47,7 +47,10 @@ struct ChatInsightView: View {
             }
         }
         .onChange(of: monitor.stats.lastSyncAt) { _, _ in
-            reloadInsightStats()
+            // Every completed scan stamps this, empty or not, and one reload is
+            // a walk of the whole message library — so this trigger goes
+            // through the store's rate limit instead of running per scan.
+            reloadInsightStats(trigger: .newData)
         }
         .onChange(of: insightStore.selectedWindow) { _, _ in
             reloadInsightStats()
@@ -81,13 +84,16 @@ struct ChatInsightView: View {
         )
     }
 
-    private func reloadInsightStats() {
+    private func reloadInsightStats(trigger: InsightStore.ReloadTrigger = .userInitiated) {
         if PreviewRuntime.opensInsightOverviewByDefault {
             insightStore.applyProductPreviewFixture(chatStats: PreviewRuntime.previewChatStats())
             return
         }
         Task {
-            await insightStore.reload(store: store, reader: reader, replyDebtItems: monitor.replyDebtItems)
+            await insightStore.reload(
+                store: store, reader: reader,
+                replyDebtItems: monitor.replyDebtItems, trigger: trigger
+            )
         }
     }
 

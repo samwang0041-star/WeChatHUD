@@ -82,6 +82,16 @@ extension ChatMonitor {
                 completed.insert(msg.id)
                 continue
             }
+            // A message with no readable text left after sanitizing — a sticker,
+            // an image, a system row — has nothing for the classifier to read.
+            // It used to arrive as an empty `{message_body}`, which left the
+            // model guessing an ask/no-ask from the two names around it while
+            // the prompt's own few-shot example still taught it the "[图片]"
+            // literal that could no longer reach it.
+            guard !AIService.sanitizeForAI(msg.text).isEmpty else {
+                completed.insert(msg.id)
+                continue
+            }
             let input = ClassifierInput(msgUID: msg.id, text: msg.text, senderName: msg.senderName,
                                         chatName: msg.chatName, isGroup: MessageHelpers.isGroupChat(msg.chatUsername))
             // SQL bounds precede LIMIT: an old queued message gets its own prior

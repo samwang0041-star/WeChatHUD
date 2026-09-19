@@ -33,10 +33,34 @@ final class ClassificationQueueWorkerTests: XCTestCase {
         for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
     }
 
-    private func message(_ id: Int, chat: String = "synthetic_peer") -> MessageInfo {
+    private func message(
+        _ id: Int, chat: String = "synthetic_peer",
+        text: String = "请发方案", baseType: Int = 1
+    ) -> MessageInfo {
         MessageInfo(id: "queued-\(id)", localId: id, chatUsername: chat, chatName: "合成同事",
-                    senderUsername: chat, senderName: "合成同事", text: "请发方案",
-                    baseType: 1, subType: 0, createTime: 1000 + id)
+                    senderUsername: chat, senderName: "合成同事", text: text,
+                    baseType: baseType, subType: 0, createTime: 1000 + id)
+    }
+
+    /// A message that is nothing but a WeChat media placeholder has no text
+    /// left after sanitizing, and the classifier's own prompt teaches it that
+    /// such a message is not an ask. It used to be sent anyway with an empty
+    /// `{message_body}`, which left the model deciding from the two names
+    /// around the gap — and the prompt's "[图片]" few-shot example could no
+    /// longer reach it, because the sanitizer deletes that literal.
+    @MainActor
+    func testMediaPlaceholderMessageIsAcknowledgedWithoutModelCall() async throws {
+        let (store, monitor, ai, path) = try await harness()
+        defer { cleanup(store, path) }
+        try store.addToWhitelist(username: "synthetic_peer", displayName: "合成同事", isGroup: false, category: .work)
+        try store.enqueueClassificationMessages([message(1, text: "[图片]", baseType: 3)])
+        monitor.drainClassificationQueue()
+        await monitor.classificationWorker?.value
+
+        XCTAssertEqual(store.classificationQueueCount(), 0, "the queue must still drain")
+        let calls = await ai.calls.count
+        XCTAssertEqual(calls, 0, "a message with no readable text must not reach the model")
+        XCTAssertTrue(store.loadPendingAsks().isEmpty)
     }
 
     @MainActor

@@ -251,18 +251,74 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
     }
 
     private func stubDecision(reply: String, confidence: Double) {
-        let payload: [String: Any] = [
-            "action": "send",
-            "reply": reply,
+        stubDecision(action: "send", reply: reply, confidence: confidence)
+    }
+
+    private func stubDecision(action: String, reply: String?, confidence: Double) {
+        var payload: [String: Any] = [
+            "action": action,
             "confidence": confidence,
             "risk": "low",
             "reasoning": "ok"
         ]
+        if let reply { payload["reply"] = reply }
         let content = String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
         URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
             content: content,
             urlString: "http://127.0.0.1:9/v1/chat/completions"
         )
         URLRequestRecorder.stubbedResponses = [URLRequestRecorder.stubbedResponse!]
+    }
+
+    /// The prompt's vocabulary is `send|stall|read_no_reply|skip`. Anything else
+    /// ("hold", "confirm", a value truncated mid-word — ordinary model drift)
+    /// was folded by the decoder into `pending=true`, which the stall branch
+    /// then treated as permission to send: an unreadable reply from the model
+    /// put its text straight into a real chat with no human in the loop.
+    func testUnrecognizedActionCannotQueueAnAutoSend() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(action: "hold", reply: "周末安排还不确定，周五再定", confidence: 0.99)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "unknown-action-1", text: "周末一起爬山吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertTrue(queue.isEmpty, "an unparsed action must not queue a send: \(queue)")
+        XCTAssertFalse(result.logEntries.isEmpty, "the decision must still be auditable")
+        XCTAssertNotEqual(result.logEntries.first?.action, .sent)
+        XCTAssertNotEqual(result.logEntries.first?.action, .stall)
+        try? await pipeline.stop()
+    }
+
+    /// An unrecognized action with no reply text used to fall into the
+    /// read-no-reply branch, which opens the chat in WeChat — an outward side
+    /// effect granted to a response the app could not even parse.
+    func testUnrecognizedActionWithoutReplyDoesNotOpenTheChat() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(action: "confirm", reply: nil, confidence: 0.99)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "unknown-action-2", text: "在吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        XCTAssertFalse(result.logEntries.isEmpty, "the decision must still be auditable")
+        XCTAssertEqual(result.logEntries.first?.action, .skipped)
+        XCTAssertNotEqual(result.logEntries.first?.action, .readNoReply)
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertTrue(queue.isEmpty)
+        try? await pipeline.stop()
     }
 }

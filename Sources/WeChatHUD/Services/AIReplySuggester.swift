@@ -142,14 +142,23 @@ actor AIReplySuggester {
             .replacingOccurrences(of: "{relationship}", with: input.relationship)
             .replacingOccurrences(of: "{relationship_hierarchy}", with: input.relationshipHierarchy ?? "unknown")
             .replacingOccurrences(of: "{tone_preference}", with: input.tonePreference ?? "unknown")
-            .replacingOccurrences(of: "{context_window}", with: input.contextWindow ?? "（无可用上下文）")
-            .replacingOccurrences(of: "{my_last_reply}", with: input.myLastReply.map(AIService.oneLine) ?? "（无）")
-            .replacingOccurrences(of: "{analysis_summary}", with: input.analysisSummary.map(AIService.oneLine) ?? "（无）")
-            .replacingOccurrences(of: "{known_constraints}", with: input.knownConstraints.map(AIService.oneLine) ?? "（无）")
+            // Every field below is quoted chat text, and `clean` only collapses
+            // newlines. The egress boundary masks identifiers too, but this is
+            // the one AI path whose callers pass raw `item.preview` /
+            // `myLastReply` / style examples, so the sink sanitizes as well.
+            .replacingOccurrences(
+                of: "{context_window}",
+                with: input.contextWindow.map { clean(AIService.sanitizeForAI($0)) } ?? "（无可用上下文）")
+            .replacingOccurrences(of: "{my_last_reply}", with: quoted(input.myLastReply))
+            .replacingOccurrences(
+                of: "{analysis_summary}", with: input.analysisSummary.map(AIService.oneLine) ?? "（无）")
+            .replacingOccurrences(
+                of: "{known_constraints}",
+                with: quoted(input.knownConstraints))
 
         // Append style hint if available (from StyleProfiler)
         if let hint = input.styleHint {
-            userPrompt += "\n\n[风格参考] \(hint)"
+            userPrompt += "\n\n[风格参考] \(AIService.sanitizeForAI(hint))"
         }
         // Append feedback context (from AI learning loop)
         if let feedback = input.feedbackContext {
@@ -333,6 +342,21 @@ actor AIReplySuggester {
         s.replacingOccurrences(of: "\n", with: " ")
          .replacingOccurrences(of: "\r", with: " ")
          .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Quoted chat text collapsed to one line, with identifiers masked and the
+    /// WeChat media placeholders stripped. A quote that strips down to nothing
+    /// has to fall back to the prompt's own placeholder rather than an empty
+    /// field, or the model is asked to draft a reply to nothing.
+    private func quoted(_ value: String?) -> String {
+        guard let value else { return "（无）" }
+        let rendered = clean(AIService.sanitizeForAI(value))
+        return rendered.isEmpty ? "（无）" : rendered
+    }
+
+    private func quoted(_ values: [String]) -> String {
+        let rendered = values.map { clean(AIService.sanitizeForAI($0)) }.filter { !$0.isEmpty }
+        return rendered.isEmpty ? "（无）" : rendered.joined(separator: "\n")
     }
 
     private func ms(since start: Date) -> Int {

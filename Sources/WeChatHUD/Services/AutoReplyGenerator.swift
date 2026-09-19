@@ -40,6 +40,10 @@ actor AutoReplyGenerator {
         let reasonCode: String?
         /// Short quote grounding the decision.
         let evidenceQuote: String?
+        /// `action` was present but outside the prompt's vocabulary
+        /// (`send|stall|pending|read_no_reply|skip`). That is the absence of a
+        /// known intent, so no caller may read it as permission to send.
+        let actionUnrecognized: Bool
 
         enum CodingKeys: String, CodingKey {
             case action, reply, confidence, risk, reasoning, skip, pending
@@ -73,6 +77,7 @@ actor AutoReplyGenerator {
                 && normalizedAction != "pending"
                 && normalizedAction != "read_no_reply"
                 && normalizedAction != "skip"
+            actionUnrecognized = hasUnknownAction
             if hasUnknownAction {
                 skip = false
                 pending = true

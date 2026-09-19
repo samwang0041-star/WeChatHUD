@@ -88,11 +88,80 @@ final class InsightStore: ObservableObject {
         )
     }
 
-    func reload(store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem]) async {
+    /// What made this reload happen.
+    enum ReloadTrigger {
+        /// The user opened the page or changed window / scope / date.
+        case userInitiated
+        /// A scan completed. `monitor.stats.lastSyncAt` is stamped on every
+        /// scan whether or not anything arrived, and one reload is a
+        /// library-wide walk, so this trigger cannot be taken literally.
+        case newData
+    }
+
+    /// Scan ticks are not evidence that anything arrived — `stats.lastSyncAt`
+    /// is stamped on every completed scan — so the tick has to ask instead of
+    /// trigger. Its own type because a `static let` on a `@MainActor` class is
+    /// not readable from the nonisolated predicate.
+    nonisolated enum AutoReload {
+        /// Minimum gap between two automatic reloads. The page still refreshes
+        /// instantly for anything the user asks for.
+        static let interval: TimeInterval = 300
+
+        static func permitted(last: Date?, now: Date) -> Bool {
+            guard let last else { return true }
+            return now.timeIntervalSince(last) >= interval
+        }
+    }
+
+    private var lastAutoReloadAt: Date?
+    private var isReloading = false
+    private var userReloadWhileBusy = false
+
+    func reload(
+        store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem],
+        trigger: ReloadTrigger, now: Date = Date()
+    ) async {
+        if trigger == .newData {
+            guard !isReloading else { return }
+            guard Self.AutoReload.permitted(last: lastAutoReloadAt, now: now) else { return }
+            lastAutoReloadAt = now
+            // New data must not blank the page: a spinner every few minutes on
+            // a view that is already showing correct numbers reads as a crash.
+            await performReload(
+                store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: false
+            )
+            return
+        }
+        if isReloading {
+            userReloadWhileBusy = true
+            return
+        }
+        await performReload(
+            store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true
+        )
+        if userReloadWhileBusy {
+            // The window/scope the user picked while a walk was running has to
+            // win; a silent drop would leave the page labelled 近 30 天 while
+            // showing 今天's numbers.
+            userReloadWhileBusy = false
+            await performReload(
+                store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true
+            )
+        }
+    }
+
+    private func performReload(
+        store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem],
+        clearsView: Bool
+    ) async {
+        isReloading = true
+        defer { isReloading = false }
         detailStatsCache.removeAll()
-        statsLoaded = false
-        overview = nil
-        reloadError = nil
+        if clearsView {
+            statsLoaded = false
+            overview = nil
+            reloadError = nil
+        }
 
         repairStaleDisplayNames(store: store, reader: reader)
 

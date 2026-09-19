@@ -297,21 +297,41 @@ enum WeChatLauncher {
         return (raw as? [AXUIElement]) ?? []
     }
 
-    /// DFS walk the AX tree looking for the first element matching
-    /// `predicate`. We keep a depth cap to protect against pathological
-    /// deep trees (WeChat's is typically 10–15 levels).
+    /// Every AX read is a blocking cross-process round trip to WeChat, and the
+    /// default messaging timeout is measured in seconds. The walks below run on
+    /// the main actor — the same thread that draws the island — so a WeChat
+    /// busy rebuilding its session list used to be able to freeze the HUD for
+    /// the whole timeout on a single hung node. 0.5s bounds one read; the node
+    /// budget in `dfsAX` bounds the walk.
+    private static func axApplication(processID: pid_t) -> AXUIElement {
+        let element = AXUIElementCreateApplication(processID)
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        return element
+    }
+
+    /// Pre-order walk for the first element matching `predicate`, capped on both
+    /// depth and node count. The depth cap alone was not a bound: WeChat's tree
+    /// is wide, and an unbounded walk over it costs one to four blocking IPCs
+    /// per node. Exhausting the budget returns nil, which every caller already
+    /// reads as "not found" and refuses the send.
     private static func dfsAX(
         _ root: AXUIElement,
         depth: Int = 0,
         maxDepth: Int = 30,
+        maxNodes: Int = 2000,
         predicate: (AXUIElement) -> Bool
     ) -> AXUIElement? {
-        if predicate(root) { return root }
-        if depth >= maxDepth { return nil }
-        for child in axChildren(root) {
-            if let match = dfsAX(child, depth: depth + 1, maxDepth: maxDepth, predicate: predicate) {
-                return match
-            }
+        var stack: [(element: AXUIElement, depth: Int)] = [(root, depth)]
+        var budget = maxNodes
+        while let (element, nodeDepth) = stack.popLast() {
+            if budget <= 0 { return nil }
+            budget -= 1
+            if predicate(element) { return element }
+            if nodeDepth >= maxDepth { continue }
+            let children = axChildren(element)
+            // Push reversed so the first child is visited first, as the
+            // recursive version did.
+            stack.append(contentsOf: children.reversed().map { ($0, nodeDepth + 1) })
         }
         return nil
     }
@@ -740,7 +760,7 @@ enum WeChatLauncher {
             ClipboardGuard.restore(saved)
             finishClipboardRestore()
         }
-        let axApp = AXUIElementCreateApplication(binding.processID)
+        let axApp = axApplication(processID: binding.processID)
         // A paste-draft (sendKey == nil) is a USER standing in WeChat; only a
         // real send is automation whose activation may suppress the pause.
         if let failure = await navigateToChat(app: app, searchNames: searchNames, automation: sendKey != nil) { return .failed(failure) }
@@ -806,7 +826,7 @@ enum WeChatLauncher {
             guard await pause(0.04) else { return .lostForeground }
         }
         guard isWeChatFrontmost(app), await pause(0.08) else { return .lostForeground }
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        let axApp = axApplication(processID: app.processIdentifier)
         // Do not use sidebar substring matching: similarly named chats are distinct.
         guard let search = findSearchField(in: axApp), clickAXElementCenter(search) else { return .inputNotFound }
         guard await pause(0.12), isWeChatFrontmost(app) else { return .lostForeground }
