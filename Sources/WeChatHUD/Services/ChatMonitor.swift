@@ -269,6 +269,10 @@ final class ChatMonitor: ObservableObject {
     static let staleArchiveSweepInterval: TimeInterval = 3600
     /// Wall-clock stamp of the last stale-row archive sweep.
     private var lastStaleArchiveSweepAt: Date?
+    /// Wall-clock stamp of the last persisted-name / historical-repair pass.
+    /// See `repairPersistedChatDataIfNeeded` for why it is throttled. The
+    /// repair itself lives in a same-module extension, so this stays internal.
+    var lastChatRepairAt: Date?
     let islandPresentation = IslandPresentation()
     let workspaceBadges = WorkspaceBadges()
     /// Per-chat labels resolved for the current process. `displayName(for:)`
@@ -1369,25 +1373,8 @@ final class ChatMonitor: ObservableObject {
         // Build unified inbox from scan results
         rebuildInbox()
         reader.purgeEphemeralCache()
-        let refreshedNames = refreshLiveWeChatDisplayNames()
-        if refreshedNames > 0 {
-            print("[WCHUD] refreshed \(refreshedNames) WeChat display names")
-        }
-        // Rows written before the naming fallback existed still carry raw
-        // `…@chatroom` ids. Repair before reloading so the published lists
-        // already show readable names.
-        let repairedNames = repairStaleChatNames()
-        if repairedNames > 0 {
-            print("[WCHUD] repaired \(repairedNames) persisted chat name rows")
-        }
-        let repairedTargets = repairStaleCommitTargets()
-        if repairedTargets > 0 {
-            print("[WCHUD] repaired \(repairedTargets) commitment target rows")
-        }
-        let repairedInquiries = repairInvertedInquiryRecords()
-        if repairedInquiries.commitments + repairedInquiries.discussions > 0 {
-            print("[WCHUD] repaired inverted inquiries: commitments=\(repairedInquiries.commitments) discussions=\(repairedInquiries.discussions)")
-        }
+        let contactsChanged = (try? reader.refreshContactsIfChanged()) ?? false
+        _ = repairPersistedChatDataIfNeeded(contactsChanged: contactsChanged)
         reloadAIData()
         runPostScanAI(o)
 

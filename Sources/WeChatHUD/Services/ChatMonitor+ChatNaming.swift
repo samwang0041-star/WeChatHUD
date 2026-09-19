@@ -99,11 +99,73 @@ extension ChatMonitor {
         return reader.weChatSearchNames(for: chatUsername)
     }
 
+    /// Gap between the historical-data repairs below. Same reasoning as
+    /// `staleArchiveSweepInterval`: they are whole-table scans over data that
+    /// is minutes-to-days old, and once a row is repaired it never becomes
+    /// stale again — so running them per scan buys nothing and costs a write
+    /// transaction plus a `LIKE '%…@chatroom'` sweep over 15 tables each time.
+    static let chatRepairInterval: TimeInterval = 3600
+
+    private func shouldRepairChatData(now: Date) -> Bool {
+        guard let last = lastChatRepairAt else { return true }
+        return now.timeIntervalSince(last) >= ChatMonitor.chatRepairInterval
+    }
+
+    /// Run the persisted-name refresh and the three historical repairs, at most
+    /// once per `chatRepairInterval` — or immediately when the contact database
+    /// actually changed, which is the only event that can rename a peer.
+    ///
+    /// All four used to run on every scan apply. With FSEvents at 0.0s latency
+    /// plus the 10s heartbeat that is 6-10 times a minute while WeChat is
+    /// active, on the main actor, and the work grows with the tables it sweeps:
+    /// the island (CADisplayLink) started dropping frames within hours of
+    /// uptime and kept degrading the longer the app ran.
+    @discardableResult
+    func repairPersistedChatDataIfNeeded(
+        contactsChanged: Bool,
+        now: Date = Date()
+    ) -> Int {
+        guard contactsChanged || shouldRepairChatData(now: now) else { return 0 }
+        if shouldRepairChatData(now: now) { lastChatRepairAt = now }
+        // `refreshLiveWeChatDisplayNames` re-detects the contact file itself;
+        // when we were woken by a change the caller already refreshed it.
+        let refreshedNames = contactsChanged
+            ? refreshLiveWeChatDisplayNamesSkippingDetection()
+            : refreshLiveWeChatDisplayNames()
+        if refreshedNames > 0 {
+            print("[WCHUD] refreshed \(refreshedNames) WeChat display names")
+        }
+        // Rows written before the naming fallback existed still carry raw
+        // `…@chatroom` ids. Repair before reloading so the published lists
+        // already show readable names.
+        let repairedNames = repairStaleChatNames()
+        if repairedNames > 0 {
+            print("[WCHUD] repaired \(repairedNames) persisted chat name rows")
+        }
+        let repairedTargets = repairStaleCommitTargets()
+        if repairedTargets > 0 {
+            print("[WCHUD] repaired \(repairedTargets) commitment target rows")
+        }
+        let repairedInquiries = repairInvertedInquiryRecords()
+        if repairedInquiries.commitments + repairedInquiries.discussions > 0 {
+            print("[WCHUD] repaired inverted inquiries: commitments=\(repairedInquiries.commitments) discussions=\(repairedInquiries.discussions)")
+        }
+        return refreshedNames + repairedNames + repairedTargets
+            + repairedInquiries.commitments + repairedInquiries.discussions
+    }
+
     /// Keep whitelist/contact labels on the current WeChat remark so the
     /// UI and search do not stay on a renamed 备注.
     @discardableResult
     func refreshLiveWeChatDisplayNames() -> Int {
         _ = try? reader.refreshContactsIfChanged()
+        return refreshLiveWeChatDisplayNamesSkippingDetection()
+    }
+
+    /// The same pass without re-asking the reader whether contact.db moved —
+    /// for callers that just asked.
+    @discardableResult
+    private func refreshLiveWeChatDisplayNamesSkippingDetection() -> Int {
         displayNameCache.removeAll()
         var changed = 0
         for entry in store.getWhitelist() {
