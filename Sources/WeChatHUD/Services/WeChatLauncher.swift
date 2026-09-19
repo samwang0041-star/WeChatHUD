@@ -140,10 +140,41 @@ enum WeChatLauncher {
         try? FileManager.default.removeItem(atPath: "/tmp/wchud_launcher.log")
     }
 
+    /// A 24/7 process appends to this forever, and the lines it appends are not
+    /// only diagnostics: an AX dump taken after a paste quotes the reply that
+    /// just went out, which is the peer's conversation text. 0600 keeps other
+    /// users out; it does not stop the file from growing without bound or from
+    /// being picked up by a backup job.
+    static let logByteCap = 256 * 1024
+
+    /// What to write instead of appending, once the log has outgrown its cap:
+    /// the last half-cap of the old contents plus this line. `nil` means 「just
+    /// append」. Split out because the claim is about growth across thousands of
+    /// calls, and a test must not write into the real log directory.
+    nonisolated static func logRewrite(existing: Data, adding line: Data, cap: Int) -> Data? {
+        guard existing.count > cap else { return nil }
+        // Keep the last half-cap, not "drop half a cap's worth": a log that grew
+        // far past the cap — a crash loop, or the cap being lowered — has to come
+        // back down to size in one pass, not in proportion to how big it got.
+        let trimmed = existing.suffix(max(0, cap / 2))
+        var kept = Data(capacity: trimmed.count + line.count)
+        trimmed.withUnsafeBytes { kept.append(contentsOf: $0) }
+        kept.append(line)
+        return kept
+    }
+
     private static func log(_ msg: String) {
         let line = "[\(Date())] \(msg)\n"
         guard let data = line.data(using: .utf8) else { return }
         let path = logPath
+        let url = URL(fileURLWithPath: path)
+        // One write rather than truncate-then-retry, so a failing write cannot
+        // turn into an unbounded call chain.
+        if let existing = try? Data(contentsOf: url),
+           let kept = logRewrite(existing: existing, adding: data, cap: logByteCap) {
+            try? kept.write(to: url)
+            return
+        }
         if let handle = FileHandle(forWritingAtPath: path) {
             handle.seekToEndOfFile()
             handle.write(data)
@@ -548,8 +579,11 @@ enum WeChatLauncher {
         // Only log interesting nodes — identifier, title, or text value.
         if !identifier.isEmpty || !title.isEmpty || !valueStr.isEmpty {
             let indent = String(repeating: "  ", count: depth)
-            let preview = String(valueStr.prefix(40))
-            log("\(indent)[\(role)] id=\(identifier) title=\(title) val=\(preview)")
+            // Length, not content. This dump runs on a failed search, i.e. at
+            // the moment the tree contains the input box — and after a paste the
+            // input box holds the reply, which quotes the peer's messages. Role,
+            // identifier and title are everything the walk needs to find a node.
+            log("\(indent)[\(role)] id=\(identifier) title=\(title) valLen=\(valueStr.count)")
         }
         for child in axChildren(element) {
             dumpAX(child, depth: depth + 1, maxDepth: maxDepth)

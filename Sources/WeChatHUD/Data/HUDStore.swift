@@ -2170,11 +2170,25 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             if let raw = getSetting("ai"), raw.contains(cfg.provider.apiKey) {
                 return false
             }
+            // The row is rewritten, not shredded. Under WAL the previous payload
+            // survives in a freed page of the main file and in the log until the
+            // next checkpoint, so `strings` on a database the user believes has
+            // been cleaned still yields the key.
+            try reclaimFreedPages()
             return true
         } catch {
             print("[HUDStore] API key Keychain migration deferred: \(error)")
             return false
         }
+    }
+
+    /// Rewrites the file so freed pages stop carrying what used to be in them,
+    /// and truncates the WAL so the same bytes are not sitting in the sidecar.
+    /// Only worth calling after a secret actually left a row.
+    func reclaimFreedPages() throws {
+        try exec("PRAGMA wal_checkpoint(TRUNCATE)")
+        try exec("VACUUM")
+        try exec("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 
     func persistedAIConfigJSON() -> String? {

@@ -330,9 +330,76 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         // Shared /tmp is world-writable — a local attacker pre-creating the
         // predictable directory owns it (can unlink/replace snapshots).
         // NSTemporaryDirectory is per-user.
-        case .temporary:  return NSTemporaryDirectory() + "wechat_hud_cache"
+        //
+        // The pid suffix is what makes the orphan sweep below possible: each
+        // run owns a directory nobody else will touch, so a leftover can be
+        // attributed to a dead process and deleted. Nothing is lost by not
+        // sharing — every process re-opens its own read-only handles.
+        case .temporary:  return NSTemporaryDirectory() + "\(temporaryCachePrefix)\(getpid())"
         case .memory:
             return NSTemporaryDirectory() + "wechat_hud_ephemeral_\(getpid())"
+        }
+    }
+
+    static let temporaryCachePrefix = "wechat_hud_cache_"
+    static let ephemeralCachePrefix = "wechat_hud_ephemeral_"
+    /// The pre-pid-suffix name, which any upgraded run leaves behind.
+    static let legacyTemporaryCacheDir = "wechat_hud_cache"
+
+    nonisolated static func isSnapshotDirectoryName(_ name: String) -> Bool {
+        name == legacyTemporaryCacheDir
+            || name.hasPrefix(temporaryCachePrefix)
+            || name.hasPrefix(ephemeralCachePrefix)
+    }
+
+    /// nil for the legacy unsuffixed name: it has no owner to ask about, and no
+    /// current build writes it.
+    nonisolated static func pid(ofSnapshotDirectoryName name: String) -> Int32? {
+        guard let tail = name.split(separator: "_").last else { return nil }
+        return Int32(tail)
+    }
+
+    /// The whole decision, as a function of a name and 「is that pid alive」.
+    /// `ownerIsAlive` is a parameter because a test cannot arrange for a dead
+    /// process with a chosen pid, and the destructive half of this sweep is
+    /// exactly the branch that would otherwise go unexercised.
+    nonisolated static func shouldRemoveSnapshotDirectory(
+        named name: String, nowPid: Int32, ownerIsAlive: (Int32) -> Bool
+    ) -> Bool {
+        guard isSnapshotDirectoryName(name) else { return false }
+        guard let pid = pid(ofSnapshotDirectoryName: name) else { return true }
+        if pid == nowPid { return false }
+        return !ownerIsAlive(pid)
+    }
+
+    /// Snapshots are plaintext copies of the whole message store. A process that
+    /// is killed reaches neither `applicationWillTerminate` nor `deinit`, and
+    /// macOS only prunes `$TMPDIR` after days of non-access — so a previous run's
+    /// full chat history can outlive it indefinitely. Anything not owned by a
+    /// live process goes at launch.
+    nonisolated static func removeOrphanedSnapshotDirectories(
+        in root: String = NSTemporaryDirectory(),
+        nowPid: Int32 = getpid(),
+        ownerIsAlive: (Int32) -> Bool = { kill($0, 0) == 0 }
+    ) {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: root) else { return }
+        for name in entries where Self.shouldRemoveSnapshotDirectory(
+            named: name, nowPid: nowPid, ownerIsAlive: ownerIsAlive
+        ) {
+            try? fm.removeItem(atPath: root + name)
+        }
+    }
+
+    /// What this process owns, deleted on the way out. `deinit` only covers the
+    /// one reader instance that happens to be released, and a quit tears down
+    /// several of them in an order nobody controls.
+    nonisolated static func removeOwnSnapshotDirectories(
+        in root: String = NSTemporaryDirectory(), nowPid: Int32 = getpid()
+    ) {
+        let fm = FileManager.default
+        for name in [temporaryCachePrefix + "\(nowPid)", ephemeralCachePrefix + "\(nowPid)"] {
+            try? fm.removeItem(atPath: root + name)
         }
     }
 

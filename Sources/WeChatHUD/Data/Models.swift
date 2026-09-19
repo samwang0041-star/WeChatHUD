@@ -1221,7 +1221,7 @@ enum DisplayScreen: String, Codable, CaseIterable {
 /// Where decrypted WeChat DBs are cached.
 enum CacheStrategy: String, Codable, CaseIterable {
     case persistent   // ~/.wechat-hud/cache/ — fast cold start, plaintext on disk
-    case temporary    // /tmp/wechat_hud_cache/ — cleared on reboot
+    case temporary    // $TMPDIR/wechat_hud_cache_<pid>/ — 本进程私有，退出与下次启动各清一次
     case memory       // process-scoped temporary files; removed on normal cleanup
 
     var label: String {

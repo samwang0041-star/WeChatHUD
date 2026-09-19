@@ -91,6 +91,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[WCHUD] launch — pid=\(ProcessInfo.processInfo.processIdentifier)")
+        // A previous run that was killed leaves a plaintext copy of the whole
+        // message store behind; `$TMPDIR` is only pruned after days of
+        // non-access, and a 24/7 app keeps its own snapshots warm. Anything
+        // whose owning pid is gone goes now, before this process writes any.
+        WeChatReader.removeOrphanedSnapshotDirectories()
         // Resolve the selected account before opening its business database.
         // Device AI/sync preferences are shared; no chat data is copied between accounts.
         let selectedRoot: String?
@@ -1272,5 +1277,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fsWatcher?.stop()
         monitor.stop()
         store.close()
+        // After `stop()`, so no scan is mid-read on a file being unlinked. The
+        // per-instance `deinit` only covers whichever reader happens to be
+        // released, and this process may have made snapshots under several.
+        WeChatReader.removeOwnSnapshotDirectories()
     }
 }
