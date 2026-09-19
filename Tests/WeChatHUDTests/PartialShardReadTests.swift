@@ -110,8 +110,8 @@ final class PartialShardReadTests: XCTestCase {
         XCTAssertTrue(feed.contains("continue"))
     }
 
-    /// The hourly sweep deletes on `expires_at`; without the index that is a full
-    /// scan of a table with one row per AI call, on the main actor.
+    /// The retention sweep's delete predicate needs its index (see §191): without
+    /// it the hourly pass is a full scan of a table with one row per AI call.
     func testRetentionSweepHasItsIndex() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -121,5 +121,59 @@ final class PartialShardReadTests: XCTestCase {
         XCTAssertEqual(
             store.components(separatedBy: "idx_analysis_cache_expires").count - 1, 1,
             "清理谓词上要有索引，且只建一次")
+    }
+
+    /// 举报：跨分片游标会永久漏行 —— 判阴，但这条判据是它成立的前提。
+    ///
+    /// `messageQuerySuffix` 的 `afterCursor` 是 `(create_time > cT) OR
+    /// (create_time = cT AND local_id > cL)`，而 `local_id` **只在单个分片内有序**
+    /// （每个 `message_N.db` 从头编号）。这条谓词是按分片各自执行的，所以一旦扫描
+    /// 用 `afterCursor` 做增量，另一片里同秒、localId 更小的真实消息会被 SQL 直接
+    /// 挡掉 —— 内存里那条「跨片同秒要放行」的规则再也看不见它。
+    ///
+    /// 今天不成立是因为扫描链路根本不传 `afterCursor`（它每次取最新 N 条，再在内存里
+    /// 按基线过滤），且那条放行规则有行为测试钉住（`ScanBacklogPagingTests`
+    /// 「same-second row in another shard must not be filtered by localId」）。
+    /// 这条判据守的是那个前提：把水位过滤下推进 SQL 的那一刻，就会重新变成永久漏消息。
+    func testScanPathsNeverFilterByCursorInSQL() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/ScanEngine.swift")
+        let scan = try String(contentsOf: root, encoding: .utf8)
+        let uses = scan.components(separatedBy: "afterCursor:").count - 1
+        let explicitNil = scan.components(separatedBy: "afterCursor: nil").count - 1
+        XCTAssertGreaterThanOrEqual(uses, 1, "锚点：扫描里那处显式 `afterCursor: nil` 要被数到")
+        XCTAssertEqual(uses, explicitNil,
+                       "扫描一旦用 afterCursor 做增量，跨分片同秒的行会被 SQL 挡在页外，内存规则救不回来")
+        XCTAssertEqual(
+            scan.components(separatedBy: "!baselineShard.isEmpty && $0.shardRelPath != baselineShard").count - 1,
+            2, "两条投递路径各有一份跨片同秒放行，少一处就是那条路径漏行")
+        // The admission needs the shard identity on the row to compare against.
+        XCTAssertTrue(scan.contains("lastShard: messages.first?.shardRelPath"),
+                      "水位要记下这一行来自哪一片，否则下一轮无从比较")
+    }
+    /// The mark is written inside the reader's lock by whichever thread drove the
+    /// read, and read from the scan path. `WeChatReaderActor` is only a facade —
+    /// every caller builds its own actor instance over the same reader — so the
+    /// lock is the sole barrier, and an unsynchronized `Set` here is a
+    /// simultaneous-access trap in a process that never restarts.
+    func testPartialReadMarkIsLockGuarded() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Data/WeChatReader.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        for name in ["func didReadPartially(chatUsername: String) -> Bool {",
+                     "func clearPartialReadMarks() {"] {
+            let body = (source.components(separatedBy: name).last ?? "")
+                .components(separatedBy: "\n    }\n").first ?? ""
+            XCTAssertFalse(body.isEmpty, "切片为空则这条判据什么都没看：\(name)")
+            XCTAssertTrue(body.contains("lock.lock()"), "\(name) 必须取读库那把锁")
+            XCTAssertTrue(body.contains("lock.unlock()"))
+        }
+        XCTAssertFalse(source.contains("private(set) var partialReadChats"),
+                       "对外可见的裸 Set = 任何人都能不经锁读它")
+        XCTAssertTrue(source.contains("private var partialReadChats"))
     }
 }

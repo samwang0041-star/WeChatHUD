@@ -169,6 +169,19 @@ actor AutopilotService {
     /// is priced in §170 rather than pretended away here.
     private var unresolvedQueueWrites: [UUID: UnresolvedQueueWrite] = [:]
 
+    /// Log rows with a 「确认发送」 in flight in *this* process. Not the same axis
+    /// as `unresolvedSentLogWrites`: that one records a send whose write-back
+    /// failed, this one records a send that has not finished yet.
+    private var inFlightApprovalLogIds: Set<Int64> = []
+
+    /// The two facts that grant a manual approval, decided together in one
+    /// synchronous block: the board still shows the row as 'pending', and nobody
+    /// is already sending it. Splitting them across an `await` is what let a
+    /// second click pass both checks and type the same reply twice.
+    nonisolated static func mayStartApproval(rowPending: Bool, alreadyInFlight: Bool) -> Bool {
+        rowPending && !alreadyInFlight
+    }
+
     enum UnresolvedQueueWrite: Equatable {
         case delivered(chatUsername: String, replyText: String)
         case cancelled(chatUsername: String, replyText: String)
@@ -868,10 +881,23 @@ actor AutopilotService {
         // re-approve a row already rejected/sent/canceled, which would send
         // the rejected reply (and double-decrement sessionPending).
         let savedReply = store.autopilotLogPendingReply(id: logId)
-        guard savedReply != nil else {
-            print("[WCHUD] Autopilot: approval blocked — log row no longer pending")
+        // Same synchronous block, or it is not a claim. 'pending' is the only
+        // idempotency credential this path has, and the row is not resolved
+        // until after the send returns — while `serialSend` releases `isSending`
+        // as soon as the keystrokes come back. A second 确认发送 landing in that
+        // gap re-reads 'pending', re-passes the cap (sessionSent is still
+        // un-incremented) and types the same reply to the same person twice.
+        guard Self.mayStartApproval(
+            rowPending: savedReply != nil,
+            alreadyInFlight: inFlightApprovalLogIds.contains(logId)
+        ) else {
+            print(savedReply == nil
+                  ? "[WCHUD] Autopilot: approval blocked — log row no longer pending"
+                  : "[WCHUD] Autopilot: approval blocked — 这条正在发送中")
             return false
         }
+        inFlightApprovalLogIds.insert(logId)
+        defer { inFlightApprovalLogIds.remove(logId) }
         if let createdAt {
             let probe = PendingSend(
                 chatUsername: chatUsername, chatName: chatName, senderName: "",

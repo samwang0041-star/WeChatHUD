@@ -932,3 +932,91 @@ S4 never-ran 当刚跑过、S5 锚点回墙上时钟、S6 撤回不读框、S7 �
 - 六条新判据（P0 真值表 / 发送键兜底 / corrupt 恢复按钮 / 静音短路位置 /
   部分页扣水位 / 探测阶段标记）逐条变异，全部 CAUGHT；全量 2063 tests / 0 failures，
   release 零警告。
+
+
+---
+
+## §192 落库的审计副本比出网的请求更宽（同一件事的第二个边界）
+
+出网那道网是 `AIService.maskDirectIdentifiers`：按位数与分组判号，能吞掉
+`138 0013 8000`、全角 `１３８００１３８０００`、`+86…`、`6222 0202 1234 5678`、
+`11010119900307457X`、邮箱。落库那道网是 `AIAuditPrivacy.persistableText` →
+`Redactor.applyMasks`，也就是被上面那套「按分组」判定**替换掉的旧四条正则**。
+结果：同一条消息，送到服务端的是遮蔽过的，写进 `~/.wechat-hud/hud.sqlite3`
+的 `ai_audit.input_text` / `output_text`（以及 `ai_feedback.original_output`）的是
+**没遮蔽的原件**，一放 14 天。而 `AIAuditPrivacy.swift` 文件头写着
+「store a redacted snippet …, never the raw prompt/response」。
+
+这不是"又一条漏遮蔽"，是一个已知的形状规则被补在了一处、没补在另一处：
+仓库里 `AIOutboundPrivacyBoundaryTests` 已经把上面 7 种形状逐个钉住了 —— 钉的都是
+`sentBody()`，也就是**只有出网那一侧**。判据补落库同一张表（8 种形状 +
+`sha256:` 行不许被动 + 「无害文本要原样留下」的正对照），
+`persistableText` 改成两层都过；`maskDirectIdentifiers` 因此要能被同步调用，
+加 `nonisolated`（它不碰 actor 状态；不加就等于要求第二个边界去等一个 UI actor）。
+
+定级说明：代理报 P0（"落库比出网宽"）。事实成立，但内容**不出机器**，
+本机库的 PII 与 §175 导出的 0644 同族 ⇒ 我按 P1 收，修法照做。
+
+## §193 「确认发送」的幂等凭据跨过一次 await 就失效
+
+`approvePending` 全部防重发都押在 `store.autopilotLogPendingReply(id:)` 读到 'pending'，
+而这一行**直到发送完成之后**才被 `resolveAutopilotLogSent` 结算。中间的每一次
+`await`（`stalePendingSendReason`、`serialSendWithRateLimit`）都是一次 actor 重入口：
+`serialSend` 的 `isSending` 在按键返回时就释放（早于结算）⇒ 第二次点击读到同样的
+'pending'、`sessionSent` 也还没 +1，同一段文本再敲一次。
+`isSending` 救不了它：它守的是"一次只敲一遍键"，不是"一条只发一次"。
+
+修法是把声明和读取焊在同一个同步块里：`mayStartApproval(rowPending:alreadyInFlight:)`
+一次决定两件事，紧随其后 `insert` + `defer remove`。判据两条：真值表（四格），
+以及**「读到 'pending' 与占位之间不许出现 await」**的切片判据；
+变异 = 中间塞一个 `await Task.yield()` ⇒ 红。
+
+## §194 我上一轮新加的标记不取锁（自己引入的 P0 类）
+
+`partialReadChats` 是 `Set<String>`：写侧在 `notePartialRead`（持 `lock`，线程随调用方），
+读侧 `didReadPartially` / `clearPartialReadMarks` **不经任何锁**，而
+`WeChatReaderActor` 只是门面 —— 全仓 30+ 处各自 `WeChatReaderActor(reader)`
+（`ChatMonitor` 5 处、`AutopilotService` 4 处、`InsightStore` 等），actor 实例之间零互斥。
+两个访问器于是直接和持锁写并发访问同一个非线程安全 `Set`：`Simultaneous accesses` trap
+或缓冲踩踏，且这个进程永不重启。修：两个访问器都上 `lock`，存储从 `private(set)` 收成
+`private`（留着 `private(set)` 就是给下一个读者留一条不经锁的读法）。
+判据钉这三点；两条变异（不取锁 / 退回 `private(set)`）各红。
+
+一般式：**新加的状态要按它所在类的既有并发约定接入** —— 这个类的约定是
+「所有可变态都在 `lock` 后面」，我加的时候只按"谁调用我"想了 actor，没按"谁能读字段"想。
+
+## §195 跨分片同秒游标漏行：判阴，但把成立的前提钉住
+
+举报是 `messageQuerySuffix` 的 `afterCursor`（`(create_time > cT) OR (= cT AND local_id > cL)`）
+按分片各自执行，而 `local_id` 只在单个 `message_N.db` 内有序 ⇒ 另一片里同秒、localId 更小的
+真实消息被 SQL 挡在页外，内存规则再也看不见它。规则本身成立。判阴的两条证据：
+
+1. 扫描链路根本不传 `afterCursor` —— `ScanEngine.swift` 里它只出现一次且是显式 `nil`；
+   白名单那条是"取最新 N 条 + 内存按基线过滤"（`ScanEngine:510-515`）。
+   非 nil 的调用点只有 `GroupMentionContextLoader` / 洞察侧，那些路径**没有持久游标**，
+   少一条只是上下文窗口短一点。
+2. 那条跨片同秒放行有真行为测试钉住（`ScanBacklogPagingTests`
+   「same-second row in another shard must not be filtered by localId」，两分片同秒场景）。
+
+因为结论依赖"扫描不把过滤下推进 SQL"这个前提，判据就钉前提本身（三条变异全红）：
+`afterCursor` 在扫描里只许显式 nil、放行式两条投递路径各一份（数到 2）、
+水位必须记下这一行来自哪一片（`lastShard: messages.first?.shardRelPath`）——
+删掉其中任何一条 = 退回那个漏行场景。
+
+## §196 本轮并发轴的其余结论
+
+已查清并排除（代理与我对读一致）：`HUDStore` 无跨线程写（`perform` + `serialQueue`
+重入键、`withDatabaseMutex`、`withCachedStatement` 全覆盖）；`processPendingQueue`
+的重入摘除与 `globalSendTimestamps` 修剪无丢失。
+
+定价未做（都有具体损伤，但要动的面比本轮剩余预算大）：
+- `stop()` 无世代闸门：已 `await` 出去的 tick 醒来后仍会跑 `scan()` /
+  `evaluateCommitmentDeadlines()`，把内存项塞回已被 stop 清掉的队列，下次 `start()`
+  给它补 DB 孪干并发出 —— 用户已放弃的草稿复活（修法：tick 体与每个 await 之后比对
+  `monitorGeneration`，仓库里 `discussionWorkerGeneration` 已有现成做法）。
+- 记忆摘要是跨 await 的读-改-写，两个入口并发时后写覆盖新摘要并刷新 `last_updated`；
+  §182 的保留扫描**新增**了一个"删掉中间行 ⇒ 摘要复活"的小概率面（修法：写回带
+  `last_updated` 版本比较）。
+- 心跳 timer 装在 `.default` 模式：菜单跟踪 / 拖窗期间整段冻结（同类 UI 定时器用 `.common`）。
+- 本轮 §186/§187 之外，`approvePending` 的 UI 侧 `isSending` 仍是每个视图自己一份，
+  跨面（审批台 / 岛内行）重复点击的窗口由 §193 的服务端声明兜住。

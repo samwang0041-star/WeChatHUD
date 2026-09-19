@@ -21,7 +21,15 @@ enum AIAuditPrivacy {
     /// Persistence form written to `ai_audit.input_text` / `output_text`.
     static func persistableText(_ raw: String) -> String {
         if persistRawText { return raw }
-        let redacted = Redactor.applyMasks(raw)
+        // `Redactor.applyMasks` is the retrospective path's stronger name/codename
+        // layer, but on its own it is the *four-regex* version: a mobile typed as
+        // 「138 0013 8000」, a full-width 全角 number, a `+86` prefix, a grouped card
+        // number or a copy-pasted zero-width one all walked straight through it and
+        // landed in `ai_audit` — which meant the local copy of a prompt kept PII
+        // shapes that the wire copy had masked. The floor has to be the same
+        // function at both boundaries, or the claim on this file's header
+        // (「never the raw prompt/response」) is only true of half the pipeline.
+        let redacted = Redactor.applyMasks(AIService.maskDirectIdentifiers(raw))
         let snippet = String(redacted.prefix(snippetLimit))
         return "sha256:\(sha256Hex(raw))\n\(snippet)"
     }

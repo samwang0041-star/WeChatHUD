@@ -444,7 +444,7 @@ func completeWithMetadata(
     /// app leaves U+200B/FEFF/soft-hyphen inside a number the human eye reads as
     /// one run. Folding here — before the placeholder strip, so `[图​片]` still
     /// counts as a placeholder — makes both shapes match.
-    private static func foldEvadedIdentifierShapes(_ text: String) -> String {
+    nonisolated private static func foldEvadedIdentifierShapes(_ text: String) -> String {
         let zeroWidth: Set<Character> = [
             "\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}"
         ]
@@ -487,14 +487,18 @@ func completeWithMetadata(
     /// subject the user is asking about or carry no direct identifier on their
     /// own; only the retrospective path codenames names, and it is the one path
     /// that persists aggregates.
-    static func maskDirectIdentifiers(_ text: String) -> String {
+    /// `nonisolated` because this is the app's one floor for identifier shapes and
+    /// two different boundaries call it: the egress path, and the audit writer that
+    /// decides what survives locally. Keeping it on the actor would make the second
+    /// caller await a UI actor to mask a string.
+    nonisolated static func maskDirectIdentifiers(_ text: String) -> String {
         // The egress boundary calls this directly, so the shape fold has to live
         // here too — otherwise the one place that is supposed to hold is the
         // place that still only sees contiguous ASCII digits.
         return maskEmail(maskDigitRuns(foldEvadedIdentifierShapes(text)))
     }
 
-    private static func maskEmail(_ text: String) -> String {
+    nonisolated private static func maskEmail(_ text: String) -> String {
         text.replacingOccurrences(
             of: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#,
             with: "[邮箱]", options: .regularExpression)
@@ -511,7 +515,7 @@ func completeWithMetadata(
     ///
     /// `.` and `,` stay out of the separator set for the same reason —
     /// "1.3800138000" and "1,380,013,800" read as amounts.
-    private static func maskDigitRuns(_ text: String) -> String {
+    nonisolated private static func maskDigitRuns(_ text: String) -> String {
         let scalars = Array(text.unicodeScalars)
         func isDigit(_ s: UnicodeScalar) -> Bool { s >= "0" && s <= "9" }
         // One separator only, and only between digits. Two consecutive spaces is

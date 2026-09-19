@@ -239,4 +239,44 @@ final class AIOutboundPrivacyBoundaryTests: XCTestCase {
         }
         return String(data: buf, encoding: .utf8)
     }
+    /// The wire copy and the local copy are two different boundaries, and only
+    /// one of them was holding the strong floor: `AIAuditPrivacy.persistableText`
+    /// ran `Redactor.applyMasks` (the four-regex version) before writing
+    /// `ai_audit`. Every shape in this table therefore reached the network
+    /// masked and sat in the local database unmasked for the full retention
+    /// window — while the file's own header claims the stored form is 「never the
+    /// raw prompt/response」.
+    func testPersistedAuditClearsTheSameShapesAsTheWire() {
+        let shapes = [
+            "138 0013 8000", "138-0013-8000", "１３８００１３８０００",
+            "+8613800138000", "86 138 0013 8000", "6222 0202 1234 5678",
+            "11010119900307457X", "someone@example.com"
+        ]
+        let stored = AIAuditPrivacy.persistableText("客户的号码是 \(shapes.joined(separator: " / "))")
+        for shape in shapes {
+            XCTAssertFalse(stored.contains(shape), "落库副本里留着 \(shape)")
+        }
+        XCTAssertTrue(stored.contains("[手机]"), "遮蔽要留占位，不能整段吞掉")
+        XCTAssertTrue(stored.hasPrefix("sha256:"), "哈希行不能被遮蔽改动")
+        // Positive control: harmless text survives, so the check is not
+        // "everything becomes placeholder soup".
+        let plain = AIAuditPrivacy.persistableText("明天下午三点开会")
+        XCTAssertTrue(plain.contains("明天下午三点开会"))
+    }
+
+    func testBothBoundariesUseTheOneFloorMasker() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let privacy = try String(
+            contentsOf: root.appendingPathComponent("Data/AIAuditPrivacy.swift"), encoding: .utf8)
+        XCTAssertTrue(privacy.contains("AIService.maskDirectIdentifiers(Redactor.applyMasks(raw))")
+                      || privacy.contains("Redactor.applyMasks(AIService.maskDirectIdentifiers(raw))"),
+                      "落库那一侧要走同一个 floor，而不是再挑一套正则")
+        let service = try String(
+            contentsOf: root.appendingPathComponent("Services/AIService.swift"), encoding: .utf8)
+        XCTAssertTrue(service.contains("nonisolated static func maskDirectIdentifiers"),
+                      "两个边界共用才要求它能被同步调用（否则第二个调用方只能等一个 UI actor）")
+    }
 }

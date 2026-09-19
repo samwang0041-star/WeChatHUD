@@ -966,4 +966,36 @@ keystrokesMayHaveLanded: false,
         XCTAssertTrue(between.contains("return"), "静音时要给出自己的说法，别落到「结果待核对」")
         XCTAssertFalse(CompanionProductCopy.sendUncertain.contains("已静音"))
     }
+    /// 「确认发送」 is the one send path a human drives, and its only idempotency
+    /// credential was a synchronous 'pending' read whose row is not resolved until
+    /// the send returns. `serialSend` releases `isSending` as soon as the keystrokes
+    /// come back, i.e. *before* the resolve — so a second click (or a second surface
+    /// showing the same row) could pass every guard here and type the same reply to
+    /// the same person twice.
+    func testApprovalClaimNeedsBothFactsAtOnce() {
+        XCTAssertTrue(AutopilotService.mayStartApproval(rowPending: true, alreadyInFlight: false))
+        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: false, alreadyInFlight: false),
+                       "行已经不 pending 就不能再发")
+        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: true, alreadyInFlight: true),
+                       "同一条正在发送中 ⇒ 第二次必须被拒")
+        XCTAssertFalse(AutopilotService.mayStartApproval(rowPending: false, alreadyInFlight: true))
+    }
+
+    /// Wiring, and the only part a unit test cannot reach: the claim has to be
+    /// taken in the *same synchronous block* as the read that grants it. One
+    /// `await` between them and the two facts can come from two different worlds.
+    func testApprovalClaimIsTakenInSameBlockAsThePendingRead() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let block = (source.components(separatedBy: "let savedReply = store.autopilotLogPendingReply(id: logId)")
+            .last ?? "").components(separatedBy: "inFlightApprovalLogIds.insert(logId)").first ?? ""
+        XCTAssertFalse(block.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertFalse(block.contains("await"),
+                       "读到 'pending' 与占位之间只要有一个 await，第二次点击就能挤进来")
+        XCTAssertTrue(source.contains("defer { inFlightApprovalLogIds.remove(logId) }"),
+                      "释放要挂在 defer 上，失败路径漏释放等于永久锁死这一条")
+    }
 }

@@ -206,15 +206,25 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// Consumers (`ScanEngine`'s two watermark writes) read this to treat a
     /// partial page as 「还没追平」, which is the contract an interrupted backlog
     /// walk already uses: delay, never a silent drop.
-    private(set) var partialReadChats: Set<String> = []
+    /// Guarded by `lock`, like every other mutable cache on this class: the mark
+    /// is written inside the shard loop (which holds the lock, on whichever
+    /// thread the reader was driven from) and read from the scan path, so an
+    /// unsynchronized `Set` here is a simultaneous-access trap, not a race
+    /// window. `WeChatReaderActor` is only a facade — every caller builds its
+    /// own actor instance over the same reader, so the lock is the sole barrier.
+    private var partialReadChats: Set<String> = []
 
     func didReadPartially(chatUsername: String) -> Bool {
-        partialReadChats.contains(chatUsername)
+        lock.lock()
+        defer { lock.unlock() }
+        return partialReadChats.contains(chatUsername)
     }
 
     /// Called once at the top of every scan, so a mark means 「这一轮扫过之后
     /// 有过读不全的分片」 and cannot survive into a scan that read everything.
     func clearPartialReadMarks() {
+        lock.lock()
+        defer { lock.unlock() }
         partialReadChats.removeAll(keepingCapacity: true)
     }
 
