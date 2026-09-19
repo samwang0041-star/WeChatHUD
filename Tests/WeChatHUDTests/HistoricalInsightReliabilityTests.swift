@@ -130,7 +130,7 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
         XCTAssertEqual(scoped.map(\.content), ["当天撤回"])
     }
 
-    func testStatsForDayReadsOnlyTheSelectedCalendarDayFromReader() throws {
+    func testStatsForDayReadsOnlyTheSelectedCalendarDayFromReader() async throws {
         let fixture = try InsightReaderFixture(messages: [
             .init(localID: 1, timestampOffset: -1, text: "前一天"),
             .init(localID: 2, timestampOffset: 1, text: "当天第一条"),
@@ -146,13 +146,13 @@ final class HistoricalInsightReliabilityTests: XCTestCase {
         } catch {
             XCTFail("synthetic reader fixture could not be read: \(error)")
         }
-        let stats = InsightDataLoader().statsForDay(
+        let stats = await InsightDataLoader().statsForDay(
             chatUsername: fixture.chatUsername,
             chatName: "合成对话",
             isGroup: false,
             category: .work,
             date: selectedDay,
-            reader: fixture.reader
+            readerActor: WeChatReaderActor(fixture.reader)
         )
 
         XCTAssertEqual(stats?.messageCount, 2)

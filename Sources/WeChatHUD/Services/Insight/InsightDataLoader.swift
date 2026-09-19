@@ -276,32 +276,14 @@ final class InsightDataLoader {
         )
     }
 
-    /// Detail statistics cover the selected calendar day, including all messages.
+    /// Detail statistics for the selected calendar day, including all messages.
     /// Overview windows and AI's bounded sample must not change these totals.
-    func statsForDay(
-        chatUsername: String, chatName: String, isGroup: Bool,
-        category: WhitelistCategory, date: Date, reader: WeChatReader
-    ) -> ChatStatsData? {
-        let range = Self.dayRange(for: date)
-        guard let messages = try? reader.getMessages(
-            chatUsername: chatUsername, limit: Int.max, afterCursor: nil,
-            startTime: range.start, endTime: range.end
-        ) else { return nil }
-        let myUsername = reader.myUsername()
-        return ChatStatsEngine.computeStats(
-            messages: messages,
-            selfUsername: myUsername,
-            selfDisplayName: reader.displayName(for: myUsername),
-            selfNames: reader.mySelfNames,
-            chatUsername: chatUsername,
-            chatName: chatName,
-            isGroup: isGroup,
-            category: category
-        )
-    }
-
-    /// Same day totals as `statsForDay(reader:)`, routed through `WeChatReaderActor`
-    /// so InsightCoordinator / async insight paths share ScanEngine's isolation boundary.
+    ///
+    /// There is deliberately no synchronous `WeChatReader` variant: this reads
+    /// `limit: Int.max` across every shard the day spans, and the only sync
+    /// caller it ever had was a SwiftUI body on the main actor.
+    /// Routed through `WeChatReaderActor` so InsightCoordinator / async insight
+    /// paths share ScanEngine's isolation boundary.
     func statsForDay(
         chatUsername: String, chatName: String, isGroup: Bool,
         category: WhitelistCategory, date: Date, readerActor: WeChatReaderActor

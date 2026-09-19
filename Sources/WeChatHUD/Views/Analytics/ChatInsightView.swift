@@ -11,6 +11,9 @@ struct ChatInsightView: View {
     @State private var selectedDate = Date()
     @State private var expandedRadarFindingID: String? = nil
     @State private var expandedModules: Set<String> = []
+    /// Day statistics for the selected chat while they load off-main.
+    @State private var detailStatsID: String? = nil
+    @State private var detailStatsValue: ChatStatsData? = nil
     @StateObject private var insightStore = InsightStore()
 
     var body: some View {
@@ -34,6 +37,7 @@ struct ChatInsightView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: detailChat.map { statsKey(for: $0) }) { await loadDetailStats() }
         .task {
             reloadInsightStats()
             // `--preview-insight-overview` keeps the overview selected so the
@@ -87,6 +91,65 @@ struct ChatInsightView: View {
         }
     }
 
+    // MARK: - Selected chat's day statistics
+
+    struct DetailChat {
+        let username: String
+        let displayName: String
+        let isGroup: Bool
+        let category: WhitelistCategory
+    }
+
+    private var detailChat: DetailChat? {
+        guard let chatId = selectedChat else { return nil }
+        if let entry = store.getWhitelist().first(where: { $0.id == chatId }) {
+            return DetailChat(username: chatId, displayName: entry.displayName,
+                              isGroup: entry.isGroup, category: entry.category)
+        }
+        if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
+            return DetailChat(username: chatId, displayName: session.displayName,
+                              isGroup: session.isGroup, category: .other)
+        }
+        return nil
+    }
+
+    private func statsKey(for chat: DetailChat) -> String {
+        "\(chat.username)|\(InsightDataLoader.dayRange(for: selectedDate).start)"
+    }
+
+    /// One day for one chat is a `getMessages(limit: Int.max)` read that
+    /// decrypts every shard the chat touches, so it cannot run inside body
+    /// evaluation. The sidebar primes the cache for the chats it lists (and
+    /// skips today entirely); whatever is left loads here off-main and the row
+    /// renders without its statistics until it arrives.
+    private func detailStats(for chat: DetailChat) -> ChatStatsData? {
+        if let cached = insightStore.cachedDayStats(chatUsername: chat.username, date: selectedDate) {
+            return cached
+        }
+        return detailStatsID == statsKey(for: chat) ? detailStatsValue : nil
+    }
+
+    private func loadDetailStats() async {
+        guard let chat = detailChat else {
+            detailStatsID = nil
+            detailStatsValue = nil
+            return
+        }
+        let key = statsKey(for: chat)
+        let date = selectedDate
+        guard insightStore.cachedDayStats(chatUsername: chat.username, date: date) == nil else { return }
+        let stats = await InsightStore.computeDayStats(
+            requests: [(username: chat.username, displayName: chat.displayName,
+                        isGroup: chat.isGroup, category: chat.category)],
+            date: date,
+            readerActor: WeChatReaderActor(reader)
+        )
+        guard key == statsKey(for: chat) else { return }
+        detailStatsID = key
+        detailStatsValue = stats[chat.username]
+        insightStore.primeDayStats(stats, date: date)
+    }
+
     @ViewBuilder
     private var detailArea: some View {
         if let chatId = selectedChat {
@@ -96,8 +159,7 @@ struct ChatInsightView: View {
                     chatName: entry.displayName,
                     isGroup: entry.isGroup,
                     category: entry.category,
-                    stats: insightStore.statsForDay(chatUsername: chatId, chatName: entry.displayName,
-                        isGroup: entry.isGroup, category: entry.category, date: selectedDate, reader: reader),
+                    stats: detailChat.flatMap(detailStats),
                     result: insightCoordinator.result(for: chatId, date: selectedDate),
                     insightCoordinator: insightCoordinator,
                     selectedDate: $selectedDate
@@ -105,8 +167,9 @@ struct ChatInsightView: View {
                 .environmentObject(monitor)
                 .id(chatId)
             } else if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
-                let stats = insightStore.statsForDay(chatUsername: chatId, chatName: session.displayName,
-                    isGroup: session.isGroup, category: .other, date: selectedDate, reader: reader)
+                let stats = detailStats(for: DetailChat(
+                    username: chatId, displayName: session.displayName,
+                    isGroup: session.isGroup, category: .other))
                 ChatInsightDetailView(
                     chatUsername: chatId,
                     chatName: session.displayName,

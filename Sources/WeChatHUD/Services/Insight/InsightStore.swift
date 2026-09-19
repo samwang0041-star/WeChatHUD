@@ -142,14 +142,17 @@ final class InsightStore: ObservableObject {
         return otherActiveSessions.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
     }
 
-    func statsForDay(chatUsername: String, chatName: String, isGroup: Bool,
-                     category: WhitelistCategory, date: Date, reader: WeChatReader) -> ChatStatsData? {
-        let key = "\(chatUsername):\(InsightDataLoader.dayRange(for: date).start)"
-        if let cached = detailStatsCache[key] { return cached }
-        let stats = dataLoader.statsForDay(chatUsername: chatUsername, chatName: chatName,
-                                          isGroup: isGroup, category: category, date: date, reader: reader)
-        detailStatsCache[key] = stats
-        return stats
+    /// Day statistics already computed for one chat, or nil.
+    ///
+    /// Deliberately cache-only: the previous version fell through to
+    /// `dataLoader.statsForDay`, a synchronous `getMessages(limit: Int.max)`
+    /// that decrypts every shard the chat spans. Called from SwiftUI body
+    /// evaluation on the main actor, that stalled the insight page on every
+    /// chat selection and date change — most visibly for today, which the
+    /// sidebar's precompute skips. Views now read this and load what is missing
+    /// through `computeDayStats`.
+    func cachedDayStats(chatUsername: String, date: Date) -> ChatStatsData? {
+        detailStatsCache["\(chatUsername):\(InsightDataLoader.dayRange(for: date).start)"]
     }
 
     // MARK: - Day stats without the main actor
