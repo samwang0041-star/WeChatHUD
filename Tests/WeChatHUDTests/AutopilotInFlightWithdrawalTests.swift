@@ -230,19 +230,22 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             AutopilotService.sendFailureDisposition(
                 paused: true, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: false,
-                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
+keystrokesMayHaveLanded: false,
+                                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
             .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。"))
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: false,
-                reason: "发送结果无法确认", retryableReason: false),
+keystrokesMayHaveLanded: false,
+                                reason: "发送结果无法确认", retryableReason: false),
             .humanRequired(reason: "发送结果无法确认，已转为人工确认"))
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: false,
-                reason: "已有发送正在进行", retryableReason: true),
+keystrokesMayHaveLanded: false,
+                                reason: "已有发送正在进行", retryableReason: true),
             .requeueUnchanged(reason: "已有发送正在进行"))
         // The real reason strings are complete sentences ending in 。; the
         // concatenation this replaces printed
@@ -251,7 +254,8 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: false,
-                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
+keystrokesMayHaveLanded: false,
+                                reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
             .humanRequired(reason: "这条回复在按下发送前已经停住，微信没有收到，已转为人工确认"))
     }
 
@@ -267,7 +271,8 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: true,
-                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
+keystrokesMayHaveLanded: false,
+                                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
             .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
         // Positive control: the same reason with an unmuted conversation is
         // still a real failure, so the branch cannot pass by never stamping.
@@ -275,7 +280,8 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: false,
-                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
+keystrokesMayHaveLanded: false,
+                                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
             .humanRequired(reason: "发送前已撤回，微信没有收到，已转为人工确认"))
     }
 
@@ -640,6 +646,16 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(gateWired, 2, "队列与人工确认两条路都要问闸门")
         XCTAssertFalse(service.contains("deliveryStillPermitted(queueId: nil, logId: logId)"),
                        "人工确认那条要带上对话名，否则静音拦不住它")
+        // 这条谓词的最后一个消费点：发送键。它以前是全仓最后一处
+        // `getSettingJSON("autopilot", ...) ?? AutopilotConfig()`，而它在
+        // 真人按「确认发送」的那条路上 —— 猜错键要么把已确认的文本留在框里，
+        // 要么提前发出去。
+        XCTAssertEqual(service.components(separatedBy: "getSettingJSON(\"autopilot\"").count - 1, 0,
+                       "托管设置只许经诚实读法进入按键路径")
+        XCTAssertTrue(service.contains("guard let sendConfig = store.autopilotConfigForSendGate()"),
+                      "读不到发送键必须停住，而不是猜一个默认发送键")
+        XCTAssertTrue(service.contains("sendKey: sendConfig.sendKey"),
+                      "闸门之后要用那次读到的键，不要再读第二次")
     }
 
     /// The gate can only refuse what it is handed: after a failed write-back the
@@ -852,5 +868,102 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
                       "内存没有就用批次结果兜上，闸门不许读到 nil")
         XCTAssertTrue(branch.contains("replyText: ghost?.replyText ?? entry.generatedReply"),
                       "同上：文本也要有第二来源")
+    }
+
+    /// 「暂停」 and 「静音」 both answer 「这条还要不要自动发」, and both are blind to
+    /// the one fact that decides it: whether a keystroke already went in.
+    /// Send key lands → WeChat's WCDB flush is slow → three 500 ms polls fail
+    /// (`"发送后未在微信数据库中确认"`) → the user pauses or mutes inside that
+    /// 1.5 s. Re-queueing there keeps the draft automatically send-eligible with
+    /// its original `scheduledSendTime`, so unmuting (or resuming) sends the peer
+    /// the same text a second time. `manualOnlyReason` was the only thing
+    /// preventing that, and neither withdrawal fact may overrule it.
+    func testWithdrawalBranchesCannotOverruleALandedKeystroke() {
+        let unverified = "发送后未在微信数据库中确认"
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: true, keystrokesMayHaveLanded: true,
+                reason: unverified, retryableReason: false),
+            .humanRequired(reason: "\(unverified)，已转为人工确认"),
+            "静音不能把『键已按下、只是没确认』洗成『什么都没发』")
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: true, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: false, keystrokesMayHaveLanded: true,
+                reason: unverified, retryableReason: false),
+            .humanRequired(reason: "\(unverified)，已转为人工确认"),
+            "暂停同理：这条在 §179 之前就有 manualOnlyReason 挡着重复发送")
+        // Positive controls: nothing typed still withdraws, so the new gate
+        // cannot pass by simply never re-queueing.
+        XCTAssertEqual(
+            AutopilotService.sendFailureDisposition(
+                paused: false, sessionOpen: true, rowStillQueued: true,
+                conversationMuted: true, keystrokesMayHaveLanded: false,
+                reason: "发送前已撤回，微信没有收到。", retryableReason: false),
+            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
+    }
+
+    /// Wiring for the landed-keystroke fact: it has to be reset per send and set
+    /// at the one place that knows the keys went in.
+    func testLandedKeystrokeFlagIsResetAndSetAtTheRightPlace() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let resets = source.components(
+            separatedBy: "lastSendKeystrokesMayHaveLanded = false").count - 1
+        XCTAssertGreaterThanOrEqual(resets, 1, "每次发送前必须清零，否则会沿用上一条的结论")
+        let setTrue = source.range(of: "lastSendKeystrokesMayHaveLanded = true")
+        let reset = source.range(of: "lastSendKeystrokesMayHaveLanded = false")
+        XCTAssertNotNil(setTrue, "确认失败那一处必须把它设为 true")
+        XCTAssertNotNil(reset)
+        XCTAssertLessThan(reset!.lowerBound, setTrue!.lowerBound, "先清后置")
+        // The rate limiter's own early refusals happen before serialSend runs, so
+        // the reset must sit at the outer entry point too.
+        let limiter = (source.components(separatedBy: "private func serialSendWithRateLimit(").last ?? "")
+            .components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertTrue(limiter.contains("lastSendKeystrokesMayHaveLanded = false"),
+                      "外层入口也要清零：限流拒绝根本没进过 serialSend")
+    }
+
+    /// The mute gate used to sit inside the launcher, after WeChat had already
+    /// been activated, the search box opened and the conversation switched. A
+    /// muted chat with a queued draft therefore stole the foreground once a
+    /// minute for the ~10 minutes until staleness retired the draft — the user
+    /// asked the assistant never to touch that conversation.
+    func testExecuteSendRefusesAMutedChatBeforeNavigating() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let body = (source.components(separatedBy: "conversationIsMuted(item.chatUsername) {").last ?? "")
+            .components(separatedBy: "let typingDelay").first ?? ""
+        XCTAssertFalse(body.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertTrue(body.contains("pendingSendQueue.append(item)"),
+                      "静音短路要把草稿放回队列，否则它凭空消失")
+        XCTAssertTrue(body.contains("return .blocked"),
+                      "短路必须真的返回，而不是记一笔继续往下走")
+        XCTAssertFalse(body.contains("serialSend"),
+                       "这一段的语义就是「一行都不许敲」")
+    }
+
+    /// 「没敲键」 and 「敲了但没确认」 were both printed as the latter on the approval
+    /// board, so confirming a reply in a muted conversation told the user to go
+    /// look at WeChat for a message that had never been typed.
+    func testApprovalBoardDoesNotBlameWeChatForAMuteRefusal() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift")
+        let view = try String(contentsOf: url, encoding: .utf8)
+        let between = view.components(separatedBy: "func confirmSend() async {").last ?? ""
+            .components(separatedBy: "approveAutopilotItem").first ?? ""
+        XCTAssertTrue(between.contains("silencedConversations"),
+                      "确认发送前要先知道这条对话被静音了")
+        XCTAssertTrue(between.contains("return"), "静音时要给出自己的说法，别落到「结果待核对」")
+        XCTAssertFalse(CompanionProductCopy.sendUncertain.contains("已静音"))
     }
 }

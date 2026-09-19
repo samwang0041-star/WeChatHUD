@@ -21,6 +21,9 @@ actor WeChatReaderActor {
     /// there.
     @discardableResult
     func prepareForScan() throws -> Bool {
+        // Marks are per-scan facts (see `WeChatReader.partialReadChats`), and
+        // this is the one place every scan path starts from.
+        reader.clearPartialReadMarks()
         try reader.loadKeys()
         return try reader.refreshContactsIfChanged()
     }
@@ -39,6 +42,14 @@ actor WeChatReaderActor {
 
     func messagesBatch(_ requests: [WeChatReader.MessageBatchRequest]) throws -> [String: [MessageInfo]] {
         try reader.getMessagesBatch(requests)
+    }
+
+    /// Whether the page just returned for this chat was assembled with at least
+    /// one shard that could not be read. See `WeChatReader.partialReadChats` —
+    /// a short page and a complete page are otherwise indistinguishable here,
+    /// and the caller is about to persist a cursor.
+    func didReadPartially(chatUsername: String) -> Bool {
+        reader.didReadPartially(chatUsername: chatUsername)
     }
 
     func getMessages(

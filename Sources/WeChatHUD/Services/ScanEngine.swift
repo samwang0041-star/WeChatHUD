@@ -434,8 +434,15 @@ enum ScanEngine {
                     let gapClosed = basePos == nil
                         || !(anchor.map { exceedsBaseline($0) } ?? false)
                         || !lastFetchWasFull
+                    // A page that skipped an unreadable shard is short, not
+                    // final. Both watermark writes downstream take the newest
+                    // row of this page, so the rows behind that shard would
+                    // fall out of the scan range permanently — 追平 means
+                    // every shard answered.
+                    let everyShardAnswered = !(await readerActor.didReadPartially(chatUsername: entry.id))
                     backlogComplete = (inboundInPage >= unreadHint || !lastFetchWasFull)
                         && gapClosed
+                        && everyShardAnswered
                     if !backlogComplete, let a = anchor { frontierToPersist = a }
                     messages = page
                     currentCursor = page.first.map { ($0.createTime, $0.localId) } ?? (0, 0)
@@ -906,6 +913,16 @@ enum ScanEngine {
                 // autopilot for good.
                 if case .unreadable = store.autopilotCursorRead(username: session.username) {
                     print("[WCHUD] autopilot: 水位读不到，跳过该会话本轮: \(session.username)")
+                    continue
+                }
+                // Same shape, one level down: a page assembled with a shard that
+                // threw is short, not complete, and this loop is about to either
+                // seed or advance a cursor off its newest row. Rows in the
+                // unreadable shard would fall behind that cursor for good.
+                // Skipping the chat replays the rows it did see on the next scan;
+                // the inbound content-key dedup absorbs the replay.
+                if await readerActor.didReadPartially(chatUsername: session.username) {
+                    print("[WCHUD] autopilot: 该会话有一片分片没读到，水位不动，本轮跳过")
                     continue
                 }
                 guard let baseline = store.getAutopilotCursor(username: session.username) else {

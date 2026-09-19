@@ -191,6 +191,33 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// is gone but the encryption mtime is still known.
     private(set) var decryptedSnapshotWriteCount = 0
 
+    /// Chats whose most recent page was assembled with at least one shard that
+    /// could not be read.
+    ///
+    /// Shard queries fail for ordinary reasons — WeChat merges `message_N.db`
+    /// into the main file, so a cached mapping can name a shard that is gone or
+    /// half-written; the dedup logic in the merge loop exists precisely because
+    /// that happens mid-read. The shard loop records such an error and carries
+    /// on, and it only *throws* when every shard failed. With one good shard and
+    /// one bad one the caller got a short page it could not tell from a complete
+    /// one, and `ScanEngine` persisted a watermark advanced past the rows it
+    /// never saw — so those messages fell behind the cursor permanently.
+    ///
+    /// Consumers (`ScanEngine`'s two watermark writes) read this to treat a
+    /// partial page as 「还没追平」, which is the contract an interrupted backlog
+    /// walk already uses: delay, never a silent drop.
+    private(set) var partialReadChats: Set<String> = []
+
+    func didReadPartially(chatUsername: String) -> Bool {
+        partialReadChats.contains(chatUsername)
+    }
+
+    /// Called once at the top of every scan, so a mark means 「这一轮扫过之后
+    /// 有过读不全的分片」 and cannot survive into a scan that read everything.
+    func clearPartialReadMarks() {
+        partialReadChats.removeAll(keepingCapacity: true)
+    }
+
     init(keysPath: String? = nil, dbDir: String? = nil, cacheStrategy: CacheStrategy = .persistent,
          persistLearnedAliases: Bool = true, userDefaults: UserDefaults = .standard) {
         let home = NSHomeDirectory()
@@ -1123,6 +1150,17 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     }
 
     /// Assumes `lock` is already held (recursive OK for nested helpers).
+    /// Record 「这一页没读全」. Called from inside the shard loop, which already
+    /// holds `lock`, so it touches the cache directly like the total-failure
+    /// path next to it.
+    private func notePartialRead(chatUsername: String) {
+        partialReadChats.insert(chatUsername)
+        // Evicting the shard mapping gives the next scan a fresh probe, which is
+        // how a rotated-away shard heals instead of marking this chat partial
+        // forever.
+        chatShardCache.removeValue(forKey: chatUsername)
+    }
+
     private func getMessagesLocked(
         chatUsername: String,
         limit: Int,
@@ -1176,7 +1214,14 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                         let probed = try Self.msgTableName(chatUsername: chatUsername, db: db)
                         gen[relPath] = currentGen
                         if probed != nil { discovered.append(relPath) }
-                    } catch { /* broken shard — leave gen unmarked */ }
+                    } catch {
+                        // 「这片读不懂」 and 「这片没有这个会话的表」 are different
+                        // answers, and the page this call returns cannot tell
+                        // them apart on its own.
+                        notePartialRead(chatUsername: chatUsername)
+                    }
+                } else {
+                    notePartialRead(chatUsername: chatUsername)
                 }
             }
             if !discovered.isEmpty {
@@ -1206,6 +1251,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     }
                 } catch {
                     if firstError == nil { firstError = error }
+                    // Only a *total* failure throws below; with one good shard
+                    // the caller gets a short page and no exception, so this is
+                    // the only place the hole can be recorded.
+                    notePartialRead(chatUsername: chatUsername)
                 }
             }
             if firstError == nil {
@@ -1230,6 +1279,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         var foundTable = false
         var queriedShards = 0
         var lastShardError: Error?
+        // Deliberately *not* cleared per call: the whitelist walk fetches several
+        // pages for one chat, and a mark from page one must still hold the
+        // watermark down after page three reads cleanly. Marks are cleared once
+        // per scan by `clearPartialReadMarks`.
         for relPath in dbPaths {
             do {
                 let decPath = try getDecryptedDB(relativePath: relPath)
@@ -1238,6 +1291,9 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 // handle cannot be invalidated mid-query.
                 let db = try acquireReadonly(path: decPath)
                 guard let tableName = try? Self.msgTableName(chatUsername: chatUsername, db: db) else {
+                    // No table name is not 「this shard has nothing」 — a stale
+                    // mapping or a half-written shard says the same thing.
+                    notePartialRead(chatUsername: chatUsername)
                     continue
                 }
                 foundTable = true
@@ -1267,6 +1323,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 }
             } catch {
                 lastShardError = error
+                // The line below only throws when *every* shard failed, so with
+                // one bad shard and one good one the caller receives a short
+                // page that looks exactly like a complete answer.
+                notePartialRead(chatUsername: chatUsername)
             }
         }
         if queriedShards == 0, let lastShardError {

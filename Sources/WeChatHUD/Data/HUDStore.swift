@@ -480,6 +480,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             )
         """)
         try exec("CREATE INDEX IF NOT EXISTS idx_ai_audit_ts ON ai_audit(ts DESC)")
+        // The hourly retention sweep (§182) deletes on `expires_at`. Without an
+        // index that is a full scan of a table holding one row per AI call,
+        // running on the main actor inside a 24/7 notch overlay.
+        try exec("CREATE INDEX IF NOT EXISTS idx_analysis_cache_expires ON analysis_cache(expires_at)")
 
         // ai_feedback: explicit user signals about classifier output.
         // Drives the manual weekly prompt-tuning loop.

@@ -456,8 +456,22 @@ actor AutopilotService {
     /// string) and any one of them alone reads as "the send failed".
     nonisolated static func sendFailureDisposition(
         paused: Bool, sessionOpen: Bool, rowStillQueued: Bool,
-        conversationMuted: Bool, reason: String, retryableReason: Bool
+        conversationMuted: Bool, keystrokesMayHaveLanded: Bool,
+        reason: String, retryableReason: Bool
     ) -> SendFailureDisposition {
+        // A withdrawn draft is only withdrawable if nothing was typed. Both
+        // withdrawal branches below answer 「这条还要不要自动发」, and neither
+        // fact (a flag flipped during an await, a mute applied while the DB
+        // confirmation was polling) says anything about whether the send key
+        // went in. The case that motivated this line: paste + send key land,
+        // WCDB flush is slow so confirmation fails for 1.5 s, the user pauses or
+        // mutes the chat inside that window — the old code stamped
+        // `manualOnlyReason`, which is what kept the peer from receiving the
+        // same text twice.
+        if keystrokesMayHaveLanded {
+            if retryableReason { return .requeueUnchanged(reason: reason) }
+            return .humanRequired(reason: Self.joinSendFailure(reason, "已转为人工确认"))
+        }
         if Self.withheldByPause(paused: paused, sessionOpen: sessionOpen,
                                 rowStillQueued: rowStillQueued) {
             return .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。")
@@ -497,6 +511,13 @@ actor AutopilotService {
     /// makes 静音此对话 a withdrawal: the mute is applied to the durable
     /// `chat_actions` row, while the draft this decision guards may already be
     /// sitting in the queue from a message that arrived before the mute.
+    /// Whether the last failed send had already pressed keys. The launcher's
+    /// refusals (撤回 / 输入框里有草稿 / 会话切换 / 账号未证) typed nothing; a
+    /// `succeeded == true` whose DB confirmation never arrived means the text
+    /// almost certainly *did* go out. Bookkeeping must not read the second one
+    /// as 「什么都没发生」 and put the draft back in the automatic queue.
+    private var lastSendKeystrokesMayHaveLanded = false
+
     /// One read of 「is this conversation muted」 for every consumer in this
     /// actor: the delivery gate and the failure bookkeeping must not disagree
     /// about whether a refusal was a permission change or a failed keystroke.
@@ -1556,6 +1577,17 @@ actor AutopilotService {
 
         // Pasteboard is MainActor-only; await save/restore so we never race
         // a detached restore Task against the next serialSend.
+        // The send key is not a detail: pressing Enter where the user configured
+        // Cmd+Enter leaves the approved text sitting in the box, and the reverse
+        // sends it early. Guessing it from `AutopilotConfig()` was the last
+        // `?? 默认值` on a path that reaches a real person's chat, and this one
+        // runs under a human's 「确认发送」 button. Refusing is also the only
+        // answer that keeps the withdrawal bookkeeping honest: nothing was typed,
+        // so the draft stays withdrawable.
+        guard let sendConfig = store.autopilotConfigForSendGate() else {
+            lastSendFailureMessage = "读不到托管设置（包括发送键），这条没有敲键。请先在设置里恢复托管配置。"
+            return false
+        }
         let savedClipboard = await ClipboardGuard.save()
         let verified: Bool
         do {
@@ -1567,7 +1599,7 @@ actor AutopilotService {
                 chatName: chatName,
                 text: text,
                 typingDelay: typingDelay,
-                sendKey: (store.getSettingJSON("autopilot", as: AutopilotConfig.self) ?? AutopilotConfig()).sendKey,
+                sendKey: sendConfig.sendKey,
                 searchNames: searchNames(for: chatUsername, fallback: chatName),
                 abortCheck: gate
             )
@@ -1589,6 +1621,10 @@ actor AutopilotService {
                     if verified { ok = true; outgoingMsgUID = uid; break }
                     if attempt == 2 {
                         lastSendFailureMessage = "发送后未在微信数据库中确认"
+                        // The keys went in; only the receipt is missing. This is
+                        // the one failure the withdrawal branches must never
+                        // treat as 「什么都没发」.
+                        lastSendKeystrokesMayHaveLanded = true
                         print("[WCHUD] Autopilot: send verification FAILED — message may not have been sent")
                     }
                 }
@@ -1629,6 +1665,9 @@ actor AutopilotService {
         gate: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> Bool {
         let now = monotonic()
+        // Reset before any early return: a refusal from the rate limiter typed
+        // nothing, and the flag must not carry over from the previous send.
+        lastSendKeystrokesMayHaveLanded = false
 
         // C2 fix: global rate limit check, plus the clock-jump fix — the
         // window is measured on the monotonic axis, so moving the system
@@ -1922,6 +1961,16 @@ actor AutopilotService {
             pendingSendQueue.append(item)
             return .blocked("自动驾驶暂停或会话未启动")
         }
+        // 静音此对话 means 「不要碰这个会话」, not 「走到最后一步再别按发送键」.
+        // The delivery gate runs inside the launcher, after WeChat has already
+        // been activated, the search box opened and the conversation switched —
+        // so a muted chat with a queued draft stole the foreground once a minute
+        // for the ~10 minutes until staleness retired it. Keep the draft, keep
+        // the watermark, type nothing.
+        if conversationIsMuted(item.chatUsername) {
+            pendingSendQueue.append(item)
+            return .blocked("这个对话已静音，这条没有发出，仍留在队列里。")
+        }
         guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
             print("[WCHUD] Autopilot: queued send blocked — session cap reached")
             var retained = item
@@ -2019,6 +2068,7 @@ actor AutopilotService {
             sessionOpen: sessionId != nil,
             rowStillQueued: store.hasPendingSend(id: item.id),
             conversationMuted: conversationIsMuted(item.chatUsername),
+            keystrokesMayHaveLanded: lastSendKeystrokesMayHaveLanded,
             reason: failureReason,
             retryableReason: Self.isRetryableSendBusy(failureReason)
         )

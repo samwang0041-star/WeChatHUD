@@ -163,4 +163,32 @@ final class SettingsScopeHonestyTests: XCTestCase {
         XCTAssertTrue(view.contains("重新读取设置"),
                       "拒绝保存要给出出口，不然这一页就卡死了")
     }
+
+    /// 「保存一次会重建默认设置」 was a promise this page could not keep: `save()`
+    /// is gated on `loadError == nil`, so a `.corrupt` 托管设置 row had no way out
+    /// on the very screen that all five send sites tell the user to visit. The
+    /// recovery exists in the store (`updateAutopilotConfig` rebuilds on
+    /// `.corrupt`) but was unreachable from the UI.
+    func testCorruptAutopilotSettingsPageHasAReachableEscape() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift")
+        let page = try String(contentsOf: root, encoding: .utf8)
+        XCTAssertFalse(page.contains("保存一次会重建默认设置"),
+                       "不许再指一条被自己挡住的恢复路径")
+        XCTAssertTrue(page.contains("loadIsCorrupt"),
+                      "「这次读不到」和「内容读不懂」要分开，只有后者能靠覆盖默认值恢复")
+        let block = (page.components(separatedBy: "if let loadError {").last ?? "")
+            .components(separatedBy: "} else if let saveError").first ?? ""
+        XCTAssertFalse(block.isEmpty, "切片为空则这条判据什么都没看")
+        XCTAssertTrue(block.contains("if loadIsCorrupt"), "恢复动作要真的出现在错误旁边")
+        XCTAssertTrue(block.contains("rebuildFromDefaults()"))
+        let fn = (page.components(separatedBy: "private func rebuildFromDefaults()").last ?? "")
+            .components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertTrue(fn.contains("updateAutopilotConfig"),
+                      "要走那条会把 corrupt 重建为默认值的写，而不是另起一条")
+        XCTAssertFalse(fn.contains("save()"), "绕道 save() 会被同一个 loadError 再挡一次")
+        XCTAssertTrue(fn.contains("saveError"), "重建也可能失败，失败要说，不能显示「已保存」")
+    }
 }

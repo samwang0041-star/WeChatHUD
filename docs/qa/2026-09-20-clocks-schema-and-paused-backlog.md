@@ -821,3 +821,114 @@ S4 never-ran 当刚跑过、S5 锚点回墙上时钟、S6 撤回不读框、S7 �
 隐藏水印与贪睡，但那两个值在**静音那一刻**就已经被哨兵覆盖了，取消只是不还原，
 不是新损伤（P3，产品上"静音=重置这条对话的分诊状态"也讲得通）；`ContactsSettingsView:850`
 丢了返回值，且那一页不渲染 `inboxActionError`（取消失败看起来像成功）—— 下一轮。
+
+
+---
+
+## §186 P0（我自己上一轮引入的）：静音/暂停的撤回，挡不住「键已经按下、只是没确认」
+
+§183 把 `conversationMuted` 接进 `sendFailureDisposition` 之后，一路代理攻破本分支 diff 时
+指出它排在了 `retryableReason` 前面，而它的输入里没有任何「是否已经敲过键」的事实。真实时序：
+粘贴 + 发送键落地 → 微信 WCDB 刷盘慢，三轮 500 ms 轮询都没在库里看到那条出站消息
+（`"发送后未在微信数据库中确认"`）→ **就在这 1.5 秒里**用户点了「静音此对话」或暂停 ⇒
+新分支判成 `.requeueUnchanged("…仍留在队列里")`，草稿保留自动资格且 `scheduledSendTime` 不变 ⇒
+用户在 10 分钟新鲜窗口内取消静音 ⇒ 下一拍把**对方已经收到过的同一段文本再发一遍**。
+改之前这条路是 `.humanRequired` 挂 `manualOnlyReason`，那个标记正是防重复发送的东西。
+
+反向验算时发现**暂停那一支（§179，上一轮我自己写的）同病**：`withheldByPause` 的三个输入
+（`paused` / `sessionOpen` / `rowStillQueued`）在「键已落地 + 确认失败 + 期间暂停」下同样全部成立。
+也就是说这两条撤回归档都在用「用户改主意了」这一个事实，去回答「有没有东西已经发出去」
+—— 那是另一个事实，只有发送链路知道。
+
+修法不是给某一支配一个特例，而是把那个缺失的事实提上来：`lastSendKeystrokesMayHaveLanded`
+在 `serialSendWithRateLimit` 入口清零（限流拒绝根本没进过 `serialSend`，不清零会沿用上一条的结论）、
+只在「`uiResult.succeeded` 而确认失败」处置真；`sendFailureDisposition` 拿它做**第一道**分岔，
+两条撤回分支都要求它为 false。判据一条真值表覆盖三支（静音 + 已按键、暂停 + 已按键、
+未按键 + 静音仍要撤回），两条变异各红 2 条，报出的正是 `requeueUnchanged` 的文案 ——
+即重复发送那条路。
+
+一般式：**凡是「把不可逆动作降级为可逆」的分支，必须显式持有「不可逆的那一步到底做了没有」**。
+把它写成「某个可撤销状态 + 一次失败」是不够的，因为这两件事在时间上可以重叠。
+
+## §187 静音闸门坐在导航之后：每分钟抢一次焦点去打开用户说「别理它」的会话
+
+`mayStillDeliver` 的静音判断在 `WeChatLauncher.performTextAction:829` 才被问到，
+而那之前已经 `NSRunningApplication.activate` 微信、点开搜索框、切到该会话。
+被静音的排队草稿每 60 秒重演一次，`isStaleForAutomaticSend` 要 ~10 分钟才把它转人工 ⇒
+每条草稿约 10 次「把我的微信前台切到那个我明确让助手不要碰的会话」。
+§180 把静音这件事接进发送链时只接了「别按发送键」，没接「也别去那个会话」。
+修：`executeSend` 在暂停短路之后加一条静音短路（草稿原样回队，什么都不记），
+判据断言这一段的切片里 `serialSend` 一次都不许出现。
+
+## §188 一片分片读不全，等于交出一页「看上去完整」的短页
+
+`WeChatReader` 的分片循环对每个分片单独 `catch`，只在**全部**分片都失败时才抛错。
+一片坏 + 一片好 ⇒ 调用方拿到一条短页、没有异常，`ScanEngine` 于是把水位/游标推进到
+这页里最新的一条 —— 坏片那侧的行从此落在游标之后，**永久不再被抓**。
+触发条件不是恶意输入：微信会把 `message_N.db` 合并进主库，而本进程手里的分片映射还认得旧文件
+（合并循环自己就写着「同一行在两个分片里都可见」，正因如此才按内容键去重）。
+
+三个静默跳过点都要记：①发现式探测里 `try? getDecryptedDB` / `acquireReadonly` 失败；
+②发现式探测里 schema 读抛出；③全量探测的 `catch`（只在 `firstError == nil` 时才写缓存）。
+新增 `partialReadChats` + `didReadPartially(chatUsername:)`，`clearPartialReadMarks()` 每轮扫描
+开始时清（标记必须是「本轮事实」，否则一片修好后水位永远不动）。两条消费路径都扣上：
+白名单那条把「每片都答到」并进 `backlogComplete`（两处水位写都挂在它下面），
+按联系人那条照 `.unreadable` 的现例 `continue` 跳过整会话本轮。
+
+写这轮判据时先红后绿了一次，值得记：我最初只在**取行**那个循环加了标记，三条行为判据全红 ——
+因为损坏的分片在**发现阶段**就被 `try?` 静默跳过了，根本没进取行循环。
+「修完不红」不是好事，「判据先红」才是。
+
+判阴一条（实测，不是推算）：代理举报「外来 `create_time` 直接做数组下标」
+（`hourly[cal.component(.hour, from: date)]`、`weekday[... - 1]`）会越界 trap。
+真机测 `Calendar.current.component(...)`：`t = 1.7e9 / 1.7e12 / 1.7e18 / Int64.min / Int64.max / 0 / -1`
+七种取值下 hour 恒在 0…23、weekday 恒在 1…7，无一越界 ⇒ 不改（CoreFoundation 把超远日期折回合法
+分量，不是我以为的返回 0/NSNotFound）。
+另有一条本轮未做：跨分片同秒同 `local_id` 的复合游标在 `prefix(limit)` 截断时可能少一条
+（需要两片同秒同 localId 且页满的夹具才能证伪），先记为待测，不当已修。
+
+## §189 设置页对「内容读不懂」的承诺是一条走不通的路；发送键是最后一处默认值兜底
+
+`.corrupt` 的文案写「保存一次会重建默认设置」，而 `save()` 的第一行就是
+`guard didLoad, !isHydrating, loadError == nil else { return }` —— 保存被自己刚设的
+`loadError` 挡死，旁边唯一的按钮「重新读取设置」对 corrupt 恒等重复失败。
+同时五处发送提示都叫用户「请先在设置里恢复托管配置」。即：库里有解恢复动作
+（`updateAutopilotConfig` 把 `.corrupt` 映射为「从默认值重建」），界面上到不了。
+补一个显式的「用默认设置覆盖并重载」（覆盖会丢弃现有托管设置，所以必须是命名按钮，
+不能藏在保存背后），并把那句假承诺删掉。判据顺手抓到自己的一次误伤：它按源文本扫
+「不许再出现那句承诺」，而我写在注释里的引用把它命中了 —— 注释里别原样引用被禁字符串。
+
+同族收尾：`serialSend` 里 `sendKey` 还在 `getSettingJSON(...) ?? AutopilotConfig()` 上读，
+而它就在真人按「确认发送」的那条路上 —— 猜错键要么把已确认的文本留在框里，要么提前发出去。
+改为 `guard let sendConfig = store.autopilotConfigForSendGate()`，读不到就什么都不敲
+（顺带让 §186 的那道新分岔成立：没敲键，才谈得上撤回）。判据把
+`getSettingJSON("autopilot"` 在 `AutopilotService.swift` 里的出现次数钉成 0。
+
+审批台另一处同族的谎：`approvePending` 因为静音返回 `false` 时，回执仍是
+「发送结果待核对；请先到微信查看，避免重复发送」—— 一个字都没敲，却叫用户去核对
+是否已经发出。改成先按「已静音的对话」清单判断并给出可操作的那句。
+
+## §190 `AutopilotTabView` 整页零实例化：本轮两条守卫落在死页面上
+
+`grep -rn "AutopilotTabView(" Sources/` 零命中（只有 `struct` 声明与一处测试注释）。
+§179 的表头「即将发送→等你确认」、§185 的两处 `guard let config` 都在这一页；
+真实的活页是 `ApprovalWorkspaceView`，代理逐条核过它的三处说法是自洽的
+（读不到时「等你确认」为真，因为闸门会拒发）。⇒ 本轮没有留下用户可见的损伤，
+但「四处手动发送」的计数里含 2 处死代码，这条要在删除那一轮一并修正。
+删整页（含 `PendingSendRow`）按既定偏好该做，但它会同时移掉 3 条判据的落点，
+不与本轮混做。
+
+## §191 本轮判阴与定价
+
+- **判阴**：`Calendar` 极端时间戳越界（实测，见 §188）；`autoSendState` 每秒 5–7 次读会
+  「自己造出 `.unreadable`」—— `readSettingJSON` 的 `.unreadable` 只来自**抛错的查询**，
+  不是锁竞争，所以那只是重复解码（P2 性能，未做）；取消静音删整行会带走隐藏水印与贪睡 ——
+  那两个值在静音那一刻已被哨兵覆盖，取消只是「不还原」，不是新损伤（P3）。
+- **定价未做**：`ApprovalWorkspaceView` 一遍 body 里 5 次 gate 读（P2）；新文案未走
+  `companionFont` 缩放、超长红字未并进 `TextEditor` 的 a11y 值（P2）；
+  `autopilot_log` / `vip_traces` / `commitment_scans` 仍无保留窗口（要 owner 挑数字）；
+  `AutopilotTabView` 整页删除；`sendNow` 之外仍未收口的最后一处 `loadAutopilotConfig`
+  消费点在 `ConversationDetailView` 之外没有了 —— 五处已全部走完。
+- 六条新判据（P0 真值表 / 发送键兜底 / corrupt 恢复按钮 / 静音短路位置 /
+  部分页扣水位 / 探测阶段标记）逐条变异，全部 CAUGHT；全量 2063 tests / 0 failures，
+  release 零警告。

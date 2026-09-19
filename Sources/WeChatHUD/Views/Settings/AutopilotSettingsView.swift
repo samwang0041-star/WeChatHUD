@@ -201,6 +201,15 @@ struct AutopilotSettingsView: View {
                 Label(loadError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
                 Button("重新读取设置") { load() }
+                // 旧的错误文案把恢复说成「保存一次就行」，而这条页根本保存不了：
+                // keep: `save()` is gated on `loadError == nil`, so a corrupt
+                // row had no way out — while all five send sites tell the user
+                // to go recover it here. The rebuild exists in the store
+                // (`updateAutopilotConfig` maps `.corrupt` onto defaults); it
+                // simply was not reachable from this screen.
+                if loadIsCorrupt {
+                    Button("用默认设置覆盖并重载") { rebuildFromDefaults() }
+                }
             } else if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
@@ -452,13 +461,16 @@ struct AutopilotSettingsView: View {
         case .absent: cfg = AutopilotConfig()
         case .unreadable:
             loadError = "读不到当前的托管设置，这一页暂时不接受改动。请点「重新读取设置」再试一次。"
+            loadIsCorrupt = false
             saved = false
             return
         case .corrupt:
             // Same refusal, different sentence: this one will not fix itself by
             // retrying, and hydrating the page from defaults would let the next
-            // 保存 write the defaults over whatever the user had set.
-            loadError = "托管设置的内容读不懂（可能被上次写入打断）。这一页暂时不接受改动，保存一次会重建默认设置。"
+            // 保存 write the defaults over whatever the user had set — so the
+            // rebuild has to be an action the user takes with their eyes open.
+            loadError = "托管设置的内容读不懂（可能被上次写入打断）。这一页暂时不接受改动；要恢复自动托管，只能显式用默认设置覆盖（会丢弃现有托管设置）。"
+            loadIsCorrupt = true
             saved = false
             return
         }
@@ -474,6 +486,26 @@ struct AutopilotSettingsView: View {
         safetyConfig = cfg
         sessions = store.loadAutopilotSessions(limit: 10)
         allContacts = store.loadContacts(level: nil)
+    }
+
+    /// Set only by the `.corrupt` read: 「内容读不懂」 and 「这次读不到」 need
+    /// different escape hatches, and only the first one is fixable by writing
+    /// defaults over the row.
+    @State private var loadIsCorrupt = false
+
+    /// The one write this page must be able to make *while* its read is failing:
+    /// `updateAutopilotConfig` rebuilds from defaults on `.corrupt`, so a no-op
+    /// mutation is what replaces the unreadable row with a readable one. It is
+    /// destructive (every stored 托管 setting goes back to defaults), which is why
+    /// it is a named button and not something 保存 does behind the user's back.
+    private func rebuildFromDefaults() {
+        guard (try? store.updateAutopilotConfig { _ in }) == true else {
+            saveError = "默认设置也没写进去：数据库可能正被占用。请稍后再试一次。"
+            return
+        }
+        loadError = nil
+        loadIsCorrupt = false
+        load()
     }
 
     private func save() {

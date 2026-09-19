@@ -386,6 +386,15 @@ struct ApprovalWorkspaceView: View {
         guard let selected, !isSending else { return }
         isSending = true
         defer { isSending = false }
+        // 「什么都没敲」 and 「敲了但没在数据库里确认」 are different answers, and
+        // the old `false` printed the second one for both: confirming a reply in
+        // a muted conversation told the user to go check WeChat for a message
+        // that had never been typed. The mute list is the one place that fact is
+        // read, so this cannot drift from what 取消静音 offers.
+        if monitor.silencedConversations.contains(where: { $0.username == selected.chatUsername }) {
+            receipt = "这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。"
+            return
+        }
         let ok = await monitor.approveAutopilotItem(
             logId: selected.id,
             reply: editedReply,
