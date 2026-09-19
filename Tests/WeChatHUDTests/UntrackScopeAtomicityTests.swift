@@ -46,6 +46,30 @@ final class UntrackScopeAtomicityTests: XCTestCase {
                       "an un-followed chat must not keep firing commitment alerts")
     }
 
+    /// The 联系人 page has its own delete, and it went through a different
+    /// helper that only cleared three tables: the contact disappeared from
+    /// settings while its 承诺 kept firing 承诺到期 alerts that could no longer
+    /// be reached or cleared from that page.
+    func testContactPageDeleteTakesTheDerivedArtifactsWithIt() throws {
+        try store.deleteContactAndTracking(username: "chat-a")
+        XCTAssertFalse(store.isWhitelisted("chat-a"))
+        XCTAssertTrue(
+            store.loadCommitments().filter { $0.status == .pending || $0.status == .overdue }.isEmpty,
+            "a deleted contact must not leave live commitments behind"
+        )
+    }
+
+    /// The asymmetry above is on purpose: 灰名单 is a level change the user can
+    /// undo, and the collateral sweep belongs only to the two paths that ask
+    /// for confirmation before destroying anything.
+    func testGreylistDemotionKeepsCommitmentsLive() throws {
+        try store.saveContactTracking(
+            username: "chat-a", displayName: "小美", isGroup: false, category: .work,
+            attentionLevel: .greylist, role: .colleague
+        )
+        XCTAssertEqual(store.loadCommitments().first?.status, .pending)
+    }
+
     @MainActor
     func testMonitorKeepsTheRowWhenTheClearFails() throws {
         try store.exec("DROP TABLE chat_actions")

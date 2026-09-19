@@ -893,30 +893,9 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// or nothing moved.
     func removeFromWhitelist(username: String) throws {
         try withTransaction {
-            try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+            try untrackContact(username: username)
             try deleteContact(username: username)
-            // Also clear this chat's baseline — otherwise re-adding the
-            // same contact to the whitelist later would reuse the stale
-            // watermark and silently swallow every message that arrived
-            // while it was off the list.
-            try exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
-            // Drop any snooze/silence state too: "removed from whitelist"
-            // is the strongest reset signal we have, and leaving those
-            // behind would make a re-added chat come back already muted.
-            try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
-            // Derived artifacts die with the scope change — otherwise a removed
-            // chat's pending commitments keep firing overdue alerts and its
-            // discussion items / memory rows persist until the model overwrites.
-            try exec(
-                "UPDATE commitments SET status='cancelled' WHERE chat_username=? AND status IN ('pending','overdue')",
-                params: [username])
-            try exec(
-                "UPDATE discussion_items SET status='dismissed' WHERE chat_username=? AND status='pending'",
-                params: [username])
-            try exec("DELETE FROM pending_asks WHERE chat_username=?", params: [username])
-            // The discussion queue table is created on first use, so the raw
-            // DELETE would fail on a database that never queued anything.
-            try clearDiscussionMessages(chatUsername: username)
+            try clearDerivedArtifacts(chatUsername: username)
         }
     }
 
@@ -2092,10 +2071,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     /// Remove a contact from both product tables and scan-side state.
+    ///
+    /// Same scope as `removeFromWhitelist`: this is the 联系人 page's delete, and
+    /// a contact removed from here must not keep firing 承诺到期 alerts for
+    /// commitments the user can no longer reach.
     func deleteContactAndTracking(username: String) throws {
         try withTransaction {
             try untrackContact(username: username)
             try deleteContact(username: username)
+            try clearDerivedArtifacts(chatUsername: username)
             try exec("DELETE FROM relationship_profiles WHERE username=?", params: [username])
         }
     }
@@ -2130,8 +2114,35 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     private func untrackContact(username: String) throws {
         try exec("DELETE FROM whitelist WHERE username=?", params: [username])
+        // Also clear this chat's baseline — otherwise re-adding the
+        // same contact to the whitelist later would reuse the stale
+        // watermark and silently swallow every message that arrived
+        // while it was off the list.
         try exec("DELETE FROM sync_state WHERE source_key=?", params: ["wl/\(username)"])
+        // Drop any snooze/silence state too: "removed from whitelist"
+        // is the strongest reset signal we have, and leaving those
+        // behind would make a re-added chat come back already muted.
         try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [username])
+    }
+
+    /// Derived artifacts die with an explicit untrack — otherwise a removed
+    /// chat's pending commitments keep firing overdue alerts, its 待办 stay in
+    /// the list, and its memory rows persist until the model overwrites them.
+    ///
+    /// Deliberately separate from `untrackContact`: moving a contact to
+    /// 灰名单 is a level change that can be reversed, while deleting the
+    /// follow is the confirmation the copy promises.
+    private func clearDerivedArtifacts(chatUsername: String) throws {
+        try exec(
+            "UPDATE commitments SET status='cancelled' WHERE chat_username=? AND status IN ('pending','overdue')",
+            params: [chatUsername])
+        try exec(
+            "UPDATE discussion_items SET status='dismissed' WHERE chat_username=? AND status='pending'",
+            params: [chatUsername])
+        try exec("DELETE FROM pending_asks WHERE chat_username=?", params: [chatUsername])
+        // The discussion queue table is created on first use, so the raw
+        // DELETE would fail on a database that never queued anything.
+        try clearDiscussionMessages(chatUsername: chatUsername)
     }
 
     func loadVIPUsernames() -> Set<String> {
