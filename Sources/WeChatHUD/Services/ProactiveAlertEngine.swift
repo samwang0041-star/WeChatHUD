@@ -201,8 +201,19 @@ final class ProactiveAlertEngine {
     func evaluateCommitmentDeadlines(commitments: [Commitment], at date: Date? = nil) {
         let evaluationNow = date ?? now()
         pruneExpiredState(at: evaluationNow)
+        // The mute list is the one promise every alert path has to keep:
+        // 「不想再看到谁的消息 — 选谁，就哪个对话都不再提醒——包括他所在的群」
+        // (`AdmissionSettingsView.swift:626`). The scan path honours it through
+        // `AdmissionPolicy.isMuted`; this path consulted none of it, so a muted
+        // person's deadline went on waking the notification centre.
+        let globallyMuted = store.loadGlobalIgnoredSenders()
+        let chatMutes = store.loadIgnoredSenderMap()
+
         for c in commitments where c.status == .pending || c.status == .overdue {
             guard let deadline = c.deadlineAt else { continue }
+            guard !isMutedForCommitment(c, globallyMuted: globallyMuted, chatMutes: chatMutes) else {
+                continue
+            }
             let remaining = deadline.timeIntervalSince(evaluationNow)
             if remaining <= 0 {
                 pushAlert(
@@ -219,6 +230,23 @@ final class ProactiveAlertEngine {
                 )
             }
         }
+    }
+
+    /// A commitment records its counterparty only as a display name
+    /// (`Commitment.commitTo`), so the name identifier is what can match — and
+    /// the chat-scoped mute is checked against the conversation the promise was
+    /// made in, which is where 「包括他所在的群」 points.
+    private func isMutedForCommitment(
+        _ commitment: Commitment,
+        globallyMuted: Set<String>,
+        chatMutes: [String: Set<String>]
+    ) -> Bool {
+        let identifier = HUDStore.senderIdentifier(
+            senderUsername: "",
+            senderName: commitment.commitTo
+        )
+        if globallyMuted.contains(identifier) { return true }
+        return chatMutes[commitment.chatUsername]?.contains(identifier) == true
     }
 
     // MARK: - Private

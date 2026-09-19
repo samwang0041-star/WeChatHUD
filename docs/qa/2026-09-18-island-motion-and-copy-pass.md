@@ -1617,3 +1617,53 @@ KPI 卡片的**视口证据这轮没拿到**：`--preview-insight-overview` 那�
 「今天」页与设置窗口（窗口宽度还带着上一轮 `--preview-narrow` 的 autosave 残留，
 2830×1868 px），洞察总览没渲染出来。文案与配色分支是 `recentDensityRatio` 的纯映射，
 由上述测试覆盖，但"这张卡在真机上到底长什么样"仍是未验证项，不留作已完成。
+
+## §93（第 25 轮）主动提醒四条规则的"界面承诺 vs 算法"审计（任务 #5）
+
+派了一个代理做跨文件比对（只读代码与文案，不碰任何聊天原文），报回 8 条。
+**按本轮定下的规矩，代理说的只是它打算做什么** —— 所以逐条自己回源码验，
+验实 6 条、撤回 0 条、修掉最重的 1 条，其余建任务。
+
+### 已修（P0）：静音的人，承诺到期照样弹
+
+- 界面（`AdmissionSettingsView.swift:626`）：「不想再看到谁的消息」
+  ——「选谁，就哪个对话都不再提醒——包括他所在的群。」
+- 代码（`ProactiveAlertEngine.evaluateCommitmentDeadlines`）：只遍历 commitments，
+  **一次静音名单都没读**；调用点（`ChatMonitor.swift:535-536`）也是从库里直接捞
+  pending + overdue，没有过滤。扫描那条链路是通过 `AdmissionPolicy.isMuted` 认这份
+  名单的，唯独提醒这条不认。结果：你把某人彻底静音了，他欠你的承诺一到点，
+  通知中心照样弹「承诺已到期」。
+
+修法不是新造一套判据，而是把**同一份**名单接进来：`store.loadGlobalIgnoredSenders()`
++ `store.loadIgnoredSenderMap()`（正是 `AdmissionPolicy` 的两个来源），
+按 `HUDStore.senderIdentifier` 匹配。承诺只存了对方显示名（`Commitment.commitTo`），
+所以按 name 标识匹配，会话级静音再按 `chatUsername` 查一层。
+
+测试（`ProactiveAlertTests` 新增 2 项，26/26 绿）：全局静音 → 不弹；
+**对照组**同引擎换个没静音的名字 → 照弹（证明"不弹"是闸门在起作用，不是夹具坏了）；
+会话级静音只静音那个会话，另一个会话仍弹。
+变异检验：把 `guard !isMutedForCommitment(...)` 换成 `guard true`，
+立刻报 `("["承诺已到期", "承诺已到期"]") is not equal to ("["承诺已到期"]")`。
+
+### 已核实、建任务未修（按严重度）
+
+- **#15 P1**：右键菜单「隐藏这条更新」是单条语义，`dismissInboxItem:2610` 写的却是
+  `store.silenceChat(chatUsername:silencedAt:)` —— 会话级水印。点掉一条，同会话里
+  时间戳不晚于它的所有消息一起消失，且没有任何提示。（自己读过两处源码确认）
+- **#16 P1**：README:135 列的「多条未回」对**私聊不可达**。规则 3 数 `unreadItems`
+  行数（≥3），而 `ScanEngine.swift:185-190` 对非群聊只取
+  `recentMsgs.first(where: !isFromSelf)` —— 一个私聊永远只贡献 1 行。
+  三条未回私聊 = 1 行 = 永不触发。（自己读过确认）
+- **#17 P1**：通知设置三颗「弹出」开关的消费者只有浮窗路径
+  （`ScanEngine:610-611`、`AppDelegate:593`），引擎从不读 `NotificationConfig`；
+  三颗全关，紧急待回复（且不占每小时预算）/多条未回/VIP 升档/跨群 VIP 照样进通知中心，
+  而文案写的是「关掉只是不弹」。同一条里还有「已安排在X提醒」：所有
+  `UNNotificationRequest` 都是 `trigger: nil`，没有任何东西被排期。
+- **#3/#7/#8 P1–P2**：「他们一开口就提醒你」受另一页开关控制；「已超时未回复」
+  写死 30 分钟而用户可在别处自定义；`MacExperienceSettingsView:163-171` 等三处死文案。
+
+### 顺带证实的一条好话
+
+AGENTS.md 说的「VIP 升档 1h 档只有视觉提示不发系统通知」**是真的**：
+`pushEscalationAlert` 的 t2 分支被跳过（`:237-243`），与
+`CompanionProductCopy:136-140` 一致。不是所有承诺都落空，这条记下来。

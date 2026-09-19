@@ -633,4 +633,76 @@ final class ProactiveAlertTests: XCTestCase {
         XCTAssertEqual(attempt, 2)
         XCTAssertEqual(engine.vipAlertTiers["vip-chat"], .t1)
     }
+
+    // MARK: - The mute list has to reach the commitment path too
+
+    /// 「不想再看到谁的消息 — 选谁，就哪个对话都不再提醒——包括他所在的群」
+    /// (`AdmissionSettingsView.swift:626`). The scan path honoured that through
+    /// `AdmissionPolicy.isMuted`; the deadline path consulted no mute list at all,
+    /// so a muted person's overdue promise kept waking the notification centre.
+    @MainActor
+    func testGloballyMutedPersonStaysSilentOnCommitmentDeadline() async throws {
+        let now = Date(timeIntervalSince1970: 5_100_000)
+        var titles: [String] = []
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        try store.ignoreSenderEverywhere(senderUsername: "", senderName: "同事")
+        let engine = ProactiveAlertEngine(
+            store: store, now: { now },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        func make(_ id: String, to person: String) -> Commitment {
+            Commitment(id: 1, msgUID: id, chatUsername: "chat", chatName: "聊天",
+                       content: "发报告", commitTo: person, deadlineAt: now.addingTimeInterval(-60),
+                       confidence: 0.9, status: .overdue, promptVersion: "v1", createdAt: now, updatedAt: now)
+        }
+
+        engine.evaluateCommitmentDeadlines(commitments: [make("muted", to: "同事")])
+        await Task.yield()
+        XCTAssertEqual(titles, [], "a muted person's deadline must stay silent")
+
+        // Control: the identical alert still fires for a name the user did not
+        // mute, so the silence above is the gate working, not a dead harness.
+        engine.evaluateCommitmentDeadlines(commitments: [make("loud", to: "另一个人")])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"])
+    }
+
+    /// A chat-scoped mute silences that conversation only — the same promise the
+    /// scan path keeps, and the reason the gate needs the commitment's own chat.
+    @MainActor
+    func testChatScopedMuteSilencesOnlyThatChatsCommitment() async throws {
+        let now = Date(timeIntervalSince1970: 5_200_000)
+        var pushed: [String] = []
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        try store.ignoreSender(
+            chatUsername: "chat-a", chatName: "A 群",
+            senderUsername: "", senderName: "同事"
+        )
+        let engine = ProactiveAlertEngine(
+            store: store, now: { now },
+            sendNotification: { title, _, _, completion in
+                pushed.append(title)
+                completion(nil)
+            }
+        )
+        func make(_ id: String, chat: String) -> Commitment {
+            Commitment(id: 1, msgUID: id, chatUsername: chat, chatName: chat,
+                       content: "发报告", commitTo: "同事", deadlineAt: now.addingTimeInterval(-60),
+                       confidence: 0.9, status: .overdue, promptVersion: "v1", createdAt: now, updatedAt: now)
+        }
+
+        engine.evaluateCommitmentDeadlines(commitments: [
+            make("in-a", chat: "chat-a"), make("in-b", chat: "chat-b"),
+        ])
+        await Task.yield()
+        XCTAssertEqual(
+            pushed, ["承诺已到期"],
+            "chat-a is muted, chat-b is not — exactly one alert should survive"
+        )
+    }
 }
