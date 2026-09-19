@@ -10,9 +10,16 @@ import SwiftUI
 /// different clocks in one panel. Formatting lives here only; callers add
 /// their own suffix instead of re-deriving the numbers.
 enum RelativeTimeFormatter {
-    /// "刚刚" / "9 分钟前" / "3 小时前" / "2 天前".
+    /// "刚刚" / "9 分钟前" / "3 小时前" / "2 天前"，或「时间待定」。
     static func relativeLabel(_ date: Date, now: Date = Date()) -> String {
         let diff = Int(now.timeIntervalSince(date))
+        // A negative difference is not 「刚刚」. macOS steps the clock backwards on
+        // wake and on NTP correction — the same axis that used to silence the
+        // heartbeat cadences (§176) — so a stamp taken *before* such a step reads
+        // as the future afterwards. Falling through to 「刚刚」 there tells the user
+        // the data on screen is fresh, at the exact moment the app cannot say how
+        // fresh it is.
+        if diff < 0 { return "时间待定" }
         if diff < 60 { return "刚刚" }
         if diff < 3600 { return "\(diff / 60) 分钟前" }
         if diff < 86400 { return "\(diff / 3600) 小时前" }
@@ -23,6 +30,8 @@ enum RelativeTimeFormatter {
     /// stamp or a "9 分钟前" one.
     static func relativeLabel(_ date: Date, suffix: String, now: Date = Date()) -> String {
         let label = relativeLabel(date, now: now)
+        // 「时间待定同步」 is not a sentence; the unknown clock is the whole message.
+        if label == "时间待定" { return label }
         return label == "刚刚" ? "刚刚\(suffix)" : "\(label)\(suffix)"
     }
 }

@@ -10,13 +10,14 @@ struct InsightRadarSection: View {
     let onExpandModule: (String) -> Void
 
     var body: some View {
-        let findings = InsightRadar.buildFindings(
+        let allFindings = InsightRadar.buildFindings(
             chatInsights: chatInsights,
             chatNames: chatNames,
             briefing: briefing,
             overview: overview,
-            limit: 6
+            limit: .max
         )
+        let findings = Array(allFindings.prefix(InsightRadarBadge.visibleLimit))
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -33,7 +34,11 @@ struct InsightRadarSection: View {
                 }
                 Spacer()
                 if !findings.isEmpty {
-                    Text("\(findings.count) 条提醒")
+                    // The badge sits next to a list that is capped at six. Printing
+                    // `findings.count` there made "6 条提醒" read as a total while the
+                    // seventh signal had already been dropped, so the number the
+                    // user trusts is the one that was truncated.
+                    Text(InsightRadarBadge.text(shown: findings.count, total: allFindings.count))
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 7)
@@ -279,5 +284,17 @@ struct InsightRadarSection: View {
         case .medium: return "今天看一眼"
         case .low: return "可观察"
         }
+    }
+}
+
+/// The badge next to a list that is capped at six. Decided by one pure function so
+/// the truncation rule has a test: `findings.count` alone made 「6 条提醒」 read as a
+/// total while the seventh signal had already been dropped.
+enum InsightRadarBadge {
+    static let visibleLimit = 6
+
+    static func text(shown: Int, total: Int) -> String {
+        guard shown > 0 else { return "" }
+        return total > shown ? "显示 \(shown) · 共 \(total) 条提醒" : "\(shown) 条提醒"
     }
 }

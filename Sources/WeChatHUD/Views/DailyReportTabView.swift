@@ -149,7 +149,12 @@ struct DailyReportTabView: View {
         let pending = items.filter { $0.status == .pending && !$0.kind.isRecord }
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("本周推进了 \(done.count) 件事，还有 \(pending.count) 件要跟进。")
+                // 「本周做完了 N 件」 is a claim about *when* things got done, and this
+                // store keeps no completion timestamp for a commitment: the filter
+                // is 「来源消息或到期时间落在本周」 且「现在的状态是已完成」. A task
+                // finished three weeks ago and mentioned on Monday counted as
+                // 本周推进.
+                Text("本周相关的事里，已完成 \(done.count) 件，还有 \(pending.count) 件要跟进。")
                     .workspaceTitle()
                 if pending.isEmpty && done.isEmpty {
                     Text("这一周还没有整理出事项。连上微信并关注对话后会出现在这里。")

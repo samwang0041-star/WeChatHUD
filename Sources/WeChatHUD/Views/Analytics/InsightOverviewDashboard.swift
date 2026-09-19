@@ -79,7 +79,12 @@ struct InsightOverviewDashboard: View {
                 // The scope and the window are what the two segmented pickers
                 // to the right of this line *are* — restating them here said
                 // 「所有人 · 今天」 twice within 200pt. Only the counts are new.
-                Text("\(insightStore.overview?.activeChats ?? 0) 个活跃对话 · \(insightStore.overview?.totalMessages ?? 0) 条消息")
+                // 「还没算」 and 「算出来是 0」 are different answers, and `?? 0`
+                // prints the second one for both. A user who opens this page before
+                // the first overview lands reads 「0 个活跃对话 · 0 条消息」 as a
+                // measurement of an empty week and closes it — instead of pressing
+                // the 刷新 that would have produced the numbers.
+                Text(InsightOverviewCounts.text(for: insightStore.overview))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -697,4 +702,21 @@ struct InsightOverviewDashboard: View {
     }
 
     private let weekdayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+}
+
+/// 「还没算」 and 「算出来是 0」 are different answers, and `?? 0` prints the second
+/// one for both. A user who opens the overview before the first computation lands
+/// reads 「0 个活跃对话 · 0 条消息」 as a measurement of an empty week and closes the
+/// page — instead of pressing the 刷新 that would have produced the numbers.
+enum InsightOverviewCounts {
+    static let pending = "统计还没算好 · 点右侧刷新生成"
+
+    static func text(activeChats: Int, totalMessages: Int) -> String {
+        "\(activeChats) 个活跃对话 · \(totalMessages) 条消息"
+    }
+
+    static func text(for overview: ChatInsightEngine.GlobalOverview?) -> String {
+        guard let overview else { return pending }
+        return text(activeChats: overview.activeChats, totalMessages: overview.totalMessages)
+    }
 }
