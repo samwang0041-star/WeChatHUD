@@ -664,7 +664,7 @@ struct AISettingsView: View {
     private var generationPreferences: some View {
         DisclosureGroup(isExpanded: $preferencesExpanded) {
             SettingsSection {
-                SettingsToggleRow("慢慢想清楚再答", subtitle: "写摘要和草稿时多想一会儿，可能会更慢。", isOn: $thinkingEnabled)
+                SettingsToggleRow("慢慢想清楚再答", subtitle: "写摘要时多想一会儿，可能会更慢。要结构化输出的任务（回复草稿）不走它。", isOn: $thinkingEnabled)
                 SettingsRowDivider()
                 SettingsRow("回复最长写多少") {
                     HStack(spacing: 4) {
@@ -687,7 +687,7 @@ struct AISettingsView: View {
                             .frame(width: 28, alignment: .trailing)
                     }
                 }
-                Text("这是平时写摘要和草稿的习惯。有的整理任务会单独处理；用 ChatGPT 登录时，上面两项长度和随意度不会生效。")
+                Text("这两项是默认值，只有没被单独设定的任务才用到。摘要和草稿各有固定写法，不受这里影响；用 ChatGPT 登录时两项也不生效。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
