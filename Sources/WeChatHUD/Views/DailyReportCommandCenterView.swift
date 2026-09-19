@@ -345,7 +345,7 @@ struct DailyReportCommandCenterView: View {
                         .font(.system(size: isWorkspace ? 12 : 9))
                         .foregroundColor(.secondary)
                     if let deadline = action.deadline {
-                        Text(deadlineText(deadline))
+                        Text(Self.deadlineText(deadline))
                             .font(.system(size: 10))
                             .foregroundColor(deadlineColor(deadline))
                     }
@@ -777,14 +777,18 @@ struct DailyReportCommandCenterView: View {
     /// Chinese it parses as a clock time first (「6 时」= 6 o'clock, "before
     /// six"), so the row that meant "overdue by six hours" can be read as "due
     /// before 6:00". The compact column earns no space worth that ambiguity.
-    private func deadlineText(_ date: Date) -> String {
-        let diff = date.timeIntervalSince(Date())
+    nonisolated static func deadlineText(_ date: Date, now: Date = Date()) -> String {
+        let diff = date.timeIntervalSince(now)
         if diff < 0 {
             let past = Int(-diff)
+            // Under a minute reads as 「0 分钟前到期」 — a number that is not a
+            // measurement, on the row whose whole job is to say how late it is.
+            if past < 60    { return "刚到期" }
             if past < 3600  { return "\(past / 60) 分钟前到期" }
             if past < 86400 { return "\(past / 3600) 小时前到期" }
             return "\(past / 86400) 天前到期"
         }
+        if diff < 60    { return "即将到期" }
         if diff < 3600  { return "\(Int(diff) / 60) 分钟后" }
         if diff < 86400 { return "\(Int(diff) / 3600) 小时后" }
         return "\(Int(diff) / 86400) 天后"

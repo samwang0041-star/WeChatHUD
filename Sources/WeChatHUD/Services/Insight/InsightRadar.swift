@@ -46,12 +46,17 @@ struct InsightRadarFinding: Identifiable, Equatable {
 }
 
 enum InsightRadar {
+    /// How many signals the overview surface shows at once. One definition: the
+    /// badge that says 「显示 6 · 共 9」 and the list it describes must not be
+    /// able to disagree about what 6 means.
+    static let visibleLimit = 6
+
     static func buildFindings(
         chatInsights: [String: ChatInsightResult],
         chatNames: [String: String] = [:],
         briefing: GlobalBriefing? = nil,
         overview: ChatInsightEngine.GlobalOverview? = nil,
-        limit: Int = 6
+        limit: Int = visibleLimit
     ) -> [InsightRadarFinding] {
         var findings: [InsightRadarFinding] = []
 

@@ -1973,8 +1973,22 @@ actor AutopilotService {
         )
     }
 
-    /// Process pending queue — send items whose timer has expired.
-    /// Called from ChatMonitor's 60s safety timer.
+    /// Bookkeeping for 「this draft now awaits a human」. One function because
+    /// four separate places convert a draft to manual-only, and the fourth used
+    /// to convert it silently: the 待确认回复 badge and the log twin then read
+    /// below the real queue for as long as that conversation stayed quiet.
+    /// Call with the PRE-conversion copy — a draft that was already
+    /// manual-only has already been counted once.
+    private func countAsAwaitingHuman(_ item: PendingSend) {
+        guard item.manualOnlyReason == nil else { return }
+        sessionPending += (try? store.markAutopilotLogPending(
+            queueId: item.id,
+            chatUsername: item.chatUsername, replyText: item.replyText
+        )) ?? 0
+        persistSessionCounts()
+    }
+
+    /// Process pending queue — send items whose timer has expired.    /// Called from ChatMonitor's 60s safety timer.
     func processPendingQueue(config: AutopilotConfig) async {
         retryUnresolvedSendWrites()
         guard config.autoSendEnabled, !isPaused, sessionId != nil else { return }
@@ -1991,6 +2005,12 @@ actor AutopilotService {
             if let sid = sessionId {
                 try? store.upsertPendingSend(pendingSendQueue[index], sessionId: sid)
             }
+            // `item` is the pre-conversion copy, which is what the accounting
+            // needs. This is the branch every idle conversation ends up in — a
+            // peer who simply stops replying has nothing newer to fail the
+            // check against — and it used to convert the draft without counting
+            // the conversion, leaving 待确认回复 below the real queue.
+            countAsAwaitingHuman(item)
         }
         let expired = pendingSendQueue.filter { Self.isEligibleForAutomaticSend($0, now: now) }
         for item in expired {
@@ -2044,13 +2064,7 @@ actor AutopilotService {
             // Converted to manual-only — it now awaits a human: the pending
             // count must include it and its log twin must become 'pending'
             // so the approval UI shows it and a later approve can unwind it.
-            if item.manualOnlyReason == nil {
-                sessionPending += (try? store.markAutopilotLogPending(
-                    queueId: item.id,
-                    chatUsername: item.chatUsername, replyText: item.replyText
-                )) ?? 0
-                persistSessionCounts()
-            }
+            countAsAwaitingHuman(item)
             return .blocked("已达到本次会话发送上限")
         }
         if let staleReason = await stalePendingSendReason(item) {
@@ -2060,13 +2074,7 @@ actor AutopilotService {
             if let sid = sessionId {
                 try? store.upsertPendingSend(retained, sessionId: sid)
             }
-            if item.manualOnlyReason == nil {
-                sessionPending += (try? store.markAutopilotLogPending(
-                    queueId: item.id,
-                    chatUsername: item.chatUsername, replyText: item.replyText
-                )) ?? 0
-                persistSessionCounts()
-            }
+            countAsAwaitingHuman(item)
             return .blocked(staleReason)
         }
         let typingDelay = Self.estimateTypingDelay(for: item.replyText)
@@ -2164,15 +2172,9 @@ actor AutopilotService {
         if let sid = sessionId {
             try? store.upsertPendingSend(retained, sessionId: sid)
         }
-        if case .humanRequired = disposition, item.manualOnlyReason == nil {
-            // A failed send becomes human-required — same manual-only
-            // conversion accounting as the cap/stale paths above. An item
-            // that was already manual-only is already counted.
-            sessionPending += (try? store.markAutopilotLogPending(
-                queueId: item.id,
-                chatUsername: item.chatUsername, replyText: item.replyText
-            )) ?? 0
-            persistSessionCounts()
+        if case .humanRequired = disposition {
+            // Same conversion accounting as the cap/stale paths above.
+            countAsAwaitingHuman(item)
         }
         switch disposition {
         case .requeueUnchanged(let reason): return .blocked(reason)

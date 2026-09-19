@@ -73,4 +73,20 @@ final class IslandClockAndCountHonestyTests: XCTestCase {
         XCTAssertTrue(page.contains("本周相关的事里，已完成"),
                        "换成能兑现的那句")
     }
+    /// The 指挥中心 deadline column is the same vocabulary question as the island
+    /// clock, and it had the same hole one layer down: a deadline 30 seconds old
+    /// printed 「0 分钟前到期」. A zero where a measurement should be reads as
+    /// "just now, no rush" on the one row whose job is to say how late it is.
+    func testDeadlineColumnNeverPrintsAZeroForASubMinuteGap() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(DailyReportCommandCenterView.deadlineText(now.addingTimeInterval(-30), now: now),
+                       "刚到期")
+        XCTAssertEqual(DailyReportCommandCenterView.deadlineText(now.addingTimeInterval(30), now: now),
+                       "即将到期")
+        // Positive control: the buckets either side still do arithmetic.
+        XCTAssertEqual(DailyReportCommandCenterView.deadlineText(now.addingTimeInterval(-120), now: now),
+                       "2 分钟前到期")
+        XCTAssertEqual(DailyReportCommandCenterView.deadlineText(now.addingTimeInterval(120), now: now),
+                       "2 分钟后")
+    }
 }

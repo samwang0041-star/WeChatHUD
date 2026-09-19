@@ -291,7 +291,9 @@ struct InsightRadarSection: View {
 /// the truncation rule has a test: `findings.count` alone made 「6 条提醒」 read as a
 /// total while the seventh signal had already been dropped.
 enum InsightRadarBadge {
-    static let visibleLimit = 6
+    /// Not a second number to keep in sync — the list and its badge read the
+    /// same cap off the same type.
+    static let visibleLimit = InsightRadar.visibleLimit
 
     static func text(shown: Int, total: Int) -> String {
         guard shown > 0 else { return "" }
