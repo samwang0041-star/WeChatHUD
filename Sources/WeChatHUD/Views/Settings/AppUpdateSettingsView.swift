@@ -42,7 +42,7 @@ struct AppUpdateSettingsView: View {
                     .disabled(PreviewRuntime.isEnabled)
             }
             SettingsRowDivider()
-            SettingsRow("发现后自动安装", subtitle: "下载 zip、替换当前应用并重新打开。只在启动时的自动检查里生效，所以也要打开「启动时自动检查」；手动点检查更新仍会让你先确认。默认关闭。", icon: "arrow.down.app", iconColor: .purple) {
+            SettingsRow("发现后自动安装", subtitle: "下载 zip、替换当前应用并重新打开。只在启动时的自动检查里生效（需同时打开上一项）；手动检查仍会先问你。默认关闭。", icon: "arrow.down.app", iconColor: .purple) {
                 Toggle("发现后自动安装", isOn: autoInstallBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
