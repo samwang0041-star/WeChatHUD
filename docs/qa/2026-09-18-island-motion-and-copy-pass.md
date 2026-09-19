@@ -2298,3 +2298,56 @@ device 文件）会把已被清空的 legacy 里的**出厂默认**再种回去�
 户没碰任何东西却看到整页转圈。改成 `while` 后标志在同一趟里被重新读到。理由来自
 读控制流（`:135-137` 的早退 + 尾巴的位置），没有配套测试：要复现得让
 `performReload` 中途可悬挂，得先给 walk 注入钩子。留作下一轮的治具项。
+
+### §123 用户正在用微信时，自动托管会自造一条无限全量扫描（commit 4f7a30f3）
+
+`handleNewMessages` 之后有一段"批次还没排空就过会儿再扫"的续命逻辑。但暂停期间
+`allExpired` 被强制成空 ⇒ `batchBuffer` 永远非空 ⇒ `hasPendingBatches` 永远为真 ⇒
+每 `batchWindowSeconds + 1` 秒重进一次 `scan()`（全库读取 + rebuildInbox + 提醒引擎
++ AI 预取）。触发条件是一条普通私聊文本，而"微信在前台"正是这个 HUD 用户最常见的
+状态。现在这条判据收进 `ChatMonitor.chasesPendingBatches(hasPending:paused:)`，暂停
+时不追扫，排空交还给 10s/60s 的安全心跳（它本来就在扫）。
+测试含判据本身 + 调用点锚点。证伪：把 `&& !paused` 去掉 ⇒ 1 条失败。
+
+### §124 详情面板会把甲的聊天记录回填进乙的窗口（commit 4f7a30f3）
+
+`loadTranscriptAndIdentity` 在两次 `await`（各自 hop 到一个新建的 reader actor）之后
+无条件写 `transcriptRows`；而 @ 跳转那条路径起的是 `.task(id:)` 取消不掉的裸
+`Task {}`。取消在这里也不够用：被等的读不观察取消点，输掉的那次照样落地。快速在
+对话间切换时，甲的消息气泡会出现在乙的标题下面，`selfNames` 也跟着错位（甲的话被
+画成"我说的"），用户接着照着甲的内容编辑并发给乙。改为写入前校验本次请求的 token。
+`StaleViewShapeGatesTests` 钉住"守卫必须在最后一次 await 之后、写 transcriptRows
+之前"。证伪：拆掉守卫 ⇒ 1 条失败。
+
+### §125 未来的消息时间戳能把「忽略」变成永久静音（commit 4f7a30f3）
+
+`dismissInboxItem` 用消息自身的时间当"已处理到这条"的水位写库，
+`rebuildInbox` 读回时 `silencedAt > permanentThreshold` 的解释是"这个对话永久静音"。
+一条时间超前的消息（改过系统时间的对方客户端、或损坏/未来 schema 的库）就让那个对话
+再也不出现。同一行的 `Int(date.timeIntervalSince1970)` 还有第二个问题：
+`Double(Int64.max)` 会舍到 2^63，转换本身 trap。三处水位写入统一走
+`MessageHelpers.watermarkSeconds`（上限=此刻，非正/非有限=0）。
+测试覆盖超前、Int64.max、负数、NaN 与正常值；证伪：把上限去掉 ⇒ 测试进程直接
+`Fatal error: Double value cannot be converted to Int`，即原缺陷的真实形态。
+
+### §126 §121 当时是死代码（自查 + 被"攻自己 diff"的子代理抓出）
+
+回顾的放弃标记在 `refreshLatestRun()` 里设上，又在它下一行调用的 `load()` 里被清掉
+⇒ 只要历史上有任何一次成功，诚实分支根本不可达。而我的测试没发现，因为它直接调
+纯函数、对"接线"部分只 grep 了源码文本。教训：**grep 式接线断言不算行为测试**，它
+只保证字符串在，不保证数据流。现在两个字段由同一个 `runState(from:)` 决定，
+`load()` 不再参与，并且顺带覆盖了"作业随应用一起死掉、35 分钟内还是 'running'"这一
+类（以前会往反方向撒谎）。测试改为对真库断言 `runState` 的两值，证伪：恢复"后写
+覆盖"⇒ 失败。
+
+同一次自查还把撤回的同名认领范围从 10 分钟匹配窗口扩到整页候选——另一个同名的人
+这一小时没发言，不构成"窗口里那条就是他"的证据（证伪后 1 条失败）。
+
+### §127 定长直方图按固定位置裸索引（commit 36bb07fc）
+
+`ForEach(0..<24)` 配 `messagesByHour[hour]`、`ForEach(0..<7)` 配
+`messagesByWeekday[i]`，长度约束只存在于生产者；同一形状还在 `ChatInsightEngine`
+的跨对话聚合里（`for i in 0..<24 { hourly[i] += s.messagesByHour[i] }`，而
+`messagesByWeekday` 在这一域里确实存在 `[]` 的取值，守卫只查了 `isEmpty` 而不是
+长度）。少一格是"打开洞察总览时进程消失"。统一走 `MessageHelpers.buckets(_:count:)`
+补零/截断：少一格从崩溃变成少一根柱子。测试断言归一函数本身 + 三处渲染点都调了它。
