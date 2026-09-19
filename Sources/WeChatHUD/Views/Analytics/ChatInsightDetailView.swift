@@ -430,6 +430,7 @@ struct ChatInsightDetailView: View {
     // MARK: - Chart Components
 
     private func hourlyBarChart(_ messagesByHour: [Int]) -> some View {
+        let messagesByHour = MessageHelpers.buckets(messagesByHour, count: 24)
         let maxVal = messagesByHour.max() ?? 1
         return HStack(alignment: .bottom, spacing: 2) {
             ForEach(0..<24, id: \.self) { hour in

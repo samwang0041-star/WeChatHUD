@@ -1,4 +1,5 @@
 import XCTest
+@testable import WeChatHUD
 
 /// Gates for the one bug class the view layer cannot prove behaviorally: a view
 /// that keeps a value it derived once from something that changes underneath it.
@@ -93,5 +94,29 @@ final class StaleViewShapeGatesTests: XCTestCase {
             "水位写入必须走 MessageHelpers.watermarkSeconds"
         )
         XCTAssertTrue(file.contains("MessageHelpers.watermarkSeconds("))
+    }
+}
+
+extension StaleViewShapeGatesTests {
+
+    /// 24 格/7 格的直方图是按固定位置索引的，缓存过的洞察行少给一格就是
+    /// "打开洞察总览时进程消失"，而不是少画一根柱子。
+    func testFixedPositionHistogramsArePadded() throws {
+        XCTAssertEqual(MessageHelpers.buckets([1, 2], count: 7), [1, 2, 0, 0, 0, 0, 0])
+        XCTAssertEqual(MessageHelpers.buckets([], count: 24).count, 24)
+        XCTAssertEqual(MessageHelpers.buckets([5, 6, 7], count: 2), [5, 6])
+        let exact = Array(repeating: 1, count: 24)
+        XCTAssertEqual(MessageHelpers.buckets(exact, count: 24), exact)
+
+        for (file, fn, count) in [
+            ("Views/Analytics/InsightOverviewDashboard.swift", "weekdayBars(_ messagesByWeekday", 7),
+            ("Views/Analytics/InsightOverviewDashboard.swift", "hourlyBarChart(_ messagesByHour", 24),
+            ("Views/Analytics/ChatInsightDetailView.swift", "hourlyBarChart(_ messagesByHour", 24),
+        ] {
+            let body = source(file).range(of: fn)
+                .map { String(source(file)[$0.lowerBound...].prefix(200)) } ?? ""
+            XCTAssertTrue(body.contains("MessageHelpers.buckets("), "\(file).\(fn) 未做定长归一")
+            XCTAssertTrue(body.contains("count: \(count)"), "\(file).\(fn) 的格数不对")
+        }
     }
 }

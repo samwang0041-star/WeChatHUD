@@ -3,6 +3,16 @@ import Foundation
 /// Pure utility functions shared across the monitoring pipeline.
 /// Extracted from ChatMonitor to keep the coordinator small.
 enum MessageHelpers {
+    /// A fixed-position histogram read at `[0]…[count-1]`. Both producers are
+    /// `Array(repeating:count:)` today, but the value also round-trips through
+    /// the cached insight rows, and a short array there is an
+    /// "Index out of range" trap in the middle of opening 洞察总览.
+    static func buckets(_ values: [Int], count: Int) -> [Int] {
+        if values.count == count { return values }
+        if values.isEmpty { return Array(repeating: 0, count: count) }
+        return (0..<count).map { $0 < values.count ? values[$0] : 0 }
+    }
+
     /// Epoch seconds from a Date derived from WeChat's `create_time`, safe to
     /// persist as a watermark. Two hazards in one: `Double(Int64.max)` rounds up
     /// to 2^63 and `Int()` traps on it (the resident process dies), and a row

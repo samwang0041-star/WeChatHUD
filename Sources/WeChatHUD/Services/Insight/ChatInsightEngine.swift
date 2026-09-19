@@ -263,7 +263,10 @@ enum ChatStatsEngine {
 
         // D1: Communication Profile
         var hourly = Array(repeating: 0, count: 24)
-        for s in statsArr { for i in 0..<24 { hourly[i] += s.messagesByHour[i] } }
+        for s in statsArr {
+            let byHour = MessageHelpers.buckets(s.messagesByHour, count: 24)
+            for i in 0..<24 { hourly[i] += byHour[i] }
+        }
 
         let initiatedCount = statsArr.filter { $0.selfInitiated && $0.messageCount > 0 }.count
         let initiationRate = activeChats > 0 ? Double(initiatedCount) / Double(activeChats) : 0
@@ -283,7 +286,8 @@ enum ChatStatsEngine {
         // D2: Time Patterns
         var wkday = Array(repeating: 0, count: 7)
         for s in statsArr where !s.messagesByWeekday.isEmpty {
-            for i in 0..<7 { wkday[i] += s.messagesByWeekday[i] }
+            let byWeekday = MessageHelpers.buckets(s.messagesByWeekday, count: 7)
+            for i in 0..<7 { wkday[i] += byWeekday[i] }
         }
         let workHourMsgs = (9..<18).reduce(0) { $0 + hourly[$1] }
         let eveningMsgs = (18..<23).reduce(0) { $0 + hourly[$1] }

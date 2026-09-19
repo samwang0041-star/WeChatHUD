@@ -544,6 +544,7 @@ struct InsightOverviewDashboard: View {
     }
 
     private func weekdayBars(_ messagesByWeekday: [Int]) -> some View {
+        let messagesByWeekday = MessageHelpers.buckets(messagesByWeekday, count: 7)
         let maxVal = max(messagesByWeekday.max() ?? 1, 1)
         return HStack(alignment: .bottom, spacing: 6) {
             ForEach(0..<7, id: \.self) { i in
@@ -562,6 +563,7 @@ struct InsightOverviewDashboard: View {
     }
 
     private func hourlyBarChart(_ messagesByHour: [Int]) -> some View {
+        let messagesByHour = MessageHelpers.buckets(messagesByHour, count: 24)
         let maxVal = messagesByHour.max() ?? 1
         return HStack(alignment: .bottom, spacing: 2) {
             ForEach(0..<24, id: \.self) { hour in
