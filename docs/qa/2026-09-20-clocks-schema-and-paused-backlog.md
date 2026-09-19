@@ -379,7 +379,12 @@ M4-M6（预占窗口两向、免打扰三态、版本收据）、M7-M13（前台
 攻刚提交那一路另外报的，全部回过源码、都成立，但都不适合塞进本轮（要么需要新的持久状态，
 要么要动 2900 行的文件）：
 
-- **P0 `AutopilotService.swift:1771` 队列孪干的收口失败**：`resolveVerifiedSend` 抛错时只 print +
+- ~~**P0 `AutopilotService.swift:1771` 队列孪干的收口失败**~~ → 已修，见 §171。
+- ~~**P0 `AutopilotService.swift:1553`「取消本条」的持久侧**~~ → 已修，见 §171。
+- ~~**P1 `HUDStore.swift:4096 clearAutopilotHistory`**~~ → 已修，见 §171。
+- ~~**P1 `HUDStore.swift:3845/3864 deletePendingSendForLog`**~~ → 已修，见 §171。
+- （已修项的历史描述留在下面，便于回看后果链）
+- **P0-历史 `AutopilotService.swift:1771` 队列孪干的收口失败**：`resolveVerifiedSend` 抛错时只 print +
   `flipped = 0`，事务回滚 → `pending_sends` 行仍存活；`start()`（:241 + :256 `loadPendingSends`）
   会把它整条载回，闸门读 `hasPendingSend` 得 true → **重启后同一条 AI 回复无人点击就再发一遍**。
   `unresolvedSentLogWrites` 是内存态且按 logId 索引，这条路两个条件都不满足。
@@ -416,3 +421,39 @@ M4-M6（预占窗口两向、免打扰三态、版本收据）、M7-M13（前台
 - **P2 死字段**：`AutopilotConfig.vipAutoNotify` / `vipBusyTemplate`（Models.swift:2140 起）
   全仓零消费者，唯一相关代码就是 §165 删掉的 `pushVIPNotification`；注释还在承诺「VIP 有 busy
   自动通知」，§164 还把 `vipAutoNotify` 列为要保命的护栏。要么删字段，要么把话说清楚。
+
+## §171 两条 P0 与两条 P1 收口：队列轴的「终态写回」与两处安全联锁
+
+- **队列轴的统一收口（修掉 §170 那两条 P0）**：新增 `unresolvedQueueWrites: [UUID:
+  UnresolvedQueueWrite]`（`.delivered(chatUsername:replyText:)` / `.cancelled(...)`），
+  两个入口都记账：验证投递之后 `resolveVerifiedSend` 抛错（原来只 print + `flipped = 0`，
+  于是那行还留在 `autopilot_pending_sends` 里，`start()` 载回后**无人点击也会再发一遍**），
+  以及 `cancelPendingSend` 的 `deletePendingSend` / `markAutopilotLogSkipped`
+  （原来双双 `try?`：界面印「已取消」，盘上那行仍可发）。闸门多一个入参
+  `queueHeldHere`，`retryUnresolvedQueueWrites()` 只在写真正落库后才放掉这条。
+  诚实的边界：这是**会话内**的拦截；「写失败 + 进程立刻崩 + 重启」这一段要的是持久化
+  的 outbox intent 行（发信前落一条、收口时删），属于设计改动，见本节末。
+  判据：`testCancelWithFailedQueueDeleteIsHeldThenReleasedWhenTheWriteLands` —— 用
+  `BEFORE DELETE … RAISE(ABORT)` 只让删除失败（读一切正常，闸门唯一的依据就是本地集合），
+  并且**先验一次仍然失败的重试**（第一版只验成功那次，「失败也放掉」的变异是活的）。
+  发送尾与取消两处接线走源码判据。变异 O1/O2/O3/O4 全红。
+- **`clearAutopilotHistory` 的安全联锁**：`currentAutopilotSession()` 的 nil 同时代表
+  「没有活动会话」和「读不到」，后者让全表 `DELETE` 在托管仍活着时跑掉。新增
+  `currentAutopilotSessionThrowing()`，联锁改用它。判据：谓词 + 函数体接线（两条都钉）。O5 红。
+- **`deletePendingSendForLog` 不许在读不到孪干时降级去文本匹配**：那样删掉的是
+  「另一条同文本、无人认领」的草稿，而真正该删的那条继续可发。改为 `.unreadable` 直接 throw。
+  判据：`testQueueIdReadSeparatesLegacyNullFromUnreadable`（NULL 是合法答案、读失败不是），
+  外加一段"分支体内必须有 throw"的接线判据。O6 红。
+
+## §172 判据自身这一轮又被攻出两次，都记下来
+
+- **被另一个信号满足**（O6、以及 §169 的 N6）：断言的对象是「有没有抛错」，而环境里
+  本来就有另一句会抛错 —— DROP 掉的表让 legacy 子查询自己失败，测试于是为错误的理由通过。
+  这类只能靠「先让被测分支可观测」或退回源码判据，本轮两处都这么处理。
+- **判据假红**（O6 第一版）：要求 `case .unreadable:` 的**下一行**就是 `throw`，被自己的
+  注释挡掉了。改成「取到下一个 case 为止，这段里必须有 throw」。
+  教训同 §167：一条源码判据要先在**未变异的代码**上跑绿，才能拿它当变异证据。
+
+已修/未修的完整清单在 §170（划掉的是本轮收口的）。仍未处理里最高的一条是
+**投递收口的跨重启窗口**：需要持久化的 outbox intent 行（发信前落、收口时删），
+以及 `ConversationMemoryUpdater` 读失败把 90 天滚动摘要覆成「首次生成」那两条 P1。

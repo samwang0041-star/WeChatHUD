@@ -3384,6 +3384,18 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         """, bind: { _ in }, decode: decodeAutopilotSession)
     }
 
+    /// The interlock version. `currentAutopilotSession` answers `nil` for 「没有
+    /// 活动会话」 and for 「这次读不到」 alike, and `clearAutopilotHistory` treats
+    /// nil as 「可以删」 — a BUSY there clears 托管历史 while autopilot is still live.
+    func currentAutopilotSessionThrowing() throws -> AutopilotSession? {
+        let row: AutopilotSession?? = try queryOneThrowing("""
+            SELECT id, started_at, ended_at, total_handled, total_pending, total_sent
+            FROM autopilot_sessions WHERE ended_at IS NULL
+            ORDER BY id DESC LIMIT 1
+        """, bind: { _ in }, decode: { stmt in decodeAutopilotSession(stmt) })
+        return row ?? nil
+    }
+
     private func decodeAutopilotSession(_ stmt: OpaquePointer?) -> AutopilotSession? {
         guard let stmt else { return nil }
         let endedAt = sqlite3_column_type(stmt, 2) != SQLITE_NULL
@@ -3913,6 +3925,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// itself carries no queue_id (a claimed twin was already deleted above;
     /// deleting again by text could kill an unclaimed sibling).
     func deletePendingSendForLog(logId: Int64, chatUsername: String, replyText: String) throws {
+        switch autopilotLogQueueIdRead(id: logId) {
+        case .unreadable:
+            // 「这条日志没有 queue_id」和「这次读不到 queue_id」是两个答案：后者会
+            // 掉进下面的文本匹配，删掉另一条同文本、无人认领的草稿，而真正该删的那条
+            // 继续可发。宁可什么都不删 —— 调用方那条日志仍被本地集合拦着。
+            throw HUDStoreError.sqlError("读不到这条日志的队列孪干，跳过文本匹配删除")
+        case .value:
+            break
+        }
         if let qid = autopilotLogQueueId(id: logId), !qid.isEmpty {
             try exec("DELETE FROM autopilot_pending_sends WHERE id=?", params: [qid])
             return
@@ -3928,6 +3949,26 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             """,
             params: [chatUsername, replyText]
         )
+    }
+
+    /// `nil` here means the row genuinely carries no queue_id (a legacy twin,
+    /// which is what the text match below is for); `.unreadable` means this read
+    /// failed and no conclusion about either case is available.
+    enum LogQueueIdRead { case value(String?), unreadable }
+
+    func autopilotLogQueueIdRead(id: Int64) -> LogQueueIdRead {
+        do {
+            let row: String?? = try queryOneThrowing(
+                "SELECT queue_id FROM autopilot_log WHERE id=?",
+                bind: { stmt in sqlite3_bind_int64(stmt, 1, id) },
+                decode: { stmt in
+                    sqlite3_column_type(stmt, 0) != SQLITE_NULL ? Self.textColumn(stmt, 0) : nil
+                }
+            )
+            return .value(row ?? nil)
+        } catch {
+            return .unreadable
+        }
     }
 
     /// The queue item UUID a log row twins with.
@@ -4185,7 +4226,7 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     func clearAutopilotHistory() throws {
         try withTransaction {
-            guard currentAutopilotSession() == nil else {
+            guard try currentAutopilotSessionThrowing() == nil else {
                 throw NSError(domain: "WeChatHUD", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "请先结束自动托管，再清除历史记录。"])
             }

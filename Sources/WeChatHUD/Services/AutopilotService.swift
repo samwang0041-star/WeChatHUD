@@ -160,6 +160,23 @@ actor AutopilotService {
     /// session scope for the same reason: the window it protects is the one where
     /// 待确认回复 can still offer that draft.
     private var unresolvedSkippedLogWrites: Set<Int64> = []
+    /// Queue rows whose *terminal* write never landed — either the retire after a
+    /// verified send, or the delete after 取消本条. The row is still in
+    /// `autopilot_pending_sends`, so `start()` loads it back and the queue can
+    /// deliver it again: to a peer who already has that reply, with nobody having
+    /// clicked anything, or after the user said 不发了. Session scope is the honest
+    /// limit — a crash inside this window needs a durable outbox intent row, which
+    /// is priced in §170 rather than pretended away here.
+    private var unresolvedQueueWrites: [UUID: UnresolvedQueueWrite] = [:]
+
+    enum UnresolvedQueueWrite: Equatable {
+        case delivered(chatUsername: String, replyText: String)
+        case cancelled(chatUsername: String, replyText: String)
+    }
+
+    /// What this process is holding back, for the behaviour tests and the
+    /// diagnostics that read it.
+    var unresolvedQueueWritesSnapshot: [UUID: UnresolvedQueueWrite] { unresolvedQueueWrites }
     /// All msgUIDs of messages sent by autopilot — used for style isolation.
     private var sentMsgUIDs: Set<String> = []
 
@@ -365,14 +382,15 @@ actor AutopilotService {
         paused: Bool, sessionOpen: Bool,
         queueRowLive: Bool?, approvalRowPending: Bool?,
         alreadySentHere: Bool = false,
-        rejectedHere: Bool = false
+        rejectedHere: Bool = false,
+        queueHeldHere: Bool = false
     ) -> Bool {
         if paused || !sessionOpen { return false }
         // These two are not about the row's state but about what this process
         // already decided: the database still calls the row 'pending' because the
         // write-back failed, so no row read can rule out either a second send of
         // a reply that already went out, or a send of one the user 取消了.
-        if alreadySentHere || rejectedHere { return false }
+        if alreadySentHere || rejectedHere || queueHeldHere { return false }
         return (queueRowLive ?? true) && (approvalRowPending ?? true)
     }
 
@@ -454,7 +472,8 @@ actor AutopilotService {
             queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
             alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
-            rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false
+            rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false,
+            queueHeldHere: queueId.map { unresolvedQueueWrites[$0] != nil } ?? false
         )
     }
 
@@ -820,6 +839,7 @@ actor AutopilotService {
     /// is the stronger fact about a row that appears in both sets.
     func retryUnresolvedSendWrites() {
         retryUnresolvedSkipWrites()
+        retryUnresolvedQueueWrites()
         guard !unresolvedSentLogWrites.isEmpty else { return }
         for logId in unresolvedSentLogWrites.sorted() {
             switch store.resolveAutopilotLogSent(id: logId) {
@@ -831,6 +851,37 @@ actor AutopilotService {
                 unresolvedSentLogWrites.remove(logId)
             case .writeFailed:
                 break
+            }
+        }
+    }
+
+    /// Re-attempts the queue rows' terminal writes and releases each hold only
+    /// once its row is genuinely gone from `autopilot_pending_sends`.
+    private func retryUnresolvedQueueWrites() {
+        guard !unresolvedQueueWrites.isEmpty else { return }
+        for (queueId, kind) in unresolvedQueueWrites.sorted(by: {
+            $0.key.uuidString < $1.key.uuidString
+        }) {
+            do {
+                var flipped = 0
+                switch kind {
+                case .delivered(let chatUsername, let replyText):
+                    flipped = try store.resolveVerifiedSend(
+                        queueId: queueId, chatUsername: chatUsername, replyText: replyText
+                    )
+                case .cancelled(let chatUsername, let replyText):
+                    try store.deletePendingSend(id: queueId)
+                    flipped = try store.markAutopilotLogSkipped(
+                        queueId: queueId, chatUsername: chatUsername, replyText: replyText
+                    )
+                }
+                if flipped > 0 {
+                    sessionPending = max(0, sessionPending - 1)
+                    persistSessionCounts()
+                }
+                unresolvedQueueWrites.removeValue(forKey: queueId)
+            } catch {
+                print("[WCHUD] Autopilot: 队列终态写回仍在失败，继续拦着这条: \(error)")
             }
         }
     }
@@ -1595,15 +1646,38 @@ actor AutopilotService {
             ?? pendingSendRows().first(where: { $0.id == id })
         guard let item else { return }
         pendingSendQueue.removeAll { $0.id == id }
-        try? store.deletePendingSend(id: id)
+        let deleteLanded: Bool
+        do {
+            try store.deletePendingSend(id: id)
+            deleteLanded = true
+        } catch {
+            deleteLanded = false
+            print("[WCHUD] Autopilot: 取消的队列行没删掉: \(error)")
+        }
         // Resolve the pending log twin too — without this the approval UI
         // keeps a live 确认发送 button for the reply the user just canceled.
         // Only a flipped pending row decrements: an auto-item's twin was
         // never counted as pending.
-        let flipped = (try? store.markAutopilotLogSkipped(
-            queueId: item.id,
-            chatUsername: item.chatUsername, replyText: item.replyText
-        )) ?? 0
+        let flipped: Int
+        let logLanded: Bool
+        do {
+            flipped = try store.markAutopilotLogSkipped(
+                queueId: item.id,
+                chatUsername: item.chatUsername, replyText: item.replyText
+            )
+            logLanded = true
+        } catch {
+            flipped = 0
+            logLanded = false
+            print("[WCHUD] Autopilot: 取消的审计行没写回: \(error)")
+        }
+        if !deleteLanded || !logLanded {
+            // The UI has already printed 已取消. Until the write lands this row is
+            // still sendable through the queue, so it is held here.
+            unresolvedQueueWrites[item.id] = .cancelled(
+                chatUsername: item.chatUsername, replyText: item.replyText
+            )
+        }
         if flipped > 0 {
             sessionPending = max(0, sessionPending - 1)
         }
@@ -1816,6 +1890,11 @@ actor AutopilotService {
             } catch {
                 print("[WCHUD] Autopilot: verified send could not retire its rows: \(error)")
                 flipped = 0
+                // The keystrokes landed. Without this hold the queue row survives,
+                // and a resume or a restart sends the same reply a second time.
+                unresolvedQueueWrites[item.id] = .delivered(
+                    chatUsername: item.chatUsername, replyText: item.replyText
+                )
             }
             // Resolve the pending autopilot_log twin in the same step —
             // otherwise the approval list keeps offering this reply and a

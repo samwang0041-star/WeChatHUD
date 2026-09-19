@@ -76,6 +76,10 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             paused: false, sessionOpen: true, queueRowLive: nil, approvalRowPending: nil,
             rejectedHere: true),
             "写回失败的已取消草稿不许再发出去")
+        XCTAssertFalse(AutopilotService.mayStillDeliver(
+            paused: false, sessionOpen: true, queueRowLive: true, approvalRowPending: nil,
+            queueHeldHere: true),
+            "收口失败的已投递队列行不能再发一次给同一个人")
     }
 
     /// The set is only worth having if `rejectPending` fills it at the moment the
@@ -107,6 +111,50 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         await service.rejectPending(logId: openId, chatUsername: "wxid_peer", replyText: "我下午给你结论")
         let cancelledHeld = await service.deliveryStillPermitted(queueId: nil, logId: openId)
         XCTAssertFalse(cancelledHeld, "写回失败的取消也必须拦住发送")
+    }
+
+    /// 队列行的终态写回失败 = 那行还在表里 = 恢复会话或重启后它会被再发一次。
+    /// 用触发器只让 DELETE 失败：读一切正常，所以闸门唯一的依据就是这个本地集合
+    /// （上一版整张表删掉的写法被另一个信号满足了，见 §169）。
+    @MainActor
+    func testCancelWithFailedQueueDeleteIsHeldThenReleasedWhenTheWriteLands() async throws {
+        let sid = try XCTUnwrap(
+            store.loadAutopilotSessions(limit: 1).first?.id,
+            "start() 没建出会话 ⇒ 这条测试什么都没验")
+        let pending = item("我下午给你结论")
+        try store.upsertPendingSend(pending, sessionId: sid)
+        let control = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        XCTAssertTrue(control, "没被动过手脚的队列行不该被这条闸门拦住")
+
+        try store.exec("""
+            CREATE TRIGGER break_queue_delete BEFORE DELETE ON autopilot_pending_sends
+            BEGIN SELECT RAISE(ABORT, 'simulated delete failure'); END
+            """)
+        await service.cancelPendingSend(id: pending.id)
+
+        let held = await service.unresolvedQueueWritesSnapshot[pending.id]
+        XCTAssertEqual(
+            held, .cancelled(chatUsername: "wxid_peer", replyText: "我下午给你结论"),
+            "删除失败必须被记下来，而不是只 print 一行"
+        )
+        XCTAssertTrue(store.hasPendingSend(id: pending.id), "盘上这行确实还在 —— 所以才需要拦")
+        let afterCancel = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        XCTAssertFalse(afterCancel, "写回失败的取消必须拦住发送")
+
+        // 先验一次「重试仍然失败」：这时集合必须仍然拦着。上一版只验了成功那次，
+        // 于是「失败也放掉」的变异是活的 —— 那等于写回失败一次就再也不拦。
+        await service.retryUnresolvedSendWrites()
+        let stillHeld = await service.unresolvedQueueWritesSnapshot[pending.id]
+        XCTAssertNotNil(stillHeld, "写还没成就不能放掉这条")
+        XCTAssertTrue(store.hasPendingSend(id: pending.id))
+        let afterFailedRetry = await service.deliveryStillPermitted(queueId: pending.id, logId: nil)
+        XCTAssertFalse(afterFailedRetry, "重试失败的这一轮也照样不许发")
+
+        try store.exec("DROP TRIGGER break_queue_delete")
+        await service.retryUnresolvedSendWrites()
+        XCTAssertFalse(store.hasPendingSend(id: pending.id), "重试成功时必须真的把这行清掉")
+        let snapshot = await service.unresolvedQueueWritesSnapshot
+        XCTAssertTrue(snapshot.isEmpty, "写成了就该放掉这条，否则这条闸门永远抬不起来")
     }
 
     /// The other direction of the same bug: stopping the keystrokes must not
@@ -359,5 +407,11 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         )
         XCTAssertTrue(source.contains("rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) }"),
                       "取消侧的集合也必须真的喂给闸门，否则那条被取消的草稿照样能发")
+        // 队列轴：已验证投递之后只是收口失败的那条，和取消写失败的那条，都必须记下来。
+        XCTAssertTrue(source.contains("unresolvedQueueWrites[item.id] = .delivered("),
+                      "键盘已经按下去了，收口失败时这条队列行不能再发第二遍")
+        XCTAssertTrue(source.contains("unresolvedQueueWrites[item.id] = .cancelled("),
+                      "界面上写了「已取消」，盘上那行还没删掉时就必须拦住")
+        XCTAssertTrue(source.contains("queueHeldHere: queueId.map { unresolvedQueueWrites[$0] != nil }"))
     }
 }

@@ -1593,6 +1593,98 @@ final class HUDStoreTests: XCTestCase {
         return nil
     }
 
+    /// 「没有活动会话」和「这次读不到会话」在旧写法里是同一个 nil，而
+    /// clearAutopilotHistory 把 nil 读成「可以删」—— 一次 BUSY 就会在托管还活着时
+    /// 清空整张历史表。谓词与接线都要验。
+    func testSessionReadForTheHistoryInterlockReportsFailure() throws {
+        let sessionId = try store.startAutopilotSession()
+        XCTAssertNotNil(try store.currentAutopilotSessionThrowing())
+        try store.exec("DROP TABLE autopilot_sessions")
+        XCTAssertThrowsError(
+            try store.currentAutopilotSessionThrowing(),
+            "读不到活动会话时必须报错，不能答 nil"
+        )
+        XCTAssertNil(store.currentAutopilotSession(), "Bool 版本仍然只能答 nil，所以联锁不许用它")
+
+        let source = try read("Sources/WeChatHUD/Data/HUDStore.swift")
+        let clear = try XCTUnwrap(
+            source.components(separatedBy: "func clearAutopilotHistory() throws {").last?
+                .components(separatedBy: "\n    }").first,
+            "找不到 clearAutopilotHistory，判据不能零命中")
+        XCTAssertTrue(clear.contains("currentAutopilotSessionThrowing()"),
+                      "安全联锁必须用会报错的那条读")
+        XCTAssertFalse(clear.contains("currentAutopilotSession() == nil"),
+                      "旧的那条读把读失败读成『可以删』")
+        _ = sessionId
+    }
+
+    /// 日志孪干的 queue_id 读失败时，旧写法会掉进「按 (chat, 文本) 匹配」的 legacy
+    /// 分支：删掉另一条同文本、无人认领的草稿，而真正该删的那条继续可发。
+    func testQueueIdReadSeparatesLegacyNullFromUnreadable() throws {
+        let sessionId = try store.startAutopilotSession()
+        let queueId = UUID()
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_q/1", triggerText: "结论",
+            generatedReply: "我下午给你结论", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: queueId.uuidString
+        ))
+        let claimed = try XCTUnwrap(store.loadAutopilotLog(sessionId: sessionId).first?.id)
+        if case .value(let qid) = store.autopilotLogQueueIdRead(id: claimed) {
+            XCTAssertEqual(qid, queueId.uuidString)
+        } else { XCTFail("认领过的孪干必须读得出来") }
+
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sessionId, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "wxid_peer", senderName: "同事",
+            triggerMsgUID: "shard/Msg_q/2", triggerText: "结论二",
+            generatedReply: "明天给你", confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date()
+        ))
+        // 不能靠 `AutopilotLogEntry.queueId` 认行：解码器不填这个字段，两行都会是 nil。
+        let legacy = store.loadAutopilotLog(sessionId: sessionId).map(\.id).first { $0 != claimed }
+        if case .value(let qid) = store.autopilotLogQueueIdRead(id: try XCTUnwrap(legacy)) {
+            XCTAssertNil(qid, "真的没有 queue_id 是合法答案，legacy 匹配就是为它留的")
+        } else { XCTFail("NULL 不是读失败") }
+
+        // 现在把日志表整个拿掉：读不到时宁可什么都不删。
+        let sibling = PendingSend(
+            chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我下午给你结论", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        try store.upsertPendingSend(sibling, sessionId: sessionId)
+        XCTAssertTrue(store.hasPendingSend(id: sibling.id))
+        try store.exec("DROP TABLE autopilot_log")
+        if case .unreadable = store.autopilotLogQueueIdRead(id: claimed) {} else {
+            XCTFail("表读不到时必须单独报 unreadable")
+        }
+        XCTAssertThrowsError(
+            try store.deletePendingSendForLog(
+                logId: claimed, chatUsername: "wxid_peer", replyText: "我下午给你结论"),
+            "读不到孪干时不许降级去删另一条"
+        )
+        XCTAssertTrue(store.hasPendingSend(id: sibling.id),
+                      "另一条同文本的草稿不该被误删")
+        // 上面那句被另一个信号满足了：日志表没了，legacy 文本匹配里的子查询自己就会
+        // 抛错，所以「不再降级去匹配」这件事只能钉源码 —— 变异 O6 就是这么活的。
+        let src = try read("Sources/WeChatHUD/Data/HUDStore.swift")
+        let deleteFn = try XCTUnwrap(
+            src.components(separatedBy: "func deletePendingSendForLog(").last?
+                .components(separatedBy: "\n    }").first,
+            "找不到 deletePendingSendForLog，判据不能零命中")
+        let unreadableArm = try XCTUnwrap(
+            deleteFn.components(separatedBy: "case .unreadable:").last,
+            "unreadable 那一臂不见了")
+        // 「紧跟 throw」会被注释挡掉（第一版就是这么假红的）：取到下一个 case 为止，
+        // 要求这一段里真的有一条 throw 提前退出。
+        let armBody = unreadableArm.components(separatedBy: "case ").first ?? unreadableArm
+        XCTAssertTrue(armBody.contains("throw"),
+                      "读不到孪干时必须停手，而不是掉进文本匹配：\(armBody)")
+    }
+
     func testWhitelistReadSeparatesUnfollowedFromUnreadable() throws {
         XCTAssertEqual(store.whitelistRead("wxid_absent"), .unfollowed)
         try store.addToWhitelist(
@@ -1688,3 +1780,9 @@ final class HUDStoreTests: XCTestCase {
         XCTAssertFalse(store.migrateToV3RetrospectiveIndexes())
     }
 }
+    private func read(_ relative: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
+    }
+
