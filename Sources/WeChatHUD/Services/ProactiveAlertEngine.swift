@@ -214,14 +214,11 @@ final class ProactiveAlertEngine {
         // (`AdmissionSettingsView.swift:626`). The scan path honours it through
         // `AdmissionPolicy.isMuted`; this path consulted none of it, so a muted
         // person's deadline went on waking the notification centre.
-        let globallyMuted = store.loadGlobalIgnoredSenders()
-        let chatMutes = store.loadIgnoredSenderMap()
+        let muteRules = store.loadIgnoredSenders()
 
         for c in commitments where c.status == .pending || c.status == .overdue {
             guard let deadline = c.deadlineAt else { continue }
-            guard !isMutedForCommitment(c, globallyMuted: globallyMuted, chatMutes: chatMutes) else {
-                continue
-            }
+            guard !Self.isMutedForCommitment(c, rules: muteRules) else { continue }
             let remaining = deadline.timeIntervalSince(evaluationNow)
             if remaining <= 0 {
                 pushAlert(
@@ -240,21 +237,36 @@ final class ProactiveAlertEngine {
         }
     }
 
-    /// A commitment records its counterparty only as a display name
-    /// (`Commitment.commitTo`), so the name identifier is what can match — and
-    /// the chat-scoped mute is checked against the conversation the promise was
-    /// made in, which is where 「包括他所在的群」 points.
-    private func isMutedForCommitment(
+    /// A commitment names its counterparty only as model-extracted free text
+    /// (`commit_to`), so a display-name comparison is the weaker half of the
+    /// match. The reliable half is available for private chats: the conversation
+    /// *is* the person, so `chatUsername` equals the `sender_username` a mute
+    /// rule was stored under. That form was never consulted here, while the
+    /// 设置 › 不再提醒某人 picker writes `username:<wxid>` — the two identifier
+    /// shapes cannot intersect, so 「选谁，就哪个对话都不再提醒」 held for the
+    /// inbox and not for that person's deadline alerts.
+    nonisolated static func isMutedForCommitment(
         _ commitment: Commitment,
-        globallyMuted: Set<String>,
-        chatMutes: [String: Set<String>]
+        rules: [IgnoredSenderRule]
     ) -> Bool {
-        let identifier = HUDStore.senderIdentifier(
-            senderUsername: "",
-            senderName: commitment.commitTo
+        let personForm = HUDStore.senderIdentifier(
+            senderUsername: commitment.chatUsername, senderName: ""
         )
-        if globallyMuted.contains(identifier) { return true }
-        return chatMutes[commitment.chatUsername]?.contains(identifier) == true
+        let nameForm = HUDStore.senderIdentifier(
+            senderUsername: "", senderName: commitment.commitTo
+        )
+        // "name:" is what an empty counterparty folds to; matching it against
+        // another empty name would mute every nameless commitment off one rule.
+        let nameFormIsUsable = nameForm != "name:"
+        for rule in rules where rule.scope == .global || rule.chatUsername == commitment.chatUsername {
+            if !personForm.isEmpty, rule.senderIdentifier == personForm { return true }
+            guard nameFormIsUsable else { continue }
+            let ruleNameForm = HUDStore.senderIdentifier(
+                senderUsername: "", senderName: rule.senderName
+            )
+            if ruleNameForm == nameForm { return true }
+        }
+        return false
     }
 
     // MARK: - Private

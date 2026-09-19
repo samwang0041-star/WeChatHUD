@@ -739,4 +739,76 @@ final class ProactiveAlertTests: XCTestCase {
             "chat-a is muted, chat-b is not — exactly one alert should survive"
         )
     }
+
+    /// 设置 › 不再提醒某人 stores the person by wxid (`username:wxid…`), while a
+    /// commitment carries only a model-extracted display name plus the chat it
+    /// came from. The two identifier shapes never intersected, so the headline
+    /// promise — 「选谁，就哪个对话都不再提醒」 — held for the inbox and not for
+    /// that person's deadline alerts.
+    @MainActor
+    func testGlobalMuteByWxidSilencesThatPersonsCommitment() async throws {
+        let now = Date(timeIntervalSince1970: 5_300_000)
+        var titles: [String] = []
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        try store.ignoreSenderEverywhere(senderUsername: "wxid_tongshi", senderName: "同事")
+        let engine = ProactiveAlertEngine(
+            store: store, now: { now },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        func make(_ id: String, chat: String, to person: String) -> Commitment {
+            Commitment(id: 1, msgUID: id, chatUsername: chat, chatName: "聊天",
+                       content: "发报告", commitTo: person, deadlineAt: now.addingTimeInterval(-60),
+                       confidence: 0.9, status: .overdue, promptVersion: "v1", createdAt: now, updatedAt: now)
+        }
+
+        // commit_to is free text from the model, so it deliberately differs from
+        // the contact name: only the conversation↔wxid bridge can match here.
+        engine.evaluateCommitmentDeadlines(commitments: [make("muted", chat: "wxid_tongshi", to: "那位同事")])
+        await Task.yield()
+        XCTAssertEqual(titles, [], "a muted person's private-chat promise must stay silent")
+
+        engine.evaluateCommitmentDeadlines(commitments: [make("loud", chat: "wxid_other", to: "那位同事")])
+        await Task.yield()
+        XCTAssertEqual(
+            titles, ["承诺已到期"],
+            "the same display name in a chat the user did not mute must still alert"
+        )
+    }
+
+    func testCommitmentMuteMatcherNeedsBothSidesOfTheName() {
+        func rule(_ username: String, _ name: String, global: Bool = true) -> IgnoredSenderRule {
+            IgnoredSenderRule(
+                chatUsername: global ? HUDStore.globalIgnoreScopeKey : "chat-a",
+                chatName: "聊天",
+                senderIdentifier: HUDStore.senderIdentifier(senderUsername: username, senderName: name),
+                senderUsername: username, senderName: name,
+                createdAt: Date(timeIntervalSince1970: 1),
+                scope: global ? .global : .chat
+            )
+        }
+        func commitment(_ chat: String, to person: String) -> Commitment {
+            let when = Date(timeIntervalSince1970: 1_000)
+            return Commitment(id: 1, msgUID: "m", chatUsername: chat, chatName: "聊天",
+                              content: "发报告", commitTo: person, deadlineAt: when,
+                              confidence: 0.9, status: .overdue, promptVersion: "v1",
+                              createdAt: when, updatedAt: when)
+        }
+
+        // A nameless promise («给自己») must not be captured by a nameless rule.
+        XCTAssertFalse(
+            ProactiveAlertEngine.isMutedForCommitment(commitment("chat-b", to: ""), rules: [rule("", "")]),
+            "empty == empty would mute every commitment off one malformed rule"
+        )
+        // Chat-scoped rules stay in their own conversation.
+        XCTAssertFalse(ProactiveAlertEngine.isMutedForCommitment(
+            commitment("chat-b", to: "同事"), rules: [rule("wxid_tongshi", "同事", global: false)]
+        ))
+        XCTAssertTrue(ProactiveAlertEngine.isMutedForCommitment(
+            commitment("chat-a", to: "同事"), rules: [rule("wxid_tongshi", "同事", global: false)]
+        ))
+    }
 }
