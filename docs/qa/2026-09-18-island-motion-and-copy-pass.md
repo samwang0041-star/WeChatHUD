@@ -1882,3 +1882,188 @@ NSStatusItem 不属于任何一支），所以这一处只有单测证据，没�
    坏消息是"你的反馈会持续打磨建议质量"只对了一半。
    补法要先把"忽略"定义出来（一键采纳只灌输入框、不写反馈，`ActionPanelView:574-583`），
    是一个产品决定而不是一个 bug 修复，留在这里定价。
+
+---
+
+## 第 28 轮：七路并发对抗审计（P0 清零）
+
+方式：同一轮里派 7 个只读子代理，按互不重叠的风险面切分 —— 崩溃/主线程阻塞、
+隐私外发、数据正确性与持久化、安全与更新链路、AI 信任边界（自动发送）、
+常驻退化（并发与资源增长）、交互安全与不可逆操作。每个代理返回后**逐条回源码复核**
+才动手；下面每条都标了"实测方式"，没有一条是按代理的措辞直接改的。
+
+### §99 私聊连发时把抓取窗口当成条数（commit dd4e6e32）
+
+自己引入的缺陷：§94 为了触发「多条未回」让私聊折叠行携带 `unansweredInboundCount`，
+但抓取窗口硬编 20。摘到的证据（临时探针跑真合成库）：
+`PROBE count=20 stats=20 preview=第 26 条` —— 26 条未回，界面和提醒都会说「有 20 条」。
+
+修法：窗口跟随 `session.unreadCount`（上限收到 `ScanEngine.unreadWindowCap = 60`），
+窗口装不下时把数字标成下限（`UnreadItem.unansweredCountIsFloor`），规则 3 文案走
+「N 条以上」。变异验证：把 floor 常量写死 false → 3 个新用例红；把窗口退回 20 →
+3 处红。
+
+### §100 AI 出网隐私边界：出口才是边界（commit 428b2665）
+
+代理报了 7 条"绕过 `sanitizeForAI` 的裸文本出网"，7 条全部回源码成立：
+洞察页把一天最多 500 条消息原文 + 撤回原文 +（senderName 为空时回落的）**wxid**
+发出去；自动回复把批量触发消息、会话账本里的双方原话、风格样本发出去；群简报把
+同一条消息明文 + 掩码双份发出去；回复建议、撤回分析、日报引用同理。它们的共同点
+是只过了 `oneLine`。`AIService.swift` 里那句"每条 live 提示词都过 sanitizeForAI"
+是个假前提。
+
+改法照抄本仓已有的判断：注入守卫当年也是逐模板写、漏一个就裸奔，后来收口成
+`completeWithMetadata` 里的 `dataBoundaryPreamble` 一行。掩码同理 —— 出口再掩一次
+证件/卡号/手机号/邮箱，任何站点漏了都不再等于泄漏；同时 9 个站点补 `sanitizeForAI`
+（顺带修掉会触发 Kimi 400 的 `[表情]` 一类占位符没被剥掉）。
+
+证据强度：变异实验把出口那行改回原样，测试直接打印出真实请求 body ——
+`"content":"【边界】…收 13812345678 联系我\n卡号 6222021234567890123…"`。
+这不是推理，是抓到的字节。
+
+### §101 老版本写下的设置 blob 让账号"看起来被清空"（commit 98c99d92）
+
+`SyncConfig`/`NotificationConfig`/`AppUpdateConfig` 用合成解码：非可选属性一律必填，
+属性默认值不参与解码。而 `AccountStoreCoordinator` 的设备设置迁移把老版本 blob
+**原样**搬过来。缺一个 `displayScreen` → 整块解码失败 → `getSettingJSON` 返回 nil →
+`?? SyncConfig()` → `wechatDBPath = "auto"` → 机器上有两个微信安装时解析不出账号根
+目录 → 新建 `accounts/unconfigured/hud.sqlite3`。白名单、承诺、日报在界面上全没了，
+真数据在旁边那个文件里没动。
+
+改法：三条设置各自逐键容错（新增 `KeyedDecodingContainer.lenient/lenientEnum`），
+"键不存在"和"整块读不出"分开处理 —— 后者按本类型既有策略直接拒绝启动，不再猜账号。
+行为测试：种一个不含 `displayScreen` 的 legacy 库 → bootstrap → 断言 storePath 仍是
+legacy 且 `getWhitelist()` 还在；变异（把 displayScreen 改回严格 decode）→ 该用例红。
+
+顺带查到但不是本轮的：`initializeIfNeeded` 在 `legacyBindingRecorded=false` 且没有
+legacy 文件时会把设备设置整份覆盖成空 —— 需要一次"设备文件在、legacy 已删、绑定
+标记却没写"的写入中断才触发，定价为 P2。
+
+### §102 洞察详情区在 body 里整读一天（commit da83200d）
+
+侧栏早就改成 `computeDayStats`（nonisolated）+ `primeDayStats`，但详情区还留着
+`insightStore.statsForDay(...)` —— 它是 @MainActor 的同步方法，底下是
+`reader.getMessages(limit: Int.max, startTime:endTime:)`。更要紧的是侧栏对「今天」
+直接跳过预取，而打开页面默认就是今天：每次选对话、每次换日期都在主线程解一遍该对话
+当天跨的所有分片。
+
+改法照抄侧栏：命中缓存立刻画，未命中先出"无统计"骨架，后台算完填回来。并且**删掉**
+`InsightDataLoader` 的同步 `reader:` 重载（只留 actor 版），让这条路径写不回来；
+唯一用到它的测试改成 async。
+
+### §103 自动发送的三道资金闸用了三种归一化（commit 7623ed00）
+
+信任边界代理报的两条，回源码都成立：
+
+1. `applySafetyDowngrades` / `autopilotSafetyHoldReason` 走
+   `normalizedForSafetyMatch`（lowercase + 繁简折叠），而最后一道
+   `automaticSendHoldReason` 只做 `replyText.lowercased()`。同一套敏感词，最靠发送
+   的那道最弱。另外归一化本身不认宽度与空格：「转 账」「轉　賬」全部绕过。
+2. `financialTriggerCues` 只有 🧧/zhuanzhang/hongbao 三个、且只查入站不查回复；
+   用户清空 `sensitiveKeywords` 就等于拆掉资金底线 —— 而且旧测试把这件事写成了期望
+   （`testEmptyKeywordListReliesOnRiskAndReasonCode` 断言 转账 明文 + 空词表 = 可发）。
+3. `evidence_quote` 解码后全仓零消费者：模型自评的 risk/confidence 是攻击者文本能
+   直接影响的唯一依据。
+
+改法：归一化统一成 lowercase → 繁简 → 宽度折叠 → 去空白/零宽（实测只去宽度折叠
+不足以拦「轉　賬」，U+3000 要靠折叠变普通空格才被剥掉）；三道闸共用；资金线索补
+汉字/英文支付通道、入站与回复双侧、图片 OCR 文本进扫描面；send 意图必须引用得出 ——
+`evidence_quote` 不在我们真正发出的那段原文里就转人工。旧测试的期望改成新契约并写明
+为什么改。
+
+代价说清楚：这会让更多私聊落到"需人工确认"。产品方向上托管本来就默认关，宁可多问
+一次也不要替用户对真人发一句资金承诺。引用回查对"模型改写了措辞而非逐字引用"会误判
+成需人工，同向、可恢复。
+
+### §104 取消关注改成一个事务，两处不可逆动作先确认（commit a4ae5905）
+
+`removeFromWhitelist` 是 8 条语句、7 条 `try?`。中间失败就是"人已不关注、承诺还在
+天天提醒、待办还在列表"，而界面按成功画。交互代理另外指出：审批工作台的「立即发送」
+一次点击直接 AX 发出微信消息（同页「确认发送」却有确认弹窗），行内正文 `lineLimit(2)`
+还会截断；收件箱右键的「取消关注此对话」一次点击触发上面那串连带清理，无确认无撤销。
+
+改法：连带清理收进 `withTransaction`（`perform` 用 dispatch-specific key 做了重入保护，
+`withTransaction` 自己支持 savepoint 嵌套，所以外层已持锁不会自锁）；store 失败时
+ChatMonitor 不清内存态；`discussion_queue` 是首次使用才建的表，改走既有的
+`clearDiscussionMessages` —— 否则一个没用过待办队列的新库直接取消不了关注（这一步是
+测试逼出来的：先写严格 DELETE 后 `testSuccessfulClear...` 红）。两处补确认。
+
+行为测试用"故意 DROP 掉级联中间那张表"来证明回滚，而不是只数条数。
+
+### §105 扫描收尾的四遍全表修复：从每轮一次收到一小时一次（commit c636af98）
+
+FSEvent `latency: 0.0` + NoDefer（0.5s debounce）加 10s 心跳 ⇒ 微信活跃时每分钟
+6-10 轮扫描，每轮收尾都在主线程串跑：`displayNameCache.removeAll()` + 每个白名单条目
+两次 SQL + 一次抢 reader 锁；`repairStaleChatNames` 的 15 张表 `LIKE '%@chatroom'`
+全表扫；承诺对象修复；反问句倒置修复（`loadCommitments()` 不传 cutoff、无 LIMIT）。
+代价跟着表本身涨，而这些都是"修好就不再变旧"的一次性归并。
+
+改法照抄仓里已有的 `shouldSweepStaleRows` 论证（小时闸门 + 启动后第一次必跑），额外
+加一条：`contact.db` 真的 mtime 变了立刻跑，那是唯一会让备注改名的信号。闸门函数
+可注入 `now`，测试验的是"第二次不跑"（用命名缓存被清空来观察有没有真跑），不是读数位。
+
+### §106 每行的显示名不再排在整分片解密后面（本轮）
+
+`WeChatReader` 一把递归锁串起所有 DB 访问，而 `getDecryptedDB` 从头持到尾（整文件
+读入 + 逐页 AES + 合 WAL）。`displayName(for:)` / `groupMemberNames` 抢同一把锁，
+可它们一个数据库都不碰。后台扫描在解大分片时，主线程画一行就得整等。
+
+**没有**把解密挪出主锁：`refreshIfChanged` / `refreshContactsIfChanged` 这些调用方
+本来就持锁进来，再压一道"解密串行闸门"就是持锁等闸、持闸等锁的反向死锁 —— 这条路
+我先实现过一遍，审出来后果比原来的卡顿严重，退掉了。改法是拆第二把锁：只护三张命名
+缓存，读侧只拿它，写侧 `lock` → `namingLock` 单向嵌套，且整份 contact 索引 + 群成员
+标签的发布收进同一个临界区（否则未命名群会在刷新中途闪成占位名）。主线程 apply 里
+另外两次抢锁一起搬走：`purgeEphemeralCache` 挪到扫描的后台侧，contact 是否变过由
+`ScanOutcome.contactsChanged` 带出来（后台 `prepareForScan` 早问过一遍，不必再问）。
+
+这一条没法写成行为测试（要把私有锁在真解密中途按住，没有测试缝），落成源码闸门：
+8 个命名查找函数必须用 `namingLock`、不得出现 `lock.withLock`。
+
+### §107 群聊未读也在把抓取窗口当条数 + 一条被 §96 打断的测试
+
+数据代理的 P1 与 §99 同一类：群聊分支对页内每条"已在手机上读过"的 @ 逐条计数，
+1 条未读的群能把 31 计进 `未读 N 条` 和 @ 角标。改法是把该房间的贡献封顶在
+`session.unreadCount`（页是新的在前，所以留下的正是没看过的），行与计数一起封顶，
+避免出现"数字封顶、行还全出"的第二套口径。
+
+另外：本轮全量跑测发现 `BannerSnoozeFailureTests.testASavedSnoozeStillHandsOffToTheInbox`
+在 §96 改文案后一直红（它断言旧措辞「已安排」）。原因是 §96 那轮只跑了
+`CompanionProductCopyTests` 就收了 —— 改一条共用文案时，要跑的是所有断言这条文案的
+测试，不是新增的那一个。断言改成契约（回执要说清"回到收件箱"）而不是某个短语。
+
+### 本轮定价但没改（下一轮的起点）
+
+P1 未修：
+- `GitHubReleaseFeed` 只校验 `scheme == https`，`browser_download_url` 无 host 白名单；
+  zip 整份缓冲进内存、无体积上限、`.sha256` sidecar 可选。验签链路本身是硬的
+  （降级拒装、名单校验、二次验签 + 回滚隔离），所以这不是"装上恶意包"，是"被指到
+  任意主机无界下载"。需要 host allowlist + 流式上限 + 强制 sha256。
+- `WeChatParser.parseSysMsg` 缺 `parseAppMsg` 的两道闸（doctype/entity 拒绝 + 长度上限），
+  而群系统消息夹带成员可控昵称 → 实体展开放大。
+- `ImageResolver` 三处整文件读入只为验 4 字节魔数 + 再整份 XOR 复制；
+  media-cache 键含尺寸 ⇒ 远端可无限堆缓存文件。
+- 锁屏通知正文带 ≤80/100 字原文，且没有"只显示提示不显示正文"的开关。
+- 日报导出到桌面的 markdown 带未回 preview 与撤回原文、0644，开了桌面 iCloud 就上云。
+- 浮窗 `sharingType` 全仓 0 处设置 ⇒ 投屏/会议录屏可捕获岛正文。
+- 队列去重把 `content_key` 当身份（不含 localId）→ 同秒同文本的第二条永不进分类。
+- 日报「今日小结」里来自 discussion_items 的待办点「完成」：`relatedID` 是
+  `"discussion-<id>"`，`Int(...)` 恒 nil 且无 else → 只从当天日报消失。
+- autopilot 分支的裸 `Task {}` 自造第三路扫描触发、`stop()` 不取消它；
+  `generateSummaries()` 没有单实例守卫；`loadContacts()` 掉进分类循环里。
+- `analysis_cache`/`ai_feedback`/`vip_traces` 等只按同 key 命中才懒删，常驻数周无界增长。
+- 岛内「稍后提醒」的 ✕/时钟命中层只有字形大小（应 22×22 + contentShape）。
+- 排除名单的红色减号一次点击即把某客户放回自动回复范围，无回执。
+- `Int(sqlite3_column_text(...))` 裸读唯一允许 NULL 的 `discussion_items.detail`。
+- `AIService.acquire()` 吞掉 CancellationError，被取消且窗口满时自旋。
+
+P2/闸门类：默认签名身份 `WeChatHD-DevCert` 走无 hardened runtime 分支、全仓无
+.entitlements；Info.plist 只声明 `NSAppleEventsUsageDescription` 而真实能力是 CGEvent
+键鼠注入 + 通用剪贴板；表名直插 SQL（需能写微信库才可利用）。
+
+### 本轮结论
+
+七路审计报的 P0 共 15 条，逐条回源码：14 条成立（全部已修并带行为/闸门测试 +
+变异验证），1 条按证据降级（安全代理自报 P0 为 0，其 3 条 P1 见上）。
+另有本轮自查发现的 3 条同类缺陷（群聊未读口径、被 §96 打断的测试、§99 的窗口口径）
+一并收口。全量 `swift test` 与 release 构建的结果以本轮收尾运行为准，写在上面各节的
+commit 里。

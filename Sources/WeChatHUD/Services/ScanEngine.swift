@@ -226,7 +226,16 @@ enum ScanEngine {
                     // A room is followed because of the handful of people in
                     // it. Surface @s and the members the user singled out;
                     // let the rest of the traffic stay in WeChat.
+                    //
+                    // WeChat's own unread count is the ceiling: the page is
+                    // fetched wider than the unread set (self messages and
+                    // bystander traffic are in it), and @-mentions the user
+                    // already read on the phone are still in it. Without the
+                    // cap a room reporting 1 unread contributed 31 to
+                    // 「未读 N 条」 and to the @ badge.
+                    var roomBudget = max(session.unreadCount, 0)
                     for msg in recentMsgs {
+                        if roomBudget == 0 { break }
                         if MessageHelpers.isFromSelf(msg, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames) {
                             continue
                         }
@@ -244,6 +253,7 @@ enum ScanEngine {
                             suppressedCollected.append(item)
                             continue
                         }
+                        roomBudget -= 1
                         if isAt { groupAtCount += 1 } else { groupMemberCount += 1 }
                         unreadCollected.append(item)
                     }

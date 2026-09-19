@@ -53,7 +53,9 @@ final class BannerSnoozeFailureTests: XCTestCase {
         XCTAssertNotNil(fixture.panelState.islandSnoozeUndo, "存下来就要能撤销")
         XCTAssertNil(fixture.monitor.inboxActionError)
         let toast = try XCTUnwrap(fixture.panelState.toastMessage)
-        XCTAssertTrue(toast.contains("已安排"), "成功要有回执，实际 \(toast)")
+        // §96 retired the 「已安排在X提醒」 wording because the app resurfaces
+        // the message rather than reminding; assert the contract, not a phrase.
+        XCTAssertTrue(toast.contains("回到收件箱"), "成功要有回执，实际 \(toast)")
     }
 
     /// The briefing card's 稍后提醒 shares the same receipt: a failed write must
