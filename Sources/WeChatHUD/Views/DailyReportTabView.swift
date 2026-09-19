@@ -35,6 +35,13 @@ struct DailyReportTabView: View {
         .onChange(of: monitor.dailyReportViewedDate) { _, _ in
             if scope == .weekly { reloadWeeklyCatalog() }
         }
+        // The live pending list is the same rows the weekly roll-up counts, so
+        // its mutation is the signal that the snapshot is stale. Without this
+        // the 周报 kept showing the numbers from whenever the tab was first
+        // opened — across a scan, and across a WeChat account switch.
+        .onChange(of: monitor.discussionItems.count) { _, _ in
+            if scope == .weekly { reloadWeeklyCatalog() }
+        }
         .onChange(of: scope) { _, value in
             if value == .weekly { reloadWeeklyCatalog() }
         }

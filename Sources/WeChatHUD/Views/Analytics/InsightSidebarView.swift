@@ -34,6 +34,11 @@ struct InsightSidebarView: View {
         .task(id: dayStatsTaskID) { await refreshDayStats() }
     }
 
+    /// Which `dayStatsTaskID` the current `dayStatsByChat` belongs to. Without
+    /// it a chat with no messages on the selected day fell through to the
+    /// *window* count, so a day of zero still read 「23条消息」.
+    @State private var dayStatsKey: String?
+
     /// Reload key for the precomputed day stats: the date plus the set of chats
     /// the sidebar can show.
     private var dayStatsTaskID: String {
@@ -59,17 +64,25 @@ struct InsightSidebarView: View {
     private func refreshDayStats() async {
         guard !Calendar.current.isDateInToday(selectedDate) else {
             dayStatsByChat = [:]
+            dayStatsKey = nil
             return
         }
         let requests = dayStatsRequests()
         guard !requests.isEmpty else {
             dayStatsByChat = [:]
+            dayStatsKey = nil
             return
         }
         let date = selectedDate
+        let key = dayStatsTaskID
         let readerActor = WeChatReaderActor(reader)
         let stats = await InsightStore.computeDayStats(requests: requests, date: date, readerActor: readerActor)
+        // The walk runs per chat over the whole library, so a fast A→B→A date
+        // switch can land A's numbers last. `ChatInsightView` guards the same
+        // race for the detail pane; the sidebar had none.
+        guard key == dayStatsTaskID, !Task.isCancelled else { return }
         dayStatsByChat = stats
+        dayStatsKey = key
         // The detail view asks for the selected chat's day stats from its own
         // body; those now come from the cache this primes instead of a read.
         insightStore.primeDayStats(stats, date: date)
@@ -370,7 +383,8 @@ struct InsightSidebarView: View {
         fallback: ChatStatsData?
     ) -> ChatStatsData? {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        return dayStatsByChat[username] ?? fallback
+        guard dayStatsKey == dayStatsTaskID else { return fallback }
+        return dayStatsByChat[username]
     }
 
     private func dayMessageCount(
@@ -381,7 +395,8 @@ struct InsightSidebarView: View {
         fallback: Int
     ) -> Int {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        return dayStatsByChat[username]?.messageCount ?? fallback
+        guard dayStatsKey == dayStatsTaskID else { return fallback }
+        return dayStatsByChat[username]?.messageCount ?? 0
     }
 
     private func categoryColor(_ cat: WhitelistCategory) -> Color {

@@ -307,12 +307,42 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
             "reasoning": "ok"
         ]
         if let reply { payload["reply"] = reply }
-        let content = String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!
+        stubRawDecision(String(data: try! JSONSerialization.data(withJSONObject: payload), encoding: .utf8)!)
+    }
+
+    private func stubRawDecision(_ content: String) {
         URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
             content: content,
             urlString: "http://127.0.0.1:9/v1/chat/completions"
         )
         URLRequestRecorder.stubbedResponses = [URLRequestRecorder.stubbedResponse!]
+    }
+
+    /// A stall *sends* text — that is what 缓兵之计 is — but the evidence check
+    /// only ran for `action == "send"`, on the comment's claim that a stall
+    /// sends nothing. A stall grounded in a quote the peer never wrote used to
+    /// go out unattended.
+    func testStallWithFabricatedQuoteIsHeldForReview() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubRawDecision(#"{"action":"stall","reply":"周五再定","confidence":0.95,"risk":"low","reason_code":"routine_ack","evidence_quote":"周末去爬山吗","reasoning":"拖一下"}"#)
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+        _ = await pipeline.handleNewMessages(
+            [inbound(uid: "stall-quote-1", text: "周末一起爬山吗")],
+            config: pipelineConfig(),
+            myUsername: "me"
+        )
+
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertEqual(
+            queue.first?.manualOnlyReason,
+            "安全检查：AI 引用的原话不在消息里，需人工确认",
+            "a stall whose quote is not in the conversation must not auto-send"
+        )
+        try? await pipeline.stop()
     }
 
     /// The prompt's vocabulary is `send|stall|read_no_reply|skip`. Anything else

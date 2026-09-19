@@ -106,6 +106,27 @@ final class AIOutboundPrivacyBoundaryTests: XCTestCase {
         }
     }
 
+    /// Grouping has to reject the *date* shapes too, not just the 2-digit ones:
+    /// `账期 20260901-20260930` is 16 digits in two groups, and a deadline is
+    /// exactly the number the user asked the AI about. A real card or phone
+    /// groups in 3-4 digit chunks, which is what separates them.
+    func testCompactDateRangesAreNotCards() {
+        for text in [
+            "账期 20260901-20260930",
+            "会议 20260919 20260920",
+            "对比 202609 202610 202611 202612 202701"
+        ] {
+            XCTAssertEqual(AIService.maskDirectIdentifiers(text), text, "\(text) was eaten")
+        }
+    }
+
+    /// Masking a window must not weld the label onto whatever follows it:
+    /// the separator is part of the user's text.
+    func testMaskingKeepsTheSeparatorAfterTheConsumedWindow() {
+        let masked = AIService.maskDirectIdentifiers("13800138000-8001")
+        XCTAssertEqual(masked, "[手机]-8001", masked)
+    }
+
     /// Grouping is what tells a phone number from a date range, so the shapes
     /// the user is actually asking about must still arrive intact: an amount
     /// with a thousands separator, a 13-digit millisecond timestamp, a dashed

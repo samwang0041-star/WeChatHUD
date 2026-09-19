@@ -324,7 +324,13 @@ enum WeChatLauncher {
         var stack: [(element: AXUIElement, depth: Int)] = [(root, depth)]
         var budget = maxNodes
         while let (element, nodeDepth) = stack.popLast() {
-            if budget <= 0 { return nil }
+            if budget <= 0 {
+                // Distinct from "the element is not in the tree": a caller that
+                // gives up here looks like a WeChat version change, and without
+                // this line nothing in the log separates the two.
+                log("AX walk hit its \(maxNodes)-node budget at depth \(nodeDepth) — treating as not found")
+                return nil
+            }
             budget -= 1
             if predicate(element) { return element }
             if nodeDepth >= maxDepth { continue }

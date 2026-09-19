@@ -574,7 +574,14 @@ func completeWithMetadata(
                 }
                 if let label {
                     out.append(contentsOf: label.unicodeScalars)
-                    groupIndex += matched
+                    // The separator that followed the consumed window belongs to
+                    // the text: dropping it welded the next number onto the
+                    // label ("13800138000-8001" → "[手机]8001").
+                    let consumed = groupIndex + matched
+                    if consumed < groups.count, consumed - 1 < separators.count {
+                        out.append(separators[consumed - 1])
+                    }
+                    groupIndex = consumed
                 } else {
                     if groupIndex == 0, hasPlus { out.append("+") }
                     out.append(contentsOf: groups[groupIndex])
@@ -594,7 +601,7 @@ func completeWithMetadata(
         var body = rendered.joined()
         let isGrouped = groups.count > 1
         if isGrouped {
-            // Grouped numbers are only credible in 3+ digit chunks; a leading
+            // Grouped numbers are only credible in 3-4 digit chunks; a leading
             // `86` country code is the one 2-digit group allowed. This is what
             // keeps `2026 09 19` (and `2026-09-19-2026-09-20`, 16 digits) out of
             // the card range.
@@ -604,7 +611,7 @@ func completeWithMetadata(
                 body = String(body.dropFirst(2))
             }
             guard checked.count > 1 else { return nil }
-            guard checked.allSatisfy({ $0.count >= 3 }) else { return nil }
+            guard checked.allSatisfy({ (3...4).contains($0.count) }) else { return nil }
         }
         let n = body.count
         if n == 18 { return "[证件]" }

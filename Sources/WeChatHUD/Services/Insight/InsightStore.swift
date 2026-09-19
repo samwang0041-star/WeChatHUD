@@ -121,7 +121,8 @@ final class InsightStore: ObservableObject {
         store: HUDStore, reader: WeChatReader, replyDebtItems: [ReplyDebtItem],
         trigger: ReloadTrigger, now: Date = Date()
     ) async {
-        if trigger == .newData {
+        switch trigger {
+        case .newData:
             guard !isReloading else { return }
             guard Self.AutoReload.permitted(last: lastAutoReloadAt, now: now) else { return }
             lastAutoReloadAt = now
@@ -130,19 +131,20 @@ final class InsightStore: ObservableObject {
             await performReload(
                 store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: false
             )
-            return
+        case .userInitiated:
+            if isReloading {
+                userReloadWhileBusy = true
+                return
+            }
+            await performReload(
+                store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true
+            )
         }
-        if isReloading {
-            userReloadWhileBusy = true
-            return
-        }
-        await performReload(
-            store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true
-        )
+        // Common tail on purpose: the request that arrived while an *automatic*
+        // walk was running has to be drained by that pass too. Draining only in
+        // the user branch left the page labelled 近 30 天 over 今天's numbers
+        // until the user switched a second time.
         if userReloadWhileBusy {
-            // The window/scope the user picked while a walk was running has to
-            // win; a silent drop would leave the page labelled 近 30 天 while
-            // showing 今天's numbers.
             userReloadWhileBusy = false
             await performReload(
                 store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true

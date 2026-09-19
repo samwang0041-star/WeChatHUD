@@ -79,7 +79,17 @@ struct DiscussionSourceView: View {
         }
         .padding(embedded ? 16 : 24)
         .frame(minWidth: embedded ? 280 : 640, minHeight: embedded ? 360 : 560, alignment: .topLeading)
-        .task {
+        .task(id: item.id) {
+            // The host leaves this view in place while the selection changes
+            // underneath it — clicking another row, the range pill, a search
+            // term, or a background scan auto-completing the open item — and a
+            // `.task` without an id never re-runs for that. The title and the
+            // headline would show the new item while the messages below stayed
+            // the old item's chat window, which reads as the new item coming
+            // from the old conversation.
+            messages = []
+            failure = nil
+            loading = true
             defer { loading = false }
             guard !PreviewRuntime.isEnabled else {
                 if let detail = item.detail, !detail.isEmpty {
