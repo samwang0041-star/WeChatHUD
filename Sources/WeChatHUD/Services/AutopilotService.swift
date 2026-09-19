@@ -30,23 +30,36 @@ actor AutopilotService {
     /// Insertion-ordered list for FIFO eviction of processedMsgUIDs.
     private var processedMsgOrder: [String] = []
 
-    /// Global send timestamps for hourly rate limiting.
-    private var globalSendTimestamps: [Date] = []
+    /// Global send timestamps for hourly rate limiting, on the monotonic axis
+    /// — see ``monotonic``. A forward clock jump used to age every entry out
+    /// of the rolling hour, disarming the cap for a full extra round of
+    /// unattended sends.
+    private var globalSendTimestamps: [TimeInterval] = []
 
     /// VIP contacts already notified this session — no duplicate "busy" messages.
     private var vipNotifiedThisSession: Set<String> = []
     /// Recent stall texts per contact — deduplicate identical stalling replies within a window.
-    private var recentStallByContact: [String: (text: String, timestamp: Date)] = [:]
+    private var recentStallByContact: [String: (text: String, timestamp: TimeInterval)] = [:]
 
     /// Pending messages awaiting batch window expiry. chatUsername → [messages].
     private var batchBuffer: [String: [InboundMessage]] = [:]
-    /// Batch timer fires: chatUsername → scheduled fire time.
-    private var batchTimers: [String: Date] = [:]
+    /// Batch timer fires: chatUsername → scheduled fire time (monotonic).
+    private var batchTimers: [String: TimeInterval] = [:]
     /// First message arrival time per chat batch — used for max window cap.
-    private var batchStartTimes: [String: Date] = [:]
+    private var batchStartTimes: [String: TimeInterval] = [:]
     /// How long to wait for more messages before processing a batch.
     /// Read from config at runtime; fallback to 10s.
     private var batchWindowSeconds: TimeInterval = 10
+
+    /// Clock for every window this actor owns: the hourly send cap, the batch
+    /// deadline, the stall-dedup window. Wall clock is unusable for these
+    /// because the system can move it; see ``MonotonicClock``.
+    ///
+    /// Deliberately *not* switched over: anything compared against a
+    /// database instant (`scheduledSendTime`, `createTime`, the 10-minute hot
+    /// chat window) or persisted, because those must stay on the same axis as
+    /// the rows they are read against.
+    private let monotonic: MonotonicSeconds
 
     /// Computes the next batch deadline without relying on actor state.
     ///
@@ -54,22 +67,63 @@ actor AutopilotService {
     /// messages may extend the deadline by ten seconds, but never shorten an
     /// existing deadline and never push the batch beyond sixty seconds from
     /// the first message.
+    ///
+    /// Instants are monotonic seconds, not `Date`: a deadline computed before a
+    /// backward clock jump used to sit in the future for the length of the
+    /// jump, so the batch neither replied nor was acknowledged and its rows
+    /// were fed back in on every scan.
     nonisolated static func batchDeadline(
-        firstArrival: Date,
-        now: Date,
+        firstArrival: TimeInterval,
+        now: TimeInterval,
         window: TimeInterval,
-        existingDeadline: Date?
-    ) -> Date {
-        let maxDeadline = firstArrival.addingTimeInterval(60)
-        let initialDeadline = firstArrival.addingTimeInterval(max(0, window))
+        existingDeadline: TimeInterval?
+    ) -> TimeInterval {
+        let maxDeadline = firstArrival + 60
+        let initialDeadline = firstArrival + max(0, window)
         let proposedDeadline = existingDeadline == nil
             ? initialDeadline
-            : now.addingTimeInterval(10)
+            : now + 10
 
         // A deadline produced by this helper is always bounded by the
         // first-arrival cap. Preserve an existing deadline when a later
         // message arrives before it would extend the window.
         return min(max(existingDeadline ?? proposedDeadline, proposedDeadline), maxDeadline)
+    }
+
+    /// How old a message has to be before autopilot stops considering it
+    /// worth answering. Ten minutes matches the windows around it (stall dedup,
+    /// hot-chat detection) and dwarfs the 60-second batch cap.
+    static let batchReplyHorizon: TimeInterval = 600
+
+    /// Whether a message is too old to buffer or reply to.
+    ///
+    /// Measured against the wall clock on purpose — both operands are
+    /// instants, one written by WeChat — so this is the one time comparison in
+    /// this actor that is not monotonic. Deliberately one-sided: a
+    /// future-dated timestamp yields a negative age and stays eligible, so a
+    /// peer's skewed clock cannot silence its own chat forever.
+    nonisolated static func isPastReplyHorizon(
+        timestamp: Int,
+        now: Date,
+        horizon: TimeInterval = AutopilotService.batchReplyHorizon
+    ) -> Bool {
+        now.timeIntervalSince(Date(timeIntervalSince1970: Double(timestamp))) > horizon
+    }
+
+    /// Prunes the rolling hour and answers the cap in one step, so the count
+    /// that gets logged and the count compared against the limit are the same
+    /// array rather than two readings of the window.
+    ///
+    /// `limit <= 0` means unlimited — consistent with `maxSendsPerSession`,
+    /// where a plain `count >= limit` would block every send at 0.
+    nonisolated static func rollingSendHour(
+        sendTimes: [TimeInterval],
+        now: TimeInterval,
+        limit: Int
+    ) -> (retained: [TimeInterval], blocked: Bool) {
+        let retained = sendTimes.filter { $0 > now - 3600 }
+        guard limit > 0 else { return (retained, false) }
+        return (retained, retained.count >= limit)
     }
 
     /// Active session ID (nil if autopilot is off).
@@ -113,7 +167,11 @@ actor AutopilotService {
 
         var avgStyleScore: Int { styleScoreCount > 0 ? styleScoreSum / styleScoreCount : 0 }
         var avgDelay: Int { delayCount > 0 ? Int(delaySum / Double(delayCount)) : 0 }
-        var duration: TimeInterval { startedAt.map { Date().timeIntervalSince($0) } ?? 0 }
+        /// Clamped: `startedAt` is a `Date` because the session row in the
+        /// database is one, so a backward clock jump used to print a negative
+        /// 「-7200s」 as the session length. A jump still skews the number;
+        /// this keeps it from going below what is true.
+        var duration: TimeInterval { startedAt.map { max(0, Date().timeIntervalSince($0)) } ?? 0 }
     }
 
     /// Callback fired on every verified outgoing send. Used by ChatMonitor
@@ -133,11 +191,13 @@ actor AutopilotService {
         reader: WeChatReader,
         aiService: AIService,
         ledgerRead: LedgerReadCallback? = nil,
-        ledgerWrite: LedgerWriteCallback? = nil
+        ledgerWrite: LedgerWriteCallback? = nil,
+        monotonic: @escaping MonotonicSeconds = { MonotonicClock.seconds() }
     ) {
         self.store = store
         self.reader = reader
         self.aiService = aiService
+        self.monotonic = monotonic
         self.generator = AutoReplyGenerator(store: store, aiService: aiService)
         self.styleProfiler = StyleProfiler(reader: reader, store: store)
         self.memoryUpdater = ConversationMemoryUpdater(reader: reader, store: store, aiService: aiService)
@@ -388,6 +448,50 @@ actor AutopilotService {
         print("[WCHUD] Autopilot: RESUMED — user left WeChat")
     }
 
+    /// Drops buffered messages that have become too old to answer, and returns
+    /// the audit rows plus the queue ids to acknowledge.
+    ///
+    /// Kept separate from `handleNewMessages` because the only path that puts
+    /// anything here is the paused one: `allExpired` is forced empty while
+    /// paused, so nothing else drains the buffer — and each buffered row is
+    /// already recorded in `processedMsgUIDs`, so no later feed can remove it
+    /// either. A day of 暂停 used to mean a day of backlog, answered on resume.
+    func ageOutBufferedMessages(
+        now: Date,
+        horizon: TimeInterval
+    ) -> (entries: [AutopilotLogEntry], ackedMsgUIDs: [String]) {
+        guard let sid = sessionId, !batchBuffer.isEmpty else { return ([], []) }
+        var entries: [AutopilotLogEntry] = []
+        var acked: [String] = []
+        for chat in batchBuffer.keys.sorted() {
+            var buffered = batchBuffer[chat] ?? []
+            // `partition(by:)` puts the elements that do NOT satisfy the
+            // predicate first, so the survivors are the prefix.
+            let split = buffered.partition(
+                by: { Self.isPastReplyHorizon(timestamp: $0.timestamp, now: now, horizon: horizon) }
+            )
+            let kept = Array(buffered[..<split])
+            let dropped = Array(buffered[split...])
+            guard !dropped.isEmpty else { continue }
+            for msg in dropped {
+                let entry = makeLogEntry(
+                    sessionId: sid, msg: msg, action: .skipped,
+                    reply: nil, confidence: 0, risk: .low,
+                    reasoning: "暂停期间积压超过 \(Int(horizon / 60)) 分钟，不再回复"
+                )
+                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                entries.append(entry)
+                acked.append(msg.msgUID)
+            }
+            batchBuffer[chat] = kept.isEmpty ? nil : kept
+            if kept.isEmpty {
+                batchTimers[chat] = nil
+                batchStartTimes[chat] = nil
+            }
+        }
+        return (entries, acked)
+    }
+
     /// Process a batch of new messages detected by ChatMonitor.
     func handleNewMessages(
         _ messages: [InboundMessage],
@@ -419,11 +523,29 @@ actor AutopilotService {
         // Phase 1: Buffer messages for batching
         var immediateEntries: [AutopilotLogEntry] = []
         var ackedMsgUIDs: [String] = []
+        let arrivalNow = Date()
 
         for msg in messages {
             guard !processedMsgUIDs.contains(msg.msgUID) else { continue }
             processedMsgUIDs.insert(msg.msgUID)
             processedMsgOrder.append(msg.msgUID)
+
+            // Too old to answer at all. Rows stay in the durable inbound queue
+            // until they are acknowledged, so a session started after the app
+            // was closed for a week used to receive that week's backlog and
+            // reply to it; and `processedMsgUIDs` evicts down to 2500 entries,
+            // which re-feeds anything still queued. Both end here.
+            if Self.isPastReplyHorizon(timestamp: msg.timestamp, now: arrivalNow) {
+                let entry = makeLogEntry(
+                    sessionId: sid, msg: msg, action: .skipped,
+                    reply: nil, confidence: 0, risk: .low,
+                    reasoning: "消息已超过 \(Int(Self.batchReplyHorizon / 60)) 分钟，不再回复"
+                )
+                do { try store.insertAutopilotLog(entry) } catch { print("[WCHUD] Autopilot: log insert failed: \(error)") }
+                immediateEntries.append(entry)
+                ackedMsgUIDs.append(msg.msgUID)
+                continue
+            }
 
             // Excluded contacts — skip silently
             if excludedSet.contains(msg.chatUsername) || excludedSet.contains(msg.senderUsername) {
@@ -478,7 +600,7 @@ actor AutopilotService {
 
             // Buffer this message for batching
             batchBuffer[msg.chatUsername, default: []].append(msg)
-            let now = Date()
+            let now = monotonic()
             if batchTimers[msg.chatUsername] == nil {
                 // First message from this chat — set batch timer
                 batchStartTimes[msg.chatUsername] = now
@@ -501,9 +623,14 @@ actor AutopilotService {
             }
         }
 
+        // Age out what is already buffered (see `ageOutBufferedMessages`).
+        let aged = ageOutBufferedMessages(now: arrivalNow, horizon: Self.batchReplyHorizon)
+        immediateEntries.append(contentsOf: aged.entries)
+        ackedMsgUIDs.append(contentsOf: aged.ackedMsgUIDs)
+
         // Phase 2: Process ALL batches whose window has expired (both new and old).
         var batchEntries: [AutopilotLogEntry] = []
-        let now = Date()
+        let now = monotonic()
         // Force-pending media rows are action='pending' — they await a human
         // and must count toward sessionPending, not skipped, or the approval
         // badge under-counts and their approve decrements an unraised counter.
@@ -993,10 +1120,10 @@ actor AutopilotService {
         // Stall deduplication: same contact shouldn't receive identical stall text within 10 min
         if finalAction == .stall {
             let dedupWindow: TimeInterval = 600
-            let now = Date()
+            let now = monotonic()
             if let last = recentStallByContact[representative.chatUsername],
                last.text == replyText,
-               now.timeIntervalSince(last.timestamp) < dedupWindow {
+               now - last.timestamp < dedupWindow {
                 // Same guard as the read-no-reply branch: without it, suppressing a
                 // duplicate stall still opened a window (and burned 3-10s) in a
                 // group or with autopilot disabled.
@@ -1259,15 +1386,20 @@ actor AutopilotService {
         topic: String? = nil,
         gate: (@MainActor @Sendable () async -> Bool)? = nil
     ) async -> Bool {
-        let now = Date()
-        let oneHourAgo = now.addingTimeInterval(-3600)
+        let now = monotonic()
 
-        // C2 fix: global rate limit check. `<= 0` means unlimited —
-        // consistent with maxSendsPerSession, and 0 must not block every
-        // send (0 >= 0 is always true).
-        globalSendTimestamps = globalSendTimestamps.filter { $0 > oneHourAgo }
-        if config.maxRepliesPerHour > 0 && globalSendTimestamps.count >= config.maxRepliesPerHour {
-            print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(globalSendTimestamps.count)/h)")
+        // C2 fix: global rate limit check, plus the clock-jump fix — the
+        // window is measured on the monotonic axis, so moving the system
+        // clock forward cannot age these timestamps out and permit a second
+        // full hour of unattended sends.
+        let hour = Self.rollingSendHour(
+            sendTimes: globalSendTimestamps,
+            now: now,
+            limit: config.maxRepliesPerHour
+        )
+        globalSendTimestamps = hour.retained
+        if hour.blocked {
+            print("[WCHUD] Autopilot: GLOBAL rate limit hit (\(hour.retained.count)/h)")
             lastSendFailureMessage = "已达到每小时发送上限"
             return false
         }

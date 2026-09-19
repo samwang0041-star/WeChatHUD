@@ -262,6 +262,26 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     // MARK: - Schema
 
+    /// Column names of a table in declared order; empty if it does not exist.
+    ///
+    /// A PRAGMA cannot take a bound parameter, so the name is interpolated —
+    /// which is only safe while callers pass literals, hence the identifier
+    /// check instead of a comment asking for one.
+    func tableInfo(_ table: String) -> [String] {
+        guard table.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return [] }
+        var names: [String] = []
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA table_info(\(table))", -1, &stmt, nil) == SQLITE_OK else {
+            sqlite3_finalize(stmt)
+            return []
+        }
+        while sqlite3_step(stmt) == SQLITE_ROW, let name = sqlite3_column_text(stmt, 1) {
+            names.append(String(cString: name))
+        }
+        sqlite3_finalize(stmt)
+        return names
+    }
+
     private func createTables() throws {
         try exec("""
             CREATE TABLE IF NOT EXISTS whitelist (
@@ -634,7 +654,17 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         // matching — new rows always carry the queue item's UUID, so an
         // identical reply ("好的") can never resolve its sibling's twin.
         _ = try? exec("ALTER TABLE autopilot_log ADD COLUMN queue_id TEXT")
-        try exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_queue_id ON autopilot_log(queue_id)")
+        // Best-effort, exactly like the column it indexes. The comment above
+        // already declares a missing `queue_id` a runnable state (old rows
+        // keep NULL and fall back to (chat, reply) text matching), so a hard
+        // `try` here let one failed ALTER — another process holding the write
+        // lock, a full or read-only volume — turn into `createTables()`
+        // throwing, `store.open()` throwing, and AppDelegate terminating the
+        // app on every launch for every existing database. A swallowed
+        // failure is only honest if someone can see it, so print it.
+        if (try? exec("CREATE INDEX IF NOT EXISTS idx_autopilot_log_queue_id ON autopilot_log(queue_id)")) == nil {
+            print("[WCHUD] hud.sqlite3: idx_autopilot_log_queue_id unavailable; twin matching stays on (chat, reply) text")
+        }
 
         // -- autopilot_pending_sends table
         try exec("""
@@ -716,35 +746,21 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             )
         """)
 
-        // Migrate: add shared_context and communication_notes if missing
-        let colCheck = "PRAGMA table_info(conversation_memory)"
-        var colStmt: OpaquePointer?
-        var hasSharedContext = false
-        if sqlite3_prepare_v2(db, colCheck, -1, &colStmt, nil) == SQLITE_OK {
-            while sqlite3_step(colStmt) == SQLITE_ROW {
-                let name = String(cString: sqlite3_column_text(colStmt, 1))
-                if name == "shared_context" { hasSharedContext = true }
-            }
-        }
-        sqlite3_finalize(colStmt)
-        if !hasSharedContext {
-            try? exec("ALTER TABLE conversation_memory ADD COLUMN shared_context TEXT NOT NULL DEFAULT '[]'")
-            try? exec("ALTER TABLE conversation_memory ADD COLUMN communication_notes TEXT NOT NULL DEFAULT '[]'")
-        }
-
-        // Migrate: add conversation_phase and stance if missing
-        var hasPhase = false
-        var phaseStmt: OpaquePointer?
-        if sqlite3_prepare_v2(db, colCheck, -1, &phaseStmt, nil) == SQLITE_OK {
-            while sqlite3_step(phaseStmt) == SQLITE_ROW {
-                let name = String(cString: sqlite3_column_text(phaseStmt, 1))
-                if name == "conversation_phase" { hasPhase = true }
-            }
-        }
-        sqlite3_finalize(phaseStmt)
-        if !hasPhase {
-            try? exec("ALTER TABLE conversation_memory ADD COLUMN conversation_phase TEXT NOT NULL DEFAULT ''")
-            try? exec("ALTER TABLE conversation_memory ADD COLUMN stance TEXT NOT NULL DEFAULT ''")
+        // Migrate: add whichever of the memory columns this file lacks, each on
+        // its own. The previous shape probed only `shared_context` and then
+        // applied the pair as a block, so a database where the first ALTER
+        // landed and the second hit a busy or I/O error stayed missing
+        // `communication_notes` for good — the guard was satisfied on every
+        // later launch, no code path re-added the column, and the writer and
+        // reader of that column failed silently for the life of the file.
+        let memoryColumns = Set(tableInfo("conversation_memory"))
+        for definition in [
+            "shared_context TEXT NOT NULL DEFAULT '[]'",
+            "communication_notes TEXT NOT NULL DEFAULT '[]'",
+            "conversation_phase TEXT NOT NULL DEFAULT ''",
+            "stance TEXT NOT NULL DEFAULT ''",
+        ] where !memoryColumns.contains(String(definition.prefix(while: { $0 != " " }))) {
+            try? exec("ALTER TABLE conversation_memory ADD COLUMN \(definition)")
         }
 
         // Prune stale conversation memories (not updated in 90 days)

@@ -76,12 +76,20 @@ extension HUDStore {
 
     /// Retrospective query indexes called out by the evolution plan (P2):
     /// red-banner lookups by todo + time, and pending todos by status/created.
+    ///
+    /// Best-effort on purpose. Both tables are created by
+    /// `migrateRetrospective()` with `execIgnoringError`, so "the table is not
+    /// there" is a state this function can legitimately meet — and a hard
+    /// `try` here made it fatal: the throw propagated out of `store.open()`,
+    /// which AppDelegate answers with a modal and `NSApp.terminate`, on every
+    /// launch. `user_version` is only written after success, so a failed pass
+    /// retried forever looked like a bricked app, not a missing index.
     func migrateToV3RetrospectiveIndexes() throws {
-        try execProbeThrowing(
-            "CREATE INDEX IF NOT EXISTS idx_red_banner_dismissals_todo_created ON red_banner_dismissals(todo_id, created_at)"
-        )
-        try execProbeThrowing(
-            "CREATE INDEX IF NOT EXISTS idx_review_todos_status_created ON review_todos(status, created_at)"
-        )
+        for sql in [
+            "CREATE INDEX IF NOT EXISTS idx_red_banner_dismissals_todo_created ON red_banner_dismissals(todo_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_review_todos_status_created ON review_todos(status, created_at)",
+        ] where (try? execProbeThrowing(sql)) == nil {
+            print("[WCHUD] hud.sqlite3: index unavailable — retrospective queries stay unindexed: \(sql)")
+        }
     }
 }

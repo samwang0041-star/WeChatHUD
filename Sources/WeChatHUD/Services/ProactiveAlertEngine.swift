@@ -16,8 +16,17 @@ typealias ProactiveAlertNotificationSender = (
 final class ProactiveAlertEngine {
     private let store: HUDStore
     private let now: () -> Date
+    /// Clock for the two windows this engine owns — the hourly budget and the
+    /// per-identifier cooldown. `now` stays a `Date` because the *conditions*
+    /// it evaluates compare against message timestamps from the database;
+    /// these two only ever compare against times this process recorded, so
+    /// they belong on the monotonic axis (see ``MonotonicClock``). A backward
+    /// clock jump used to make every recorded push look future-dated, which
+    /// muted the whole reminder feature — including the P0 rule — until the
+    /// clock caught up, while the settings page still said 提醒已开启.
+    private let monotonic: () -> TimeInterval
     private let sendNotification: ProactiveAlertNotificationSender
-    private var alertHistory: [Date] = []
+    private var alertHistory: [TimeInterval] = []
     private let maxAlertsPerHour = 5
     /// Quiet period for an unresolved commitment that is already past its
     /// deadline. The condition stays true until the user resolves it, so the
@@ -33,7 +42,7 @@ final class ProactiveAlertEngine {
     /// The timestamp is the successful delivery submission time, so an
     /// identifier becomes eligible again once its window elapses.
     private struct DedupEntry {
-        let pushedAt: Date
+        let pushedAt: TimeInterval
         let window: TimeInterval
     }
     private var pushedIdentifiers: [String: DedupEntry] = [:]
@@ -66,19 +75,27 @@ final class ProactiveAlertEngine {
     init(store: HUDStore) {
         self.store = store
         self.now = Date.init
+        self.monotonic = { MonotonicClock.seconds() }
         self.sendNotification = Self.systemNotificationSender
         requestNotificationPermission()
     }
 
     /// Injectable initializer for deterministic rule tests. The production
     /// initializer above keeps the existing notification-permission behavior.
+    ///
+    /// `monotonic` defaults to the real uptime clock rather than to `now`, so a
+    /// test that forgets it sees a window that does not expire instead of one
+    /// that silently expires with the virtual clock. Tests that exercise an
+    /// elapsed window pass both.
     init(
         store: HUDStore,
         now: @escaping () -> Date,
+        monotonic: @escaping () -> TimeInterval = { MonotonicClock.seconds() },
         sendNotification: @escaping ProactiveAlertNotificationSender
     ) {
         self.store = store
         self.now = now
+        self.monotonic = monotonic
         self.sendNotification = sendNotification
     }
 
@@ -97,7 +114,7 @@ final class ProactiveAlertEngine {
         activeConversations: Set<String> = []
     ) {
         let evaluationNow = now()
-        pruneExpiredState(at: evaluationNow)
+        pruneExpiredState()
         let alertable = unreadItems.filter {
             !$0.replied && !activeConversations.contains($0.chatUsername)
         }
@@ -208,7 +225,7 @@ final class ProactiveAlertEngine {
     /// using a potentially stale published UI snapshot.
     func evaluateCommitmentDeadlines(commitments: [Commitment], at date: Date? = nil) {
         let evaluationNow = date ?? now()
-        pruneExpiredState(at: evaluationNow)
+        pruneExpiredState()
         // The mute list is the one promise every alert path has to keep:
         // 「不想再看到谁的消息 — 选谁，就哪个对话都不再提醒——包括他所在的群」
         // (`AdmissionSettingsView.swift:626`). The scan path honours it through
@@ -378,8 +395,7 @@ final class ProactiveAlertEngine {
         ignoresBudget: Bool = false,
         onSuccess: (() -> Void)? = nil
     ) -> Bool {
-        let submissionNow = now()
-        pruneExpiredState(at: submissionNow)
+        pruneExpiredState()
         if !ignoresBudget {
             guard alertHistory.count + inFlightIdentifiers.count < maxAlertsPerHour else { return false }
         }
@@ -399,8 +415,8 @@ final class ProactiveAlertEngine {
                     return
                 }
 
-                let deliveredAt = self.now()
-                self.pruneExpiredState(at: deliveredAt)
+                let deliveredAt = self.monotonic()
+                self.pruneExpiredState()
                 self.alertHistory.append(deliveredAt)
                 self.pushedIdentifiers[identifier] = DedupEntry(pushedAt: deliveredAt, window: cooldown)
                 onSuccess?()
@@ -409,11 +425,18 @@ final class ProactiveAlertEngine {
         return true
     }
 
-    private func pruneExpiredState(at date: Date) {
-        let cutoff = date.addingTimeInterval(-3600)
+    /// Prunes the budget and the per-identifier cooldown. Reads the monotonic
+    /// clock directly rather than taking the caller's evaluation date: these
+    /// entries were recorded on this axis, and pruning them against a wall
+    /// `Date` would compare uptime seconds with seconds-since-1970 and either
+    /// drop everything (re-firing the same alert on every scan) or nothing
+    /// (muting it for the length of a clock jump).
+    private func pruneExpiredState() {
+        let date = monotonic()
+        let cutoff = date - 3600
         alertHistory.removeAll { $0 <= cutoff }
         pushedIdentifiers = pushedIdentifiers.filter { _, entry in
-            entry.pushedAt.addingTimeInterval(entry.window) > date
+            entry.pushedAt + entry.window > date
         }
     }
 

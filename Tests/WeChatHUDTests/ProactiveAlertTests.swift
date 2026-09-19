@@ -311,6 +311,7 @@ final class ProactiveAlertTests: XCTestCase {
         var titles: [String] = []
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"), now: { current },
+            monotonic: { current.timeIntervalSince1970 },
             sendNotification: { title, _, _, _ in titles.append(title) }
         )
         let commitment = Commitment(
@@ -331,6 +332,7 @@ final class ProactiveAlertTests: XCTestCase {
         var titles: [String] = []
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"), now: { current },
+            monotonic: { current.timeIntervalSince1970 },
             sendNotification: { title, _, _, _ in titles.append(title) }
         )
         func commitment(_ status: CommitmentStatus, id: String) -> Commitment {
@@ -400,6 +402,7 @@ final class ProactiveAlertTests: XCTestCase {
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"),
             now: { current },
+            monotonic: { current.timeIntervalSince1970 },
             sendNotification: { title, _, _, completion in
                 titles.append(title)
                 completion(nil)
@@ -458,20 +461,127 @@ final class ProactiveAlertTests: XCTestCase {
 
     // MARK: - Rate limit logic
 
-    func testRateLimitPreventsExcessAlerts() {
-        var history: [Date] = Array(repeating: Date(), count: 5)
-        let oneHourAgo = Date(timeIntervalSinceNow: -3600)
-        history.removeAll { $0 < oneHourAgo }
-        // 5 alerts in the last hour → should block
-        XCTAssertTrue(history.count >= 5)
+    /// The hourly budget and the per-identifier cooldown are elapsed time
+    /// between two events this process observed, so they are measured on the
+    /// monotonic axis. Recorded against `Date` they could be erased — or made
+    /// unreachable — by anyone setting the system clock: a forward jump aged
+    /// every entry out of its hour, which re-fired an unresolved commitment
+    /// alert immediately and refilled the 5-per-hour budget that the P0 rule
+    /// depends on. The two assertions below are that jump, in one direction
+    /// and then the other.
+    @MainActor
+    func testForwardWallClockJumpDoesNotRefireAnOverdueCommitment() async {
+        let start = Date(timeIntervalSince1970: 5_000_000)
+        var wall = start
+        var mono: TimeInterval = 900_000
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { wall },
+            monotonic: { mono },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        let commitment = Commitment(
+            id: 1, msgUID: "late", chatUsername: "chat", chatName: "聊天",
+            content: "发报告", commitTo: "同事",
+            deadlineAt: start.addingTimeInterval(-3_600),
+            confidence: 0.9, status: .overdue, promptVersion: "v1",
+            createdAt: start, updatedAt: start
+        )
+
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"])
+
+        // Three days of wall clock, one second of real elapsed time.
+        wall = wall.addingTimeInterval(3 * 86_400)
+        mono += 1
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"], "墙钟跳格不能把 24 小时静默期清零")
     }
 
-    func testRateLimitAllowsAfterPrune() {
-        var history: [Date] = Array(repeating: Date(timeIntervalSinceNow: -7200), count: 5)
-        let oneHourAgo = Date(timeIntervalSinceNow: -3600)
-        history.removeAll { $0 < oneHourAgo }
-        // All alerts are > 1 hour old → pruned → should allow
-        XCTAssertTrue(history.count < 5)
+    @MainActor
+    func testForwardWallClockJumpDoesNotRefillTheHourlyBudget() async {
+        let start = Date(timeIntervalSince1970: 5_500_000)
+        var wall = start
+        var mono: TimeInterval = 910_000
+        var sends = 0
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { wall },
+            monotonic: { mono },
+            sendNotification: { _, _, _, completion in
+                sends += 1
+                completion(nil)
+            }
+        )
+
+        for index in 0..<5 {
+            engine.pushCrossGroupVIPAlert(
+                vipName: "同事", vipUsername: "alice-\(index)",
+                groupName: "群聊", groupUsername: "group-\(index)",
+                preview: "hello", messageCount: 1
+            )
+        }
+        await Task.yield()
+        XCTAssertEqual(sends, 5)
+
+        wall = wall.addingTimeInterval(3 * 86_400)
+        mono += 1
+        engine.pushCrossGroupVIPAlert(
+            vipName: "同事", vipUsername: "alice-six",
+            groupName: "群聊", groupUsername: "group-six",
+            preview: "hello", messageCount: 1
+        )
+        await Task.yield()
+        XCTAssertEqual(sends, 5, "墙钟跳格不能把每小时配额退回，P0 规则依赖这个上限")
+    }
+
+    /// The mirror image: measuring these windows on a clock the system owns
+    /// could also make them unreachable rather than erasable. Pruning
+    /// uptime-scaled entries against a seconds-since-1970 cutoff (or the other
+    /// way round) leaves nothing eligible ever again, and 设置 still reads
+    /// 「已开启提醒」. So a window that genuinely elapsed must still reopen —
+    /// here the wall clock has only gone backwards.
+    @MainActor
+    func testBackwardWallClockJumpDoesNotMuteAlertsForever() async {
+        let start = Date(timeIntervalSince1970: 6_000_000)
+        var wall = start
+        var mono: TimeInterval = 40_000
+        var titles: [String] = []
+        let engine = ProactiveAlertEngine(
+            store: HUDStore(dbPath: ":memory:"),
+            now: { wall },
+            monotonic: { mono },
+            sendNotification: { title, _, _, completion in
+                titles.append(title)
+                completion(nil)
+            }
+        )
+        let commitment = Commitment(
+            id: 1, msgUID: "late", chatUsername: "chat", chatName: "聊天",
+            content: "发报告", commitTo: "同事",
+            deadlineAt: start.addingTimeInterval(-3_600),
+            confidence: 0.9, status: .overdue, promptVersion: "v1",
+            createdAt: start, updatedAt: start
+        )
+
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles, ["承诺已到期"])
+
+        // The quiet period has genuinely elapsed; the wall clock has gone the
+        // other way (kept barely earlier, so the commitment is still overdue
+        // and only the window axis is in question).
+        mono += 24 * 3_600 + 1
+        wall = wall.addingTimeInterval(-1)
+        engine.evaluateCommitmentDeadlines(commitments: [commitment])
+        await Task.yield()
+        XCTAssertEqual(titles.count, 2, "静默期真的过了就要再提醒，哪怕墙钟倒退了")
     }
 
     // MARK: - Engine delivery state
@@ -484,6 +594,7 @@ final class ProactiveAlertTests: XCTestCase {
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"),
             now: { current },
+            monotonic: { current.timeIntervalSince1970 },
             sendNotification: { _, _, _, completion in
                 sends += 1
                 completion(nil)
@@ -525,6 +636,7 @@ final class ProactiveAlertTests: XCTestCase {
         let engine = ProactiveAlertEngine(
             store: HUDStore(dbPath: ":memory:"),
             now: { current },
+            monotonic: { current.timeIntervalSince1970 },
             sendNotification: { _, _, _, completion in
                 sends += 1
                 completion(nil)
