@@ -45,7 +45,8 @@ final class InsightDataLoader {
             selfNames: selfNames,
             sinceTsEpoch: cutoff,
             myUsername: reader.myUsername(),
-            myDisplayName: reader.displayName(for: reader.myUsername())
+            myDisplayName: reader.displayName(for: reader.myUsername()),
+            recentSinceTs: InsightRecentWindow.cutoff()
         )
 
         var stats: [String: ChatStatsData] = [:]
@@ -93,7 +94,8 @@ final class InsightDataLoader {
                 ignoredMessages: [],
                 selfInitiated: bulk.selfInitiated,
                 earliestTs: bulk.earliestTs,
-                latestTs: bulk.latestTs
+                latestTs: bulk.latestTs,
+                recentMessageCount: bulk.recentCount
             )
             stats[chatUsername] = chatStats
 
@@ -174,7 +176,8 @@ final class InsightDataLoader {
             selfNames: selfNames,
             sinceTsEpoch: cutoff,
             myUsername: myUsername,
-            myDisplayName: myDisplayName
+            myDisplayName: myDisplayName,
+            recentSinceTs: InsightRecentWindow.cutoff()
         )
 
         var stats: [String: ChatStatsData] = [:]
@@ -229,7 +232,8 @@ final class InsightDataLoader {
                 ignoredMessages: [],
                 selfInitiated: bulk.selfInitiated,
                 earliestTs: bulk.earliestTs,
-                latestTs: bulk.latestTs
+                latestTs: bulk.latestTs,
+                recentMessageCount: bulk.recentCount
             )
             stats[chatUsername] = chatStats
 

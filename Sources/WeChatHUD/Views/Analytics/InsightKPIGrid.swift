@@ -75,18 +75,23 @@ struct InsightKPIGrid: View {
 
     /// Direction only. The number this used to print was a ratio of two
     /// averages (`近 7 天日均 / 全窗口日均`) dressed as a percentage delta, so
-    /// 「-100% 近期偏闲」 was both unreadable and — because `recent7dMsgs` adds a
-    /// chat's *entire* history whenever that chat's latest message is recent
-    /// (`ChatInsightEngine.swift:385`) — not a count of the last seven days at
-    /// all. Words carry the same guidance without implying a precision the
-    /// computation does not have.
-    private func densityHint(_ ratio: Double) -> String {
+    /// 「-100% 近期偏闲」 was both unreadable and — the numerator counted a
+    /// chat's whole window history whenever its latest message was recent —
+    /// not a count of the last seven days at all. Words carry the same guidance
+    /// without implying a precision the computation does not have.
+    ///
+    /// `nil` means the two spans are the same span: a 7-day-or-shorter window
+    /// cannot compare "recent" against "overall", and printing 节奏正常 for that
+    /// would be a verdict on no evidence.
+    private func densityHint(_ ratio: Double?) -> String {
+        guard let ratio else { return "时间范围不足 7 天，无法比较近期与整体" }
         if ratio > 1.3 { return "近期更活跃" }
         if ratio < 0.7 { return "近期更安静" }
         return "节奏正常"
     }
 
-    private func densityStatus(_ ratio: Double) -> KPIStatus {
+    private func densityStatus(_ ratio: Double?) -> KPIStatus {
+        guard let ratio else { return .neutral }
         if ratio > 1.5 { return .red }
         if ratio > 1.3 || ratio < 0.7 { return .orange }
         return .green

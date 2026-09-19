@@ -209,4 +209,21 @@ struct ChatStatsData {
     let selfInitiated: Bool             // first message in window is from self
     let earliestTs: Int
     let latestTs: Int
+    /// Messages inside `InsightRecentWindow`, which is a span — not "this chat
+    /// was recently active, so count its whole history".
+    var recentMessageCount: Int = 0
+}
+
+/// The "近期" the insight overview means.
+///
+/// Declared once because the window has to agree between the SQL scan that
+/// counts it and the overview that divides it: a cutoff computed in one place
+/// and a `/ 7.0` written in another is how a metric silently stops being about
+/// the last seven days.
+enum InsightRecentWindow {
+    static let days = 7
+
+    static func cutoff(now: Date = Date()) -> Int {
+        Int(now.timeIntervalSince1970) - days * 86_400
+    }
 }

@@ -1499,6 +1499,43 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         let selfInitiated: Bool          // first message in window is from self
         let earliestTs: Int
         let latestTs: Int
+        /// Messages at or after the caller's recent-window cutoff.
+        ///
+        /// This exists because "近期" needs to mean a span, not a property of
+        /// the whole window: the insight overview used to infer it from
+        /// `latestTs >= cutoff`, which counts a chat's *entire* history as
+        /// recent the moment one message lands inside the window.
+        let recentCount: Int
+
+        /// Folds another shard's stats for the same chat in.
+        ///
+        /// A `Msg_<md5>` table legitimately appears in more than one
+        /// `message_N.db`, and `findMessageDBs` walks them all. Assigning per
+        /// DB (which this used to do) left every insight number — total volume,
+        /// active chats, density — describing whichever shard happened to be
+        /// read last, silently.
+        func merged(with other: BulkChatStats) -> BulkChatStats {
+            var senders = senderCounts
+            for (key, value) in other.senderCounts { senders[key, default: 0] += value }
+            var types = typeCounts
+            for (key, value) in other.typeCounts { types[key, default: 0] += value }
+            // Whichever shard holds the oldest message also holds the one that
+            // decides who spoke first.
+            let earlier = earliestTs <= other.earliestTs ? self : other
+            return BulkChatStats(
+                chatUsername: chatUsername,
+                totalCount: totalCount + other.totalCount,
+                selfCount: selfCount + other.selfCount,
+                senderCounts: senders,
+                hourlyBuckets: zip(hourlyBuckets, other.hourlyBuckets).map(+),
+                weekdayBuckets: zip(weekdayBuckets, other.weekdayBuckets).map(+),
+                typeCounts: types,
+                selfInitiated: earlier.selfInitiated,
+                earliestTs: min(earliestTs, other.earliestTs),
+                latestTs: max(latestTs, other.latestTs),
+                recentCount: recentCount + other.recentCount
+            )
+        }
     }
 
     /// Build the reverse tableName → chatUsername map used to attribute rows
@@ -1523,7 +1560,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         selfNames: Set<String>,
         sinceTsEpoch: Int = 0,
         myUsername: String = "",
-        myDisplayName: String = ""
+        myDisplayName: String = "",
+        recentSinceTs: Int = 0
     ) -> [String: BulkChatStats] {
         // Build chatUsername → (tableName, chatUsername) map
         let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
@@ -1576,6 +1614,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 var firstSenderIsSelf = false
                 var earliestTs = Int.max
                 var latestTs = 0
+                var recent = 0
 
                 while sqlite3_step(sStmt) == SQLITE_ROW {
                     let senderId = Int(sqlite3_column_int64(sStmt, 0))
@@ -1603,11 +1642,12 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
                     if createTime < earliestTs { earliestTs = createTime }
                     if createTime > latestTs { latestTs = createTime }
+                    if recentSinceTs > 0, createTime >= recentSinceTs { recent += 1 }
                     total += 1
                 }
                 guard total > 0 else { continue }
 
-                result[chatUsername] = BulkChatStats(
+                let shard = BulkChatStats(
                     chatUsername: chatUsername,
                     totalCount: total,
                     selfCount: selfCount,
@@ -1617,8 +1657,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     typeCounts: typeCounts,
                     selfInitiated: firstSenderIsSelf,
                     earliestTs: earliestTs,
-                    latestTs: latestTs
+                    latestTs: latestTs,
+                    recentCount: recent
                 )
+                // Same chat, next `message_N.db`: fold, never replace.
+                result[chatUsername] = result[chatUsername].map { $0.merged(with: shard) } ?? shard
             }
         }
         return result

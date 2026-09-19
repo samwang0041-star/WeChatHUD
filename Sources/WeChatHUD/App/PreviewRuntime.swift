@@ -73,7 +73,12 @@ enum PreviewRuntime {
                 ignoredMessages: isGroup ? [(sender: "广告君", text: "【推广】", time: 0)] : [],
                 selfInitiated: !isGroup,
                 earliestTs: 0,
-                latestTs: 0
+                latestTs: 0,
+                // One quarter of a 30-day window's volume inside the last seven
+                // days, i.e. an even week. Without this the fixture reads as 0
+                // recent messages and the demo overview is permanently stuck on
+                // 「近期更安静」, which QA then chases as a product defect.
+                recentMessageCount: total / 4
             )
         }
         return [

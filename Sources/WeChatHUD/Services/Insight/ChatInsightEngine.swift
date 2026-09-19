@@ -222,7 +222,11 @@ enum ChatStatsEngine {
         let pendingAsks: Int
         let urgentAsks: Int
         let recalledMessages: Int
-        let recentDensityRatio: Double      // last 7d daily avg / overall daily avg
+        /// Last-7-day daily average ÷ the whole-window daily average.
+        /// `nil` when the window is too short for the two spans to differ —
+        /// a ratio of a period against itself is 1.0 by construction, and 1.0
+        /// is not evidence that the rhythm is normal.
+        let recentDensityRatio: Double?
 
         /// The quantity `boundaryScore` is made of. The score is literally
         /// `100 - 下班后的工作消息 / 全部工作消息`, so showing 「边界分 70」 asked
@@ -380,15 +384,23 @@ enum ChatStatsEngine {
         let avgPerChat = activeChats > 0 ? Double(totalMessages) / Double(activeChats) : 0
 
         // D10: Pressure Signals
-        let nowTs = Int(now.timeIntervalSince1970)
-        let sevenDaysAgo = nowTs - 7 * 86400
-        let recent7dMsgs = statsArr.reduce(0) { total, s in
-            if s.latestTs >= sevenDaysAgo { return total + s.messageCount }
-            return total
-        }
+        // 「近期」 is now a span, not a property of the chat: the scan counted
+        // messages inside `InsightRecentWindow` directly. The old version added
+        // a chat's *whole* window history whenever its latest message fell in
+        // the last seven days, so on a 30-day window the ratio was pinned near
+        // 30/7 ≈ 4.3 no matter how quiet the week actually was — and the card
+        // said 「近期更活跃」 about the length of the window the user picked.
+        let recentWindowMsgs = statsArr.reduce(0) { total, s in total + s.recentMessageCount }
         let dailyAvgOverall = windowDays > 0 ? Double(totalMessages) / Double(windowDays) : 0
-        let dailyAvgRecent = Double(recent7dMsgs) / 7.0
-        let densityRatio = dailyAvgOverall > 0 ? dailyAvgRecent / dailyAvgOverall : 1.0
+        // A window of seven days or fewer makes "近期" and "全期" the same span,
+        // so the ratio is 1.0 by construction. That is not "节奏正常" — it is no
+        // comparison available, and the card says so instead of grading it.
+        let densityRatio: Double?
+        if windowDays > InsightRecentWindow.days, dailyAvgOverall > 0 {
+            densityRatio = (Double(recentWindowMsgs) / Double(InsightRecentWindow.days)) / dailyAvgOverall
+        } else {
+            densityRatio = nil
+        }
 
         return GlobalOverview(
             totalMessages: totalMessages, myMessages: myMessages,

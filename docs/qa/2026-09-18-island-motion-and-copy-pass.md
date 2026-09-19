@@ -1565,3 +1565,55 @@ P0→diamond、P1→ring、P2→disc，同一 8pt 占位、同一 14×14 槽位�
 循环第一秒就退出、应用在 3 秒时被杀 —— 于是拿到一张**动画未停稳**的图
 （第一行标题被切一半、底部大片空）。这张图不能当证据。改成固定等待后正常。
 判据：多段序列的每张图都要单独确认"已停稳"，不能假定序列后段一定完整。
+
+## §92（第 24 轮）洞察算法两处：「近期」根本不是近七天，多分片库只算最后一个分片
+
+任务 #9 起于"口径不清"，查下去是两处算错，其中一处影响面极大。
+
+### 一、`bulkMessageStats` 逐库赋值，不跨分片归并（P1）
+
+`WeChatReader.bulkMessageStats` 外层 `for relPath in findMessageDBs()`，内层
+`result[chatUsername] = BulkChatStats(...)` —— **直接覆盖**。同一个 `Msg_<md5>`
+表合法地存在于多个 `message_N.db`，于是每次洞察扫描后，一个对话的统计只剩
+**最后读到的那个分片**。
+
+影响面不是我猜的：`WeChatShardMergeTests` 的文件头记着参考账号实测
+**932/2572 张表跨分片、115 个关注对话里 103 个是多分片** —— 约九成对话的
+「消息总量 / 活跃对话 / 非工时占比 / 密度」全部只反映一部分历史。
+读消息那条链路早就修过（`getMessages` 会归并），统计这条漏了，所以它只在
+"数字看着挺合理"的层面暴露不了 —— 渲染质检抓不到，只有算法审计能抓到。
+
+修法：`BulkChatStats.merged(with:)` 折叠 totalCount/selfCount/senderCounts/
+hourly/weekday/typeCounts/earliest/latest/recentCount；`selfInitiated`（"谁先开口"）
+取**持有最早消息的那个分片**，而不是读取顺序的最后一个 —— 折叠顺序不该改变答案。
+
+### 二、`recent7dMsgs` 数的是"最近活跃的对话的全部历史"
+
+原式：`if s.latestTs >= sevenDaysAgo { total += s.messageCount }`。一个 30 天窗口里
+只要某对话最近 7 天说过一句话，它**整段 30 天**的消息都被算成"近期"。再除以 7 得到
+"近期日均"，与"全窗口日均"（total/30）相除 —— 只要所有对话都近期活跃（正常账号基本如此），
+比值恒等于 **30/7 ≈ 4.3**，与那一周实际忙不忙无关。界面据此常年显示「近期更活跃」+ 橙色点，
+说的其实是"你选的时间范围是 30 天"。
+
+修法：让"近期"回到**一段区间**。SQL 扫描处已有逐条 `create_time`，直接数进
+`recentCount`；口径常量收进 `InsightRecentWindow`（7 天），扫描与除法共用一处定义 ——
+"cutoff 在一处算、`/7` 在另一处写"正是这类指标悄悄跑偏的方式。
+另外：窗口 ≤7 天时"近期"与"全期"是同一段，比值按构造必为 1.0，这不是"节奏正常"而是
+**没有可比性**，`recentDensityRatio` 改为 `Double?`，卡片显示
+「时间范围不足 7 天，无法比较近期与整体」+ 中性色（沿用本轮已确立的"空分母不许打分"）。
+
+### 测试与变异检验
+
+`InsightDensityAndShardTests`（6 项）+ `WeChatShardMergeTests` 新增 1 项：
+- 均匀历史 → 比值 1.0（旧式给 4.3）；安静周 → 0；忙周 → 4.29；窗口 7 天 → nil。
+- 用**现成的多分片合成库**测真实调用点（不是只测 `merged(with:)` 这个纯函数）：
+  两分片各 2 条 → 期望 4 条。
+- 变异检验：把归并退回成 `result[chatUsername] = shard`，该测试立刻报
+  `("Optional(2)") is not equal to ("Optional(4)")` —— 门禁是真的在守。
+
+### 没做到的
+
+KPI 卡片的**视口证据这轮没拿到**：`--preview-insight-overview` 那一跑截到的是
+「今天」页与设置窗口（窗口宽度还带着上一轮 `--preview-narrow` 的 autosave 残留，
+2830×1868 px），洞察总览没渲染出来。文案与配色分支是 `recentDensityRatio` 的纯映射，
+由上述测试覆盖，但"这张卡在真机上到底长什么样"仍是未验证项，不留作已完成。

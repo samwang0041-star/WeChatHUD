@@ -24,6 +24,29 @@ final class WeChatShardMergeTests: XCTestCase {
         ])
     }
 
+    /// The same split silently halved every insight number for a multi-shard
+    /// chat: `bulkMessageStats` assigned per DB instead of folding, so the
+    /// overview described whichever shard happened to be read last. On the
+    /// reference account that is 103 of 115 whitelisted chats.
+    func testBulkMessageStatsFoldsEveryShard() throws {
+        let fixture = try fixture()
+        defer { fixture.cleanup() }
+
+        let stats = fixture.reader.bulkMessageStats(
+            chatUsernames: [chat],
+            selfNames: [],
+            recentSinceTs: 2_500
+        )
+
+        XCTAssertEqual(stats[chat]?.totalCount, 4, "two shards of two messages each")
+        XCTAssertEqual(stats[chat]?.earliestTs, 1_000)
+        XCTAssertEqual(stats[chat]?.latestTs, 3_000)
+        XCTAssertEqual(
+            stats[chat]?.recentCount, 1,
+            "only createTime 3_000 is at or after the cutoff — 近期 must be a span, not a shard"
+        )
+    }
+
     func testGetMessagesMergesEveryShardNewestFirst() throws {
         let fixture = try fixture()
         defer { fixture.cleanup() }
