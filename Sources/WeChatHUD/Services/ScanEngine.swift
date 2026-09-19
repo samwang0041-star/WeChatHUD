@@ -1036,7 +1036,11 @@ enum ScanEngine {
     /// headroom because `unreadCount` counts inbound rows while the page mixes
     /// in self rows; private chats need at least the whole unanswered tail.
     static func unreadFetchLimit(_ session: SessionInfo) -> Int {
-        let wanted = session.isGroup ? session.unreadCount * 2 : session.unreadCount
+        // `unread_count` is WeChat's column, not ours. Clamp before the group
+        // doubling: a corrupt or future-schema value would otherwise trap on
+        // `* 2` and kill the resident process over a page size.
+        let unread = min(max(session.unreadCount, 0), unreadWindowCap)
+        let wanted = session.isGroup ? unread * 2 : unread
         return min(max(wanted, 20), unreadWindowCap)
     }
 
@@ -1103,17 +1107,33 @@ enum ScanEngine {
         } ?? recallerIsSelf
         // The original row is the message owner's newest message at-or-
         // before the recall time (within a 10-minute horizon).
-        let original = candidates.first(where: {
+        let window = candidates.filter {
             $0.id != recall.id
                 && $0.sysKind == nil
                 && $0.createTime <= recall.createTime
                 && $0.createTime >= recall.createTime - 600
-                && (ownerIsSelf
-                    ? MessageHelpers.isFromSelf($0, chatUsername: chatUsername,
-                                                myUsername: myUsername,
-                                                myDisplayName: myDisplayName,
-                                                mySelfNames: mySelfNames)
-                    : ($0.senderName == owner || $0.senderUsername == owner))
+        }
+        // WeChat names the owner with a display name, and two members of one
+        // group can carry the same display name. Claiming the newest same-
+        // named row would then tombstone the OTHER member's message — a
+        // live commitment cancelled and a pending ask deleted, which the scan
+        // watermark never redoes. Ambiguous name: record the recall, cascade
+        // nothing.
+        let ownerClaimants = Set(window.compactMap { row in
+            row.senderName == owner && !row.senderUsername.isEmpty
+                ? row.senderUsername : nil
+        })
+        let ownerNameIsAmbiguous = !ownerIsSelf && ownerClaimants.count >= 2
+        if ownerNameIsAmbiguous {
+            print("[WCHUD] recall cascade skipped: name claimed by \(ownerClaimants.count) senders")
+        }
+        let original = ownerNameIsAmbiguous ? nil : window.first(where: {
+            ownerIsSelf
+                ? MessageHelpers.isFromSelf($0, chatUsername: chatUsername,
+                                            myUsername: myUsername,
+                                            myDisplayName: myDisplayName,
+                                            mySelfNames: mySelfNames)
+                : ($0.senderName == owner || $0.senderUsername == owner)
         })
         let senderUsername = original?.senderUsername ?? owner
         let contact = contactMap[senderUsername]

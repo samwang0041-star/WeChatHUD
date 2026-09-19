@@ -144,7 +144,10 @@ final class InsightStore: ObservableObject {
         // walk was running has to be drained by that pass too. Draining only in
         // the user branch left the page labelled 近 30 天 over 今天's numbers
         // until the user switched a second time.
-        if userReloadWhileBusy {
+        // `while`, not `if`: a reload requested *during* this drain would
+        // otherwise leave the flag set until the next automatic pass, which
+        // would then blank the page with a spinner nobody asked for.
+        while userReloadWhileBusy {
             userReloadWhileBusy = false
             await performReload(
                 store: store, reader: reader, replyDebtItems: replyDebtItems, clearsView: true

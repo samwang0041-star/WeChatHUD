@@ -1448,17 +1448,27 @@ actor AutopilotService {
             peerLastMessage: item.peerLastMessage, topic: item.topic
         )
         if success {
-            try? store.deletePendingSend(id: item.id)
+            // Delivered, so it counts as sent even if the bookkeeping below
+            // fails — but the queue row and its log twin must be retired in
+            // ONE transaction. Split across two `try?` calls, a failed twin
+            // flip left 'pending' on the approval board for a reply the peer
+            // had already received.
+            let flipped: Int
+            do {
+                flipped = try store.resolveVerifiedSend(
+                    queueId: item.id,
+                    chatUsername: item.chatUsername, replyText: item.replyText
+                )
+            } catch {
+                print("[WCHUD] Autopilot: verified send could not retire its rows: \(error)")
+                flipped = 0
+            }
             // Resolve the pending autopilot_log twin in the same step —
             // otherwise the approval list keeps offering this reply and a
             // later "确认发送" pushes it a second time. sessionPending only
             // counts items awaiting a human — an auto-sent item whose log
             // twin was already .sent never incremented it, so decrement
             // only when a pending row actually flipped.
-            let flipped = (try? store.markAutopilotLogSent(
-                queueId: item.id,
-                chatUsername: item.chatUsername, replyText: item.replyText
-            )) ?? 0
             sessionStats.totalSent += 1
             sessionSent += 1
             if flipped > 0 {

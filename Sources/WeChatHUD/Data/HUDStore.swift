@@ -3563,10 +3563,38 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// completed.
     private static let unverifiedClaim = "(action='sent' AND sent_at IS NULL OR action='stall')"
 
+    /// A verified send retires the queue row and resolves its log twin in one
+    /// transaction. Split across two `try?` calls, a failed twin flip left the
+    /// twin 'pending' with no queue row — the approval list kept offering
+    /// 确认发送 for a reply the peer had already received, and one click sent
+    /// it a second time. Rolled back instead, the queue row is still there for
+    /// the staleness and new-content gates to reach.
+    func resolveVerifiedSend(
+        queueId: UUID, chatUsername: String, replyText: String
+    ) throws -> Int {
+        try withTransaction {
+            try deletePendingSend(id: queueId)
+            return try markAutopilotLogSent(
+                queueId: queueId, chatUsername: chatUsername, replyText: replyText)
+        }
+    }
+
     /// Resolve the log twin of a queue item. Returns the flipped row count —
     /// callers decrement pending counters only when a pending row resolved.
     @discardableResult
     func markAutopilotLogSent(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        // Two to four statements against different row states ('unverified
+        // claim', 'skipped', 'pending'): half-applied, the same reply is both
+        // 'sent' and still awaiting a human.
+        try withTransaction {
+            try markAutopilotLogSentUnchecked(
+                queueId: queueId, chatUsername: chatUsername, replyText: replyText)
+        }
+    }
+
+    private func markAutopilotLogSentUnchecked(
+        queueId: UUID, chatUsername: String, replyText: String
+    ) throws -> Int {
         let now = String(Int(Date().timeIntervalSince1970))
         let qid = queueId.uuidString
         // .sent rows are written at ENQUEUE time with sent_at NULL — stamp
@@ -3616,6 +3644,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// reply the user just canceled. Returns the flipped row count.
     @discardableResult
     func markAutopilotLogSkipped(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        try withTransaction {
+            try markAutopilotLogSkippedUnchecked(
+                queueId: queueId, chatUsername: chatUsername, replyText: replyText)
+        }
+    }
+
+    private func markAutopilotLogSkippedUnchecked(
+        queueId: UUID, chatUsername: String, replyText: String
+    ) throws -> Int {
         let qid = queueId.uuidString
         // An unverified send claim (enqueue-time '.sent', or a 'stall' row)
         // claimed a send that never happened — a stop/cancel must un-claim
@@ -3643,6 +3680,15 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// out of the approval list forever. Returns the flipped row count.
     @discardableResult
     func markAutopilotLogPending(queueId: UUID, chatUsername: String, replyText: String) throws -> Int {
+        try withTransaction {
+            try markAutopilotLogPendingUnchecked(
+                queueId: queueId, chatUsername: chatUsername, replyText: replyText)
+        }
+    }
+
+    private func markAutopilotLogPendingUnchecked(
+        queueId: UUID, chatUsername: String, replyText: String
+    ) throws -> Int {
         let qid = queueId.uuidString
         var changes = try execReturningChanges(
             "UPDATE autopilot_log SET action='pending' WHERE queue_id=? AND \(Self.unverifiedClaim)",

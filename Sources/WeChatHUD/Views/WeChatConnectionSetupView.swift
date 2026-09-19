@@ -640,11 +640,21 @@ struct WeChatConnectionSetupView: View {
         }
     }
 
+    /// How long the re-login wait polls. Each tick spawns an `lsof`, and the
+    /// driving `Task` handle is discarded, so nothing else can end a wait the
+    /// user walked away from — without a deadline an abandoned 「等待微信重新
+    /// 登录」 leaves the 24/7 overlay polling every 2 s for the rest of the
+    /// session. 10 minutes is generous for re-entering a WeChat password.
+    static let reloginWaitSeconds = 600
+
     /// Polls for a WeChat process launched after the resign timestamp and
     /// confirms the fresh process carries exactly one account root. Returns
-    /// the observed root, or nil when the user cancels.
+    /// the observed root, or nil when the user cancels or the wait expires.
     private func awaitFreshWeChatRelogin(since mark: Date, token: UUID) async -> String? {
+        let deadline = Date().addingTimeInterval(TimeInterval(Self.reloginWaitSeconds))
+        var timedOut = false
         while !Task.isCancelled {
+            guard Date() < deadline else { timedOut = true; break }
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard token == preparationToken else { return nil }
             guard let application = runningWeChatApplication,
@@ -655,6 +665,13 @@ struct WeChatConnectionSetupView: View {
                   observed.count == 1,
                   let root = observed.first else { continue }
             return WeChatAccountEvidence.canonicalRoot(root)
+        }
+        if timedOut, token == preparationToken {
+            // Leaving the phase at `.waitingForWeChatRelogin` would keep the
+            // page claiming a wait that already stopped.
+            keyPreparation.setPhase(.failed(reason: FirstLaunchGuide.userFacingPreparationError(
+                "等了 10 分钟还没有等到微信重新登录，已停止等待。重新登录微信后再点一次「开始准备」。"
+            )))
         }
         return nil
     }

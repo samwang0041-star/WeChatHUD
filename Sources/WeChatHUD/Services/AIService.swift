@@ -566,7 +566,21 @@ func completeWithMetadata(
             while groupIndex < groups.count {
                 var matched = 0
                 var label: String?
-                for length in stride(from: groups.count - groupIndex, through: 1, by: -1) {
+                // No identifier is shorter than 11 digits or longer than 19, and
+                // only a leading `86` can add to that, so a window wider than 21
+                // digits can never classify. Stop widening there instead of
+                // constructing every suffix of the run: a peer who pastes a
+                // 500-group digit storm must not cost 2·10⁵ window builds per
+                // mask call on the request path.
+                var reach = 1
+                var reachDigits = groups[groupIndex].count
+                while reachDigits <= Self.maxClassifiableDigits,
+                      groupIndex + reach < groups.count {
+                    reachDigits += groups[groupIndex + reach].count
+                    if reachDigits > Self.maxClassifiableDigits { break }
+                    reach += 1
+                }
+                for length in stride(from: reach, through: 1, by: -1) {
                     let window = Array(groups[groupIndex..<groupIndex + length])
                     if let candidate = digitRunLabel(window) {
                         matched = length; label = candidate; break
@@ -611,6 +625,10 @@ func completeWithMetadata(
                 body = String(body.dropFirst(2))
             }
             guard checked.count > 1 else { return nil }
+            // An ID card is hand-copied in its printed 地址6-出生8-顺序4 chunking
+            // far more often than as one 18-digit wall, so that shape has to
+            // classify too — the 3-4 rule alone would ship it in plaintext.
+            if isIDCardChunking(checked) { return "[证件]" }
             guard checked.allSatisfy({ (3...4).contains($0.count) }) else { return nil }
         }
         let n = body.count
@@ -619,6 +637,26 @@ func completeWithMetadata(
         if n == 13, body.hasPrefix("86"), isMobile(String(body.dropFirst(2))) { return "[手机]" }
         if n == 11, isMobile(body) { return "[手机]" }
         return nil
+    }
+
+    /// Total digits any label can cover, plus the `86` prefix that is dropped
+    /// before the length bands are read.
+    static let maxClassifiableDigits = 21
+
+    /// `110101 19900101 0011`: exactly 6-8-4 with a plausible birth date in
+    /// the middle. Narrow on purpose — a 16-digit date range (`20260901-
+    /// 20260930`, 8-8) and two stacked 8-digit timestamps must stay text.
+    static func isIDCardChunking(_ groups: [String]) -> Bool {
+        guard groups.count == 3, groups[0].count == 6, groups[1].count == 8,
+              groups[2].count == 4 else { return false }
+        let birth = groups[1]
+        // No upper bound tied to "today": a future-dated year is not a birth
+        // date, but over-masking here is the safe direction and keeps the rule
+        // from rotting as the calendar moves.
+        guard let year = Int(birth.prefix(4)), (1900...2100).contains(year),
+              let month = Int(birth.dropFirst(4).prefix(2)), (1...12).contains(month),
+              let day = Int(birth.dropFirst(6).prefix(2)), (1...31).contains(day) else { return false }
+        return true
     }
 
     private static func isMobile(_ number: String) -> Bool {

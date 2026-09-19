@@ -120,6 +120,42 @@ final class AIOutboundPrivacyBoundaryTests: XCTestCase {
         }
     }
 
+    /// 身份证最常见的抄写方式就是印刷分节 6-8-4。分组规则只认 3-4 位时，
+    /// 这个写法整条都不匹配，18 位原文会原样发给配置好的 AI 端点。
+    func testPrintChunkedIDCardIsMasked() {
+        for text in [
+            "身份证 110101 19900101 0011",
+            "证件号 110101-19900101-0011",
+            "110101 19900101 001X"
+        ] {
+            let masked = AIService.maskDirectIdentifiers(text)
+            XCTAssertFalse(masked.contains("19900101"), "\(text) left in plaintext: \(masked)")
+        }
+        XCTAssertTrue(
+            AIService.maskDirectIdentifiers("110101 19900101 0011").contains("[证件]"))
+    }
+
+    /// The 6-8-4 rule must not swallow the 8-8 shapes that motivated the
+    /// grouping gate in the first place.
+    func testEightDigitPairsAreNotReadAsIDCards() {
+        for text in [
+            "账期 20260901-20260930",
+            "流水 20260901 20260930 0011",
+            "对比 11010100000000000011 2026"
+        ] {
+            XCTAssertEqual(AIService.maskDirectIdentifiers(text), text, "\(text) was eaten")
+        }
+    }
+
+    /// Widening stops at the longest classifiable window, which must not cost
+    /// a real identifier that sits behind a digit storm.
+    func testIdentifiersAfterADigitStormAreStillMasked() {
+        let storm = Array(repeating: "77777777", count: 200).joined(separator: " ")
+        let masked = AIService.maskDirectIdentifiers("\(storm) 138 0013 8000")
+        XCTAssertTrue(masked.contains("[手机]"), masked)
+        XCTAssertFalse(masked.contains("138 0013 8000"), masked)
+    }
+
     /// Masking a window must not weld the label onto whatever follows it:
     /// the separator is part of the user's text.
     func testMaskingKeepsTheSeparatorAfterTheConsumedWindow() {
