@@ -34,10 +34,14 @@ struct InsightSidebarView: View {
         .task(id: dayStatsTaskID) { await refreshDayStats() }
     }
 
-    /// Which `dayStatsTaskID` the current `dayStatsByChat` belongs to. Without
-    /// it a chat with no messages on the selected day fell through to the
-    /// *window* count, so a day of zero still read 「23条消息」.
-    @State private var dayStatsKey: String?
+    /// Which day the current `dayStatsByChat` belongs to, as a start-of-day
+    /// stamp. Without it a chat with no messages on the selected day fell
+    /// through to the *window* count, so a day of zero still read 「23条消息」.
+    ///
+    /// Deliberately just the date, and deliberately a stored value: the full
+    /// `dayStatsTaskID` calls `dayStatsRequests()`, which reads the whitelist
+    /// out of SQLite, and these getters run once per sidebar row per body pass.
+    @State private var dayStatsLoadedDay: Int?
 
     /// Reload key for the precomputed day stats: the date plus the set of chats
     /// the sidebar can show.
@@ -64,13 +68,13 @@ struct InsightSidebarView: View {
     private func refreshDayStats() async {
         guard !Calendar.current.isDateInToday(selectedDate) else {
             dayStatsByChat = [:]
-            dayStatsKey = nil
+            dayStatsLoadedDay = nil
             return
         }
         let requests = dayStatsRequests()
         guard !requests.isEmpty else {
             dayStatsByChat = [:]
-            dayStatsKey = nil
+            dayStatsLoadedDay = nil
             return
         }
         let date = selectedDate
@@ -82,7 +86,7 @@ struct InsightSidebarView: View {
         // race for the detail pane; the sidebar had none.
         guard key == dayStatsTaskID, !Task.isCancelled else { return }
         dayStatsByChat = stats
-        dayStatsKey = key
+        dayStatsLoadedDay = Int(date.timeIntervalSince1970)
         // The detail view asks for the selected chat's day stats from its own
         // body; those now come from the cache this primes instead of a read.
         insightStore.primeDayStats(stats, date: date)
@@ -383,7 +387,7 @@ struct InsightSidebarView: View {
         fallback: ChatStatsData?
     ) -> ChatStatsData? {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        guard dayStatsKey == dayStatsTaskID else { return fallback }
+        guard dayStatsLoadedDay == Int(selectedDate.timeIntervalSince1970) else { return fallback }
         return dayStatsByChat[username]
     }
 
@@ -395,7 +399,7 @@ struct InsightSidebarView: View {
         fallback: Int
     ) -> Int {
         if Calendar.current.isDateInToday(selectedDate) { return fallback }
-        guard dayStatsKey == dayStatsTaskID else { return fallback }
+        guard dayStatsLoadedDay == Int(selectedDate.timeIntervalSince1970) else { return fallback }
         return dayStatsByChat[username]?.messageCount ?? 0
     }
 
