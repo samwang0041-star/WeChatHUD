@@ -849,7 +849,8 @@ final class ChatMonitor: ObservableObject {
                         isVIP: $0.isVIP,
                         replied: $0.replied,
                         status: $0.status,
-                        isIgnored: true
+                        isIgnored: true,
+                        unansweredInboundCount: $0.unansweredInboundCount
                     )
                 },
                 at: 0
@@ -1071,7 +1072,10 @@ final class ChatMonitor: ObservableObject {
     /// (silence, snooze) so the compact pill reflects the new count
     /// without waiting for the next full scan.
     private func recomputeStatsFromItems() {
-        let pr = unreadItems.filter { $0.kind == .privateChat }.count
+        // All three terms count messages, matching the scan's `totalUnread`:
+        // a private row stands for its whole folded tail, not for itself.
+        let pr = unreadItems.filter { $0.kind == .privateChat }
+            .reduce(0) { $0 + $1.inboundMessageCount }
         let at = unreadItems.filter { $0.kind == .groupAt }.count
         // The scan's totalUnread also counts group-member messages — the
         // recompute must match or every inbox action silently drops them

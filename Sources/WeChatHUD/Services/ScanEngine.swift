@@ -105,7 +105,7 @@ enum ScanEngine {
             )
             // ReplyDebt uses rule scoring only, no AI ranker
 
-            var privateUnreadChats = 0
+            var privateUnreadMessages = 0
             var groupAtCount = 0
             var groupMemberCount = 0
             var unreadCollected: [UnreadItem] = []
@@ -151,7 +151,11 @@ enum ScanEngine {
                 let isVIP = vipSet.contains(session.username)
                 let silencedAt = chatActions[session.username]?.silencedAt ?? 0
 
-                func makeItem(_ msg: MessageInfo, kind: HUDNotificationKind) -> UnreadItem {
+                func makeItem(
+                    _ msg: MessageInfo,
+                    kind: HUDNotificationKind,
+                    unansweredInboundCount: Int = 1
+                ) -> UnreadItem {
                     let ts = Date(timeIntervalSince1970: Double(msg.createTime))
                     let replied = latestSelfTime > msg.createTime
                     // Report the full mute state (this chat and everywhere) so
@@ -178,15 +182,28 @@ enum ScanEngine {
                             isVIP: isVIP,
                             thresholds: thresholds
                         ),
-                        isIgnored: isIgnored
+                        isIgnored: isIgnored,
+                        unansweredInboundCount: unansweredInboundCount
                     )
                 }
 
                 if !session.isGroup {
-                    guard let msg = recentMsgs.first(where: {
+                    // Fetched newest-first, so `first` is their latest message and
+                    // the whole older tail gets folded into this one row.
+                    let inboundMsgs = recentMsgs.filter {
                         !MessageHelpers.isFromSelf($0, chatUsername: session.username, myUsername: myUname, myDisplayName: myDisplayName, mySelfNames: selfNames)
-                    }) else { continue }
-                    let item = makeItem(msg, kind: .privateChat)
+                    }
+                    guard let msg = inboundMsgs.first else { continue }
+                    let item = makeItem(
+                        msg,
+                        kind: .privateChat,
+                        // Without this the row looks like "1 message", and the
+                        // 「多条未回」 rule — which counts what the rows stand for,
+                        // not how many rows exist — can never see a private burst.
+                        unansweredInboundCount: inboundMsgs.filter {
+                            $0.createTime > latestSelfTime
+                        }.count
+                    )
                     let decision = admissionRules.decide(
                         chatUsername: session.username,
                         isGroup: false,
@@ -197,7 +214,7 @@ enum ScanEngine {
                     if !decision.isAdmitted || isSnoozed || msg.createTime <= silencedAt {
                         suppressedCollected.append(item)
                     } else {
-                        privateUnreadChats += 1
+                        privateUnreadMessages += item.inboundMessageCount
                         unreadCollected.append(item)
                     }
                 } else {
@@ -233,7 +250,10 @@ enum ScanEngine {
             // input order.
             let sortedUnread = unreadCollected.sorted(by: Self.unreadOrder)
             let sortedSuppressed = suppressedCollected.sorted { $0.timestamp > $1.timestamp }
-            let totalUnread = privateUnreadChats + groupAtCount + groupMemberCount
+            // Every term counts *messages*. Private chats used to contribute one
+            // per chat while group chats contributed one per message, and the
+            // only consumer publishes this as 日报's 「未读 N 条」.
+            let totalUnread = privateUnreadMessages + groupAtCount + groupMemberCount
             let debugUnreadExtra: Int
             if whitelist.isEmpty {
                 debugUnreadExtra = (try? debugScanAllTables(

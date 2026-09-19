@@ -233,7 +233,8 @@ final class W5CrashAndIdentityHardeningTests: XCTestCase {
             isVIP: isVIP,
             replied: false,
             status: .pending,
-            isIgnored: false
+            isIgnored: false,
+            unansweredInboundCount: 1
         )
     }
 

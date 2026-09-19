@@ -1650,7 +1650,7 @@ KPI 卡片的**视口证据这轮没拿到**：`--preview-insight-overview` 那�
 - **#15 P1**：右键菜单「隐藏这条更新」是单条语义，`dismissInboxItem:2610` 写的却是
   `store.silenceChat(chatUsername:silencedAt:)` —— 会话级水印。点掉一条，同会话里
   时间戳不晚于它的所有消息一起消失，且没有任何提示。（自己读过两处源码确认）
-- **#16 P1**：README:135 列的「多条未回」对**私聊不可达**。规则 3 数 `unreadItems`
+- **#16 P1**（下一轮已收口，见 §94）：README:135 列的「多条未回」对**私聊不可达**。规则 3 数 `unreadItems`
   行数（≥3），而 `ScanEngine.swift:185-190` 对非群聊只取
   `recentMsgs.first(where: !isFromSelf)` —— 一个私聊永远只贡献 1 行。
   三条未回私聊 = 1 行 = 永不触发。（自己读过确认）
@@ -1667,3 +1667,61 @@ KPI 卡片的**视口证据这轮没拿到**：`--preview-insight-overview` 那�
 AGENTS.md 说的「VIP 升档 1h 档只有视觉提示不发系统通知」**是真的**：
 `pushEscalationAlert` 的 t2 分支被跳过（`:237-243`），与
 `CompanionProductCopy:136-140` 一致。不是所有承诺都落空，这条记下来。
+
+## §94（第 26 轮）收口 §93 的 #16：私聊连发以前根本触发不了「多条未回」
+
+### 先复现，再动手
+
+§93 里那条"读源码确认过"的判断需要一个能跑的证。`SyntheticShardedScanFixture`
+能造出真加密的微信库，于是直接驱动真链路 `ScanEngine.performScan`：
+私聊 5 条入站（senderId 1=对方）、`unreadCount: 5` → 结果 `unreadItems` 里
+**只有 1 行**。规则 3 的桶 `+= 1`，阈值 `>= 3`，所以这条 README 上写给客户的能力
+对私聊是结构性不可达的 —— 一个人连发 5 条 DM 永远不弹，只有群成员能弹。
+
+不是"阈值定高了"，是**计数单位错了**：私聊一行代表的是整段未回尾巴，
+群聊一行代表一条消息。同一个桶里混两种单位。
+
+### 改法：让行自己说它代表几条
+
+- `UnreadItem.unansweredInboundCount`：私聊行 = 我方最后一条之后到达的入站条数；
+  群聊行 = 1。字段**故意不给默认值**（`let` 带初值时 Swift 的成员初始化器
+  仍要求显式传参，试过 `var … = 1` 会让单位问题在新增构造点悄悄回来）——
+  新增构造点必须回答"我这一行代表几条"，这正是这个字段存在的理由。
+- `UnreadItem.inboundMessageCount = max(1, unansweredInboundCount)`：
+  所有"按条计"的地方共用它，规则 3 和日报不可能各说各话。
+  `max(1, …)` 不是凑数：已回的行还在屏上时，它至少代表它显示的那一条。
+- 单位收口顺带把日报的另一处一起修了：`totalUnread` 之前是
+  `私聊按对话数 + 群聊按条数`，而这个数最终写成 `未读 N 条`
+  （`DailyReportBuilder:346`）/`unreadMessageCount` 进 AI 提示词。
+  现在三项都是条数，`recomputeStatsFromItems` 跟着一起改 ——
+  那处注释本来就要求两边同单位，否则会漂。
+
+### 与既有实现的关系（不是重复造）
+
+`ReplyDebtScorer` 早就有 `inboundCountSinceLastOutbound`，同一个想法的按会话版本，
+连文案都在说「连续未回复 N 条」。没有直接复用它，因为它的桶是**会话**、
+且已经剔掉静音的人；规则 3 要的是**人**（同一人在一个私聊 + 两个群里发言要合起来看）。
+两边口径一致：都是"我方最后一条之后"，且都和 `replied` 用同一个
+`> latestSelfTime` 比较，保证 `replied ⇒ 计数 0` 这个不变量不会被打断。
+
+### 测试与变异检验
+
+新增 `PrivateBurstCountTests`（8 项）：链路上 3 项走真 `performScan`
+（5 条折成 1 行且携带 5、我方回复把尾巴切成 2、已回的是 0 但屏上仍算 1），
+规则侧 4 项走真 `ProactiveAlertEngine.evaluate`（1 行 3 条要弹、1 行 2 条不弹、
+已回的 9 条不能把 2 条抬成 11 条、群聊行仍按 1 计），加 1 项单位定义本身。
+
+- 变异 A：ScanEngine 的 `unansweredInboundCount:` 改回 `1` → 3 项链路上报红，
+  含 `("Optional(1)") is not equal to ("Optional(5)")`。
+- 变异 B：规则里 `item.inboundMessageCount` 改回 `1` → `testThreeUnanswered…`
+  三连红（0≠1、nil≠"多条未回"）。
+- 相关面回归 146 项绿（ProactiveAlert / W5 / ScanEngine* / ScanBacklog /
+  AnsweredFeedEviction / InboxActionPersistence / DailyReportBuilder /
+  GroupWindow / RecallContext / InboxViewLogic / InboxBuilder）。
+
+### 留在原地的（本轮判过，不做）
+
+收件箱那一行现在**知道**自己代表 5 条，但界面上仍只显示最新那条的文字。
+要不要给它一个「5 条」的小角标，是把 `UnreadItem` 的口径接到 `InboxItem`
+（要过 `InboxBuilder`）的产品选项，不是正确性缺口 —— 微信自己的会话列表
+也是一行一对话。撤销路径：`unansweredInboundCount` 已经在链路上，加角标只是读它。

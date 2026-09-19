@@ -94,7 +94,7 @@ final class InboxActionPersistenceTests: XCTestCase {
         defer { cleanup(store, root) }
         let unread = UnreadItem(chatUsername: "synthetic-peer", chatName: "测试",
             senderUsername: "peer", senderName: "测试同事", preview: "合成消息", timestamp: Date(),
-            kind: .privateChat, isWhitelisted: true, isVIP: false, replied: false, status: .pending, isIgnored: false)
+            kind: .privateChat, isWhitelisted: true, isVIP: false, replied: false, status: .pending, isIgnored: false, unansweredInboundCount: 1)
         monitor.unreadItems = [unread]
         store.close()
         monitor.ignoreSender(chatUsername: unread.chatUsername, chatName: unread.chatName,

@@ -145,11 +145,16 @@ final class ProactiveAlertEngine {
         // cross the 3-message threshold with no single person having sent 3.
         // Rows without a username (system/unread summaries) fall back to the
         // display name so they still bucket somewhere.
+        //
+        // Counting what each row *stands for*, not the rows themselves, is what
+        // makes this reachable at all: a private chat folds its unanswered tail
+        // into a single row, so the old `+= 1` meant the rule could only ever
+        // fire for group members — a colleague firing off five DMs produced one.
         var senderCounts: [String: Int] = [:]
         var displayNames: [String: String] = [:]
         for item in alertable {
             let key = Self.burstBucketKey(senderUsername: item.senderUsername, senderName: item.senderName)
-            senderCounts[key, default: 0] += 1
+            senderCounts[key, default: 0] += item.inboundMessageCount
             // First display name wins for the body text; the key already
             // carries the identity, so only readability depends on this.
             if displayNames[key] == nil { displayNames[key] = item.senderName }

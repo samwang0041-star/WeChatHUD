@@ -260,6 +260,21 @@ struct UnreadItem: Identifiable {
     /// True when the row is hidden by a sender-level ignore rule rather
     /// than a chat-level silence/snooze action.
     let isIgnored: Bool
+    /// How many inbound messages this row stands for.
+    ///
+    /// A private chat folds its whole unanswered tail into one row — the newest
+    /// message — so the number of rows is not the number of messages waiting.
+    /// Group chats emit one row per admitted message and pass 1. Required rather
+    /// than defaulted: every construction site has to state which unit it means.
+    let unansweredInboundCount: Int
+
+    /// What this row contributes wherever messages, rather than rows, are
+    /// counted (the 「多条未回」 alert, 日报's 「未读 N 条」).
+    ///
+    /// Never 0: a row on screen stands for at least the message it shows, even
+    /// when the reply that made it "answered" hasn't cleared WeChat's unread
+    /// state yet.
+    var inboundMessageCount: Int { max(1, unansweredInboundCount) }
 }
 
 /// Configurable thresholds for when an unreplied item becomes "已超时".

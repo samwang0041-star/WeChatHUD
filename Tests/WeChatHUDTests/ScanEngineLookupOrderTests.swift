@@ -49,7 +49,8 @@ final class ScanEngineLookupOrderTests: XCTestCase {
             isVIP: false,
             replied: false,
             status: status,
-            isIgnored: false
+            isIgnored: false,
+            unansweredInboundCount: 1
         )
     }
 

@@ -31,7 +31,8 @@ final class ProactiveAlertTests: XCTestCase {
             isVIP: isVIP,
             replied: replied,
             status: status,
-            isIgnored: false
+            isIgnored: false,
+            unansweredInboundCount: 1
         )
     }
 
