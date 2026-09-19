@@ -203,6 +203,30 @@ actor AutopilotService {
         }
     }
 
+    /// The in-memory holds die with this process, and the failure they guard
+    /// against is precisely the one that outlives them: a queue row whose
+    /// terminal write never landed. A resume or a restart rehydrates that row and
+    /// `processPendingQueue` fires the same text at the same person again. So the
+    /// same fact also goes onto the row, where it survives — which costs automatic
+    /// eligibility and buys a warning a human actually reads.
+    ///
+    /// Precondition: the row is still on disk. Calling this after a delete that
+    /// landed would write the row back and resurrect a canceled draft.
+    private func holdRowAcrossRestart(_ item: PendingSend, kind: UnresolvedQueueWrite) {
+        guard item.manualOnlyReason == nil else { return }
+        var guarded = item
+        switch kind {
+        case .delivered:
+            guarded.manualOnlyReason = "发送结果没能记账：这条很可能已经发出。请先在微信里核对，不要直接确认。"
+        case .cancelled:
+            guarded.manualOnlyReason = "取消没能落库：这条已经撤回，先别确认发送。"
+        }
+        if let sid = sessionId {
+            try? store.upsertPendingSend(guarded, sessionId: sid)
+        }
+        countAsAwaitingHuman(item)
+    }
+
     /// What this process is holding back, for the behaviour tests and the
     /// diagnostics that read it.
     var unresolvedQueueWritesSnapshot: [UUID: UnresolvedQueueWrite] { unresolvedQueueWrites }
@@ -1876,6 +1900,11 @@ actor AutopilotService {
             )
             unresolvedQueueWrites[item.id] = hold
             holdTwinLog(for: item.id, kind: hold)
+            // Only when the queue row itself survived. Re-writing it after a
+            // delete that *did* land would resurrect a draft the user canceled —
+            // the durable hold has to be a fallback for a row still on disk, not
+            // a second author of rows that are gone.
+            if !deleteLanded { holdRowAcrossRestart(item, kind: hold) }
         }
         if flipped > 0 {
             sessionPending = max(0, sessionPending - 1)
@@ -2114,6 +2143,10 @@ actor AutopilotService {
                 )
                 unresolvedQueueWrites[item.id] = hold
                 holdTwinLog(for: item.id, kind: hold)
+                // `resolveVerifiedSend` retires both rows in one transaction, so
+                // a throw here means neither moved — the queue row is on disk and
+                // the durable hold applies.
+                holdRowAcrossRestart(item, kind: hold)
             }
             // Resolve the pending autopilot_log twin in the same step —
             // otherwise the approval list keeps offering this reply and a

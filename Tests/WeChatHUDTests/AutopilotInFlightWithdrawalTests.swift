@@ -201,6 +201,41 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
         XCTAssertTrue(snapshot.isEmpty, "写成了就该放掉这条，否则这条闸门永远抬不起来")
     }
 
+    /// Same failure, the dimension the in-memory hold cannot reach: a process that
+    /// is killed takes its `unresolvedQueueWrites` with it, and the row it was
+    /// holding is still on disk. A fresh service over the same store must find the
+    /// warning written there, or 「取消」 turns into a send after a restart.
+    @MainActor
+    func testCancelWithFailedQueueDeleteSurvivesAFreshProcess() async throws {
+        let sid = try XCTUnwrap(store.loadAutopilotSessions(limit: 1).first?.id)
+        let pending = item("我下午给你结论")
+        try store.upsertPendingSend(pending, sessionId: sid)
+        try store.exec("""
+            CREATE TRIGGER break_queue_delete BEFORE DELETE ON autopilot_pending_sends
+            BEGIN SELECT RAISE(ABORT, 'simulated delete failure'); END
+            """)
+        await service.cancelPendingSend(id: pending.id)
+
+        let onDisk = store.loadPendingSends(sessionId: sid).first { $0.id == pending.id }
+        let held = try XCTUnwrap(onDisk, "盘上这行没留下，说明拦的是内存")
+        XCTAssertNotNil(held.manualOnlyReason,
+                        "只记在内存里的 hold 活不过它要防的那次重启")
+        XCTAssertTrue(held.manualOnlyReason?.contains("撤回") ?? false,
+                      "人要能看懂这条为什么不能直接确认")
+        XCTAssertFalse(AutopilotService.isEligibleForAutomaticSend(held, now: Date().addingTimeInterval(3600)),
+                       "重启后自动发送必须不再考虑这一行")
+
+        // The restart itself: a brand new service over the same store, with the
+        // trigger gone so the write would now succeed.
+        try store.exec("DROP TRIGGER break_queue_delete")
+        let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+        try await revived.start()
+        var config = AutopilotConfig()
+        config.autoSendEnabled = true
+        await revived.processPendingQueue(config: config)
+        let sent = await revived.sessionSent
+        XCTAssertEqual(sent, 0, "重启后把用户已经撤回的回复发出去了")
+    }
     /// The other direction of the same bug: stopping the keystrokes must not
     /// consume the draft. A pause mid-flight used to fall into the failed-send
     /// tail, which stamps `manualOnlyReason` — and only an unstamped row is
