@@ -1,9 +1,8 @@
 import XCTest
 @testable import WeChatHUD
 
-/// Phase 0+ tests for the 4 standalone AI services:
+/// Phase 0+ tests for the standalone AI services:
 ///   - AIReplySuggester
-///   - AIGroupCatchup
 ///   - AIWhitelistCategorizer
 ///   - AIDailyRetrospector
 ///
@@ -35,14 +34,6 @@ final class AIServicesTests: XCTestCase {
         XCTAssertTrue(template.contains("{message_body}"))
         XCTAssertTrue(template.contains("{ask_type}"))
         XCTAssertTrue(template.contains("suggestions"))
-    }
-
-    func testGroupCatchupPromptLoads() throws {
-        let loader = PromptLoader()
-        let template = try loader.load(version: "group_catchup_v1")
-        XCTAssertTrue(template.contains("{messages}"))
-        XCTAssertTrue(template.contains("{self_name}"))
-        XCTAssertTrue(template.contains("highlights"))
     }
 
     func testWhitelistCategorizerPromptLoads() throws {
@@ -125,32 +116,6 @@ final class AIServicesTests: XCTestCase {
         XCTAssertEqual(suggestion.category, "work", "obvious work conversation should classify as work")
         XCTAssertGreaterThan(suggestion.confidence, 0.7, "obvious case should have high confidence")
         XCTAssertTrue(suggestion.shouldWhitelist, "boss giving work orders → should whitelist")
-    }
-
-    func testGroupCatchupLive() async throws {
-        try requireLiveAIOptIn()
-        let cfg = store.loadAIConfig()
-        try await skipIfModelUnavailable(config: cfg)
-
-        let catchup = AIGroupCatchup(store: store, aiService: AIService(config: cfg))
-        let result = await catchup.summarize(.init(
-            chatName: "测试群",
-            selfName: "我",
-            messages: [
-                ("张总", "明天 10 点开个紧急会"),
-                ("李姐", "收到"),
-                ("张总", "@我 你也来一下，主要是你那块的内容"),
-                ("我", "好的"),
-                ("张总", "客户对方案有意见，需要重做")
-            ]
-        ))
-
-        guard let summary = result else {
-            XCTFail("AIGroupCatchup returned nil")
-            return
-        }
-        XCTAssertFalse(summary.headline.isEmpty, "headline should be non-empty")
-        XCTAssertTrue(summary.needsUserAction, "explicit @ should trigger needsUserAction=true")
     }
 
     func testDailyRetrospectorLive() async throws {

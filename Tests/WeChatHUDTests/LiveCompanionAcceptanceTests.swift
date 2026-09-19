@@ -187,37 +187,6 @@ final class LiveCompanionAcceptanceTests: XCTestCase {
             XCTFail("AIClassifier returned nil after its bounded retry")
         }
 
-        let catchup = AIGroupCatchup(store: store, aiService: service)
-        let catchupResult = await catchup.summarize(.init(
-            chatName: "项目协作群（合成验收）",
-            selfName: "我",
-            messages: [
-                (sender: "林晓", body: "客户今晚要看风险清单"),
-                (sender: "周宁", body: "我把接口异常日志补上了"),
-                (sender: "林晓", body: "@我 请在今天17:00前把风险清单发到群里"),
-                (sender: "我", body: "好的，我整理完发"),
-                (sender: "周宁", body: "收到后我们再一起过一遍")
-            ]
-        ))
-        if let catchupResult {
-            evidence.groupCatchup = .init(
-                status: "returned",
-                headline: clipped(catchupResult.headline),
-                highlightCount: catchupResult.highlights.count,
-                needsUserAction: catchupResult.needsUserAction,
-                actionSummary: clipped(catchupResult.actionSummary),
-                skipSafe: catchupResult.skipSafe
-            )
-            XCTAssertFalse(catchupResult.headline.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            XCTAssertFalse(catchupResult.highlights.isEmpty, "catch-up should retain concrete group highlights")
-            XCTAssertTrue(catchupResult.needsUserAction, "explicit @me delivery request needs user action")
-            XCTAssertFalse(catchupResult.actionSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            XCTAssertTrue(catchupResult.actionSummary.contains("风险清单"), "catch-up action must retain the requested deliverable")
-        } else {
-            evidence.groupCatchup = .failed
-            XCTFail("AIGroupCatchup returned nil after its bounded retry")
-        }
-
         let chatInsight = AIChatInsight(store: store, aiService: service)
         let insightResult = await chatInsight.analyzeChat(
             chatUsername: "synthetic-project-group",
@@ -495,7 +464,6 @@ private struct Evidence {
     let providerID: String
     let model: String
     var classifier: ClassifierEvidence = .notRun
-    var groupCatchup: GroupEvidence = .notRun
     var chatInsight: ChatInsightEvidence = .notRun
     var replySuggestions: ReplyEvidence = .notRun
     var autoReply: AutoReplyEvidence = .notRun
@@ -522,10 +490,6 @@ private struct Evidence {
         Input: fictional `@我` request to send a risk list before 17:00.
 
         \(classifier.markdown)
-
-        ## AIGroupCatchup — synthetic group context summary
-
-        \(groupCatchup.markdown)
 
         ## AIChatInsight — synthetic chat insight
 
@@ -572,18 +536,6 @@ private struct ClassifierEvidence {
     static let notRun = ClassifierEvidence(status: "not_run")
     static let failed = ClassifierEvidence(status: "failed")
     var markdown: String { "status=\(status), isAsk=\(isAsk), type=\(type), confidence=\(confidence), deadlinePresent=\(deadlinePresent), summary=\(summary)" }
-}
-
-private struct GroupEvidence {
-    var status: String
-    var headline: String = ""
-    var highlightCount = 0
-    var needsUserAction = false
-    var actionSummary: String = ""
-    var skipSafe = false
-    static let notRun = GroupEvidence(status: "not_run")
-    static let failed = GroupEvidence(status: "failed")
-    var markdown: String { "status=\(status), needsUserAction=\(needsUserAction), highlightCount=\(highlightCount), skipSafe=\(skipSafe), headline=\(headline), actionSummary=\(actionSummary)" }
 }
 
 private struct ChatInsightEvidence {

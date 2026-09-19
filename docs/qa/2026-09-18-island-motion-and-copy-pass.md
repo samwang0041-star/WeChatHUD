@@ -1841,3 +1841,44 @@ t1 = 「VIP 等你 30 分钟了」/「…的消息还没回」，和 t3/t4 的
 证据缺口（诚实记录）：菜单栏 badge 不在截图通路里
 （`writeSurfaceBitmaps` 只认 FloatingPanel / 工作台 / onboarding / 回顾窗口，
 NSStatusItem 不属于任何一支），所以这一处只有单测证据，没有像素。
+
+## §98（第 27 轮）删掉 AIGroupCatchup：每次群 @ 花一次 AI 调用，产出没人读
+
+「每个模块的算法」这一维最后一块。派了代理去画链路，**每条结论自己回源码复核过**：
+
+- `GroupContextBriefing` 上 8 个 `deep*` 字段里，界面只读 `deepSuggestedAction`
+  （`InboxRowView:358`）。其余 7 个（background / whatTheyWant / hiddenContext /
+  stakeholders / yourPosition / timing / risk）全仓 grep 只有声明和写入，**0 读取者**。
+- `AIGroupCatchup.summarize` 在 phase 2 里只写 `deepBackground` 和 `deepWhatTheyWant`
+  这两个没人读的字段（`ChatMonitor:682-697`）—— 也就是说这次 AI 调用的全部产出都被丢掉。
+  代价是真实的：每条群 @ 简报一次调用（含 `AIGroupCatchup:96-120` 的有界重试），
+  而且会把 `sanitizeForAI` 处理过的群聊原文发出去。
+- 生产消费者只有 `ChatMonitor`（写死字段）+ `ClassifierCLI` 的 `group-catchup` 子命令
+  （调试工具，不是产品面）+ 两个测试。
+
+判据沿用本仓库已经接受过四次的规则：**生产不可达就删，连它自己的测试和 CLI 一起**。
+删掉 `AIGroupCatchup.swift`(189 行)、`group_catchup_v1.txt`、`group-catchup` 子命令
+（`main.swift` 的列表 + 分发 + 83 行实现）、`ChatMonitor` 的 phase-2 catchup 块、
+7 个没人读的 `deep*` 字段与写入、`AIServicesTests` 的两处、
+`LiveCompanionAcceptanceTests` 的整段验收与其 `GroupEvidence` 结构。
+
+保留 `ContextAnalyzer` 那一次调用：它的 `suggestedAction` 是行上真看得见的「下一步」。
+`GroupContextBriefing: Codable` 是合成实现，删可选字段对旧 JSON 解码安全（未知键被忽略）。
+
+净效果：群 @ 简报的 AI 调用从 3 次（briefing + catchup + analyzer）降到 2 次，
+少一份出网的群聊原文，少 219 行没人看的代码。
+
+### 顺带查实并留下的两条（都不是 P0，写清楚不动手）
+
+1. **写作风格承诺成立**：`StyleProfiler` 的画像确实进 prompt
+   （`AIReplySuggester:151-153` 的 `[风格参考]`，另有 autopilot 两条链），
+   README:139 那句不是空话。缺口是**静默降级**：某会话自己发过的消息 <20 条时
+   `buildStyleHint`/`buildRichStyleHint` 双双返回 nil，界面上没有任何地方说明
+   "这个会话还没学会你的风格"。
+2. **反馈闭环只有一半**：`ai_feedback` 的唯一写入点硬编码 `adopted: true`
+   （`ConversationDetailView:363-366`），`ignored_suggestion` 无人写，
+   所以 `buildFeedbackHint` 里 `if rejected > 0` 那一支永不触发 —— 模型看到的
+   历史永远是"全被采纳"。好消息是它不会因此说谎（条件分支不输出），
+   坏消息是"你的反馈会持续打磨建议质量"只对了一半。
+   补法要先把"忽略"定义出来（一键采纳只灌输入框、不写反馈，`ActionPanelView:574-583`），
+   是一个产品决定而不是一个 bug 修复，留在这里定价。

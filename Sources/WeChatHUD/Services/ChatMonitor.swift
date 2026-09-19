@@ -220,7 +220,6 @@ final class ChatMonitor: ObservableObject {
         )
     }()
     private let groupContextBriefingService: GroupContextBriefingService
-    private let aiGroupCatchup: AIGroupCatchup
     private let contextAnalyzer: ContextAnalyzer
     lazy var aiClassifier: AIClassifier = {
         AIClassifier(store: store, aiService: aiService)
@@ -451,7 +450,6 @@ final class ChatMonitor: ObservableObject {
             store: store,
             client: aiService
         )
-        self.aiGroupCatchup = AIGroupCatchup(store: store, aiService: aiService)
         self.contextAnalyzer = ContextAnalyzer(store: store, aiService: aiService)
         self.insightCoordinator = InsightCoordinator(reader: reader, store: store, aiService: aiService)
         // Read the stored level before anything publishes chrome, so the
@@ -645,10 +643,8 @@ final class ChatMonitor: ObservableObject {
         )
 
         let service = groupContextBriefingService
-        let catchup = aiGroupCatchup
         let analyzer = contextAnalyzer
         let storeRef = store
-        let myUname = reader.myUsername()
         Task { [weak self] in
             let result = await service.explain(
                 notification: notification,
@@ -665,7 +661,7 @@ final class ChatMonitor: ObservableObject {
                 self.trimGroupContextStateIfNeeded()
             }
 
-            // --- Phase 2: AIGroupCatchup + ContextAnalyzer (fire-and-forget, non-blocking) ---
+            // --- Phase 2: ContextAnalyzer (fire-and-forget, non-blocking) ---
             // Reuse the exact source-centered window loaded by phase 1. If
             // the source was unavailable, never let phase 2 reinterpret the
             // chat's newest messages as the trigger context.
@@ -673,30 +669,7 @@ final class ChatMonitor: ObservableObject {
             let supportsDeepActionContext = notification.supportsDeepActionContext
             let contextMessages = result.contextMessages
 
-            // AIGroupCatchup: enrich briefing with headline / highlights.
-            let catchupInput = AIGroupCatchup.Input(
-                chatName: notification.chatName,
-                selfName: myUname,
-                messages: contextMessages.map { ($0.senderName, AIService.sanitizeForAI($0.text)) }
-            )
-            if let summary = await catchup.summarize(catchupInput) {
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    guard var state = self.groupContextStates[key],
-                          var briefing = state.briefing else { return }
-                    // Only fill deep fields if not already present.
-                    if briefing.deepBackground == nil {
-                        briefing.deepBackground = summary.headline
-                    }
-                    if supportsDeepActionContext, briefing.deepWhatTheyWant == nil, !summary.highlights.isEmpty {
-                        briefing.deepWhatTheyWant = summary.highlights.joined(separator: " · ")
-                    }
-                    state.briefing = briefing
-                    self.groupContextStates[key] = state
-                }
-            }
-
-            // ContextAnalyzer: fill deep* fields using a synthetic PendingAsk.
+            // ContextAnalyzer: the one deep field the row actually shows.
             guard supportsDeepActionContext else { return }
             let syntheticAsk = PendingAsk(
                 id: 0,
@@ -749,14 +722,7 @@ final class ChatMonitor: ObservableObject {
                     guard let self else { return }
                     guard var state = self.groupContextStates[key],
                           var briefing = state.briefing else { return }
-                    briefing.deepBackground = briefing.deepBackground ?? deepResult.background
-                    briefing.deepWhatTheyWant = briefing.deepWhatTheyWant ?? deepResult.whatTheyWant
-                    briefing.deepHiddenContext = deepResult.hiddenContext
-                    briefing.deepStakeholders = deepResult.stakeholderMap.map { "\($0.name): \($0.stance)" }
-                    briefing.deepYourPosition = deepResult.yourPosition
                     briefing.deepSuggestedAction = deepResult.suggestedAction
-                    briefing.deepSuggestedTiming = deepResult.suggestedTiming
-                    briefing.deepRiskIfIgnore = deepResult.riskIfIgnore
                     state.briefing = briefing
                     self.groupContextStates[key] = state
                 }

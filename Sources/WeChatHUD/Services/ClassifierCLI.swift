@@ -9,7 +9,6 @@ import Foundation
 ///   classify-fixture <path>
 ///   classify-real [--per-chat N] [--max-total N] [--include-groups] [--out P]
 ///   suggest-reply <text> [--sender N] [--chat N] [--group] [--type yes_no|...]
-///   group-catchup <chat_username> [--limit N]
 ///   categorize <chat_username> [--limit N]
 ///   retrospect [--date YYYY-MM-DD]
 ///
@@ -25,8 +24,6 @@ enum ClassifierCLI {
             runReal(args: args)
         case "suggest-reply":
             runSuggestReply(args: args)
-        case "group-catchup":
-            runGroupCatchup(args: args)
         case "categorize":
             runCategorize(args: args)
         case "retrospect":
@@ -534,89 +531,6 @@ enum ClassifierCLI {
             print("   理由: \(s.rationale)")
         }
         fputs("[\(elapsed)ms]\n", stderr)
-        exit(0)
-    }
-
-    // MARK: - group-catchup <chat_username>
-
-    private static func runGroupCatchup(args: [String]) -> Never {
-        guard let chatUsername = args.first, !chatUsername.hasPrefix("--") else {
-            fputs("usage: WeChatHUD group-catchup <chat_username> [--limit N]\n", stderr)
-            exit(2)
-        }
-        var limit = 30
-        var i = 1
-        while i < args.count {
-            if args[i] == "--limit", i + 1 < args.count, let n = Int(args[i + 1]) {
-                limit = n; i += 2
-            } else {
-                i += 1
-            }
-        }
-
-        let context = makeContext()
-        let store = context.store
-        let reader: WeChatReader
-        do {
-            reader = try readerForAccount(context)
-            try reader.loadKeys()
-            try reader.loadContacts()
-        } catch {
-            fputs("微信读取未就绪，请检查所选账号目录、密钥与连接诊断；未切换到其他账号。\n", stderr)
-            exit(2)
-        }
-
-        let msgs: [MessageInfo]
-        do {
-            msgs = try reader.getMessages(chatUsername: chatUsername, limit: limit)
-        } catch {
-            fputs("could not load messages for \(chatUsername): \(error)\n", stderr)
-            exit(2)
-        }
-        if msgs.isEmpty {
-            fputs("no messages found for \(chatUsername)\n", stderr)
-            exit(1)
-        }
-
-        // Sort chronological (oldest first), drop empty/system messages.
-        let usable = msgs.sorted { $0.createTime < $1.createTime }
-            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .filter { !($0.text == "null" || $0.text == "(null)") }
-            .map { (sender: $0.senderName, body: $0.text) }
-
-        let chatName = msgs.first?.chatName ?? chatUsername
-        let selfName = reader.displayName(for: reader.myUsername())
-
-        let catchup = AIGroupCatchup(store: store, aiService: AIService(config: store.loadAIConfig()))
-        let started = Date()
-        let result = runAsync {
-            await catchup.summarize(.init(chatName: chatName, selfName: selfName, messages: usable))
-        }
-        let elapsed = Int(Date().timeIntervalSince(started) * 1000)
-
-        guard let summary = result else {
-            fputs("AIGroupCatchup returned nil — see ai_audit\n", stderr)
-            exit(1)
-        }
-
-        print("===== group catchup =====")
-        print("群: \(chatName)  消息数: \(usable.count)  延迟: \(elapsed)ms")
-        print("")
-        print("📋 \(summary.headline)")
-        if !summary.highlights.isEmpty {
-            print("")
-            for h in summary.highlights {
-                print("  • \(h)")
-            }
-        }
-        print("")
-        if summary.needsUserAction {
-            print("⚠️  你需要做: \(summary.actionSummary)")
-        } else if summary.skipSafe {
-            print("✅ 可以跳过这段（噪音 \(Int(summary.noiseRatio * 100))%）")
-        } else {
-            print("ℹ️  没有 @ 你的事，但有信息可以扫一下")
-        }
         exit(0)
     }
 

@@ -25,7 +25,6 @@ if CommandLine.arguments.dropFirst().first == "ai-check" {
 //   classify-fixture <path/to/labeled_messages.json>
 //   classify-real [--per-chat N] [--out path.json] [--include-groups]
 //   suggest-reply <text> [--sender N] [--chat N] [--group] [--type T]
-//   group-catchup <chat_username> [--limit N]
 //   categorize <chat_username> [--limit N]
 //   retrospect [--date YYYY-MM-DD]
 //   ai-check
@@ -36,7 +35,6 @@ let aiSubcommands: Set<String> = [
     "classify-fixture",
     "classify-real",
     "suggest-reply",
-    "group-catchup",
     "categorize",
     "retrospect",
     "ai-check"

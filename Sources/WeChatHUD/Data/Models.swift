@@ -570,15 +570,13 @@ struct GroupContextBriefing: Codable, Equatable {
     let source: GroupContextBriefingSource
     let generatedAt: Date
 
-    // Deep analysis (from ContextAnalyzer, loaded async after initial briefing)
-    var deepBackground: String?
-    var deepWhatTheyWant: String?
-    var deepHiddenContext: String?
-    var deepStakeholders: [String]?
-    var deepYourPosition: String?
+    /// The one deep-analysis field the row renders (展开后的「下一步」).
+    ///
+    /// ContextAnalyzer also returns background / whatTheyWant / hiddenContext /
+    /// stakeholders / yourPosition / timing / risk, and this struct used to
+    /// carry all of them. Nothing ever read those seven, so the writes were
+    /// dropped rather than kept as a "we went deeper" placeholder.
     var deepSuggestedAction: String?
-    var deepSuggestedTiming: String?
-    var deepRiskIfIgnore: String?
 }
 
 enum GroupContextBriefingSource: String, Codable {
