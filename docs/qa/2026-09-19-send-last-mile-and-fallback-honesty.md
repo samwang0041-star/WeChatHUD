@@ -408,7 +408,9 @@ low」就能全部清空。跳过条件写成"没引用就不查"，等于把这
 变异记录（三次都跑到对应测试）：
 - M1 删掉 `else if groundsSend` 分支 → 5 处断言 / 4 个测试失败，其中真实链路那条
   的日志 action 退回 `.sent`（即"未验引用的回复自动发出"确实可达）；
-- M2 把 `groundsSend` 判据改成常量 `false` → 同上；
+- M2 把 `groundsSend(skip:readNoReply:)` 判据改成常量 `false` → 3 个测试失败：
+  两个 pipeline + 那条真值表，但 `testSendWithoutAnyQuoteIsHeld` 这类单元层不失败
+  （它们显式传 `groundsSend:`，测的是闸门不是判据）—— 分层是刻意的；
 - M3 只在调用点写死 `groundsSend: false` → **只有两个 pipeline 测试失败，单元层
   全绿**。这正是 §144 那次没牙判据的形状，说明接线这次有自己独立的牙；
 - M4 `evidenceSource` 退回 `combinedText` → 图片那条失败 1 处。
