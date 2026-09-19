@@ -326,3 +326,33 @@ reason:retryableReason:) -> .requeueUnchanged | .humanRequired`，
 而 `queryOne` 内部 `try?` 吞错 ⇒ 一次 SQLITE_BUSY 读会被读成「已撤回」，
 把真发送关掉并（修完 §144 后）转人工。要根治得给这两个查询一个能区分
 「查不到」与「查失败」的返回，属于「读不到印 0」那一整类，下一轮统一收。
+
+## §145 常驻退化这一轴：两路代理都没跑完，最后手工做完（结论 P0 无）
+
+派了两路子代理做这件事：第一路 38 次调用后 connection interrupted，
+第二路收窄到两条面（≤22 次调用）之后也没有回报。第三轮我直接自己做完了，
+过程与覆盖面记在这里，免得下一轮又从零派。
+
+**面 1 · 会被重复创建的 timer。** 全仓库 18 处 timer 创建点，
+其中 `repeats: true` 且所在函数可被反复调用的只有四处，四处都有拆除或幂等保护：
+- `ChatMonitor.scheduleSafetyTimer`（心跳，随倒计时/空闲切换重排）
+  第一行就是 `safetyTimer?.invalidate()`；
+- `MenuBarController.render()` 在 `startSpinning` 之前 `spinTimer?.invalidate(); spinTimer = nil`，
+  所以状态栏 0.12s 的转圈不会因两次进度回调叠成双倍速；
+- `CompactInboxBar.startIdleTimer` 同样先 `invalidate()`；
+- `PixelBuddyView` 的精灵定时器带幂等判断
+  （`if isRunning, runningInterval == interval { return }`），
+  注释写明为什么不能在每次通知里重建。
+`FloatingPanel` 的两处（1/60s 动画、1/6s 采样）由 `IslandMotion.maxRunDuration`
+的超时兜底 + `invalidate` 配对（第 30 轮已专项做过）。
+
+**面 2 · 只增不减的集合。** 常驻服务里 20 个 `private var` 集合，
+按事件增长的五处全部有界：
+- `processedMsgUIDs` / `processedMsgOrder`：FIFO，>5000 时裁到 2500；
+- `recentlyPresentedBannerKeys`：>64 时留 32；
+- `dismissedInbox` / `silencedInbox` / `snoozedInbox`：键是 chatUsername ⇒ 上限是白名单规模，
+  且有显式 `removeValue` 和 2553 行的整体重建；
+- `sentMsgUIDs`（>500 裁到 250）、`globalSendTimestamps`（按 1 小时窗口 filter）
+  在第 30 轮已处理。
+
+**结论：P0 无。** 这一轴的判据不是"没找到"，而是"每一处按事件增长的都量过上限"。
