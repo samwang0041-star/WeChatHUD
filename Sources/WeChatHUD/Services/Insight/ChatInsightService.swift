@@ -56,8 +56,10 @@ actor ChatInsightService {
             )
             let sender = isSelf
                 ? "我（\(selfLabel)）"
-                : (message.senderName.isEmpty ? message.senderUsername : message.senderName)
-            let body = await readerActor.normalizeContactMentions(in: message.text)
+                : (message.senderName.isEmpty ? "对方" : message.senderName)
+            let body = await readerActor.normalizeContactMentions(
+                in: AIService.sanitizeForAI(message.text)
+            )
             formatted.append((sender: sender, body: body, time: message.createTime))
         }
 
@@ -139,8 +141,8 @@ actor ChatInsightService {
             guard message.chatUsername == chatUsername,
                   message.recalledAt >= dayStart,
                   message.recalledAt < dayEnd else { return nil }
-            let sender = message.senderName.isEmpty ? message.senderUsername : message.senderName
-            let content = message.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sender = message.senderName.isEmpty ? "对方" : message.senderName
+            let content = AIService.sanitizeForAI(message.originalText)
             guard !content.isEmpty else { return nil }
             return (sender: sender, content: content)
         }

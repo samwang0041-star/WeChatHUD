@@ -2715,7 +2715,7 @@ final class ChatMonitor: ObservableObject {
         let context = await buildReplySuggestionContext(for: item, pendingAsk: pendingAsk)
 
         let input = AIReplySuggester.Input(
-            messageBody: item.preview,
+            messageBody: AIService.sanitizeForAI(item.preview),
             senderName: item.senderName,
             chatName: item.chatName,
             isGroup: item.isGroup,

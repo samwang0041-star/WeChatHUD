@@ -470,7 +470,7 @@ extension ChatMonitor {
         let replyContext = await buildReplySuggestionContext(for: item)
 
         let input = AIReplySuggester.Input(
-            messageBody: item.preview,
+            messageBody: AIService.sanitizeForAI(item.preview),
             senderName: item.senderName,
             chatName: item.chatName,
             isGroup: item.isGroup,

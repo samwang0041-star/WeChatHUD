@@ -649,9 +649,9 @@ actor AutopilotService {
         // --- Combine batch texts for context + detect media ---
         let combinedText: String
         if batch.count == 1 {
-            combinedText = batch[0].text
+            combinedText = AIService.sanitizeForAI(batch[0].text)
         } else {
-            combinedText = batch.map { $0.text }.joined(separator: "\n")
+            combinedText = batch.map { AIService.sanitizeForAI($0.text) }.joined(separator: "\n")
         }
 
         // Detect media messages in the batch and build context hints

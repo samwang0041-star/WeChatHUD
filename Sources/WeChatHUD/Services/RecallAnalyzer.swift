@@ -59,7 +59,7 @@ actor RecallAnalyzer {
         let prompt = template
             .replacingOccurrences(of: "{sender_name}", with: escape(recalled.senderName))
             .replacingOccurrences(of: "{sender_role}", with: recalled.senderRole.label)
-            .replacingOccurrences(of: "{original_text}", with: escape(recalled.originalText))
+            .replacingOccurrences(of: "{original_text}", with: escape(AIService.sanitizeForAI(recalled.originalText)))
             .replacingOccurrences(of: "{delay_seconds}", with: "\(recalled.recallDelaySeconds)")
             .replacingOccurrences(of: "{chat_type}", with: chatTypeLabel)
             .replacingOccurrences(of: "{chat_name}", with: escape(recalled.chatName))

@@ -400,7 +400,7 @@ actor GroupContextBriefingService {
             chatName: notification.chatName,
             readerNames: readerNames,
             targetSender: notification.senderName,
-            targetMessage: notification.rawText,
+            targetMessage: AIService.sanitizeForAI(notification.rawText),
             now: MessageInfo.formatAbsoluteForPrompt(Int(now.timeIntervalSince1970)),
             contextMessages: contextMessages.map { msg in
                 PromptMessage(

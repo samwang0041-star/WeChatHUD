@@ -335,8 +335,8 @@ actor StyleProfiler {
                     lastPeerMsg = nil
                     continue
                 }
-                let q = peer.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                let a = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let q = AIService.sanitizeForAI(peer.text)
+                let a = AIService.sanitizeForAI(msg.text)
                 if q.count >= 2 && a.count >= 2 && q.count <= 100 && a.count <= 100 {
                     pairs.append((q, a))
                 }

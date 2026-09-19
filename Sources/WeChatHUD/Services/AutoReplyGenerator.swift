@@ -291,12 +291,14 @@ actor AutoReplyGenerator {
         fmt.dateFormat = "HH:mm"
         return entries.suffix(8).map { e in
             let time = fmt.string(from: e.timestamp)
-            let peer = e.peerLastMessage.flatMap { text -> String in
+            let peer = e.peerLastMessage.flatMap { raw -> String? in
+                let text = AIService.sanitizeForAI(raw)
+                guard !text.isEmpty else { return nil }
                 let snippet = text.count > 50 ? String(text.prefix(50)) + "…" : text
                 return "对方: \"\(AIService.oneLine(snippet))\""
             }
             let prefix = peer.map { "[\(time) \($0)]" } ?? "[\(time)]"
-            return "\(prefix) → 你回:「\(AIService.oneLine(e.outgoingText))」"
+            return "\(prefix) → 你回:「\(AIService.oneLine(AIService.sanitizeForAI(e.outgoingText)))」"
         }.joined(separator: "\n")
     }
 }

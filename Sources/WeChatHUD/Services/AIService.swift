@@ -90,7 +90,12 @@ func completeWithMetadata(
     // its user prompt, and each service's own injection guard lives in the
     // *template* — a template missing it leaves the path naked. One line
     // here covers all of them uniformly.
-    let user = Self.dataBoundaryPreamble + user
+    //
+    // The same reasoning applies to identifiers: `sanitizeForAI` is the
+    // per-service ingress step, but a service that forgets it used to leak a
+    // phone / bank card / ID / email straight to the endpoint. Masking here
+    // makes the egress the boundary that actually holds.
+    let user = Self.dataBoundaryPreamble + Self.maskDirectIdentifiers(user)
 
     let slot = config.provider
     return try await send(slot: slot, system: system, user: user, options: options)
@@ -434,12 +439,11 @@ func completeWithMetadata(
     }
 
     /// Mask uniquely-identifying tokens before chat text leaves the machine for
-    /// an AI endpoint. Every live inbox / classifier / reply / briefing /
-    /// autopilot prompt funnels user-controlled chat content through
-    /// `sanitizeForAI`, so this is the single outbound boundary — masking here
-    /// keeps the whole live path consistent instead of only the retrospective
-    /// path (which already masked via `Redactor.applyMasks`, leaving the much
-    /// larger live surface sending raw identifiers).
+    /// an AI endpoint, and drop the WeChat media placeholders that make some
+    /// providers (Kimi) answer HTTP 400. This is the per-service ingress step;
+    /// `completeWithMetadata` re-applies `maskDirectIdentifiers` to the rendered
+    /// prompt, so a service that forgets here still cannot send an identifier —
+    /// but it will send `[表情]`, which is why the live paths all call this too.
     ///
     /// Scope is deliberate: phone / email / national ID / bank card are direct
     /// identifiers with no summarization value, so they go. Money amounts and

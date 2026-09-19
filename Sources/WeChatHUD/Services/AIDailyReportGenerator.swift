@@ -140,7 +140,7 @@ actor AIDailyReportGenerator {
         }
 
         let highlightsText = report.highlights.prefix(8).enumerated().map { (i, h) in
-            let snippet = h.quotedSnippet.map { " \"\(AIService.oneLine(String($0.prefix(40))))\($0.count > 40 ? "…" : "")\"" } ?? ""
+            let snippet = h.quotedSnippet.map { " \"\(AIService.oneLine(AIService.sanitizeForAI(String($0.prefix(40)))))\($0.count > 40 ? "…" : "")\"" } ?? ""
             return "\(i + 1). [\(AIService.oneLine(h.sourceChatName))] \(AIService.oneLine(String(h.summary.prefix(60))))\(h.summary.count > 60 ? "…" : "")\(snippet)"
         }.joined(separator: "\n")
 
