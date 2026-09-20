@@ -1904,3 +1904,22 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
   `dispositionForUnadmitted(...)` 传旗标，变异（worker 仍传 `followingUnreadable`）
   全绿 —— 记忆里的「接线断言不算行为测试」今天第三次生效。
 变异：Ma/Mb/Mc 各红（Mc 只在端到端那条存在时才红）。全量 2155 XCTest（+5）绿。
+
+## §238 第 9 轮：每次启动都会跑的 VIP 对齐修复，把读不到的分类写成「其他」（P1，已修）
+
+`repairVIPTrackingAlignment()` 由 `HUDStore.open()`(:152) 调用 ⇒ 每次启动、每次换号必经。
+它用 `getWhitelistEntry`（`queryOne`，出错即 nil）取现有行，再以
+`category: existing?.category ?? .other` 喂给整列覆盖的 `upsertWhitelistTracking`
+(:2502 `DO UPDATE SET display_name/is_group/category/attention_level`)。于是「这次读不到」
+被回答成「这人没有分类」，把用户自己归的 工作/生活 静默改成 其他；`guard existing?.attentionLevel
+!= .vip` 同样在 nil 上放行，整行都可能被重写。
+
+修法：补行级三态 `whitelistEntryRead()`（复用已审的 `whitelistRead` 做存在性判断，
+"行在但解不出"归 `.unreadable`），`.unreadable` 时**这一行完全不动**；`.absent` 仍按联系人
+建行（那是这个修复存在的理由）。读函数作为参数注入，生产调用点签名不变。
+
+判据：`VIPAlignmentRepairHonestyTests` 3 条 —— 可读写入时分类必须保留（今天也成立，用来
+钉住语义）、读不到时分类与档位都不许变、确无行时仍要建得出跟踪行。反向变异（把
+`.unreadable` 折进 `.absent`，即旧的 `?? .other` 形状）红 2 条：
+`("other") is not equal to ("work")` 与 `("vip") is not equal to ("watch")`。
+全量 2158 XCTest（+3）绿。

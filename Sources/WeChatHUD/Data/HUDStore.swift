@@ -1071,6 +1071,26 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Row-level version of ``whitelistRead(_:)``: 「no such row」 and 「this read
+    /// failed」 are different answers, and the only consumer that matters writes the
+    /// row back with every column overwritten.
+    enum WhitelistEntryRead {
+        case value(WhitelistEntry)
+        case absent
+        case unreadable
+    }
+
+    func whitelistEntryRead(_ username: String) -> WhitelistEntryRead {
+        switch whitelistRead(username) {
+        case .unreadable: return .unreadable
+        case .unfollowed: return .absent
+        case .followed:
+            // Present but undecodable is still not 「no entry」.
+            guard let entry = getWhitelistEntry(username: username) else { return .unreadable }
+            return .value(entry)
+        }
+    }
+
     func getWhitelistEntry(username: String) -> WhitelistEntry? {
         queryOne("""
             SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
@@ -4628,16 +4648,37 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     /// A contact marked 重点关注 must be scanned as VIP even if an older writer
     /// left whitelist on watch or omitted the row.
     func repairVIPTrackingAlignment() {
+        repairVIPTrackingAlignment(read: whitelistEntryRead)
+    }
+
+    /// The seam: 「读不到」 can be driven without racing a real lock.
+    func repairVIPTrackingAlignment(read: (String) -> WhitelistEntryRead) {
         for contact in loadContacts() where contact.attentionLevel == .vip {
-            let existing = getWhitelistEntry(username: contact.username)
-            guard existing?.attentionLevel != .vip else { continue }
-            try? upsertWhitelistTracking(
-                username: contact.username,
-                displayName: existing?.displayName ?? contact.displayName,
-                isGroup: existing?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
-                category: existing?.category ?? .other,
-                attentionLevel: .vip
-            )
+            switch read(contact.username) {
+            case .unreadable:
+                // This runs from `open()` on every launch and every account switch.
+                // `existing?.category ?? .other` used to answer a failed read by
+                // writing 其他 over a conversation the user had filed under 工作 or
+                // 生活 — a silent, self-inflicted relabel of their own data.
+                continue
+            case .absent:
+                try? upsertWhitelistTracking(
+                    username: contact.username,
+                    displayName: contact.displayName,
+                    isGroup: MessageHelpers.isGroupChat(contact.username),
+                    category: .other,
+                    attentionLevel: .vip
+                )
+            case .value(let existing):
+                guard existing.attentionLevel != .vip else { continue }
+                try? upsertWhitelistTracking(
+                    username: contact.username,
+                    displayName: existing.displayName,
+                    isGroup: existing.isGroup,
+                    category: existing.category,
+                    attentionLevel: .vip
+                )
+            }
         }
     }
 
