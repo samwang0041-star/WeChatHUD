@@ -99,4 +99,63 @@ final class SnapshotReclaimTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: root + other),
                       "退出只清自己的；别人的要等它自己那次启动的孤儿扫描")
     }
+
+    /// pid reuse: macOS hands a freed process id to the next process, so
+    /// 「is that pid alive」 answers about a stranger — and the directory it
+    /// "owns" is a plaintext copy of the whole message store that then never
+    /// gets reclaimed. Only a start time later than the directory can prove it.
+    func testReusedPidDoesNotProtectAnOrphanDirectory() {
+        let mtime = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertTrue(WeChatReader.shouldRemoveSnapshotDirectory(
+            named: "wechat_hud_cache_99998", nowPid: 12345, directoryMtime: mtime,
+            ownerIsAlive: { _ in true },
+            ownerStartedAt: { _ in mtime.addingTimeInterval(60) }),
+            "a process that started after the directory was written cannot own it")
+        XCTAssertFalse(WeChatReader.shouldRemoveSnapshotDirectory(
+            named: "wechat_hud_cache_99998", nowPid: 12345, directoryMtime: mtime,
+            ownerIsAlive: { _ in true },
+            ownerStartedAt: { _ in mtime.addingTimeInterval(-60) }),
+            "the real owner started earlier and is still alive")
+        // Anything undateable stays put — this is the destructive branch.
+        XCTAssertFalse(WeChatReader.shouldRemoveSnapshotDirectory(
+            named: "wechat_hud_cache_99998", nowPid: 12345, directoryMtime: mtime,
+            ownerIsAlive: { _ in true }, ownerStartedAt: { _ in nil }))
+        XCTAssertFalse(WeChatReader.shouldRemoveSnapshotDirectory(
+            named: "wechat_hud_cache_99998", nowPid: 12345, directoryMtime: nil,
+            ownerIsAlive: { _ in true }, ownerStartedAt: { _ in Date() }))
+    }
+
+    /// The kernel wrapper is the part that can silently always return nil, which
+    /// would leave the reuse hole wide open while every predicate test stays green.
+    func testProcessStartTimeProbeIsReallyLive() {
+        XCTAssertNotNil(WeChatReader.systemBootTime,
+                        "kern.boottime unreadable ⇒ the reuse defense never fires")
+        guard let started = WeChatReader.processStartedAt(getpid()),
+              let boot = WeChatReader.systemBootTime else {
+            return XCTFail("cannot date our own process")
+        }
+        XCTAssertLessThanOrEqual(started, Date(), "our process did not start in the future")
+        XCTAssertGreaterThanOrEqual(started, boot, "start time has to be boot-anchored")
+        XCTAssertNotNil(WeChatReader.processStartedAt(1), "launchd is always there")
+        XCTAssertNil(WeChatReader.processStartedAt(Int32.max), "a nonexistent pid must not report a time")
+    }
+
+    /// The sweep has to hand the predicate a real mtime, not the defaulted nil.
+    func testSweepPassesTheDirectoryTimestampToThePredicate() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path + "/"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let name = "wechat_hud_cache_99997"
+        try FileManager.default.createDirectory(atPath: root + name, withIntermediateDirectories: true)
+        let mtime = Date(timeIntervalSince1970: 1_600_000_000)
+        try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: root + name)
+        var sawMtime: Date?
+        WeChatReader.removeOrphanedSnapshotDirectories(
+            in: root, nowPid: 12345,
+            ownerIsAlive: { _ in true },
+            ownerStartedAt: { pid in sawMtime = nil; return mtime.addingTimeInterval(3600) }
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root + name),
+                       "a live stranger holding our old pid must not keep the plaintext copy alive")
+        _ = sawMtime
+    }
 }

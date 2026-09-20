@@ -191,3 +191,115 @@ final class ClipboardRecordedWriteTests: XCTestCase {
         XCTAssertNil(left)
     }
 }
+
+/// Round 5's two P0s: the durable traces a withdrawal leaves behind were written
+/// by one commit and read by nobody.
+final class WithdrawalDurabilityTests: XCTestCase {
+    private var store: HUDStore!
+    private var reader: WeChatReader!
+    private var service: AutopilotService!
+
+    override func setUpWithError() throws {
+        let tmp = NSTemporaryDirectory() + "hud_withdrawal_\(UUID().uuidString).sqlite3"
+        store = HUDStore(dbPath: tmp)
+        try store.open()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reader = WeChatReader(dbDir: root.path, cacheStrategy: .memory)
+        service = AutopilotService(store: store, reader: reader, aiService: AIService())
+    }
+
+    override func tearDown() async throws {
+        try? await service.stop()
+        store.close()
+    }
+
+    private func twin(_ sid: Int64, reason: String?) throws -> PendingSend {
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "收到-\(UUID().uuidString.prefix(4))", confidence: 0.9, risk: .low,
+            reasoning: "ok", styleScore: 80,
+            scheduledSendTime: Date().addingTimeInterval(-1), manualOnlyReason: reason
+        )
+        try store.upsertPendingSend(item, sessionId: sid)
+        return item
+    }
+
+    private func pendingLogRow(_ sid: Int64, for item: PendingSend) throws -> Int64 {
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-\(item.id)",
+            triggerText: "在吗", generatedReply: item.replyText, confidence: 0.9,
+            riskLevel: .low, action: .pending, aiReasoning: nil, sentAt: nil,
+            createdAt: Date(), queueId: item.id.uuidString
+        ))
+        let rows = store.loadAutopilotLog(sessionId: sid).filter { $0.triggerMsgUID == "m-\(item.id)" }
+        return try XCTUnwrap(rows.first?.id, "no log row written for \(item.id)")
+    }
+
+    /// `executeSend` re-inserts the queue row just before it types (its upsert is
+    /// `ON CONFLICT DO UPDATE`, which re-creates a deleted row), so mid-send a
+    /// 取消 leaves the queue axis reading 「live」 again — and the approval gate is
+    /// called with `logId: nil` there, so nothing else was left to refuse.
+    func testAResurrectedQueueRowStillReadsAsWithdrawn() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        let item = try twin(sid, reason: nil)
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-9", triggerText: "在吗",
+            generatedReply: item.replyText, confidence: 0.9, riskLevel: .low,
+            action: .skipped, aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: item.id.uuidString
+        ))
+        XCTAssertTrue(store.hasPendingSend(id: item.id))
+        XCTAssertTrue(store.autopilotLogWithdrawnForQueue(queueId: item.id))
+        let permitted = await service.deliveryStillPermitted(
+            queueId: item.id, logId: nil, chatUsername: nil)
+        XCTAssertFalse(permitted, "the row was re-created by the send path itself; the cancel has to win")
+    }
+
+    /// After a restart the in-memory holds are gone, and 确认发送 is exactly what
+    /// a user reaches for when the card reappears. Ordinary manual-only reasons
+    /// (敏感词 / 群聊 / 置信度) must stay approvable, or this becomes a new lockout.
+    func testDurableHoldOnTheQueueRowRefusesApproval() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        for (reason, refuses) in [
+            (AutopilotService.unverifiedDeliveryHoldText, true),
+            (AutopilotService.cancelNotLandedHoldText, true),
+            ("包含敏感词，转人工", false),
+            (nil, false),
+        ] {
+            let item = try twin(sid, reason: reason)
+            let rowId = try pendingLogRow(sid, for: item)
+            let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+            try await revived.start()
+            let permitted = await revived.deliveryStillPermitted(
+                queueId: item.id, logId: rowId, chatUsername: "wxid_peer",
+                requiresQueueRow: false)
+            XCTAssertEqual(permitted, !refuses,
+                           "a row whose manual-only reason is a durable send-unknown hold must not send")
+            try? await revived.stop()
+        }
+    }
+
+    /// 「夜里没有往来」 is a completed measurement. Trusting the cached row only
+    /// when the rate is non-nil re-read 500 messages per batch for most of the
+    /// whitelist — the honesty fix must not have become a hot-path fix.
+    func testACompletedMeasurementWithNoLateNightTrafficIsNotReMeasured() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let unreadable = WeChatReader(dbDir: root.path, cacheStrategy: .memory)
+        try store.upsertReplyTimingProfile(ReplyTimingProfile(
+            chatUsername: "wxid_quiet", workHours: .zero, evening: .zero, weekend: .zero,
+            lateNight: .zero, silentAtNight: true, lateNightReplyRate: nil,
+            sampleCount: 40, lastUpdated: Date()
+        ))
+        let got = await StyleProfiler(reader: unreadable, store: store)
+            .getTimingProfile(chatUsername: "wxid_quiet")
+        XCTAssertEqual(got.sampleCount, 40,
+                       "the stored measurement was ignored and the history re-read")
+        XCTAssertNil(got.lateNightReplyRate, "still no fabricated rate for a quiet night")
+    }
+}

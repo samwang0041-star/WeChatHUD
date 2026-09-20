@@ -1996,7 +1996,11 @@ struct AutopilotLogEntry: Identifiable {
     let createdAt: Date
     /// The PendingSend UUID this log row twins with — the shared key that
     /// replaces (chat, replyText) matching, which collapses identical
-    /// replies. NULL for rows written before the column existed.
+    /// replies. NULL for rows written before the column existed, and always
+    /// nil on rows that came back from `loadAutopilotLog`: the shared decoder
+    /// reads a column list that stops at `created_at`, so do not treat a nil
+    /// here as "no twin" — ask the store (`twinClaimed`,
+    /// `autopilotLogWithdrawnForQueue`) instead.
     var queueId: String? = nil
 
     func replacingReply(_ reply: String) -> AutopilotLogEntry {

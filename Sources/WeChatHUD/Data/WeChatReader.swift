@@ -364,12 +364,54 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     /// process with a chosen pid, and the destructive half of this sweep is
     /// exactly the branch that would otherwise go unexercised.
     nonisolated static func shouldRemoveSnapshotDirectory(
-        named name: String, nowPid: Int32, ownerIsAlive: (Int32) -> Bool
+        named name: String, nowPid: Int32, directoryMtime: Date? = nil,
+        ownerIsAlive: (Int32) -> Bool,
+        ownerStartedAt: (Int32) -> Date? = { _ in nil }
     ) -> Bool {
         guard isSnapshotDirectoryName(name) else { return false }
         guard let pid = pid(ofSnapshotDirectoryName: name) else { return true }
         if pid == nowPid { return false }
-        return !ownerIsAlive(pid)
+        guard ownerIsAlive(pid) else { return true }
+        // pid reuse. macOS hands a freed process id straight to the next process,
+        // so `kill(pid, 0)` answers 「owner alive」 about a complete stranger —
+        // and the directory it "owns" is a plaintext copy of the entire message
+        // store, which then never gets reclaimed. A process that started *after*
+        // the directory was last written cannot have written it.
+        // Anything we cannot date stays put: this is the destructive branch.
+        guard let started = ownerStartedAt(pid), let mtime = directoryMtime else { return false }
+        return started > mtime
+    }
+
+    /// `kern.boottime`, read once as the floor for the probe below.
+    nonisolated static let systemBootTime: Date? = {
+        var tv = timeval()
+        var size = MemoryLayout<timeval>.stride
+        var name: [Int32] = [CTL_KERN, KERN_BOOTTIME]
+        guard sysctl(&name, 2, &tv, &size, nil, 0) == 0, size > 0, tv.tv_sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(tv.tv_sec)
+            + TimeInterval(tv.tv_usec) / 1_000_000)
+    }()
+
+    /// When that process started, or nil when the kernel will not say.
+    ///
+    /// Measured on this macOS (2026-09-20, `swift stprobe`):
+    /// `proc_bsdinfo.p_starttime` is already absolute epoch time — for our own
+    /// process it read 1789862775.650 against `Date()` 1789862775.858 and
+    /// `kern.boottime` 1789351563. The folklore that it counts from boot is wrong
+    /// here, and adding boot to it produced a start time in 2083, which silently
+    /// made every directory look older than its owner (i.e. never reclaim
+    /// anything). The boot time is kept only as a sanity floor.
+    nonisolated static func processStartedAt(_ pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&name, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let start = info.kp_proc.p_starttime
+        guard start.tv_sec > 0 else { return nil }
+        let absolute = Date(timeIntervalSince1970: TimeInterval(start.tv_sec)
+            + TimeInterval(start.tv_usec) / 1_000_000)
+        guard let boot = systemBootTime, absolute >= boot else { return nil }
+        return absolute
     }
 
     /// Snapshots are plaintext copies of the whole message store. A process that
@@ -380,13 +422,17 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
     nonisolated static func removeOrphanedSnapshotDirectories(
         in root: String = NSTemporaryDirectory(),
         nowPid: Int32 = getpid(),
-        ownerIsAlive: (Int32) -> Bool = { kill($0, 0) == 0 }
+        ownerIsAlive: (Int32) -> Bool = { kill($0, 0) == 0 },
+        ownerStartedAt: (Int32) -> Date? = WeChatReader.processStartedAt
     ) {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(atPath: root) else { return }
-        for name in entries where Self.shouldRemoveSnapshotDirectory(
-            named: name, nowPid: nowPid, ownerIsAlive: ownerIsAlive
-        ) {
+        for name in entries {
+            let mtime = (try? fm.attributesOfItem(atPath: root + name))?[.modificationDate] as? Date
+            guard Self.shouldRemoveSnapshotDirectory(
+                named: name, nowPid: nowPid, directoryMtime: mtime,
+                ownerIsAlive: ownerIsAlive, ownerStartedAt: ownerStartedAt
+            ) else { continue }
             try? fm.removeItem(atPath: root + name)
         }
     }

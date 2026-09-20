@@ -434,7 +434,10 @@ actor AutopilotService {
     nonisolated static func mayStillDeliver(
         paused: Bool, sessionOpen: Bool,
         conversationMuted: Bool = false,
-        queueRowLive: Bool?, approvalRowPending: Bool?,
+        queueRowLive: Bool?,
+        queueRowWithdrawn: Bool = false,
+        durableHoldActive: Bool = false,
+        approvalRowPending: Bool?,
         alreadySentHere: Bool = false,
         rejectedHere: Bool = false,
         queueHeldHere: Bool = false
@@ -450,6 +453,14 @@ actor AutopilotService {
         // write-back failed, so no row read can rule out either a second send of
         // a reply that already went out, or a send of one the user 取消了.
         if alreadySentHere || rejectedHere || queueHeldHere { return false }
+        // Two durable answers to 「the human already took this back / the last
+        // outcome is unknown」. `executeSend` re-writes the queue row right before
+        // it types (its upsert is `ON CONFLICT DO UPDATE`, which re-inserts a
+        // deleted row), so during a mid-send cancel `queueRowLive` reads 「live」
+        // again a few lines after the cancel landed; and the in-memory holds that
+        // used to be the only other signal are empty after exactly the restart the
+        // durable marker was written to survive.
+        if queueRowWithdrawn || durableHoldActive { return false }
         return (queueRowLive ?? true) && (approvalRowPending ?? true)
     }
 
@@ -597,13 +608,24 @@ actor AutopilotService {
         ) ?? false
     }
 
-    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?) -> Bool {
+    /// - Parameter requiresQueueRow: whether the queue row is this send's
+    ///   credential. For the batch path it is — the row IS the work item, and a
+    ///   取消 deletes it. For 确认发送 it is not: an enqueue whose
+    ///   `upsertPendingSend` hit SQLITE_BUSY legitimately has an audit row and no
+    ///   twin, and requiring one there locked the card permanently. The cancel is
+    ///   still caught, by the two durable axes below.
+    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?,
+                                requiresQueueRow: Bool = true) -> Bool {
         let muted = chatUsername.map { conversationIsMuted($0) } ?? false
         return Self.mayStillDeliver(
             paused: isPaused,
             sessionOpen: sessionId != nil,
             conversationMuted: muted,
-            queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
+            queueRowLive: requiresQueueRow ? queueId.map { store.hasPendingSend(id: $0) } : nil,
+            queueRowWithdrawn: queueId.map { store.autopilotLogWithdrawnForQueue(queueId: $0) } ?? false,
+            durableHoldActive: queueId.map {
+                Self.durableHold(store.pendingSendManualOnlyReason(id: $0)) != .none
+            } ?? false,
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
             alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
             rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false,
@@ -1031,7 +1053,8 @@ actor AutopilotService {
             // thing checked before the send key.
             gate: { [weak self] in
                 await self?.deliveryStillPermitted(
-                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername
+                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername,
+                    requiresQueueRow: false
                 ) ?? false
             }
         )

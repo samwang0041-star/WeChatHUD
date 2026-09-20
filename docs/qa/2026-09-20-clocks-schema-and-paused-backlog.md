@@ -1385,3 +1385,94 @@ db+wal 字节里读得到 canary（夹具真的建立了泄漏），再断言迁
    + 两处生产者 + 一个 `analysisType` bump 才能让旧缓存失效，
    属产品口径（"没内容可读"要不要单独成一档）而不是纯缺陷，交回给 owner 定价。
 5. 崩溃窗口里的剪贴板残留：要修只能把聊天原文写进哨兵文件，比泄漏本身更糟 —— 不做。
+
+## §218 撤回被发送路径自己复活（P0，第 5 轮代理攻击成立）
+
+`executeSend` 在敲键之前有一行 `if let sid = sessionId { try? store.upsertPendingSend(item, …) }`，
+注释写着"队列行必须在整个发送期间存在，否则闸门会读成『已取消』而永远不发"。
+但 `upsertPendingSend` 是 `ON CONFLICT DO UPDATE` —— 对被删除的行它是 **INSERT**，
+于是这条防御恰好把用户刚刚按下的「取消本条」撤销了：
+
+`await stalePendingSendReason(item)` 是 actor 的再入点，取消在这一步落地
+（翻日志行成功 + 删队列行成功 ⇒ 不留任何 hold，因为两笔写都成了）
+→ 恢复后上面那行把队列行写回去 → 闸门 `deliveryStillPermitted(queueId: item.id, logId: nil, …)`
+读到 `queueRowLive = true`，而 `logId: nil` 让审批行轴无从拒绝 → 敲键。
+发送成功后 `markAutopilotLogSentUnchecked` 的 `WHERE queue_id=? AND action='skipped'`
+还会把那行"已取消"改回 `sent`，撤回记录一起抹掉。
+
+这不是 §213 那次重排造成的（旧顺序同样存在），但重排让它变成唯一的存活路径，
+所以代理这一击正好打在新代码上。**修法**：给 `mayStillDeliver` 加一条耐久轴
+`queueRowWithdrawn`（`autopilotLogWithdrawnForQueue(queueId:)`：有日志行认领这个 queue_id
+且 `action='skipped'`），并在 `deliveryStillPermitted` 里对两个调用方都计算。
+队列行"活着"不再是"没人撤回过"的证据。
+
+## §219 耐久标记写好了，没有第二个人读（P0，同一谓词的漏消费点）
+
+§214 我把 `durableHold` 只接在 `sendNow` 上（全仓一个调用点），
+而审批走的是 `deliveryStillPermitted` / `mayStartApproval` —— 它们的八条轴里
+没有任何一条读 `manual_only_reason`。于是重启后：内存 hold 空、队列行还在、
+审计行还是 `pending` ⇒ 确认发送全轴放行，而那一行自己写着"先别确认发送"。
+**我自己记过的规矩（一处谓词要扫它全部消费点）这次是我违犯的那一条。**
+
+修法与 §218 同一处：再加一条 `durableHoldActive`（读队列行的
+`manual_only_reason` 过 `durableHold`），两档（未确认送达 / 撤回未落库）都拒绝。
+判据带四条真值表：两支 hold 拒绝，`包含敏感词，转人工` 与 nil 两支**必须放行**，
+否则这就是第 N 个确认发送死锁。写侧与判侧共用常量（`unverifiedDeliveryHoldText` /
+`cancelNotLandedHoldText`），文案一改测试就红。
+
+有了这两条耐久轴之后，`requiresQueueRow: false` 才重新成立：
+取消由"日志行 skipped"和"队列行 hold"两把耐久锁盖住，队列行的存在与否
+不再承担区分"取消过 / 从没写进去"的职责 —— §213 的两次反复根源于此。
+
+## §220 我把"诚实的 nil"当成了"没测到"（P1，自己上一轮的药）
+
+§211 让夜里没有来量时 `lateNightReplyRate = nil`（正确），
+但缓存与信任轴是按"rate 非 nil"判断"这行是不是测过"的 ⇒
+一个测了 40 对、只是夜里不说话的联系人，DB 行永远不被信任、内存窗口被降级到 60 秒
+→ 每个批次 flush 重跑一次 500 条全量配对分析（白名单里多数是夜间不回复的人）。
+改成问 `sampleCount > 0`：**"测过但没有值"与"没测过"是两个问题，别用同一个字段答**。
+判据 `testACompletedMeasurementWithNoLateNightTrafficIsNotReMeasured`
+用一个指向空目录的 reader 做判别器：信 DB 就返回 sampleCount=40，重测就返回 0。
+
+## §221 pid 复用：明文快照的守灵人换了（P1，§217 的第 2 条已修）
+
+`ownerIsAlive = kill(pid,0)==0` 在 pid 被复用后会对着一个陌生进程说"主人还活着"，
+而那个目录是整个消息库的明文副本 —— 它永远不会被回收。
+`shouldRemoveSnapshotDirectory` 增加"主人启动时刻晚于目录 mtime ⇒ 不可能是主人"，
+判据四向：晚启动 ⇒ 删；早启动 ⇒ 留；启动时间或 mtime 未知 ⇒ 留（这是破坏性分支）；
+以及一条活的内核探针测试（`processStartedAt(getpid())` 必须落在 boot 与 now 之间）。
+
+**实测推翻了我的先验**：`proc_bsdinfo.p_starttime` 在这台 macOS 上就是**绝对 epoch 秒**
+（本进程读到 1789862775.650，`Date()` 1789862775.858，`kern.boottime` 1789351563），
+不是"开机以来秒数"。我先按 `boot + p_starttime` 写，测试立刻红在
+"我们的进程启动于 2083-06-03"，如果只靠推理这里就会留下一个永久失效的防御
+（所有目录都比"主人"年轻 ⇒ 什么都不清理，且看起来完全正常）。
+boot time 只留作下界校验。
+
+## §222 本轮判阴与定价（不修，但记清楚为什么不修）
+
+1. **legacy 文本兜底现在有歧义池（P1，未修）**：`legacyTwinPredicate` 是
+   `queue_id IS NULL … ORDER BY created_at, rowid LIMIT 1`（最旧优先）。
+   §213 让运行期的孪生写失败也产出 `queue_id IS NULL` 的 pending 行，
+   于是同会话同文本（"好的""收到"）两行时，取消可能翻到**更旧的那行**，
+   `flipped=1、deleteLanded=true` ⇒ 不布防任何 hold，用户那张卡片还是 pending。
+   没有一并修的原因：这条路径要求"孪生写失败 + 同文本并发 + 取消"三件事同时发生，
+   而正确修法（把兜底收紧成"仅当候选唯一"或把 session_id 一路传进 `markAutopilotLogSkipped`）
+   会改变 `twinClaimed` 的语义，需要一整轮回归；
+   §218/§219 两条耐久轴已经把"翻错行 ⇒ 能发出去"这一步挡住了（队列行被删 ⇒ `queueRowLive=false`，
+   除非它又被复活，而那正是 §218 的轴在读）。
+2. **第四种 hold 文案没进分类器（P1，故意只做两档）**：`sendFailureDisposition` 的
+   `.humanRequired` 文本（"…请先检查微信，再手动处理"）语义上同样是"键可能已进"，
+   但它是**运行时拼接**的（原因 + 后缀），精确等值分类器无法覆盖。
+   不修的理由：给它加一档会立刻把"每一次发送失败"都变成"禁止确认发送"，
+   那是把 P0 换成另一个死锁。要修得先在 `SendFailureDisposition` 里把
+   "键是否可能已落地"提成枚举字段而不是文案（同 §214 的形状），是一次独立重构。
+3. **拒绝语指向一个不存在的按钮（P2）**：`sendNow` 的拒绝文案让用户"用「编辑并发送」"，
+   而 `editAndSendAutopilot` 在 Views 里零调用点。已把文案改成"先在微信里核对"，
+   但那条路现在确实只有核对 —— 这是产品缺口不是缺陷（用户需要一个"核对完再放行"的按钮）。
+4. **统计口径（P2）**：写失败的转账被 `immediateEntries.count - pending` 归进"已跳过"，
+   统计页会把它报成跳过的消息，而它其实是待本人处理。要单开一档"记录失败"才准。
+5. **`loadAutopilotLog` 不读 `queue_id`（P3）**：共享解码器的列表停在 `created_at`，
+   所以任何从 `loadAutopilotLog` 出来的行 `.queueId == nil`。今天没有读者依赖它
+   （全部 `.queueId` 消费点用的都是当场构造的 entry），已在字段注释里写明
+   "别把这里的 nil 当成『没有孪生』，要问 store"。

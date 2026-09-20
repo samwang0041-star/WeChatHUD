@@ -3818,6 +3818,23 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         ) ?? false
     }
 
+    /// Did the human take this back? The cancel's flip is the durable answer, and
+    /// `executeSend` re-writes the queue row before it sends (`ON CONFLICT DO
+    /// UPDATE` re-inserts a deleted one), so the queue row alone cannot answer
+    /// this — it says 「live」 again a few lines after a 取消 landed.
+    func autopilotLogWithdrawnForQueue(queueId: UUID) -> Bool {
+        queryOne("SELECT 1 FROM autopilot_log WHERE queue_id=? AND action='skipped' LIMIT 1",
+                 bind: { sqlite3_bind_text($0, 1, queueId.uuidString, -1, Self.sqliteTransient) },
+                 decode: { _ in 1 }) != nil
+    }
+
+    /// Why this queue row stopped being automatic — nil when it is still eligible.
+    func pendingSendManualOnlyReason(id: UUID) -> String? {
+        queryOne("SELECT manual_only_reason FROM autopilot_pending_sends WHERE id=? LIMIT 1",
+                 bind: { sqlite3_bind_text($0, 1, id.uuidString, -1, Self.sqliteTransient) },
+                 decode: { stmt in sqlite3_column_type(stmt, 0) == SQLITE_NULL ? nil : Self.textColumn(stmt, 0) })
+    }
+
     /// A held reply exists as BOTH a pending_sends row and an autopilot_log
     /// row. New log rows carry the queue item's UUID in `queue_id` — resolve
     /// by that key. Rows written before the column existed match by

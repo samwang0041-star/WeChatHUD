@@ -495,16 +495,16 @@ actor StyleProfiler {
         // Check memory cache
         if let cached = timingCache[chatUsername],
            Self.isFresh(refreshedAt: cached.refreshedAt,
-                        window: cached.profile.lateNightReplyRate == nil
-                            ? Self.unmeasuredRetrySeconds : 3600) {
+                        window: cached.profile.sampleCount > 0 ? 3600 : Self.unmeasuredRetrySeconds) {
             return cached.profile
         }
-        // Check DB cache (refreshed < 24h ago). A row with no rate is a
-        // pre-persistence row: it cannot answer the threshold question, so it is
-        // re-measured rather than trusted — the old loader answered it with a
-        // 0.0 / 1.0 rebuilt from the silent bit.
+        // Check DB cache (refreshed < 24h ago). 「Was anything measured at all」
+        // is asked of `sampleCount`, not of the rate: a contact with 40 pairs and
+        // no late-night traffic IS measured (rate nil by honesty), and keying the
+        // trust off the rate re-read 500 messages for them on every batch flush —
+        // i.e. for most of the whitelist.
         if let stored = store.loadReplyTimingProfile(chatUsername: chatUsername),
-           stored.lateNightReplyRate != nil,
+           stored.sampleCount > 0,
            Date().timeIntervalSince(stored.lastUpdated) < 86400 {
             timingCache[chatUsername] = (stored, Date())
             return stored
