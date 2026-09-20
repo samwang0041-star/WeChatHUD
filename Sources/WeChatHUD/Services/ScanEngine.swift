@@ -54,7 +54,13 @@ enum ScanEngine {
             let readerActor = WeChatReaderActor(reader)
             let contactsChanged = try await readerActor.prepareForScan()
 
-            let chatActions = store.loadChatActions()
+            guard let chatActions = store.chatActionsRead() else {
+                // Every consumer below reads this as 「这条对话没被静音/稍后提醒」.
+                // Skip the round instead of notifying at chats the user silenced;
+                // the next scan retries.
+                print("[WCHUD] chat_actions 读不到，跳过本轮扫描（不把「没有规则」当成规则）")
+                return nil
+            }
             let nowEpoch = Int(Date().timeIntervalSince1970)
 
             let sessions: [SessionInfo]

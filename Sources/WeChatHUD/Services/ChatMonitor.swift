@@ -2625,7 +2625,13 @@ final class ChatMonitor: ObservableObject {
     ///   - silenced_at > now+1yr → silencedInbox.insert(user)   (permanent)
     ///   - silenced_at > 0       → dismissedInbox[user] = silenced_at
     private func hydrateInboxActionsFromStore() {
-        let actions = store.loadChatActions()
+        guard let actions = store.chatActionsRead() else {
+            // This runs at start(); rebuilding from `[:]` would clear the mute and
+            // snooze sets the user left behind, then the next scan would notify
+            // at exactly the conversations they silenced.
+            print("[WCHUD] chat_actions 读不到，保留现有收件箱静音状态")
+            return
+        }
         let nowEpoch = Int(Date().timeIntervalSince1970)
         dismissedInbox.removeAll(keepingCapacity: true)
         snoozedInbox.removeAll(keepingCapacity: true)

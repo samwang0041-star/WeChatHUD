@@ -483,11 +483,22 @@ actor StyleProfiler {
     // MARK: - Reply Timing Analysis
 
     func testingProfileCacheCount() -> Int { profileCache.count }
+    func testingTimingCacheCount() -> Int { timingCache.count }
 
     static let unmeasuredRetrySeconds: TimeInterval = 60
 
     /// Cached timing profiles keyed by chatUsername.
     private var timingCache: [String: (profile: ReplyTimingProfile, refreshedAt: Date)] = [:]
+
+    /// Same shape as `profileCache`, which grew unbounded for the life of a 24/7
+    /// process and only got a bound last round; TTL here is the *longest* window a
+    /// read will honour, so pruning never drops an entry still considered fresh.
+    static let timingCacheCap = 128
+
+    private func pruneTimingCache() {
+        timingCache = Self.pruning(timingCache, ttl: 3600,
+                                   cap: Self.timingCacheCap, now: Date())
+    }
 
     /// Analyze historical reply intervals and build a timing profile.
     /// Cached for 1 hour since historical patterns change slowly.
@@ -507,6 +518,7 @@ actor StyleProfiler {
            stored.sampleCount > 0,
            Date().timeIntervalSince(stored.lastUpdated) < 86400 {
             timingCache[chatUsername] = (stored, Date())
+            pruneTimingCache()
             return stored
         }
 
@@ -520,9 +532,11 @@ actor StyleProfiler {
             // 60s, not an hour: the next successful read must be able to land.
             let unmeasured = Self.unmeasuredTimingProfile(chatUsername: chatUsername)
             timingCache[chatUsername] = (unmeasured, Date())
+            pruneTimingCache()
             return unmeasured
         }
         timingCache[chatUsername] = (profile, Date())
+        pruneTimingCache()
         try? store.upsertReplyTimingProfile(profile)
         return profile
     }

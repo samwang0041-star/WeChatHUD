@@ -1837,3 +1837,37 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 计数仍是 1，我却把随后的"0 failures"当成了变异存活的结论。两步都被"恢复后 grep 关键行"
 这道收尾断言抓住 —— 以后所有变异实验都必须打印"我确实改到了"的计数，并且把
 "改前源文件 + 新测试"这一组当作默认的红/绿对照，而不是依赖手写的 mutation 字符串。
+
+## §236 第 9 轮：静音规则「读不到」＝「没人被静音」，于是把撤回过的回复敲进微信（P0，已修）
+
+第四路只读扫描代理报回这一族的又两处，其中一处它把我原先定价的 P2 上调为 P0，回源码同意：
+`loadChatActions()`（HUDStore:1312）走 `queryAll`，其 `try?` 把 prepare/step 错吞成 `[]`，
+四个消费点全部把空字典读成「没有任何对话被静音/稍后提醒」：
+
+- `AutopilotService.conversationIsMuted`(:626) 的 `?? false` 直接喂 `deliveryStillPermitted`
+  (:644) 的发送门禁 —— 静音是用户**不开审批卡就撤回一条回复**的手段，读失败即放行，等于把
+  他刚撤回的话敲进微信。按本轴定义（发出已撤回内容）是 P0，不是 P2。
+- `ScanEngine.performScan`(:57) 的 6 处读（:138/:151/:686/:996/:1422→:1533）决定横幅与系统
+  通知；读失败会把用户静音过的对话重新弹通知。
+- `ChatMonitor.hydrateInboxActionsFromStore`(:2628) 更糟：它先 `removeAll` 再按读到的内容重建，
+  于是一次启动期的读失败会**清空内存里的静音/稍后提醒**，而它在 `start()` 里跑。
+- `silencedConversations`(:2745) 只影响管理页（读失败→列表空→没有那颗取消静音键），
+  本轮按原样保留，属"展示层少东西"不是"做错事"。
+
+修法：新增 `HUDStore.chatActionsRead() -> [String: ChatActionState]?`（nil＝读不到），三个会
+做错事的消费点改为保守方向 —— 门禁 nil⇒视为已静音（不发）、扫描 nil⇒本轮不出结论且
+**不推水位**、水合 nil⇒保留现有内存状态不重建。`loadChatActions()` 留给展示型调用点。
+另补 `StyleProfiler.timingCache` 的上限（上一轮 profileCache 的同形状漏改，复用已有的纯函数
+`pruning`，TTL 取读侧最长窗口 3600 以免剪掉仍算新鲜的条目）。
+
+判据：`MuteRuleFailClosedTests` 3 条 + `ScanSkipsUnreadableMuteRulesTests` 1 条。
+- 门禁：同一份 setup 里先要 `permittedNormally == true`（正对照，防"改成永不发送"），
+  再把 `chat_actions` 改名让读失败，随后必须 false。
+- 扫描：读失败那一轮返回 nil 之后，把表改回来再扫，**必须仍然看到那两条未回消息** ——
+  这条才是"没有把水位推过去"的证据，不是断言函数返回值。
+- 三条变异（门禁回退成 `?? false` / 剪枝不接线 / 扫描改回吞错读）各红 1 条，且都用
+  **能编译**的变异；前一版我把整个 `guard` 块替换掉导致编译失败、测试静默不跑，
+  已在下面记成流程教训。全量 2150 XCTest（+4）+ 70 swift-testing 绿。
+
+流程教训（本轮又两次）：变异实验必须"改完还能编译"，并且要看到**你新写那条断言的失败行**；
+`grep` 只匹配 `error: -[` 时，编译错会让整轮"看起来 0 failures"。

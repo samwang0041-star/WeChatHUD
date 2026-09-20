@@ -1309,6 +1309,33 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return "name:\(normalizedName)"
     }
 
+    /// ``loadChatActions`` answers `[:]` both when nobody is muted and when the
+    /// table could not be read, and every consumer treats 「没有静音」 as permission
+    /// — to notify, and (worse) to auto-send a reply the user withdrew by muting.
+    /// nil means 「这次读不到」, which is not the same answer.
+    func chatActionsRead() -> [String: ChatActionState]? {
+        do {
+            let rows: [(String, ChatActionState)?] = try queryAllThrowing(
+                "SELECT chat_username, silenced_at, snoozed_until FROM chat_actions",
+                bind: { _ in },
+                decode: { stmt in
+                    let username = Self.textColumn(stmt, 0)
+                    guard !username.isEmpty else { return nil }
+                    return (
+                        username,
+                        ChatActionState(
+                            silencedAt: Int(sqlite3_column_int64(stmt, 1)),
+                            snoozedUntil: Int(sqlite3_column_int64(stmt, 2))
+                        )
+                    )
+                }
+            )
+            return rows.compactMap { $0 }.reduce(into: [:]) { $0[$1.0] = $1.1 }
+        } catch {
+            return nil
+        }
+    }
+
     func loadChatActions() -> [String: ChatActionState] {
         let rows: [(String, ChatActionState)] = queryAll(
             "SELECT chat_username, silenced_at, snoozed_until FROM chat_actions",

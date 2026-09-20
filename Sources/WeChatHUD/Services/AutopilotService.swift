@@ -624,7 +624,11 @@ actor AutopilotService {
     /// of the send as `SendAttempt.keystrokesLanded` rather than parked on the
     /// actor, because the read happens after an `await`.
     private func conversationIsMuted(_ username: String) -> Bool {
-        store.loadChatActions()[username]?.isPermanentlySilenced(
+        // Fail closed. Muting a conversation is how a user takes back a reply
+        // without opening the approval card, so 「读不到这条规则」 may not fall through
+        // to 「没被静音」 and type the withdrawn text into WeChat.
+        guard let actions = store.chatActionsRead() else { return true }
+        return actions[username]?.isPermanentlySilenced(
             nowEpoch: Int(Date().timeIntervalSince1970)
         ) ?? false
     }
