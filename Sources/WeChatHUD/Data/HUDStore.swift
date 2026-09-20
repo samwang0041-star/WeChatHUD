@@ -1389,6 +1389,34 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         try exec("DELETE FROM chat_actions WHERE chat_username=?", params: [chatUsername])
     }
 
+    /// `loadIgnoredSenders` answers `[]` both for 「没有静音规则」 and for 「这次读不到」,
+    /// and *both* directions are destructive downstream: an empty mute set admits the
+    /// senders a user muted, and an empty group-watch list un-admits chats whose
+    /// messages the scan then advances its watermark past for good.
+    func ignoredSendersRead() -> [IgnoredSenderRule]? {
+        let sql = """
+            SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at, scope
+            FROM ignored_senders
+            ORDER BY created_at DESC, chat_name ASC, sender_name ASC
+            """
+        do {
+            let rows: [IgnoredSenderRule?] = try queryAllThrowing(sql, bind: { _ in }) { stmt in
+                IgnoredSenderRule(
+                    chatUsername: Self.textColumn(stmt, 0),
+                    chatName: Self.textColumn(stmt, 1),
+                    senderIdentifier: Self.textColumn(stmt, 2),
+                    senderUsername: Self.textColumn(stmt, 3),
+                    senderName: Self.textColumn(stmt, 4),
+                    createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 5))),
+                    scope: IgnoredSenderScope(rawValue: Self.textColumn(stmt, 6)) ?? .chat
+                )
+            }
+            return rows.compactMap { $0 }
+        } catch {
+            return nil
+        }
+    }
+
     func loadIgnoredSenders() -> [IgnoredSenderRule] {
         queryAll("""
             SELECT chat_username, chat_name, sender_identifier, sender_username, sender_name, created_at, scope
@@ -1535,6 +1563,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
     }
 
     // MARK: - Group member rules
+
+    /// Same shape as ``ignoredSendersRead()``: empty means 「没人被关注」 only if the
+    /// read actually succeeded.
+    func groupMemberRulesRead() -> [GroupMemberRule]? {
+        let sql = """
+            SELECT chat_username, chat_name, sender_username, sender_name, created_at
+            FROM group_member_rules
+            ORDER BY created_at DESC, chat_name ASC, sender_name ASC
+            """
+        do {
+            let rows: [GroupMemberRule?] = try queryAllThrowing(sql, bind: { _ in }) { stmt in
+                GroupMemberRule(
+                    chatUsername: Self.textColumn(stmt, 0),
+                    chatName: Self.textColumn(stmt, 1),
+                    senderUsername: Self.textColumn(stmt, 2),
+                    senderName: Self.textColumn(stmt, 3),
+                    createdAt: Date(timeIntervalSince1970: Double(sqlite3_column_int64(stmt, 4)))
+                )
+            }
+            return rows.compactMap { $0 }
+        } catch {
+            return nil
+        }
+    }
 
     func loadGroupMemberRules() -> [GroupMemberRule] {
         queryAll("""

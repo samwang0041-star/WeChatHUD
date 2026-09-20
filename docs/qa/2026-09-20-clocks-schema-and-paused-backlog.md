@@ -1871,3 +1871,36 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 
 流程教训（本轮又两次）：变异实验必须"改完还能编译"，并且要看到**你新写那条断言的失败行**；
 `grep` 只匹配 `error: -[` 时，编译错会让整轮"看起来 0 failures"。
+
+## §237 第 9 轮：三张准入规则表读不到＝「没有规则」，既放行被静音的人，又删掉待分析的行（P0，已修）
+
+`AdmissionRules.load` 的四个输入里有三个走吞错读：`loadGroupMemberMap`、
+`loadIgnoredSenderMap`、`loadGlobalIgnoredSenders`（全部经 `queryAll`，`try?` 把 prepare/step
+错变成 `[]`）。已有的 `followingUnreadable` 旗标只覆盖关注列表，所以**规则表读失败不举任何旗**，
+而 `[]` 在两个方向上都是破坏性的（`AdmissionPolicy.decide`:72-80）：
+
+- `senderIsMuted` 变假 ⇒ 用户全局/按群静音的人，消息被放行、弹横幅、进自动回复；
+  这正是 §236 那条 P0 的另一张表。
+- `senderIsWatchedMember` 变假 ⇒ **已关注群里的被关注成员**消息落到
+  `.suppress(.notFollowed)`，分类 worker 据此 `.retire` 删掉队列行（唯一记录），
+  同一事务 `ScanEngine:821` 又无条件 `setWhitelistCursor` ⇒ 这批消息永不再被扫。
+
+修法：`HUDStore` 补 `groupMemberRulesRead()` / `ignoredSendersRead()` 三态读；
+`AdmissionRules` 增 `rulesUnreadable`，并把「负面裁决能不能删工作或推水位」这一问收成一个
+`scopeUnreadable`（= 关注列表或规则表任一读不到）；退班判定与水位两处消费点都改问它。
+`loadIgnoredSenders` 等旧函数保留给展示型调用点（它们最坏只是列表少一项）。
+
+判据 5 条，两条是端到端：
+- `AdmissionRuleReadHonestyTests`：空表 ≠ 读不到（正对照，否则旗标会永久压住水位）、
+  两张表各自读失败都举旗、被静音的人确实不放行、`dispositionForUnadmitted` 在
+  `scopeUnreadable` 下返回 `.retry`。
+- `AdmissionRuleWatermarkTests`：规则读不到那一轮之后，恢复表再扫，那两条消息
+  **仍须出现在 `newInboundForClassifier` 里** —— 这是水位敏感的断言，
+  变异（把旗标钉死 false / 去掉水位守卫）都得到 `("0") is not equal to ("2")`。
+- `ClassificationQueueWorkerTests.testUnreadableGroupRulesKeepTheQueueRowForRetry`：
+  真跑一次 worker。第一版我把群设成"未关注"，结果被 `scopeVerdict` 合法退役，测试以
+  `("0")!=("1")` 红给我看，说明我把不可达的场景当成了缺陷；改成"已关注群里被关注的成员"
+  才是可达形状。**并且这条才是补上 Mc 漏洞的那条**：先前我只直接调
+  `dispositionForUnadmitted(...)` 传旗标，变异（worker 仍传 `followingUnreadable`）
+  全绿 —— 记忆里的「接线断言不算行为测试」今天第三次生效。
+变异：Ma/Mb/Mc 各红（Mc 只在端到端那条存在时才红）。全量 2155 XCTest（+5）绿。

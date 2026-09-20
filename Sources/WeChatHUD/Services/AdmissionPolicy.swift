@@ -119,6 +119,16 @@ struct AdmissionRules {
     /// `false` so a hand-built snapshot in a test stays honest about the case it
     /// means to cover.
     var followingUnreadable: Bool = false
+    /// The mute / group-watch rule tables could not be read, so `perChatMuted`,
+    /// `globalMuted` and `watchedMembers` are empty for a reason that has nothing to
+    /// do with the user. Destructive in *both* directions: an empty mute set admits
+    /// senders the user muted, and an empty watch list un-admits chats whose messages
+    /// this scan then marks as already seen.
+    var rulesUnreadable: Bool = false
+
+    /// The one question every consumer that deletes work or moves a watermark has to
+    /// ask before acting on a negative verdict.
+    var scopeUnreadable: Bool { followingUnreadable || rulesUnreadable }
 
     static func load(store: HUDStore) -> AdmissionRules {
         let whitelist: [WhitelistEntry]
@@ -131,6 +141,25 @@ struct AdmissionRules {
             whitelist = []
             unreadable = true
         }
+        let memberRules = store.groupMemberRulesRead()
+        let ignoredRules = store.ignoredSendersRead()
+        let perChatMuted: [String: Set<String>]
+        let globalMutedSet: Set<String>
+        if let ignoredRules {
+            perChatMuted = ignoredRules.reduce(into: [String: Set<String>]()) { acc, rule in
+                if rule.scope == .chat {
+                    acc[rule.chatUsername, default: []].insert(rule.senderIdentifier)
+                }
+            }
+            globalMutedSet = Set(ignoredRules.filter { $0.scope == .global }.map(\.senderIdentifier))
+        } else {
+            perChatMuted = [:]
+            globalMutedSet = []
+        }
+        let watched: [String: Set<String>] = memberRules?.reduce(
+            into: [String: Set<String>]()) { acc, rule in
+            acc[rule.chatUsername, default: []].insert(rule.senderUsername)
+        } ?? [:]
         return AdmissionRules(
             config: store.loadAdmissionConfig(),
             followedChats: Set(whitelist.map(\.id)),
@@ -140,10 +169,11 @@ struct AdmissionRules {
                     .filter { $0.attentionLevel == .vip && !$0.isGroup }
                     .map(\.id)
             ),
-            watchedMembers: store.loadGroupMemberMap(),
-            perChatMuted: store.loadIgnoredSenderMap(),
-            globalMuted: store.loadGlobalIgnoredSenders(),
-            followingUnreadable: unreadable
+            watchedMembers: watched,
+            perChatMuted: perChatMuted,
+            globalMuted: globalMutedSet,
+            followingUnreadable: unreadable,
+            rulesUnreadable: memberRules == nil || ignoredRules == nil
         )
     }
 

@@ -85,7 +85,7 @@ extension ChatMonitor {
                 isAtMention: isAt
             ).isAdmitted else {
                 switch Self.dispositionForUnadmitted(
-                    followingUnreadable: admissionRules.followingUnreadable
+                    followingUnreadable: admissionRules.scopeUnreadable
                 ) {
                 case .retire: completed.insert(msg.id)
                 case .retry: try? store.deferClassificationMessage(id: msg.id)

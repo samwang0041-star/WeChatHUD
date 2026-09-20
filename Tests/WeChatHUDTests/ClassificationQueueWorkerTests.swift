@@ -144,6 +144,43 @@ final class ClassificationQueueWorkerTests: XCTestCase {
         XCTAssertEqual(store.classificationQueueCount(), 0)
     }
 
+    /// §237: the same retire hole reached through the group-member rule table instead
+    /// of the follow list. A watched member's message in an unfollowed group is admitted
+    /// only because that rule exists; when the table cannot be read the verdict flips to
+    /// 「没关注」, and the worker used to delete the one record saying this message still
+    /// needed analysis.
+    @MainActor
+    func testUnreadableGroupRulesKeepTheQueueRowForRetry() async throws {
+        let group = "synthetic_group@chatroom"
+        let (controlStore, controlMonitor, _, controlPath) = try await harness()
+        defer { cleanup(controlStore, controlPath) }
+        try controlStore.addToWhitelist(username: group, displayName: "合成群",
+                                        isGroup: true, category: .work)
+        try controlStore.addGroupMemberRule(chatUsername: group, chatName: "合成群",
+                                            senderUsername: group, senderName: "合成同事")
+        try controlStore.enqueueClassificationMessages([message(1, chat: group)])
+        controlMonitor.drainClassificationQueue()
+        await controlMonitor.classificationWorker?.value
+        XCTAssertEqual(controlStore.classificationQueueCount(), 0,
+                       "正对照：可读的群规则必须放行，否则这条判据只是「永不处理」")
+
+        let (store, monitor, _, path) = try await harness()
+        defer { cleanup(store, path) }
+        try store.addToWhitelist(username: group, displayName: "合成群",
+                                 isGroup: true, category: .work)
+        try store.addGroupMemberRule(chatUsername: group, chatName: "合成群",
+                                     senderUsername: group, senderName: "合成同事")
+        try store.enqueueClassificationMessages([message(7, chat: group)])
+        try store.exec("DROP TABLE group_member_rules")
+
+        monitor.drainClassificationQueue()
+        await monitor.classificationWorker?.value
+        XCTAssertEqual(store.classificationQueueCount(), 1,
+                       "读不到群规则不等于这条不用管 —— 队列行是唯一记录")
+        XCTAssertTrue(store.pendingClassificationMessages().isEmpty,
+                      "这条得是被 defer 推到将来的，不是原地没人碰过")
+    }
+
     /// The scope re-check has three answers and the store used to have one Bool
     /// for two of them: `isWhitelisted` is `false` both for 「没关注」 and for
     /// 「读不到」, and the worker retired the queue row on `false`. One busy lock

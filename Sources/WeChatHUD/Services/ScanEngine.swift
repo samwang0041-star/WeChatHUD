@@ -817,7 +817,10 @@ enum ScanEngine {
                                     try store.enqueueAutopilotInbound(inbound)
                                 }
                             }
-                            if backlogComplete {
+                            // A failed rule read un-admits (or admits) chats for a
+                            // reason that is not the user's; advancing past those
+                            // messages costs them a second chance for good.
+                            if backlogComplete, !admissionRules.scopeUnreadable {
                                 try store.setWhitelistCursor(
                                     username: entry.id,
                                     lastCreateTime: currentCursor.0,
