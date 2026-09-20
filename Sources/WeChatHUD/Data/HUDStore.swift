@@ -1574,8 +1574,18 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
 
     // MARK: - Message admission
 
+    func admissionConfigRead() -> SettingRead<AdmissionConfig> {
+        readSettingJSON("admission", as: AdmissionConfig.self)
+    }
+
+    /// Defaults for both 「还没设过」 and 「这次读不到」 — which is exactly why the
+    /// snapshot consumer has to ask ``admissionConfigRead()`` instead: the defaults
+    /// un-mute every 「@ 提醒静默」 group and can widen the admission mode.
     func loadAdmissionConfig() -> AdmissionConfig {
-        getSettingJSON("admission", as: AdmissionConfig.self) ?? AdmissionConfig()
+        switch admissionConfigRead() {
+        case .value(let config): return config
+        case .absent, .corrupt, .unreadable: return AdmissionConfig()
+        }
     }
 
     func saveAdmissionConfig(_ config: AdmissionConfig) throws {

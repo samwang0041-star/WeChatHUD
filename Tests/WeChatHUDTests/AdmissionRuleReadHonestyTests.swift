@@ -44,6 +44,23 @@ final class AdmissionRuleReadHonestyTests: XCTestCase {
                       "静音规则表读不到时也必须举旗：空集会被当成「没人被静音」")
     }
 
+    /// §241: the admission config is a fourth input to the same snapshot, and its
+    /// defaults un-mute every 「@ 提醒静默」 group and can widen the mode.
+    func testUnreadableAdmissionConfigIsFlaggedToo() throws {
+        XCTAssertFalse(AdmissionRules.load(store: store).rulesUnreadable,
+                       "正对照：没设过准入配置 ≠ 读不到，否则水位会被永久压住")
+        try store.saveAdmissionConfig(AdmissionConfig(mode: .all, atMutedGroups: ["g@chatroom"]))
+        XCTAssertFalse(AdmissionRules.load(store: store).rulesUnreadable)
+        XCTAssertTrue(AdmissionRules.load(store: store).config.atMutedGroups.contains("g@chatroom"))
+
+        try store.exec("ALTER TABLE settings RENAME TO settings_hidden")
+        XCTAssertTrue(AdmissionRules.load(store: store).rulesUnreadable,
+                      "准入设置读不到时，默认值会顺手把用户设的 @ 静默与模式解掉")
+        try store.exec("ALTER TABLE settings_hidden RENAME TO settings")
+        XCTAssertFalse(AdmissionRules.load(store: store).rulesUnreadable,
+                       "读恢复之后旗标要落下，不能一次失败永久钉住")
+    }
+
     /// The mute itself, and the contract the destructive consumers rely on.
     func testMutedSenderIsSuppressedAndAFailedReadRefusesToRetire() throws {
         try store.ignoreSenderEverywhere(senderUsername: "wxid_boss", senderName: "老板")

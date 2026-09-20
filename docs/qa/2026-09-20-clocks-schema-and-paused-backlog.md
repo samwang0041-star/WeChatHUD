@@ -1966,3 +1966,21 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 本轮实测：2163 XCTest + 70 swift-testing，`TEST_EXIT=0`。
 §239 里"反向变异红 2 条"的结论仍然有效（那一步是在完好树上做的，失败行是我新写的断言），
 但其后那次恢复把它带坏了 —— 结论没错、提交错了，两件事都要记。
+
+## §241 第 9 轮：准入设置也是同一份快照的第四个输入，读不到＝解掉用户的 @ 静默（P1，已修）
+
+§237 补的旗标漏了 `AdmissionRules.config`：`loadAdmissionConfig()` 是
+`getSettingJSON("admission") ?? AdmissionConfig()`，而默认值是 `mode = .whitelistOnly` +
+`atMutedGroups = []`。于是 settings 一次读失败会同时做两件用户没同意的事：把
+`mode` 从 `.all` 收成 `.whitelistOnly`（该出现的对话不再出现），并**解掉所有
+「@ 提醒静默」的群**（`shouldRaiseBanner` 少了那层抑制，@ 又开始弹横幅）。
+
+修法：补 `admissionConfigRead() -> SettingRead<AdmissionConfig>`，`.unreadable` 折进
+`rulesUnreadable`，因此沿用 §237 已有的两处守卫（退班判定与水位）而不再新增消费点。
+`.corrupt` **有意不折**：半写的行是永久状态，为它无限期按住水位等于把"数据丢失"换成
+"应用冻住"；它需要的是一个可见的「设置读不懂，请重存」入口，那是界面改动，单独排。
+
+判据：`AdmissionRuleReadHonestyTests` 新增 1 条，三段：没设过配置 ≠ 读不到（否则旗标会
+永久压住水位）、设过的 `atMutedGroups` 确实读得到、settings 读失败 ⇒ 举旗且**恢复后旗标落下**
+（防一次失败钉死）。反向变异（去掉 `|| configUnreadable`）红 1 条。
+全量 2164 XCTest + 70 swift-testing，`TEST_EXIT=0`（pipefail + 真实计数，见 §240）。

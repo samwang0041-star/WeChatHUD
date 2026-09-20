@@ -141,6 +141,14 @@ struct AdmissionRules {
             whitelist = []
             unreadable = true
         }
+        // `.corrupt` deliberately not folded in: a half-written row is permanent,
+        // and holding the watermark forever for it trades a data-loss bug for a
+        // frozen app. It needs a visible 「设置读不懂，请重存」 affordance instead.
+        let configUnreadable: Bool
+        switch store.admissionConfigRead() {
+        case .unreadable: configUnreadable = true
+        default: configUnreadable = false
+        }
         let memberRules = store.groupMemberRulesRead()
         let ignoredRules = store.ignoredSendersRead()
         let perChatMuted: [String: Set<String>]
@@ -173,7 +181,7 @@ struct AdmissionRules {
             perChatMuted: perChatMuted,
             globalMuted: globalMutedSet,
             followingUnreadable: unreadable,
-            rulesUnreadable: memberRules == nil || ignoredRules == nil
+            rulesUnreadable: memberRules == nil || ignoredRules == nil || configUnreadable
         )
     }
 
