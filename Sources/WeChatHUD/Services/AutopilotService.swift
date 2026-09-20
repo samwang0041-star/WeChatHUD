@@ -1952,8 +1952,19 @@ actor AutopilotService {
 
     // MARK: - Pending send queue operations
 
+    /// Did the withdrawal reach the durable record?
+    ///
+    /// The approval workspace used to print 「已取消即将发送的回复」 unconditionally,
+    /// including when neither write landed — and since §224 a failed audit flip
+    /// deliberately leaves the row queued, so the banner and the queue disagreed
+    /// on the same screen.
+    enum CancelOutcome: Equatable {
+        case withdrawn
+        case held(reason: String)
+    }
+
     /// Cancel a pending send by ID. Logs as skipped for audit trail.
-    func cancelPendingSend(id: UUID) {
+    func cancelPendingSend(id: UUID) -> CancelOutcome {
         // A row mid-send has already been taken out of `pendingSendQueue`, so
         // looking only at memory used to drop this cancel on the floor while
         // the UI printed "已取消" and the keystrokes landed anyway. The DB twin
@@ -1961,7 +1972,9 @@ actor AutopilotService {
         // checkpoint re-reads before the send key.
         let item = pendingSendQueue.first(where: { $0.id == id })
             ?? pendingSendRows().first(where: { $0.id == id })
-        guard let item else { return }
+        // Nothing queued is nothing that can be sent — that is a withdrawal,
+        // not a failure to withdraw.
+        guard let item else { return .withdrawn }
         pendingSendQueue.removeAll { $0.id == id }
         // The flip order used to be delete-then-flip, and that is the whole
         // reason this block has to be read as a sequence: the audit row is the
@@ -2021,6 +2034,10 @@ actor AutopilotService {
             sessionPending = max(0, sessionPending - 1)
         }
         persistSessionCounts()
+        if logLanded && deleteLanded { return .withdrawn }
+        return .held(reason: logLanded
+            ? "审计行改了，但队列行没能删掉：这条仍留在队列里，请再按一次取消。"
+            : "取消没能落库：这条仍然待发。请再按一次取消；在它消失之前，别当成已经撤回。")
     }
 
     enum ManualSendOutcome: Equatable {

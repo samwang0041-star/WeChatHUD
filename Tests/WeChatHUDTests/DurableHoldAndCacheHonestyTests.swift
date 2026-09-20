@@ -451,3 +451,94 @@ final class DurableHoldCoverageTests: XCTestCase {
         }
     }
 }
+
+/// 「已取消」 is a claim about the durable record, not about the button press.
+final class CancelReceiptHonestyTests: XCTestCase {
+    private var store: HUDStore!
+    private var reader: WeChatReader!
+    private var service: AutopilotService!
+
+    override func setUpWithError() throws {
+        let tmp = NSTemporaryDirectory() + "hud_cancelreceipt_\(UUID().uuidString).sqlite3"
+        store = HUDStore(dbPath: tmp)
+        try store.open()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reader = WeChatReader(dbDir: root.path, cacheStrategy: .memory)
+        service = AutopilotService(store: store, reader: reader, aiService: AIService())
+    }
+
+    override func tearDown() async throws {
+        try? await service.stop()
+        store.close()
+    }
+
+    private func queued(_ sid: Int64) async throws -> PendingSend {
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我下午给你结论", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        await service.testingEnqueue(item)
+        try store.upsertPendingSend(item, sessionId: sid)
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-\(item.id)",
+            triggerText: "在吗", generatedReply: item.replyText, confidence: 0.9,
+            riskLevel: .low, action: .pending, aiReasoning: nil, sentAt: nil,
+            createdAt: Date(), queueId: item.id.uuidString
+        ))
+        return item
+    }
+
+    func testCancelOutcomeFollowsTheWrites() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+
+        // Nothing queued at all is a withdrawal, not a failure to withdraw.
+        let absent = await service.cancelPendingSend(id: UUID())
+        XCTAssertEqual(absent, .withdrawn)
+
+        let clean = try await queued(sid)
+        let cleanOutcome = await service.cancelPendingSend(id: clean.id)
+        XCTAssertEqual(cleanOutcome, .withdrawn)
+        XCTAssertFalse(store.hasPendingSend(id: clean.id))
+
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+        let stuck = try await queued(sid)
+        let outcome = await service.cancelPendingSend(id: stuck.id)
+        guard case .held(let reason) = outcome else {
+            return XCTFail("取消没落库时不能回报 .withdrawn，界面会打印「已取消」")
+        }
+        XCTAssertTrue(store.hasPendingSend(id: stuck.id))
+        XCTAssertTrue(reason.contains("仍然待发"), reason)
+        try? await service.stop()
+    }
+
+    /// The two View halves cannot be unit-tested without a window, so pin the
+    /// wiring with a floor that fails if either guard is deleted.
+    func testViewsStillCarryTheTwoWiringGuards() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+        let workspace = try String(contentsOf: root
+            .appendingPathComponent("Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
+        let change = workspace.range(of: "onChange(of: selected?.id)")
+        let window = try XCTUnwrap(change?.lowerBound)
+        let after = workspace[window...].prefix(600)
+        XCTAssertTrue(after.contains("receipt = nil"),
+                      "换一条队列项时旧回执必须消失：A 的成功回执挂在 B 下面是确定地报错")
+        XCTAssertTrue(workspace.contains("case .held(let reason)"),
+                      "取消的回执必须读 cancelPendingSend 的结果")
+        XCTAssertFalse(workspace.contains("receipt = .done(\"已取消即将发送的回复\")\n    }"),
+                       "无条件打印「已取消」的写法回来了")
+
+        let settings = try String(contentsOf: root
+            .appendingPathComponent("Views/Settings/AutopilotSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(settings.contains(".disabled(loadError != nil)"),
+                      "读不到配置时这张页仍是可交互表单：滑块会动、保存被静默挡住")
+    }
+}

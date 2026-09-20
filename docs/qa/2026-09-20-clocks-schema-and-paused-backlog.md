@@ -1541,3 +1541,36 @@ boot time 只留作下界校验。
 判据：`DurableHoldCoverageTests` 2 条，各带反向变异
 （把早退守卫放回去 ⇒ 第一条红；把 `durableHold(existing.manualOnlyReason)` 换成 `durableHold(nil)` ⇒ 第二条红），
 以及"普通 hold 必须仍可编辑并发送"的正控。
+
+## §225 第 6 轮前端确认：P0：无，三条 P1 修了两条半
+
+前端一路专查本轮 34 个 UI 文件改动的四条轴，回报 **P0：无**，并核实了
+被删的 `AutopilotTabView` / `InsightWindow` 零悬挂入口（`SettingsView.Tab` 18 个 case 全有渲染分支），
+同时**证伪了两条它自己考虑过的候选**（取消关注的长文案确实兑现到 `clearDerivedArtifacts`；
+`RelativeTimeFormatter.unknown` 在三个整句调用点不会拼出破碎句）。
+
+已修：
+
+1. **回执会跨行存活（P1）**：`ApprovalWorkspaceView` 里 `receipt` 有 10 处赋值、
+   零处清空；选中另一条队列项时，上一条的绿色「已发送给「A」」仍挂在 B 的详情下方。
+   本轮刚把 `receipt` 升级成自带 `isFailure` 的 `Receipt`，于是这条陈旧横幅
+   从"图标靠猜"变成"确定地报错"。`onChange(of: selected?.id)` 里清空。
+2. **「已取消」不看结果（P1）**：`cancelPendingSend` 返回 Void，界面无条件打印
+   「已取消即将发送的回复」—— 而 §224 之后，翻转写失败时我们**故意留着队列行**，
+   于是同一个屏幕上一边打勾一边把那条继续排在待发队列里。
+   改成 `CancelOutcome { withdrawn | held(reason:) }`，两个写都落地才算撤回；
+   "队列里根本没有这条"算撤回（没有东西能发出去），不是撤回失败。
+3. **读不到配置的设置页长得像能改（P1）**：`.unreadable/.corrupt` 分支的提示在表单
+   **下方**，八个 `@State` 保持 Swift 默认值，`save()` 又被 `loadError == nil` 挡住 ——
+   用户拖动置信度滑块，滑块动了、什么都没写；同一页还印「不会自动回复的人 (0)」，
+   把"没读到"当计数显示。表单整体 `.disabled(loadError != nil)` + 半透明。
+
+未修（定价）：`ChatInsightView` 把日统计移出 body 之后，读取期间 `stats` 为 nil，
+详情面板没有"正在读"这一档：无 AI 结果时印「选一个日期后…」（用户已经选了），
+有 AI 结果时 `stats?.messageCount ?? 0` 把"没读到"喂成实测值印「0 条消息」。
+这是本轮"把计算移出 body"引入的瞬态，要修得给详情面板加一档读态（并顺手处理
+`InsightKPIGrid` 把 nil 一律解释成"范围不足 7 天"）；两条都是**瞬时**且
+下一次刷新自愈，不是持久谎言，排在下一轮。
+
+判据：`CancelReceiptHonestyTests` 2 条（真值表 + 两条 View 侧接线守卫带下限），
+反向变异"取消总是回报成功"⇒ 1 红。

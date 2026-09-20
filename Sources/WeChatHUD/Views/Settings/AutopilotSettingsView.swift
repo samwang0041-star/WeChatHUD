@@ -195,6 +195,13 @@ struct AutopilotSettingsView: View {
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
+                // The config could not be read, so every control below is drawn
+                // from Swift defaults, and `save()` is gated off: dragging the
+                // 置信度 slider used to move the slider, print nothing, and write
+                // nothing — while 「不会自动回复的人 (0)」 claimed an empty list was
+                // a fact. Editable-looking and inert is worse than greyed out.
+                .disabled(loadError != nil)
+                .opacity(loadError == nil ? 1 : 0.55)
             }
 
             if let loadError {

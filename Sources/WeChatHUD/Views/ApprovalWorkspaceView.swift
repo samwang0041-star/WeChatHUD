@@ -130,7 +130,14 @@ struct ApprovalWorkspaceView: View {
             }
         }
         .onAppear { selectedID = selected?.id; syncEditor() }
-        .onChange(of: selected?.id) { _, _ in syncEditor() }
+        .onChange(of: selected?.id) { _, _ in
+            // A receipt is about the action taken on one row. It used to survive
+            // selecting a different row, so 「已发送给「A」」 sat under B's detail
+            // pane — and since the Receipt now carries its own verdict, the
+            // stale banner reports a confident, wrong green checkmark.
+            receipt = nil
+            syncEditor()
+        }
         .onChange(of: entries.count) { _, _ in reconcileSelection() }
         .onChange(of: filter) { _, _ in reconcileSelection() }
         .companionDialogBackdrop(showSendConfirm) {
@@ -449,9 +456,17 @@ struct ApprovalWorkspaceView: View {
     }
 
     private func cancelPending(_ item: PendingSend) async {
-        await monitor.autopilotService?.cancelPendingSend(id: item.id)
+        let outcome = await monitor.autopilotService?.cancelPendingSend(id: item.id)
+            ?? .withdrawn
         await monitor.syncAutopilotPendingQueue()
-        receipt = .done("已取消即将发送的回复")
+        // 「已取消」 used to print whatever the two writes below did, and a
+        // cancel that failed both of them leaves the row queued on this very
+        // screen — a green checkmark next to the reply it claims is gone.
+        if case .held(let reason) = outcome {
+            receipt = .problem(reason)
+        } else {
+            receipt = .done("已取消即将发送的回复")
+        }
     }
 }
 
