@@ -1020,14 +1020,27 @@ final class ChatMonitor: ObservableObject {
         fallbackCategory: WhitelistCategory,
         attentionLevel: WhitelistAttentionLevel
     ) {
-        let existing = store.getWhitelistEntry(username: username)
-        try? store.addToWhitelist(
-            username: username,
-            displayName: existing?.displayName ?? displayName,
-            isGroup: existing?.isGroup ?? isGroup,
-            category: existing?.category ?? fallbackCategory,
-            attentionLevel: attentionLevel
-        )
+        // The old shape read the existing row with `getWhitelistEntry` (nil for
+        // 「读不到」 too) and then wrote every column back, so marking someone VIP
+        // during a transient read failure reset their 工作/生活 分类 and display name.
+        do {
+            if try !store.setWhitelistAttentionLevel(attentionLevel, username: username) {
+                switch store.whitelistEntryRead(username) {
+                case .absent:
+                    // Genuinely new: nothing exists to preserve, so the caller's
+                    // values are the right ones.
+                    try store.addToWhitelist(
+                        username: username, displayName: displayName, isGroup: isGroup,
+                        category: fallbackCategory, attentionLevel: attentionLevel)
+                case .unreadable:
+                    print("[WCHUD] 白名单行读不到，本次不改档位（宁可少改，不用默认值覆盖）")
+                case .value:
+                    break
+                }
+            }
+        } catch {
+            print("[WCHUD] 白名单档位更新失败: \(error)")
+        }
         Task { @MainActor in
             await self.scan()
         }

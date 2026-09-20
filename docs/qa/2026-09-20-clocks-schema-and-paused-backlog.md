@@ -1984,3 +1984,21 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 永久压住水位）、设过的 `atMutedGroups` 确实读得到、settings 读失败 ⇒ 举旗且**恢复后旗标落下**
 （防一次失败钉死）。反向变异（去掉 `|| configUnreadable`）红 1 条。
 全量 2164 XCTest + 70 swift-testing，`TEST_EXIT=0`（pipefail + 真实计数，见 §240）。
+
+## §242 第 9 轮：标 VIP 不再读改写整行（P1，已修 —— 用"根本不读"消灭歧义）
+
+`ChatMonitor.updateWhitelistAttention` 先前是 `getWhitelistEntry`（出错即 nil）→
+`existing?.displayName ?? 调用方给的` 等四个 `??` → `addToWhitelist` 整行覆盖。于是"给某人
+标 VIP"这一次点击，在恰逢读失败时会顺手改掉显示名、私聊/群、以及用户自己归的 工作/生活。
+与 §233/§238 同形，差别在于这次不必补三态旗标：**这个读本来就不需要**。
+
+新 `HUDStore.setWhitelistAttentionLevel(_:username:)` 只 `UPDATE whitelist SET attention_level=?`，
+`false` 因此精确表示「这行确实没有」（SQLite 计的是被 UPDATE 匹配到的行，值相同也算），
+写失败则**抛出**而不是回答 false —— 否则调用方会把它当成"没有这行"再插一条。只有确无行时
+才用调用方的值插入（那时没有可保留的东西）。
+
+判据：`WhitelistAttentionFlipTests` 3 条 —— 调用方传来的显示名/群标记/兜底分类一个都不许
+落到既有行上（只有档位变）、确无行时仍按调用方值建、以及**语句失败必须抛而不是返回 false**
+（反向变异：把 `try withCachedStatement` 换成 `try?` ⇒ 第三条红
+「did not throw an error」，前两条仍绿，说明它测的正是那条歧义）。
+全量 2167 XCTest + 70 swift-testing，`TEST_EXIT=0`。

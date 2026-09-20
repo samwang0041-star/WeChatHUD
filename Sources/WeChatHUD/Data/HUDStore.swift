@@ -1091,6 +1091,28 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Flip one column instead of read-modify-writing the whole row. `false` means
+    /// there is genuinely no such row (an UPDATE reports matched rows, so an
+    /// unchanged value still counts); a failed statement throws rather than answering
+    /// 「没有这行」 — which is the whole difference this method exists for.
+    @discardableResult
+    func setWhitelistAttentionLevel(_ level: WhitelistAttentionLevel,
+                                     username: String) throws -> Bool {
+        var changes = 0
+        try withCachedStatement(
+            "UPDATE whitelist SET attention_level=? WHERE username=?"
+        ) { stmt in
+            sqlite3_bind_text(stmt, 1, level.rawValue, -1, Self.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, username, -1, Self.sqliteTransient)
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw HUDStoreError.sqlError(
+                    String(cString: sqlite3_errmsg(sqlite3_db_handle(stmt))))
+            }
+            changes = Int(sqlite3_changes(sqlite3_db_handle(stmt)))
+        }
+        return changes == 1
+    }
+
     func getWhitelistEntry(username: String) -> WhitelistEntry? {
         queryOne("""
             SELECT username, display_name, is_group, category, attention_level, added_at, auto_suggested
