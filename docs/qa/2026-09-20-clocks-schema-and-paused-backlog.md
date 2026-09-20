@@ -1574,3 +1574,24 @@ boot time 只留作下界校验。
 
 判据：`CancelReceiptHonestyTests` 2 条（真值表 + 两条 View 侧接线守卫带下限），
 反向变异"取消总是回报成功"⇒ 1 红。
+
+## §226 我自己写的两面旗子被我自己新写的注释绊倒（判据精度）
+
+第 6 轮之后跑全量，红了两条 —— 都不是产品缺陷，是**门禁把注释当文案扫**：
+
+1. `RelativeTimeVocabularyTests.testPassedDeadlineIsCalledOneThingAcrossTheApp`
+   禁止 `超期/过期` 出现在 Sources 任何一行，我给 `holdRowAcrossRestart` 写的解释性注释
+   （"会话上限 / 过期 / 敏感词 转人工的行"）命中。
+2. 本轮新加的 `ReferralCopyPointsAtRealControlsTests` 禁止 `编辑并发送` 出现在
+   `AutopilotService.swift`，而我为"为什么这条路径不设防"写的注释里正提到那个不存在的按钮。
+
+两条都改成**只看用户读得到的行**（跳过 `//` 与 `*` 开头的行），
+理由与那条老判据自己的注释一致（"comments may still describe the old label"）。
+收紧之后各自反向变异仍然红：往 Sources 放一个含 `已超期` 的实体文件 ⇒ 第 1 条红；
+把 `sendNow` 的拒绝文案改回"…再用「编辑并发送」" ⇒ 第 2 条红；
+并给第 2 条补了"剥完注释后不能是空串"的覆盖度下限，
+否则"全部剥掉"和"没有问题"又是一对长得一样的输出。
+
+一般式：**判据的作用面要与它要管的东西同宽**。管文案就只看字面量，
+把散文一起管进去的判据，第一次被人认真写注释时就会红，
+而那一红的正确反应往往是删掉有用的注释 —— 那是判据在倒过来编程。

@@ -342,9 +342,16 @@ final class ReferralCopyPointsAtRealControlsTests: XCTestCase {
         let src = try String(contentsOf: URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift"), encoding: .utf8)
-        XCTAssertFalse(src.contains("编辑并发送"),
+        // Only copy a user can read. A comment may name the missing button —
+        // several of them exist precisely to warn the next reader about it.
+        let code = src.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.starts(with: "//") && !$0.starts(with: "*") }
+            .joined(separator: "\n")
+        XCTAssertFalse(code.contains("编辑并发送"),
                        "editAndSend has no button; user copy may not point at it")
-        XCTAssertFalse(src.contains("用「编辑并发送」"))
+        XCTAssertFalse(code.contains("用「编辑并发送」"))
+        XCTAssertFalse(code.isEmpty, "the scan stripped everything — it is asserting nothing")
     }
 }
 

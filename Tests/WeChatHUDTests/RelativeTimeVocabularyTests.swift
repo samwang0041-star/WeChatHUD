@@ -93,6 +93,13 @@ final class RelativeTimeVocabularyTests: XCTestCase {
             let text = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
             for line in text.split(separator: "\n") {
                 if line.contains("已到期") || line.contains("前到期") { unified += 1 }
+                // The ban is on copy a user can read. Prose that explains the
+                // old words — which is what most of these lines do — has to be
+                // allowed to name them, or every comment about this decision
+                // trips the guard it is describing (a comment in
+                // AutopilotService's `holdRowAcrossRestart` did exactly that).
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.starts(with: "//") || trimmed.starts(with: "*") { continue }
                 guard line.contains("超期") || line.contains("过期") else { continue }
                 // A login token running out is a different fact from a promise
                 // coming due, so that one reading of 过期 survives.
