@@ -2002,3 +2002,25 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 （反向变异：把 `try withCachedStatement` 换成 `try?` ⇒ 第三条红
 「did not throw an error」，前两条仍绿，说明它测的正是那条歧义）。
 全量 2167 XCTest + 70 swift-testing，`TEST_EXIT=0`。
+
+## §243 第 9 轮：设置 blob 的「读不到→用默认值整行写回」（P1，已修 4 个写点）
+
+`getSettingJSON("sync") ?? SyncConfig()` 再 `setSettingJSON("sync")` 是整行覆盖
+（`setSetting` → `INSERT OR REPLACE`）。settings 一次读失败，`persistRoot` /
+`persistKeysPath` / `bindLegacyRecords` / 预览态的显示器切换就会把**账号根目录、keys 路径、
+同步间隔、缓存与显示偏好**一起复位成出厂值，而界面报「已保存」。
+
+修法：`HUDStore.updatingSettingJSON(_:as:fallback:mutate:)` —— 与已修的
+`updateAutopilotConfig` 同一条规矩：`.unreadable` 直接返回 nil（一个字节都不写），
+`.absent`/`.corrupt` 才用默认值；调用点拿不到值就抛，走既有的
+「连接设置没有保存成功，请重试。」通道，而不是静默保存错的东西。
+`SyncSettingsView.save()` 复核为**不在此列**：它 `guard didLoad`，且写入的是表单自己的字段，
+`previous` 只用来算 `needsRestart`。
+
+判据：`SettingsMergeWriteTests` 4 条 —— 合并保留调用方没碰的字段（间隔/keys 路径不丢）、
+读不到时返回 nil **且库里的原值一字未动**、首次安装（`.absent`）仍存得进去，加一条
+反回潮闸：扫描"在 5 行内 `?? SyncConfig()` 之后紧跟 `setSettingJSON("sync"`"。
+闸门第一版写成了「文件里不许出现 `?? SyncConfig()`」，被两处**只读**的表单初值判红 ——
+作用面比管控对象宽，已收窄成只查这一对读写（§224 同族教训）。
+两条变异：把旧形状塞回一个视图 ⇒ 闸门红；把 `.unreadable` 改成走 fallback ⇒ 行为判据红。
+全量 2171 XCTest（+4）+ 70 swift-testing，`TEST_EXIT=0`。

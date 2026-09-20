@@ -248,9 +248,10 @@ enum PreviewRuntime {
         guard isEnabled else { return }
         usingExternalDisplay.toggle()
         let screen: DisplayScreen = usingExternalDisplay ? .external : .builtIn
-        var cfg = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        cfg.displayScreen = screen
-        try? store.setSettingJSON("sync", value: cfg)
+        _ = try? store.updatingSettingJSON("sync", as: SyncConfig.self,
+                                           fallback: { SyncConfig() }) { latest in
+            latest.displayScreen = screen
+        }
         NotificationCenter.default.post(name: .hudDisplayPreferenceDidChange, object: nil)
         if let app = NSApp.delegate as? AppDelegate {
             app.panel?.displayScreen = screen

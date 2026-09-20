@@ -921,6 +921,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return true
     }
 
+    /// Read-modify-write that refuses to invent a prior. The
+    /// `getSettingJSON(key) ?? Defaults()` → `setSettingJSON(key)` shape reads a whole
+    /// row, hands the caller factory values when the read failed, and writes the whole
+    /// row back — so one BUSY timeout or I/O error reset the account root, keys path and
+    /// display preferences while the UI reported 「已保存」. `nil` means nothing was
+    /// touched; callers must surface that instead of proceeding.
+    @discardableResult
+    func updatingSettingJSON<T: Codable>(_ key: String, as type: T.Type,
+                                         fallback: () -> T,
+                                         mutate: (inout T) -> Void) throws -> T? {
+        var value: T
+        switch readSettingJSON(key, as: type) {
+        case .value(let stored):
+            value = stored
+        case .absent, .corrupt:
+            value = fallback()
+        case .unreadable:
+            return nil
+        }
+        mutate(&value)
+        try setSettingJSON(key, value: value)
+        return value
+    }
+
     func setSettingJSON<T: Encodable>(_ key: String, value: T) throws {
         if key == "ai", let config = value as? AIConfig {
             try persistAIConfig(config)

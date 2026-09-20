@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// Surfaced through the existing 「连接设置没有保存成功，请重试。」 channel: refusing to
+/// save is better than saving factory values over a record this app could not read.
+enum ConnectionPersistenceError: Error {
+    case currentSettingsUnreadable
+}
+
 @MainActor
 enum ConnectionSetupFlow {
     /// Apply a connection root without discarding settings edited elsewhere
@@ -519,10 +525,16 @@ struct WeChatConnectionSetupView: View {
     private func persistRoot(_ root: String) throws {
         // SyncSettingsView owns interval/cache/display preferences and may
         // have saved them while this child view was open. Re-read the latest
-        // record before changing only the account root.
-        let latestConfiguration = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        let candidateConfiguration = ConnectionSetupFlow.configurationUpdatingRoot(root, from: latestConfiguration)
-        try store.setSettingJSON("sync", value: candidateConfiguration)
+        // record before changing only the account root — and if that read fails,
+        // save nothing rather than writing factory values over the user's own.
+        guard let candidateConfiguration = try store.updatingSettingJSON(
+                "sync", as: SyncConfig.self, fallback: { SyncConfig() },
+                mutate: { latest in
+                    latest = ConnectionSetupFlow.configurationUpdatingRoot(root, from: latest)
+                })
+        else {
+            throw ConnectionPersistenceError.currentSettingsUnreadable
+        }
         configuration = candidateConfiguration
         showAccounts = false
         errorMessage = nil
@@ -677,10 +689,12 @@ struct WeChatConnectionSetupView: View {
     }
 
     private func persistKeysPath(_ path: String) throws {
-        let latestConfiguration = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-        var updated = latestConfiguration
-        updated.keysFilePath = path
-        try store.setSettingJSON("sync", value: updated)
+        guard let updated = try store.updatingSettingJSON(
+                "sync", as: SyncConfig.self, fallback: { SyncConfig() },
+                mutate: { latest in latest.keysFilePath = path })
+        else {
+            throw ConnectionPersistenceError.currentSettingsUnreadable
+        }
         configuration = updated
         NotificationCenter.default.post(name: .hudConnectionConfigurationDidChange, object: nil)
     }

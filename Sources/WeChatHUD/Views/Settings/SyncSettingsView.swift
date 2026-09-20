@@ -403,9 +403,13 @@ struct SyncSettingsView: View {
     private func bindLegacyRecords() {
         guard let device = store.deviceSettings else { return }
         do {
-            var sync = store.getSettingJSON("sync", as: SyncConfig.self) ?? SyncConfig()
-            sync.wechatDBPath = monitor.reader.dbDir
-            try store.setSettingJSON("sync", value: sync)
+            guard try store.updatingSettingJSON(
+                    "sync", as: SyncConfig.self, fallback: { SyncConfig() },
+                    mutate: { latest in latest.wechatDBPath = monitor.reader.dbDir }) != nil
+            else {
+                // 读不到旧值就不写：整行覆盖会把用户设的间隔/缓存/显示偏好一起复位
+                throw HUDStoreError.sqlError("sync 设置读不到")
+            }
             dbPath = monitor.reader.dbDir
             try device.confirmLegacyAccountIdentity(expectedRoot: monitor.reader.dbDir)
             legacyStatus = device.legacyStoreStatus
