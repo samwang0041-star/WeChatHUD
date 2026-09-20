@@ -1947,3 +1947,22 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 新鲜时仍限流、被跳过的那一轮之后库里的摘要原样还在。反向变异（删掉 `.unreadable` 那一行，
 即旧的 nil 兼两意）红 2 条：`("rebuild") is not equal to ("skipUnreadable")`。
 全量 2163 XCTest（+5）绿。
+
+## §240 更正：`2bb9e3df` 提交进去的是一棵编译不过的树（判据 5 条里那 2 条当时根本没跑）
+
+上一条 §239 的"全量 2163 绿"当时并不成立。成因是我自己的两个错误叠起来：
+
+1. 变异实验后用 `cp /tmp/fixed9/ConversationMemoryUpdater.swift` 恢复 —— 但那份备份是在
+   **抽出 `memoryRebuildDecision` 之前**存的，于是恢复动作把被 §239 依赖的那个函数一起删掉了
+   （同一族第二次：备份方向 / 恢复后不复核关键行）。
+2. 随后的收尾命令是 `swift test 2>&1 | grep -E "Executed …|failure" | tail -4 && … commit`。
+   编译失败时 `swift test` 的输出里没有一行匹配我的 grep，管道退出码取的是 `tail` 的 0，
+   `&&` 于是照常往下走 —— 我把"什么都没打印"读成了"跑过了"。这条管道掩码是"0 failures
+   的三类假绿"之外的第四类：**管道末位命令的退出码冒充了被测命令的**。
+
+后果：`2bb9e3df` 的测试树编译不过（`type 'ConversationMemoryUpdater' has no member
+'memoryRebuildDecision'`），本提交把它修好；现在用 `set -o pipefail` + 显式
+`TEST_EXIT=$?` + 真实用例计数三条一起看，才允许自己写"全绿"。
+本轮实测：2163 XCTest + 70 swift-testing，`TEST_EXIT=0`。
+§239 里"反向变异红 2 条"的结论仍然有效（那一步是在完好树上做的，失败行是我新写的断言），
+但其后那次恢复把它带坏了 —— 结论没错、提交错了，两件事都要记。

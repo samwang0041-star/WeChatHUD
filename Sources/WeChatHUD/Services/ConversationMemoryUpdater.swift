@@ -106,6 +106,30 @@ actor ConversationMemoryUpdater {
                                    memoryRead: store.conversationMemoryRead(_:))
     }
 
+    enum MemoryRebuild: Equatable {
+        case skipFresh
+        case skipUnreadable
+        case rebuild
+    }
+
+    /// The prior summary is the *input* to the merge below, and the write replaces
+    /// every column. Rebuilding over a memory this app only failed to read answered
+    /// 「我不知道」 with 「这里什么都没发生过」, permanently replacing a 90-day rolling
+    /// summary with the last 30 messages — so an unreadable prior is not a signal to
+    /// regenerate.
+    nonisolated static func memoryRebuildDecision(
+        prior: HUDStore.ConversationMemoryRead,
+        stalenessSeconds: TimeInterval,
+        now: Date
+    ) -> MemoryRebuild {
+        if prior.isUnreadable { return .skipUnreadable }
+        if let existing = prior.entry,
+           now.timeIntervalSince(existing.lastUpdated) < stalenessSeconds {
+            return .skipFresh
+        }
+        return .rebuild
+    }
+
     /// The seam: 「读不到既有记忆」 can be driven without racing a real lock.
     func updateMemoryIfNeeded(
         chatUsername: String,
@@ -114,18 +138,15 @@ actor ConversationMemoryUpdater {
         memoryRead: (String) -> HUDStore.ConversationMemoryRead
     ) async {
         let prior = memoryRead(chatUsername)
-        // Rate limit: skip if updated recently
-        if let existing = prior.entry,
-           Date().timeIntervalSince(existing.lastUpdated) < stalenessSeconds {
+        switch Self.memoryRebuildDecision(prior: prior, stalenessSeconds: stalenessSeconds,
+                                          now: Date()) {
+        case .skipFresh:
             return
-        }
-        guard !prior.isUnreadable else {
-            // The prior summary is the *input* to this merge, and the write replaces
-            // every column. Regenerating over a memory this app only failed to read
-            // answered 「我不知道」 with 「这里什么都没发生过」 and permanently replaced the
-            // 90-day rolling summary with the last 30 messages. Skip; retry later.
+        case .skipUnreadable:
             print("[WCHUD] 对话记忆读不到，本轮不重建（避免用最近 30 条覆盖既有摘要）")
             return
+        case .rebuild:
+            break
         }
 
         let messages = (try? reader.getMessages(chatUsername: chatUsername, limit: 30)) ?? []
