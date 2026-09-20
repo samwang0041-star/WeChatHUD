@@ -1782,3 +1782,32 @@ whitelist_hidden`（模拟迁移中/BUSY 超时/IOERR 下所有对该表的读�
 证明不是把"覆盖"换成"永不写"）；读失败下不抛错且 roleNote/replyWindowMinutes 保持；
 读失败下关注确实写进去了。反向变异（把 `.unreadable` 塌回 `.absent`）红 3 条，其中一条正是
 `("absent") is not equal to ("unreadable")`。全量 2142 XCTest（+4）+ 70 swift-testing 绿。
+
+## §234 第 9 轮：会话恢复读失败会「再开一个会话」，每会话发送上限被花第二次（P1，已修）
+
+§231 第 2 条核实成立。`AutopilotService.start()` 用 `store.currentAutopilotSession()` 恢复
+活动会话，而它走 `queryOne`（`try?` 吞 prepare/step 错）⇒ nil 同时表示「没有活动会话」与
+「这次读不到」；下一行 `recovered?.id ?? store.startAutopilotSession()` 于是**新建一个会话**，
+`sessionSent` 归零 —— `maxSendsPerSession`（默认 50）正是挡住托管模式对同一个人反复敲键的最后
+一道闸，一次读失败就把它变成可以花两遍；同时旧会话的 `ended_at` 永久为 NULL，它名下的队列行
+再也没人加载。
+
+同一族第三次命中：`currentAutopilotSessionThrowing` 早已存在，注释还写明「clearAutopilotHistory
+把 nil 当成可以删」而需要它 —— 又是形状 B（三态兄弟做过了，消费点漏了）。
+
+修法：`start()` 改 `try store.currentAutopilotSessionThrowing()`。它本来就是 `throws`，而
+`startAutopilotAndWait` 已经把抛错如实变成「没开启」（不打印已开启、不翻转 UI），所以不需要
+额外的回执改造。
+
+判据：`AutopilotSessionRecoveryHonestyTests` 2 条。故障注入取的是"读坏而写不坏"的最小形状：
+`startAutopilotSession()` 只 INSERT `started_at`，所以 `ALTER TABLE autopilot_sessions
+RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
+- 反向变异（换回非抛版）红 5 条，其中两条就是 `("2") is not equal to ("1")`（多开了一个会话）
+  和 `("0") is not equal to ("40")`（已发送数被弃用/归零）。
+- 正对照：健康重启仍复用同一会话、仍带 40 的计数 —— 证明修改没把恢复变成「永远拒绝启动」。
+全量 2144 XCTest（+2）+ 70 swift-testing 绿。
+
+自查：本轮我自己的两个流程错误值得记 —— (1) 把 `cp X.bak X` 的备份方向搞反，用"改前备份"
+去"恢复改后"，等于悄悄回滚了自己的修复（恢复后必须 grep 关键行确认，已补做）；(2) 变异跑
+"没输出"是因为测试文件根本没编译过，`grep` 只找断言行就看不见编译错 —— 这是同一族第三次
+（没收集 / filter 打错 / 编译没过）。

@@ -325,7 +325,14 @@ actor AutopilotService {
     /// Start autopilot mode. Creates a new session in the DB.
     func start() throws {
         guard sessionId == nil else { return }
-        let recovered = store.currentAutopilotSession()
+        // `currentAutopilotSession` is nil for 「这次读不到」 as well as 「没有活动
+        // 会话」, and the fallback below *creates* one — which spends
+        // `maxSendsPerSession` a second time over and leaves the previous session's
+        // queue rows orphaned on a row that never gets `ended_at`. The throwing
+        // sibling already exists for exactly this (see `clearAutopilotHistory`), and
+        // `start()` is already `throws`, with `startAutopilotAndWait` turning a throw
+        // into 「没开启」 rather than a false 已开启.
+        let recovered = try store.currentAutopilotSessionThrowing()
         let id = try recovered?.id ?? store.startAutopilotSession()
         sessionId = id
         sessionHandled = recovered?.totalHandled ?? 0
