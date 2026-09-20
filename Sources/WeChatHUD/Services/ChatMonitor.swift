@@ -3509,20 +3509,29 @@ final class ChatMonitor: ObservableObject {
         return attempt
     }
 
-    /// Reject a pending autopilot item.
-    func rejectAutopilotItem(logId: Int64, chatUsername: String? = nil, replyText: String? = nil) {
-        Task { @MainActor in
-            if let service = autopilotService {
-                await service.rejectPending(logId: logId, chatUsername: chatUsername, replyText: replyText)
-            } else {
-                if store.resolveAutopilotLogSkipped(id: logId) == .consumedPending, let chatUsername, let replyText {
-                    try? store.deletePendingSendForLog(
-                        logId: logId, chatUsername: chatUsername, replyText: replyText
-                    )
-                }
+    /// Reject a pending autopilot item. Awaitable: the caller prints a receipt
+    /// about whether the withdrawal actually landed, and the fire-and-forget form
+    /// let it claim 「已取消本条」 a beat before the write failed.
+    @discardableResult
+    func rejectAutopilotItem(logId: Int64, chatUsername: String? = nil,
+                             replyText: String? = nil) async -> AutopilotService.CancelOutcome {
+        let outcome: AutopilotService.CancelOutcome
+        if let service = autopilotService {
+            outcome = await service.rejectPending(
+                logId: logId, chatUsername: chatUsername, replyText: replyText)
+        } else {
+            let consumed = store.resolveAutopilotLogSkipped(id: logId) == .consumedPending
+            if consumed, let chatUsername, let replyText {
+                try? store.deletePendingSendForLog(
+                    logId: logId, chatUsername: chatUsername, replyText: replyText
+                )
             }
-            refreshAutopilotSessionState()
+            outcome = consumed
+                ? .withdrawn
+                : .held(reason: "取消没能落库，且自动驾驶当前没有运行：请先在微信里核对这条。")
         }
+        refreshAutopilotSessionState()
+        return outcome
     }
 
     func syncAutopilotPendingQueue() async {

@@ -1191,11 +1191,14 @@ actor AutopilotService {
 
     /// Reject a pending item (mark as skipped) and drop its pending_sends
     /// twin — a rejected draft must not stay sendable through the queue row.
-    func rejectPending(logId: Int64, chatUsername: String? = nil, replyText: String? = nil) {
+    @discardableResult
+    func rejectPending(logId: Int64, chatUsername: String? = nil,
+                       replyText: String? = nil) -> CancelOutcome {
         // Idempotent AND race-safe: the flip only fires on a still-pending
         // row, so a double-tap or a reject landing during an in-flight
         // approve (whose send already completed) cannot re-resolve it.
         let consumed: Bool
+        var flipFailed = false
         switch store.resolveAutopilotLogSkipped(id: logId) {
         case .consumedPending:
             consumed = true
@@ -1212,9 +1215,9 @@ actor AutopilotService {
             // keeps trying the write. The twin is still this cancel's to clean.
             consumed = false
             unresolvedSkippedLogWrites.insert(logId)
+            flipFailed = true
         }
-        let clearTwin = consumed || unresolvedSkippedLogWrites.contains(logId)
-        if clearTwin, let chatUsername, let replyText {
+        if consumed, let chatUsername, let replyText {
             try? store.deletePendingSendForLog(
                 logId: logId, chatUsername: chatUsername, replyText: replyText
             )
@@ -1224,11 +1227,43 @@ actor AutopilotService {
                 // Legacy twin (no queue_id) — in-memory copy matched by text.
                 pendingSendQueue.removeAll { $0.chatUsername == chatUsername && $0.replyText == replyText }
             }
+        } else if flipFailed, let chatUsername, let replyText {
+            // The flip did not land, so this reject lives only in this process.
+            // Deleting the queue twin anyway would recreate the exact shape §219
+            // and §224 had to close: audit row 'pending' + twin gone, which after
+            // a restart reads 「没人撤回过」 and 确认发送 types the text again.
+            // Hold the row instead — it stays visible, carries the reason, and the
+            // durable axis refuses it.
+            holdTwinAcrossReject(chatUsername: chatUsername, replyText: replyText, logId: logId)
         }
         if consumed {
             sessionPending = max(0, sessionPending - 1)
             persistSessionCounts()
         }
+        return flipFailed
+            ? .held(reason: "取消没能落库：这条已经按住，不会自动发出，但请先在微信里核对它是否已经送达。")
+            : .withdrawn
+    }
+
+    /// Put the durable cancel hold on the queue twin of a reject whose audit
+    /// write failed. Same destination as `cancelPendingSend`'s failure path:
+    /// `holdRowAcrossRestart` is the only thing that survives a restart.
+    private func holdTwinAcrossReject(chatUsername: String, replyText: String, logId: Int64) {
+        let twin: PendingSend?
+        if let qid = store.autopilotLogQueueId(id: logId), let uuid = UUID(uuidString: qid) {
+            twin = pendingSendQueue.first { $0.id == uuid }
+                ?? pendingSendRows().first { $0.id == uuid }
+        } else {
+            twin = pendingSendQueue.first { $0.chatUsername == chatUsername && $0.replyText == replyText }
+                ?? pendingSendRows().first { $0.chatUsername == chatUsername && $0.replyText == replyText }
+        }
+        guard let twin else { return }
+        pendingSendQueue.removeAll { $0.id == twin.id }
+        let hold: UnresolvedQueueWrite = .cancelled(
+            chatUsername: chatUsername, replyText: replyText)
+        unresolvedQueueWrites[twin.id] = hold
+        holdTwinLog(for: twin.id, kind: hold)
+        holdRowAcrossRestart(twin, kind: hold)
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.
@@ -1975,6 +2010,7 @@ actor AutopilotService {
         // Nothing queued is nothing that can be sent — that is a withdrawal,
         // not a failure to withdraw.
         guard let item else { return .withdrawn }
+        let requeueable = item
         pendingSendQueue.removeAll { $0.id == id }
         // The flip order used to be delete-then-flip, and that is the whole
         // reason this block has to be read as a sequence: the audit row is the
@@ -2034,6 +2070,14 @@ actor AutopilotService {
             sessionPending = max(0, sessionPending - 1)
         }
         persistSessionCounts()
+        if !deleteLanded {
+            // The card list mirrors `pendingSendQueue`. Dropping the row there
+            // made 「请再按一次取消」 point at a button that had just vanished, and
+            // meant the orange durable-hold banner could never appear in this
+            // session — only after a restart. The row IS still queued and held.
+            pendingSendQueue.removeAll { $0.id == id }
+            pendingSendQueue.append(requeueable)
+        }
         if logLanded && deleteLanded { return .withdrawn }
         return .held(reason: logLanded
             ? "审计行改了，但队列行没能删掉：这条仍留在队列里，请再按一次取消。"

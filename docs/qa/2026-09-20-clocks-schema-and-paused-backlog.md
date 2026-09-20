@@ -1595,3 +1595,44 @@ boot time 只留作下界校验。
 一般式：**判据的作用面要与它要管的东西同宽**。管文案就只看字面量，
 把散文一起管进去的判据，第一次被人认真写注释时就会红，
 而那一红的正确反应往往是删掉有用的注释 —— 那是判据在倒过来编程。
+
+## §227 第 7 轮：另一颗取消键是同一缺陷的第二个门（P1→修）
+
+第 7 轮只审最近三个提交，回报 **P0：无**，两条 P1 都指向我上一轮药的另一半：
+
+1. **`rejectPending`（详情面板那颗「取消本条」）从不布防耐久 hold**。
+   §219/§224 修的撤回痕迹全在 `cancelPendingSend` 这条路上，而审批卡片自己的那颗按钮
+   走 `ChatMonitor.rejectAutopilotItem → service.rejectPending(logId:)`：
+   翻转 `.writeFailed` 时它把队列孪生照样 `try?` 删掉，于是留下
+   「审计行 pending + 孪生没了」——正是 §219 花两轮关掉的那个形状。
+   重启后 `durableHoldActive`（读队列行）与 `queueRowWithdrawn`（读审计行 skipped）
+   双双为 false，加上 `requiresQueueRow:false` ⇒ 确认发送放行。
+   **改法**：翻转失败时不删孪生，改为找到它并走 `holdRowAcrossRestart(.cancelled)`
+   （与 `cancelPendingSend` 同一目的地），同时把结果回报成 `CancelOutcome`，
+   界面不再无条件打印「已取消本条，对应的待发草稿已一并移除。」。
+2. **取消失败时那张卡片自己先消失了**。`cancelPendingSend` 在任何写之前无条件
+   `pendingSendQueue.removeAll`，而列表镜像正是这个内存数组 ⇒
+   我上一轮写的提示「请再按一次取消」指向一颗刚刚不存在的按钮，
+   而详情面板那条橙色耐久 hold 文案在本会话内永远不可能出现（只有重启后才露出）。
+   **改法**：`!deleteLanded` 时把这一行放回内存队列（它确实还排着、也确实被按住）。
+
+P2 三条的处置：
+- `receipt = nil` 也吃程序化换选中（取消成功后该行离开 `.pending` 过滤器，
+  下一次刷新会把刚印出的回执抹掉）——**已知代价，未修**：
+  在"陈旧回执确定地报错"与"回执可能提前消失"之间，后者是更轻的错；
+  要修得把清空点从 `onChange` 移到列表行的点击处理上。
+- `.cancelled` 覆写会盖掉 `.delivered` 那支更强的文案（两支都拒绝发送，
+  只是人话降级）——记在此处，与 §224 第 3 条一并留待把 `manual_only_reason`
+  从文案升级成带档位的编码。
+- 设置页的逃生门复核为**没被禁**（`SettingsSection` 在 disabled 容器之外闭合，
+  「重新读取设置」与「用默认设置覆盖并重载」仍按得动）；一起被压暗的是只读安全陈述
+  与两个 `DisclosureGroup`，可接受。
+- 另外它证伪了两条它自己考虑过的候选：`autopilotService` 全仓只在
+  `ChatMonitor.swift:3361` 赋值、从不置 nil（故 `?? .withdrawn` 当前不可达）；
+  `sessionPending` 不会重计或漏计。
+
+判据：`RejectDoorDurabilityTests` 2 条，反向变异各红 1 条
+（去掉 `holdRowAcrossRestart` ⇒ 第一条红；去掉把行放回内存队列 ⇒ 第二条红）。
+写这两条判据时第一条测试自己先红了两次：一次是忘了插审计行（没有孪生可翻时
+翻转"成功"是正确的），一次是 `.cancelled` 忘了带参数 —— 都属于判据自己坏掉，
+不是被测对象坏掉。

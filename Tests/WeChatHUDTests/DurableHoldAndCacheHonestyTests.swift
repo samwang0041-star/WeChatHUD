@@ -549,3 +549,109 @@ final class CancelReceiptHonestyTests: XCTestCase {
                       "读不到配置时这张页仍是可交互表单：滑块会动、保存被静默挡住")
     }
 }
+
+/// The other door: the 待确认 card's own 「取消本条」 goes through
+/// `rejectPending(logId:)`, not `cancelPendingSend(id:)`.
+final class RejectDoorDurabilityTests: XCTestCase {
+    private var store: HUDStore!
+    private var reader: WeChatReader!
+    private var service: AutopilotService!
+
+    override func setUpWithError() throws {
+        let tmp = NSTemporaryDirectory() + "hud_reject_\(UUID().uuidString).sqlite3"
+        store = HUDStore(dbPath: tmp)
+        try store.open()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reader = WeChatReader(dbDir: root.path, cacheStrategy: .memory)
+        service = AutopilotService(store: store, reader: reader, aiService: AIService())
+    }
+
+    override func tearDown() async throws {
+        try? await service.stop()
+        store.close()
+    }
+
+    private func staged() async throws -> (PendingSend, Int64, Int64) {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我下午给你结论", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        await service.testingEnqueue(item)
+        try store.upsertPendingSend(item, sessionId: sid)
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-rej", triggerText: "在吗",
+            generatedReply: item.replyText, confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: item.id.uuidString
+        ))
+        let logId = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: sid).first { $0.triggerMsgUID == "m-rej" }?.id)
+        return (item, logId, sid)
+    }
+
+    /// A reject whose audit flip failed used to delete the queue twin anyway,
+    /// producing 「审计行 pending + 孪生没了」 — after a restart that is
+    /// indistinguishable from a reply nobody withdrew.
+    func testRejectWithFailedFlipHoldsTheTwinInsteadOfDeletingIt() async throws {
+        let (item, logId, sid) = try await staged()
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+        let outcome = await service.rejectPending(
+            logId: logId, chatUsername: "wxid_peer", replyText: item.replyText)
+        guard case .held = outcome else {
+            return XCTFail("翻转写失败时不能回报 .withdrawn —— 界面正读这个值")
+        }
+        XCTAssertTrue(store.hasPendingSend(id: item.id), "孪生行必须留着当耐久载体")
+        let held = try XCTUnwrap(store.loadPendingSends(sessionId: sid).first { $0.id == item.id })
+        XCTAssertEqual(held.manualOnlyReason, AutopilotService.cancelNotLandedHoldText)
+
+        let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+        try await revived.start()
+        let permitted = await revived.deliveryStillPermitted(
+            queueId: item.id, logId: logId, chatUsername: "wxid_peer", requiresQueueRow: false)
+        XCTAssertFalse(permitted, "重启后确认发送仍必须拒绝这条被撤回过的回复")
+        try? await revived.stop()
+    }
+
+    /// 「请再按一次取消」 has to point at a card that is still on screen: the list
+    /// mirrors `pendingSendQueue`, so dropping the in-memory copy along with a
+    /// failed delete erased the very button the sentence names.
+    func testACancelThatDidNotLandKeepsItsCardVisible() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我下午给你结论", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1)
+        )
+        await service.testingEnqueue(item)
+        try store.upsertPendingSend(item, sessionId: sid)
+        // A cancel with no audit twin has nothing to flip, so it legitimately
+        // lands — the trigger below needs a row to abort on.
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-card", triggerText: "在吗",
+            generatedReply: item.replyText, confidence: 0.9, riskLevel: .low,
+            action: .pending, aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: item.id.uuidString
+        ))
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+        let outcome = await service.cancelPendingSend(id: item.id)
+        guard case .held(let reason) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertTrue(reason.contains("再按一次取消"), reason)
+        let queue = await service.pendingSendQueue
+        XCTAssertTrue(queue.contains { $0.id == item.id },
+                      "提示让用户再按一次，就不能先把那颗按钮拿掉")
+        try? await service.stop()
+    }
+}

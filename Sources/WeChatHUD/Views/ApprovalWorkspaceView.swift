@@ -373,12 +373,19 @@ struct ApprovalWorkspaceView: View {
                         }
                         .buttonStyle(.bordered)
                         Button("取消本条") {
-                            monitor.rejectAutopilotItem(
-                                logId: selected.id,
-                                chatUsername: selected.chatUsername,
-                                replyText: selected.generatedReply
-                            )
-                            receipt = .done("已取消本条，对应的待发草稿已一并移除。")
+                            let target = selected
+                            Task { @MainActor in
+                                let outcome = await monitor.rejectAutopilotItem(
+                                    logId: target.id,
+                                    chatUsername: target.chatUsername,
+                                    replyText: target.generatedReply
+                                )
+                                if case .held(let reason) = outcome {
+                                    receipt = .problem(reason)
+                                } else {
+                                    receipt = .done("已取消本条，对应的待发草稿已一并移除。")
+                                }
+                            }
                         }
                         .buttonStyle(.bordered)
                     }
