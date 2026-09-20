@@ -677,5 +677,52 @@ final class RejectDoorDurabilityTests: XCTestCase {
         XCTAssertEqual(afterBlockedSend.manualOnlyReason, AutopilotService.cancelNotLandedHoldText,
                        "被拦下的这次「立即发送」不能顺手把耐久标记覆写回旧值")
         try? await service.stop()
+    }    /// §229-1: with no queue twin to hold, the reject leaves no durable trace at
+    /// all — yet the receipt promised 「已经按住，不会自动发出」. A promise the
+    /// producer cannot honour is worse than a failure, because the user stops
+    /// checking.
+    func testRejectWithNothingToHoldDoesNotPromiseItIsHeld() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-lonely",
+            triggerText: "在吗", generatedReply: "我看看再回你", confidence: 0.9,
+            riskLevel: .low, action: .pending, aiReasoning: nil, sentAt: nil,
+            createdAt: Date(), queueId: nil
+        ))
+        let logId = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: sid).first { $0.triggerMsgUID == "m-lonely" }?.id)
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+
+        let outcome = await service.rejectPending(
+            logId: logId, chatUsername: "wxid_peer", replyText: "我看看再回你")
+        guard case .held(let reason) = outcome else {
+            return XCTFail("翻转写失败时不能回报 .withdrawn: \(outcome)")
+        }
+        XCTAssertFalse(reason.contains("已经按住"),
+                       "没有任何耐久载体时不能说「已经按住」： \(reason)")
+        XCTAssertTrue(reason.contains("再按一次") || reason.contains("核对"),
+                      "必须把用户下一步能做的事说出来: \(reason)")
+        try? await service.stop()
+    }
+
+    /// The other branch still earns its stronger promise — otherwise the fix is
+    /// just two copies of one generic warning.
+    func testRejectWithAHeldTwinStillSaysItIsHeld() async throws {
+        let (item, logId, _) = try await staged()
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+        let outcome = await service.rejectPending(
+            logId: logId, chatUsername: "wxid_peer", replyText: item.replyText)
+        guard case .held(let reason) = outcome else {
+            return XCTFail("\(outcome)")
+        }
+        XCTAssertTrue(reason.contains("已经按住"), reason)
     }
 }

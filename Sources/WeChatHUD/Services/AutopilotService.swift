@@ -1214,6 +1214,7 @@ actor AutopilotService {
         // approve (whose send already completed) cannot re-resolve it.
         let consumed: Bool
         var flipFailed = false
+        var heldTwin: PendingSend? = nil
         switch store.resolveAutopilotLogSkipped(id: logId) {
         case .consumedPending:
             consumed = true
@@ -1243,36 +1244,55 @@ actor AutopilotService {
                 pendingSendQueue.removeAll { $0.chatUsername == chatUsername && $0.replyText == replyText }
             }
         } else if flipFailed, let chatUsername, let replyText {
+            heldTwin = holdTwinAcrossReject(chatUsername: chatUsername,
+                                            replyText: replyText, logId: logId)
             // The flip did not land, so this reject lives only in this process.
             // Deleting the queue twin anyway would recreate the exact shape §219
             // and §224 had to close: audit row 'pending' + twin gone, which after
             // a restart reads 「没人撤回过」 and 确认发送 types the text again.
             // Hold the row instead — it stays visible, carries the reason, and the
             // durable axis refuses it.
-            holdTwinAcrossReject(chatUsername: chatUsername, replyText: replyText, logId: logId)
         }
         if consumed {
             sessionPending = max(0, sessionPending - 1)
             persistSessionCounts()
         }
         return flipFailed
-            ? .held(reason: "取消没能落库：这条已经按住，不会自动发出，但请先在微信里核对它是否已经送达。")
+            ? .held(reason: heldTwin == nil
+                ? "取消没能落库，而且这条没有可持有的队列行：它并没有被记成已撤回。请再按一次「取消本条」，并核对微信里是否已经发出。"
+                : "取消没能落库：这条已经按住，不会自动发出，但请先在微信里核对它是否已经送达。")
             : .withdrawn
     }
 
     /// Put the durable cancel hold on the queue twin of a reject whose audit
     /// write failed. Same destination as `cancelPendingSend`'s failure path:
     /// `holdRowAcrossRestart` is the only thing that survives a restart.
-    private func holdTwinAcrossReject(chatUsername: String, replyText: String, logId: Int64) {
+    ///
+    /// Returns the held row, because the caller's receipt has to differ when there
+    /// was nothing to hold: a reject that neither flipped the audit row nor found a
+    /// queue twin leaves *no* durable trace, so it is not "held" and must not be
+    /// reported as if it were.
+    private func holdTwinAcrossReject(chatUsername: String, replyText: String,
+                                      logId: Int64) -> PendingSend? {
         let twin: PendingSend?
-        if let qid = store.autopilotLogQueueId(id: logId), let uuid = UUID(uuidString: qid) {
-            twin = pendingSendQueue.first { $0.id == uuid }
-                ?? pendingSendRows().first { $0.id == uuid }
-        } else {
-            twin = pendingSendQueue.first { $0.chatUsername == chatUsername && $0.replyText == replyText }
-                ?? pendingSendRows().first { $0.chatUsername == chatUsername && $0.replyText == replyText }
+        // `autopilotLogQueueId` answers nil for 「读不到」 and for 「这条没有队列孪生」
+        // alike; both go looking for the row by text, but only the latter may be
+        // reported to the user as a settled fact.
+        switch store.autopilotLogQueueIdRead(id: logId) {
+        case .unreadable:
+            twin = nil
+        case .value(let queued):
+            if let qid = queued, let uuid = UUID(uuidString: qid) {
+                twin = pendingSendQueue.first { $0.id == uuid }
+                    ?? pendingSendRows().first { $0.id == uuid }
+            } else {
+                twin = nil
+            }
         }
-        guard let twin else { return }
+        let matched = twin
+            ?? pendingSendQueue.first { $0.chatUsername == chatUsername && $0.replyText == replyText }
+            ?? pendingSendRows().first { $0.chatUsername == chatUsername && $0.replyText == replyText }
+        guard let twin = matched else { return nil }
         pendingSendQueue.removeAll { $0.id == twin.id }
         let hold: UnresolvedQueueWrite = .cancelled(
             chatUsername: chatUsername, replyText: replyText)
@@ -1283,6 +1303,7 @@ actor AutopilotService {
         // answer two different ways across launches — and 「it stays visible」
         // above would be a comment about a row the user never sees.
         pendingSendQueue.append(holdRowAcrossRestart(twin, kind: hold))
+        return twin
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.
