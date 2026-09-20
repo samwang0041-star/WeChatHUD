@@ -12,6 +12,16 @@ enum ApprovalWorkspacePolicy {
         }
         return queue
     }
+
+    /// A receipt belongs to the row that earned it. `displayedRowID` has to be the
+    /// row the detail pane is showing *right now*, not the stored selection: the
+    /// acted-on draft leaves 待确认 the moment the write lands, and then the
+    /// selection id still names the vanished row while the pane has already fallen
+    /// back to the next one. Gating on the stored id would post 「已取消本条」 under
+    /// an unrelated reply, with its own green check.
+    static func receiptStillOnScreen(actionedRowID: Int64, displayedRowID: Int64?) -> Bool {
+        displayedRowID == actionedRowID
+    }
 }
 
 /// 待确认回复 master-detail matching 不漏事 figure 07 / 40.
@@ -37,6 +47,7 @@ struct ApprovalWorkspaceView: View {
     @State private var receipt: Receipt?
     @State private var showSendConfirm = false
     @State private var isSending = false
+    @State private var isCancelling = false
 
     /// A receipt states its own verdict instead of having one inferred from its
     /// wording. The icon used to be chosen by looking for 「失败」 in the
@@ -362,32 +373,45 @@ struct ApprovalWorkspaceView: View {
                            .buttonStyle(.borderedProminent)
                            .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
                        Button("保存修改") {
-                            Task {
+                            let target = selected
+                            Task { @MainActor in
+                                let written: Receipt
                                 do {
-                                    try await monitor.saveAutopilotDraft(logId: selected.id, reply: editedReply)
-                                    receipt = .done("已保存草稿")
+                                    try await monitor.saveAutopilotDraft(logId: target.id, reply: editedReply)
+                                    written = .done("已保存草稿")
                                 } catch {
-                                    receipt = .problem("草稿没有保存，请重试。")
+                                    written = .problem("草稿没有保存，请重试。")
                                 }
+                                postReceipt(written, forRow: target.id)
                             }
                         }
                         .buttonStyle(.bordered)
+                        .disabled(isCancelling)
                         Button("取消本条") {
                             let target = selected
+                            // 确认发送 has this latch; this one didn't, so a double
+                            // tap started two cancels for the same row and the
+                            // second read back 「was not pending」 — a row the first
+                            // tap already took out of the queue.
+                            guard !isCancelling else { return }
+                            isCancelling = true
                             Task { @MainActor in
+                                defer { isCancelling = false }
                                 let outcome = await monitor.rejectAutopilotItem(
                                     logId: target.id,
                                     chatUsername: target.chatUsername,
                                     replyText: target.generatedReply
                                 )
                                 if case .held(let reason) = outcome {
-                                    receipt = .problem(reason)
+                                    postReceipt(.problem(reason), forRow: target.id)
                                 } else {
-                                    receipt = .done("已取消本条，对应的待发草稿已一并移除。")
+                                    postReceipt(.done("已取消本条，对应的待发草稿已一并移除。"),
+                                                forRow: target.id)
                                 }
                             }
                         }
                         .buttonStyle(.bordered)
+                        .disabled(isCancelling)
                     }
                 }
             }
@@ -411,17 +435,28 @@ struct ApprovalWorkspaceView: View {
         editedReply = selected?.generatedReply ?? ""
     }
 
+    /// Every receipt on this page is written after an `await`, and the list can
+    /// move on while the write is in flight — so the row it belongs to is checked
+    /// again at the moment of posting, not just at click time.
+    private func postReceipt(_ newReceipt: Receipt, forRow actionedRowID: Int64) {
+        guard ApprovalWorkspacePolicy.receiptStillOnScreen(
+            actionedRowID: actionedRowID, displayedRowID: selected?.id) else { return }
+        receipt = newReceipt
+    }
+
     private func confirmSend() async {
         guard let selected, !isSending else { return }
         isSending = true
         defer { isSending = false }
+        let actionedRowID = selected.id
         // 「什么都没敲」 and 「敲了但没在数据库里确认」 are different answers, and
         // the old `false` printed the second one for both: confirming a reply in
         // a muted conversation told the user to go check WeChat for a message
         // that had never been typed. The mute list is the one place that fact is
         // read, so this cannot drift from what 取消静音 offers.
         if monitor.silencedConversations.contains(where: { $0.username == selected.chatUsername }) {
-            receipt = .problem("这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。")
+            postReceipt(.problem("这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。"),
+                        forRow: actionedRowID)
             return
         }
         let attempt = await monitor.approveAutopilotItem(
@@ -437,11 +472,12 @@ struct ApprovalWorkspaceView: View {
         // a row that left the queue all told the user to go dig through WeChat
         // for a message that was never typed.
         if attempt.verified {
-            receipt = .done(CompanionProductCopy.sendSuccess(name: selected.chatName))
+            postReceipt(.done(CompanionProductCopy.sendSuccess(name: selected.chatName)),
+                        forRow: actionedRowID)
         } else if attempt.keystrokesLanded {
-            receipt = .problem(CompanionProductCopy.sendUncertain)
+            postReceipt(.problem(CompanionProductCopy.sendUncertain), forRow: actionedRowID)
         } else {
-            receipt = .problem(attempt.failureMessage ?? "这条没有发出。")
+            postReceipt(.problem(attempt.failureMessage ?? "这条没有发出。"), forRow: actionedRowID)
         }
     }
 

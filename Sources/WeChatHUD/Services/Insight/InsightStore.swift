@@ -184,16 +184,19 @@ final class InsightStore: ObservableObject {
             replyDebtItems: replyDebtItems, window: window, scope: scope
         )
 
-        guard let result else {
-            reloadError = "无法读取会话列表"
+        switch result {
+        case .unreadable(let notice):
+            // The page keeps whatever it last showed and says this round has no
+            // trustworthy numbers — a partial read used to fall through as a
+            // smaller set of confident figures.
+            reloadError = notice
             statsLoaded = true
-            return
+        case .loaded(let loaded):
+            allStats = loaded.stats
+            overview = loaded.overview
+            otherActiveSessions = loaded.otherActiveSessions
+            statsLoaded = true
         }
-
-        allStats = result.stats
-        overview = result.overview
-        otherActiveSessions = result.otherActiveSessions
-        statsLoaded = true
     }
 
     func filteredWhitelist(store: HUDStore, searchText: String) -> [WhitelistEntry] {
@@ -277,7 +280,7 @@ final class InsightStore: ObservableObject {
         replyDebtItems: [ReplyDebtItem],
         window: InsightTimeWindow,
         scope: InsightScope
-    ) async -> InsightDataLoader.LoadResult? {
+    ) async -> InsightDataLoader.LoadOutcome {
         let readerActor = WeChatReaderActor(reader)
         return await loader.load(
             store: store,

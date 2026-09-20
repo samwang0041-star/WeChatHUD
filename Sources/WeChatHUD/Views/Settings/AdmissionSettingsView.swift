@@ -19,6 +19,12 @@ struct AdmissionSettingsView: View {
     @State private var globalMuted: [IgnoredSenderRule] = []
     @State private var loaded = false
     @State private var error: String?
+    /// Set when the stored 托管规则 could not be read at all (`.unreadable`) or
+    /// could not be decoded (`.corrupt`). Both freeze the form: `save()` writes the
+    /// whole config back, so an edit landing on top of a defaulted read destroys
+    /// what is stored.
+    @State private var loadError: String?
+    @State private var loadIsCorrupt = false
 
     @State private var picker: PickerTarget?
 
@@ -130,10 +136,27 @@ struct AdmissionSettingsView: View {
     var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             summary
-            modeSection
-            watchedMemberSection
-            atMentionSection
-            mutedSection
+            Group {
+                modeSection
+                watchedMemberSection
+                atMentionSection
+                mutedSection
+            }
+            .disabled(loadError != nil)
+            .opacity(loadError == nil ? 1 : 0.55)
+            if let loadError {
+                Label(loadError, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                HStack(spacing: 10) {
+                    Button("重新读取规则") { reload() }
+                        .controlSize(.small)
+                    if loadIsCorrupt {
+                        Button("用默认规则覆盖并重载（丢弃「群 @ 静默」名单）") { rebuildFromDefaults() }
+                            .controlSize(.small)
+                    }
+                }
+            }
             if let error {
                 Text(error)
                     .font(.system(size: 12))
@@ -169,6 +192,12 @@ struct AdmissionSettingsView: View {
     }
 
     private var summaryText: String {
+        if loadError != nil {
+            // The sentence below is derived from `config`, which on a failed read
+            // is a constructed default — printed as 「现在的规则」 that states a
+            // rule the user never set.
+            return "暂时读不到当前的规则，下面的开关先不接受改动。"
+        }
         var parts: [String] = [config.mode == .whitelistOnly ? "只提醒关注的人" : "全部未读都提醒"]
         parts.append("关注 \(followed.count) 个对话")
         if !memberRules.isEmpty {
@@ -402,15 +431,72 @@ struct AdmissionSettingsView: View {
     // MARK: - Data
 
     private func reload() {
-        config = store.loadAdmissionConfig()
+        // The whole config is written back by `save()`, so a read that failed has
+        // to stop the write rather than hydrate the page from defaults: that used
+        // to paint 「只提醒关注的人」 on a broken read and push it to disk on the
+        // next tap, which silently un-mutes every 群 @ 静默 the user had set.
+        switch LoadDecision(store.admissionConfigRead()) {
+        case .hydrate(let stored):
+            config = stored
+            loadError = nil
+            loadIsCorrupt = false
+            loaded = true
+        case .frozen(let notice, let needsExplicitOverwrite):
+            loadError = notice
+            loadIsCorrupt = needsExplicitOverwrite
+            loaded = false
+        }
         followed = store.getWhitelist()
         memberRules = store.loadGroupMemberRules()
         globalMuted = store.loadIgnoredSenders().filter { $0.scope == .global }
-        loaded = true
+    }
+
+    /// What one read of the stored rules costs this page. One place decides, and
+    /// both halves consume it: `reload()` freezes the form on it and `save()`
+    /// refuses to write on it, so the classification cannot drift away from the
+    /// gate that protects the stored 群 @ 静默 list.
+    enum LoadDecision: Equatable {
+        case hydrate(AdmissionConfig)
+        case frozen(notice: String, needsExplicitOverwrite: Bool)
+
+        init(_ read: HUDStore.SettingRead<AdmissionConfig>) {
+            switch read {
+            case .value(let stored):
+                self = .hydrate(stored)
+            case .absent:
+                // Nothing stored yet: defaults here are the starting point, not a
+                // loss, so the page may write.
+                self = .hydrate(AdmissionConfig())
+            case .unreadable:
+                self = .frozen(
+                    notice: "读不到当前的提醒规则，这一页暂时不接受改动。请点「重新读取规则」再试一次。",
+                    needsExplicitOverwrite: false)
+            case .corrupt:
+                self = .frozen(
+                    notice: "提醒规则的内容读不懂（可能被上次写入打断）。这一页暂时不接受改动；要重新用规则，只能显式覆盖成默认值（会丢弃现有的「群 @ 静默」名单）。",
+                    needsExplicitOverwrite: true)
+            }
+        }
+
+        var acceptsEdits: Bool {
+            if case .hydrate = self { return true }
+            return false
+        }
+    }
+
+    /// The one write the page keeps while its read is failing: `.corrupt` has no
+    /// other way out, since the stored blob cannot be merged into. Deliberately a
+    /// named button — it throws away the 群 @ 静默 list.
+    private func rebuildFromDefaults() {
+        guard (try? store.saveAdmissionConfig(AdmissionConfig())) != nil else {
+            error = "默认规则也没写进去：数据库可能正被占用。请稍后再试一次。"
+            return
+        }
+        reload()
     }
 
     private func save() {
-        guard loaded else { return }
+        guard loaded, loadError == nil else { return }
         do {
             try store.saveAdmissionConfig(config)
             error = nil

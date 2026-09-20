@@ -35,6 +35,64 @@ final class ApprovalWorkspaceTests: XCTestCase {
         XCTAssertEqual(first.triggerMsgUID, second.triggerMsgUID)
     }
 
+    /// The row still being shown is the only one a receipt may land on.
+    func testReceiptBelongsToTheRowOnScreen() {
+        XCTAssertTrue(ApprovalWorkspacePolicy.receiptStillOnScreen(actionedRowID: 7, displayedRowID: 7))
+        XCTAssertFalse(ApprovalWorkspacePolicy.receiptStillOnScreen(actionedRowID: 7, displayedRowID: 8),
+                       "换行了还挂旧回执 = 在 B 的详情下打勾说「本条已取消」")
+        XCTAssertFalse(ApprovalWorkspacePolicy.receiptStillOnScreen(actionedRowID: 7, displayedRowID: nil),
+                       "这一栏已经空了，回执没有归属")
+    }
+
+    /// The detail pane shows `entries.first` whenever the stored selection has
+    /// left the list — which is exactly what a successful cancel does to its own
+    /// row. So the gate has to be handed the *displayed* row; the stored
+    /// `selectedID` still names the vanished one and would post under a stranger.
+    func testReceiptGateReadsTheDisplayedRowNotTheStoredSelection() throws {
+        let view = try String(contentsOf: sourceRoot.appendingPathComponent(
+            "Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
+        let definitionStart = try XCTUnwrap(view.range(of: "private func postReceipt(")).lowerBound
+        let body = view[definitionStart...]
+            .components(separatedBy: "\n    }\n").first ?? ""
+        XCTAssertTrue(body.contains("displayedRowID: selected?.id"),
+                      "串位守卫要的是详情窗此刻显示的那一行")
+        XCTAssertFalse(body.contains("displayedRowID: selectedID"),
+                       "又去读那个存着的选中 id：它指着一行已经不存在的旧选中")
+
+        for dead in ["receipt = .done(\"已保存草稿\")",
+                     "receipt = .problem(\"草稿没有保存，请重试。\")",
+                     "receipt = .done(\"已取消本条，对应的待发草稿已一并移除。\")",
+                     "receipt = .done(CompanionProductCopy.sendSuccess(name: selected.chatName)",
+                     "receipt = .problem(CompanionProductCopy.sendUncertain)"] {
+            XCTAssertFalse(view.contains(dead), "绕过守卫的直写回来了：\(dead)")
+        }
+        XCTAssertEqual(view.components(separatedBy: "postReceipt(").count - 1, 8,
+                       "详情窗的每一次回执都要过守卫（1 处定义 + 7 处调用）")
+    }
+
+    /// 「取消本条」 used to have no latch at all, so a double tap started two
+    /// cancels over the same row — unlike 确认发送, which guards on `isSending`.
+    func testCancelButtonLatchesLikeConfirmSendDoes() throws {
+        let view = try String(contentsOf: sourceRoot.appendingPathComponent(
+            "Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
+        let buttonStart = try XCTUnwrap(view.range(of: "Button(\"取消本条\")")).lowerBound
+        let pieces = view[buttonStart...].components(separatedBy: ".buttonStyle(.bordered)")
+        let button = pieces.first ?? ""
+        XCTAssertTrue(button.contains("guard !isCancelling else { return }"))
+        XCTAssertTrue(button.contains("isCancelling = true"))
+        XCTAssertTrue(button.contains("defer { isCancelling = false }"),
+                      "闩只在任务开始时放、不在结束时收，等于第二次永远点不动")
+        let afterStyle = pieces.count > 1 ? pieces[1] : ""
+        XCTAssertTrue(afterStyle.prefix(80).contains(".disabled(isCancelling)"),
+                      "闩没有接到这颗按钮上：点下去以后还是能再点一次")
+    }
+
+    private var sourceRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD")
+    }
+
     @MainActor
     func testEnsureAutopilotReadyForSendCreatesServiceWithoutEnablingAutoSend() async throws {
         let root = NSTemporaryDirectory() + "approval-workspace-\(UUID().uuidString)"

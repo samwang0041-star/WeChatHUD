@@ -129,7 +129,7 @@ actor WeChatReaderActor {
         myUsername: String = "",
         myDisplayName: String = "",
         recentSinceTs: Int = 0
-    ) -> [String: WeChatReader.BulkChatStats] {
+    ) -> [String: WeChatReader.BulkChatStats]? {
         reader.bulkMessageStats(
             chatUsernames: chatUsernames,
             selfNames: selfNames,

@@ -681,7 +681,8 @@ enum ScanEngine {
                         decision: decision,
                         chatUsername: msg.chatUsername,
                         isAtMention: isAt,
-                        atMutedGroups: admissionRules.config.atMutedGroups
+                        atMutedGroups: admissionRules.config.atMutedGroups,
+                        rulesUnreadable: admissionRules.rulesUnreadable
                     )
                     let alreadyAnswered = latestSelfTime > msg.createTime
                     // A permanently-silenced chat (silencedAt = now+10yr)

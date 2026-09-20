@@ -32,11 +32,11 @@ final class WeChatShardMergeTests: XCTestCase {
         let fixture = try fixture()
         defer { fixture.cleanup() }
 
-        let stats = fixture.reader.bulkMessageStats(
+        let stats = try XCTUnwrap(fixture.reader.bulkMessageStats(
             chatUsernames: [chat],
             selfNames: [],
             recentSinceTs: 2_500
-        )
+        ), "两个分片都读得动，不许报「这一轮没读全」")
 
         XCTAssertEqual(stats[chat]?.totalCount, 4, "two shards of two messages each")
         XCTAssertEqual(stats[chat]?.earliestTs, 1_000)
@@ -47,8 +47,56 @@ final class WeChatShardMergeTests: XCTestCase {
         )
     }
 
-    func testGetMessagesMergesEveryShardNewestFirst() throws {
-        let fixture = try fixture()
+    /// The other half of 「分片读不全」: a shard whose table cannot be queried used
+    /// to be walked past, and what came back was a smaller number presented as the
+    /// whole story — 洞察 printed 「这个对话 0 条消息」 and the neglect insight blamed
+    /// the user for messages that were never counted.
+    func testUnqueryableShardRefusesTheWholeRound() throws {
+        let broken = try SyntheticShardedScanFixture(
+            chatUsername: chat,
+            shards: [
+                0: [.init(localId: 1, createTime: 2_000, senderId: 1, text: "今天的问题")],
+                3: [.init(localId: 1, createTime: 1_000, senderId: 1, text: "上周的问题")]
+            ],
+            malformedShards: [3])
+        defer { broken.cleanup() }
+
+        XCTAssertNil(broken.reader.bulkMessageStats(chatUsernames: [chat], selfNames: []),
+                     "读不全的一轮要交回「不知道」，而不是一个更小的可信数字")
+    }
+
+    /// And the page has to route that answer to a sentence, not to an empty board.
+    func testInsightLoaderReportsAnIncompleteRoundInsteadOfPartialNumbers() async throws {
+        func outcome(malformed: Bool) async throws -> InsightDataLoader.LoadOutcome {
+            let fixture = try SyntheticShardedScanFixture(
+                chatUsername: chat,
+                shards: [
+                    0: [.init(localId: 1, createTime: 2_000, senderId: 1, text: "今天的问题")],
+                    3: [.init(localId: 1, createTime: 1_000, senderId: 1, text: "上周的问题")]
+                ],
+                malformedShards: malformed ? [3] : [])
+            let store = try fixture.makeStore()
+            defer { fixture.cleanup(); store.close() }
+            return await InsightDataLoader().load(
+                store: store,
+                readerActor: WeChatReaderActor(fixture.reader),
+                replyDebtItems: [],
+                window: .all,
+                scope: .all
+            )
+        }
+
+        if case .unreadable(let notice) = try await outcome(malformed: false) {
+            XCTFail("正对照：两个分片都读得动的一轮必须交出数字，否则这条门只是「永远说读不到」— \(notice)")
+        }
+        if case .unreadable(let notice) = try await outcome(malformed: true) {
+            XCTAssertFalse(notice.isEmpty, "拒了就得说为什么拒")
+        } else {
+            XCTFail("分片读不全时不许交出数字，也不许当「这个对话没聊过」")
+        }
+    }
+
+    func testGetMessagesMergesEveryShardNewestFirst() throws {        let fixture = try fixture()
         defer { fixture.cleanup() }
 
         let messages = try fixture.reader.getMessages(chatUsername: chat, limit: 10)

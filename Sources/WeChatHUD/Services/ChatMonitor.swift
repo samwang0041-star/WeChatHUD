@@ -2757,15 +2757,23 @@ final class ChatMonitor: ObservableObject {
     /// when a mute only hid a row; now that a mute also withdraws a queued draft
     /// and stops the conversation reaching the assistant at all, an unreachable
     /// unmute means "that peer is dead, with no way back from inside the app".
-    var silencedConversations: [SilencedConversation] {
+    /// nil = 「`chat_actions` 这次读不到」。The management page needs that third
+    /// answer: an empty list there says 「没人被静音」 and takes away the only
+    /// 「取消静音」 button, while 确认发送 is telling the user to go to that page to
+    /// undo a mute.
+    var silencedConversationsRead: [SilencedConversation]? {
         let now = Int(Date().timeIntervalSince1970)
+        guard let actions = store.chatActionsRead() else { return nil }
         var names: [String: String] = [:]
         for entry in store.getWhitelist() { names[entry.id] = entry.displayName }
-        return store.loadChatActions()
+        return actions
             .filter { $0.value.isPermanentlySilenced(nowEpoch: now) }
             .map { SilencedConversation(username: $0.key, displayName: names[$0.key] ?? $0.key) }
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
+
+    /// Two-state convenience for callers that can only act on 「是不是这条被静音了」.
+    var silencedConversations: [SilencedConversation] { silencedConversationsRead ?? [] }
 
     @discardableResult
     func unsilenceConversation(username: String) -> Bool {

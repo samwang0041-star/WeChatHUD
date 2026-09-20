@@ -194,6 +194,10 @@ final class SilenceStopsUnattendedReplyTests: XCTestCase {
             encoding: .utf8)
         XCTAssertTrue(view.contains("monitor.silencedConversations"),
                       "静音清单要读持久状态")
+        XCTAssertTrue(view.contains("monitor.silencedConversationsRead"),
+                      "管理页要拿得到第三种答案")
+        XCTAssertTrue(view.contains("暂时读不到静音名单"),
+                      "读不到那一支不许退回「没有静音的对话」：那句话会拿走它自己叫用户去按的按钮")
         XCTAssertFalse(view.contains("monitor.silencedItems"),
                        "读回收件箱行 = 那个行一消失，用户就没法取消静音了")
 
@@ -201,9 +205,10 @@ final class SilenceStopsUnattendedReplyTests: XCTestCase {
             contentsOf: root.appendingPathComponent("Services/ChatMonitor.swift"),
             encoding: .utf8)
         let list = try XCTUnwrap(
-            monitor.components(separatedBy: "var silencedConversations:").last
+            monitor.components(separatedBy: "var silencedConversationsRead:").last
         ).components(separatedBy: "\n    }\n").first ?? ""
-        XCTAssertTrue(list.contains("loadChatActions"), "清单的来源必须是 chat_actions")
+        XCTAssertTrue(list.contains("chatActionsRead"),
+                      "清单要读那份能回答「读不到」的读法：空字典不是「没人被静音」")
         XCTAssertTrue(list.contains("isPermanentlySilenced"),
                       "要用那一条共用的静音判据，而不是第六种写法")
         let unmute = try XCTUnwrap(

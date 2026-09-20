@@ -48,20 +48,24 @@ final class SyntheticShardedScanFixture {
     ///     table to an already-keyed file.
     ///   - unreadCount: what `session.db` reports for the chat, which is what
     ///     the scan sizes its page by.
-    convenience init(chatUsername: String, shards: [Int: [MessageRow]], unreadCount: Int = 0) throws {
+    convenience init(chatUsername: String, shards: [Int: [MessageRow]], unreadCount: Int = 0,
+                     malformedShards: Set<Int> = []) throws {
         try self.init(
             chatUsername: chatUsername,
             optionalShards: shards.mapValues { Optional($0) },
-            unreadCount: unreadCount
+            unreadCount: unreadCount,
+            malformedShards: malformedShards
         )
     }
 
     /// `optionalShards` value nil → shard file exists and is keyed, but the
     /// chat's `Msg_` table is absent from it. `extraName2Id` appends member
     /// names (group name2id rows) — pass the same value twice to build an
-    /// ambiguous nickname shared by two member ids.
+    /// ambiguous nickname shared by two member ids. `malformedShards` names shard
+    /// indexes whose `Msg_` table exists with a schema the reader cannot query —
+    /// the shape of a WeChat migration or a damaged page.
     init(chatUsername: String, optionalShards shards: [Int: [MessageRow]?], unreadCount: Int = 0,
-         extraName2Id: [String] = []) throws {
+         extraName2Id: [String] = [], malformedShards: Set<Int> = []) throws {
         self.chatUsername = chatUsername
         root = FileManager.default.temporaryDirectory.appendingPathComponent("sharded-scan-\(UUID().uuidString)")
         dbDir = root.appendingPathComponent("synthetic_account/db_storage", isDirectory: true)
@@ -77,12 +81,18 @@ final class SyntheticShardedScanFixture {
         }.joined(separator: "\n")
 
         for (index, maybeRows) in shards.sorted(by: { $0.key < $1.key }) {
-            let rows = maybeRows ?? []
+            let malformed = malformedShards.contains(index)
+            let rows = malformed ? [] : (maybeRows ?? [])
             let inserts = rows.map {
                 "INSERT INTO [\(table)] VALUES (\($0.localId), \($0.localType), \($0.createTime), \($0.senderId), '\($0.escapedText)', 0);"
             }.joined(separator: "\n")
             newestTimestamp = max(newestTimestamp, rows.map(\.createTime).max() ?? 0)
-            let tableDDL = maybeRows == nil ? "" : """
+            let tableDDL = maybeRows == nil ? "" : malformed ? """
+                CREATE TABLE [\(table)] (
+                    local_id INTEGER PRIMARY KEY,
+                    not_the_columns_the_reader_queries INTEGER
+                );
+                """ : """
                 CREATE TABLE [\(table)] (
                     local_id INTEGER PRIMARY KEY,
                     local_type INTEGER,

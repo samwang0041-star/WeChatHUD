@@ -84,13 +84,21 @@ enum AdmissionPolicy {
     /// A group the user muted for @s still reaches the inbox — dropping it
     /// entirely would hide the one message they were probably waiting for. It
     /// just does not pop up.
+    ///
+    /// `rulesUnreadable` fails the *outward* half closed: the mute lists arrive
+    /// empty when the tables cannot be read, so 「这个人不要提醒我」 is silently
+    /// un-honored for the duration. A row in the inbox is recoverable; an
+    /// interruption the user switched off is not, and it is the one thing here
+    /// that cannot be taken back.
     static func shouldRaiseBanner(
         decision: Decision,
         chatUsername: String,
         isAtMention: Bool,
-        atMutedGroups: Set<String>
+        atMutedGroups: Set<String>,
+        rulesUnreadable: Bool
     ) -> Bool {
         guard decision.isAdmitted else { return false }
+        if rulesUnreadable { return false }
         if isAtMention, atMutedGroups.contains(chatUsername) { return false }
         return true
     }

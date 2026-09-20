@@ -233,7 +233,7 @@ final class LateNightRateHonestyTests: XCTestCase {
             BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
         """)
 
-        await service.cancelPendingSend(id: item.id)
+        _ = await service.cancelPendingSend(id: item.id)
 
         XCTAssertTrue(store.hasPendingSend(id: item.id),
                       "the durable cancel is the audit row; deleting the queue twin alone leaves a sendable shape with no owner")
@@ -271,7 +271,7 @@ final class LateNightRateHonestyTests: XCTestCase {
         )
         try store.insertAutopilotLog(entry)
         let rowId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sid).first { $0.action == .pending }).id
-        await service.cancelPendingSend(id: item.id)
+        _ = await service.cancelPendingSend(id: item.id)
         try? await service.stop()
 
         XCTAssertFalse(store.hasPendingSend(id: item.id), "the delete landed")
@@ -285,7 +285,7 @@ final class LateNightRateHonestyTests: XCTestCase {
         // agrees. Both have to hold, because a stale `queue_id` on a row that is
         // no longer there is the only thing distinguishing this from a reply
         // that never had a twin.
-        let afterRestart = try await revived.deliveryStillPermitted(
+        let afterRestart = await revived.deliveryStillPermitted(
             queueId: item.id, logId: rehydratedRow.id, chatUsername: "wxid_peer")
         XCTAssertFalse(afterRestart,
                        "a landed cancel must stay refused once the in-memory holds are gone")

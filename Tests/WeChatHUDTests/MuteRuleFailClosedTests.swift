@@ -76,6 +76,34 @@ final class MuteRuleFailClosedTests: XCTestCase {
     }
 }
 
+/// The 静音清单 on the contacts page reads the same table through `ChatMonitor`.
+/// There an empty list is a claim (「没有静音的对话」) that takes away the only
+/// 「取消静音」 button — while 确认发送 refuses a muted chat and points the user at
+/// that very button.
+@MainActor
+final class SilencedListHonestyTests: XCTestCase {
+    func testListSeparatesNobodyMutedFromCannotRead() throws {
+        let root = NSTemporaryDirectory() + "silenced-list-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let store = HUDStore(dbPath: root + "/hud.sqlite3")
+        try store.open()
+        let reader = WeChatReader(dbDir: root + "/db_storage", cacheStrategy: .memory)
+        let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
+        defer { store.close(); try? FileManager.default.removeItem(atPath: root) }
+
+        XCTAssertEqual(monitor.silencedConversationsRead?.count, 0,
+                       "正对照：表读得到且为空就是「没人被静音」，不许举「读不到」")
+        try store.addToWhitelist(username: "wxid_peer", displayName: "同事", isGroup: false, category: .work)
+        try store.silenceChat(chatUsername: "wxid_peer",
+                              silencedAt: Int(Date().timeIntervalSince1970) + 10 * 365 * 86400)
+        XCTAssertEqual(monitor.silencedConversationsRead?.map(\.displayName), ["同事"])
+
+        try store.exec("ALTER TABLE chat_actions RENAME TO chat_actions_hidden")
+        XCTAssertNil(monitor.silencedConversationsRead,
+                     "读不到时答「没有静音的对话」，等于顺手拿走它自己叫用户去按的那颗按钮")
+    }
+}
+
 /// The scan facade reads the same table for banner/snooze verdicts; a failed read
 /// must cost a round, not consume the watermark.
 final class ScanSkipsUnreadableMuteRulesTests: XCTestCase {

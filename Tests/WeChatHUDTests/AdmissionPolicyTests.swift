@@ -161,7 +161,8 @@ final class AdmissionPolicyTests: XCTestCase {
                 decision: .suppress(.notFollowed),
                 chatUsername: "g1@chatroom",
                 isAtMention: true,
-                atMutedGroups: []
+                atMutedGroups: [],
+                rulesUnreadable: false
             )
         )
     }
@@ -176,7 +177,8 @@ final class AdmissionPolicyTests: XCTestCase {
                 decision: decision,
                 chatUsername: "noisy@chatroom",
                 isAtMention: true,
-                atMutedGroups: ["noisy@chatroom"]
+                atMutedGroups: ["noisy@chatroom"],
+                rulesUnreadable: false
             )
         )
     }
@@ -190,7 +192,8 @@ final class AdmissionPolicyTests: XCTestCase {
                 decision: decision,
                 chatUsername: "noisy@chatroom",
                 isAtMention: false,
-                atMutedGroups: ["noisy@chatroom"]
+                atMutedGroups: ["noisy@chatroom"],
+                rulesUnreadable: false
             ),
             "the @ mute must not also silence the members the user singled out"
         )

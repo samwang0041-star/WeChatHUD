@@ -1757,6 +1757,11 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         Dictionary(pairs.map { ($0.tableName, $0.chatUsername) }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// nil = 「这一轮没读全」。Every failure below used to be a bare `continue`, so a
+    /// chat whose older shard could not be opened or queried came back as a
+    /// smaller, confident number — and 洞察 printed that as fact (「这个对话 0 条
+    /// 消息」, and the neglect insight blaming the user for messages that were never
+    /// counted). Partial data here is not a smaller answer, it is an unknown one.
     func bulkMessageStats(
         chatUsernames: [String],
         selfNames: Set<String>,
@@ -1764,7 +1769,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
         myUsername: String = "",
         myDisplayName: String = "",
         recentSinceTs: Int = 0
-    ) -> [String: BulkChatStats] {
+    ) -> [String: BulkChatStats]? {
         // Build chatUsername → (tableName, chatUsername) map
         let chatToTable: [(chatUsername: String, tableName: String)] = chatUsernames.map {
             ($0, "Msg_\(Self.md5Hex($0))")
@@ -1776,23 +1781,38 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
         let msgDBs = findMessageDBs()
         var result: [String: BulkChatStats] = [:]
+        var incomplete = false
 
         for relPath in msgDBs {
-            guard let decPath = try? getDecryptedDB(relativePath: relPath) else { continue }
+            guard let decPath = try? getDecryptedDB(relativePath: relPath) else {
+                incomplete = true
+                continue
+            }
             var db: OpaquePointer?
-            guard Self.openReadonly(path: decPath, db: &db) else { continue }
+            guard Self.openReadonly(path: decPath, db: &db) else {
+                incomplete = true
+                continue
+            }
             defer { sqlite3_close(db) }
 
             // Find which target tables exist in this DB
             var tableStmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'", -1, &tableStmt, nil) == SQLITE_OK else { continue }
+            guard sqlite3_prepare_v2(db, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Msg_%'", -1, &tableStmt, nil) == SQLITE_OK else {
+                incomplete = true
+                continue
+            }
             defer { sqlite3_finalize(tableStmt) }
 
             var foundTables: [String] = []
-            while sqlite3_step(tableStmt) == SQLITE_ROW {
+            var listRC = sqlite3_step(tableStmt)
+            while listRC == SQLITE_ROW {
                 let name = String(cString: sqlite3_column_text(tableStmt, 0))
                 if targetTables.contains(name) { foundTables.append(name) }
+                listRC = sqlite3_step(tableStmt)
             }
+            // A page that fails mid-enumeration hides the tables after it; that
+            // reads as 「这个分片没有这个对话」, which is the wrong answer.
+            if listRC != SQLITE_DONE { incomplete = true }
             guard !foundTables.isEmpty else { continue }
 
             let name2id = loadName2Id(db: db)
@@ -1803,7 +1823,10 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
 
                 let sql = "SELECT real_sender_id, create_time, local_type FROM [\(table)] \(whereClause) ORDER BY create_time ASC"
                 var sStmt: OpaquePointer?
-                guard sqlite3_prepare_v2(db, sql, -1, &sStmt, nil) == SQLITE_OK else { continue }
+                guard sqlite3_prepare_v2(db, sql, -1, &sStmt, nil) == SQLITE_OK else {
+                    incomplete = true
+                    continue
+                }
                 defer { sqlite3_finalize(sStmt) }
 
                 let cal = Calendar.current
@@ -1818,7 +1841,8 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 var latestTs = 0
                 var recent = 0
 
-                while sqlite3_step(sStmt) == SQLITE_ROW {
+                var rc = sqlite3_step(sStmt)
+                while rc == SQLITE_ROW {
                     let senderId = Int(sqlite3_column_int64(sStmt, 0))
                     let createTime = Int(sqlite3_column_int64(sStmt, 1))
                     let localType = Int(sqlite3_column_int64(sStmt, 2))
@@ -1846,7 +1870,13 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                     if createTime > latestTs { latestTs = createTime }
                     if recentSinceTs > 0, createTime >= recentSinceTs { recent += 1 }
                     total += 1
+                    rc = sqlite3_step(sStmt)
                 }
+                // SQLITE_ERROR partway through (a corrupt page, a schema WeChat
+                // changed under us) is the failure mode that used to be invisible:
+                // the loop just stopped and the rows before it were reported as
+                // the whole story.
+                if rc != SQLITE_DONE { incomplete = true }
                 guard total > 0 else { continue }
 
                 let shard = BulkChatStats(
@@ -1866,7 +1896,7 @@ final class WeChatReader: ObservableObject, @unchecked Sendable {
                 result[chatUsername] = result[chatUsername].map { $0.merged(with: shard) } ?? shard
             }
         }
-        return result
+        return incomplete ? nil : result
     }
 
     /// One candidate for smart whitelist import. All scoring inputs are

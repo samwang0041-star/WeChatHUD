@@ -2024,3 +2024,98 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 作用面比管控对象宽，已收窄成只查这一对读写（§224 同族教训）。
 两条变异：把旧形状塞回一个视图 ⇒ 闸门红；把 `.unreadable` 改成走 fallback ⇒ 行为判据红。
 全量 2171 XCTest（+4）+ 70 swift-testing，`TEST_EXIT=0`。
+
+## §244 第 9 轮收尾：审批台「取消本条」的回执要认行（P1，已修 —— 但只有半级判据，如实记）
+
+§229 交棒的那半颗：按钮本身读的是 `rejectPending` 的真实结果（上一轮已修），但**写回执的
+时机**在两次 `await` 之后。而 `rejectAutopilotItem` 内部 `refreshAutopilotSessionState()`
+会强制重读展示日志 ⇒ 取消成功那一刻，这行就从「待确认」栏消失了；`.onChange(of: selected?.id)`
+里的 `receipt = nil` 与那次待写的赋值谁先谁后，取决于渲染轮次。两种结局都不是人要的：
+要么成功回执被清空（沉默），要么它落在**下一行**下面（绿色对勾 + 「已取消本条」说的是别人）。
+
+修法：把"归属"写成显式判据 `ApprovalWorkspacePolicy.receiptStillOnScreen(actionedRowID:
+displayedRowID:)`，所有详情窗的回执改走 `postReceipt(_:forRow:)`。关键在传的是
+**当前显示的那一行**（`selected?.id`，它带着"选中行已消失 ⇒ 回落到第一条"的语义），
+不是存着的 `selectedID` —— 后者在取消成功后仍指向那行已经不存在的旧选中，用它做门等于没门。
+顺手补上 `isCancelling` 闩（`confirmSend` 早就有 `isSending`，这颗按钮没有 ⇒ 双击起两个 Task）。
+
+判据：3 条（`ApprovalWorkspaceTests`）。行为级只有判据本身（换行 ⇒ 丢、空栏 ⇒ 丢、同一行 ⇒ 挂），
+**"视图在 await 之后按显示行写"这一步没有行为级覆盖**：SwiftUI 的渲染轮次在测试里造不出来。
+它是靠两条源码闸拦回归的 —— ① 7 个 `postReceipt(` 调用点齐；② 五种"绕过守卫的直写"原文
+（`receipt = .done("已取消本条…` 等）一律不许回来。变异实测：把 `displayedRowID` 换成
+`selectedID` ⇒ 红 2 条；删闩 ⇒ 红 1 条；把 保存修改 改回直写 ⇒ 红 3 条（含计数那条）。
+**仍需一次人工点击验收**（生产上架前）：取消一条以后连着换两次选中，看横幅会不会挂在别人身上。
+
+## §245 第 9 轮：提醒规则页会把「读不到」写成用户的设置（P1，已修，并补上 §241 排下的可见出口）
+
+`AdmissionSettingsView` 是整份覆盖写的形状：`reload()` 用 `loadAdmissionConfig()`（读失败
+⇒ 默认值），`save()` 把整个 `config` 写回去。于是一次 settings 读失败后，用户在这页按任何
+一个开关，都会把**默认规则**盖到真实存量上：`mode` 被改回「只提醒关注的人」，
+`atMutedGroups` 里那串「@ 提醒静默」的群整体清零。而且页顶「现在的规则」那句话是拿
+`config` 现推的 ⇒ 它先把默认值当事实念了一遍，再去写。
+
+修法：`LoadDecision`（`.hydrate` / `.frozen(notice:needsExplicitOverwrite:)`）成为唯一一处
+分类，`reload()` 与 `save()` 都消费它 —— 测试里的那份分类因此不可能是界面上的死代码（这是
+本轮第 N 次踩到"判据与消费者两处各写一份"，直接把它们焊在一起）。`.absent` 仍然可以写：
+没设过就是该从默认值开始，否则这页永远存不下第一次。`.corrupt` 重试不来，所以给了
+「用默认规则覆盖并重载」这颗**显式**按钮 —— §241 排下的"需要一个可见的读不懂出口"到这里补齐。
+表单整体 `.disabled(loadError != nil)`，页顶那句话在冻结时改成「暂时读不到当前的规则」。
+
+判据：`AdmissionConfigWriteGateTests` 2 条。一条真行为（拿 `LoadDecision` 过 `.absent` /
+`.value` / 重命名 `settings` 表造成的 `.unreadable` / `setSetting("admission", "{oops")`
+造成的 `.corrupt` 四态，并断言 unreadable 与 corrupt **给的出口不同**）；一条源码闸
+（`reload` 必须吃 `LoadDecision(store.admissionConfigRead())`、`save()` 的门是
+`guard loaded, loadError == nil`、`ScanEngine` 那一半必须把旗子传进 `shouldRaiseBanner`）。
+变异实测：`.unreadable` 当 `.absent` ⇒ 红 2 条；corrupt 不给覆盖 ⇒ 红 1 条；删 `save()` 的门
+⇒ 红 1 条；扫描不传旗 ⇒ 红 1 条。
+
+## §246 第 9 轮：读不到静音名单时，横幅与「静音清单」都不许替用户做主（P2 两颗，已修）
+
+同一形状的另两个消费点：
+
+1. `AdmissionPolicy.shouldRaiseBanner` 少了 `rulesUnreadable`。静音名单读失败交回**空集**，
+   于是「这个人不要提醒我」在那一轮被静默解掉、横幅照弹。收件箱那一半**故意不fail closed**
+   （藏行会把消息弄没，弹不完只是吵）；横幅这一半是外发动作、收不回，所以压掉。
+2. `ChatMonitor.silencedConversations` 走 `loadChatActions()`（读失败 ⇒ `[:]`），于是
+   管理页打印「没有静音的对话」并**收走唯一的「取消静音」按钮** —— 而 `confirmSend` 的
+   拒绝话术正好叫用户去这一页取消静音。同一个读失败把入口和出口一起弄没了。
+   补 `silencedConversationsRead`（nil = 读不到），管理页第三种答案有自己的话术 + 「重新读取」；
+   旧的两态访问器保留给"只能回答是/否"的调用点。
+
+判据：`SilencedListHonestyTests`（空表 ≠ 读不到、静音的那条列得出来、重命名 `chat_actions`
+⇒ nil）+ 横幅那 3 段真值表（含正对照，防"永不弹"）+ 两处源码闸。变异：Monitor 退回
+`loadChatActions()` ⇒ 红 2 条；管理页 nil 分支退回空列表话术 ⇒ 红 1 条；策略里删那行
+`return false` ⇒ 红 1 条。
+
+## §247 第 9 轮：洞察把「分片读不全」当小一点的数字交出去（P2，已修）
+
+`bulkMessageStats` 里每一处失败都是裸 `continue`：分片打不开、`sqlite_master` 枚举、
+`SELECT real_sender_id…` prepare 失败、以及**逐行 step 中途 SQLITE_ERROR**（`while step ==
+SQLITE_ROW` 会把它当成"读完了"）。结果是同一个对话只剩一个分片的行数，而 洞察 拿它当全部：
+「这个对话 0 条消息」，以及「被忽视的高层」把用户从没被数进去的消息算成他冷落人。
+§201 修的是跨分片**归并**，这一颗修的是归并面前的**丢读**。
+
+修法：任一失败 ⇒ 整轮 `nil`（"不知道"），不再返回更小的可信数字；`InsightDataLoader.load`
+从 `LoadResult?` 改成 `LoadOutcome`（`.loaded` / `.unreadable(notice:)`），因为两种失败的
+话术不同：会话列表读不到是「这一页开不了」，分片读不全得说「数字先不要采信」，
+`InsightStore` 原来对两者统一打印「无法读取会话列表」。
+
+顺手删掉一段生产不可达的同步 `load(store:reader:)`（128 行，只有异步那份被
+`loadInBackground` 调用；删完编译通过即证）。
+
+判据：`WeChatShardMergeTests` 新增 2 条 —— 夹具补 `malformedShards:`（建一张**列不对**的
+`Msg_` 表，让 prepare 真实失败，而不是把文件删掉：删文件只是"这个分片没有这个对话"），
+一条打 reader 层，一条打 loader 层且带正对照（两个健康分片必须交出数字，否则这条门只是
+"永远说读不到"）。全量 **2180 XCTest（+9）+ 70 swift-testing**，`TEST_EXIT=0`，
+测试目标 0 警告（顺带清掉 `LateNightRateHonestyTests` 里 3 处旧警告）。
+
+## §248 又一次：拿"改之前的备份"去撤销实验，把在修的东西一起冲掉了
+
+§240 记过一次，本轮末尾又犯：做变异实验前我 `cp` 的是**动手之前**的状态，用来"撤销实验"
+就把同一文件里的在修内容一起撤销了。ChatMonitor 与 ContactsSettingsView 的 §246 修复
+被冲掉一次，靠 `git diff --stat` 当场发现（那两个文件从 diff 里消失了）才重做。
+
+规则补一条：**实验用的备份必须在编辑之后打**（`/tmp/post_<name>.swift`），"改前备份"只用来
+对照、永远不用来回滚；撤销动作完成后必须 `grep` 一个只属于本次修复的锚点行，再看
+`git diff --stat` 是否还列着这个文件。同一轮里 M9/M11 两次变异因为改错形状编译不过 ——
+那不是判据红了，是自己的实验没做到"改完还能编译"（§240 已记，本轮再犯）。
