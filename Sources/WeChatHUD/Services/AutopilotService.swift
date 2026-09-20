@@ -213,7 +213,13 @@ actor AutopilotService {
     /// Precondition: the row is still on disk. Calling this after a delete that
     /// landed would write the row back and resurrect a canceled draft.
     private func holdRowAcrossRestart(_ item: PendingSend, kind: UnresolvedQueueWrite) {
-        guard item.manualOnlyReason == nil else { return }
+        // No `manualOnlyReason == nil` guard here, unlike `countAsAwaitingHuman`.
+        // A row that already awaits a human (会话上限 / 过期 / 敏感词) is exactly the
+        // row the approval card offers 「立即发送」 for — and if this cancel's audit
+        // flip failed, that ordinary reason is all the durable record says, so the
+        // user is told 「已取消」 and then succeeds at sending it after a restart.
+        // 「上一次的结果没人知道」 outranks 「不能自动发」, so it overwrites; the
+        // specific reason still lives on the audit row's own text.
         var guarded = item
         switch kind {
         case .delivered:
@@ -2067,7 +2073,7 @@ actor AutopilotService {
             break
         case .possiblyDelivered:
             print("[WCHUD] Autopilot: sendNow blocked — 发送结果未记账，可能已经发出")
-            return .blocked("这条的发送结果没能记账，很可能已经发出去了。请先在微信里核对，确认没发出去再用「编辑并发送」。")
+            return .blocked("这条的发送结果没能记账，很可能已经发出去了。请先在微信里核对；确认没有发出，再取消这条并手动回复。")
         case .withdrawn:
             print("[WCHUD] Autopilot: sendNow blocked — 用户已撤回这条")
             return .blocked("这条你已经取消了，只是没能落库。请先在微信里核对，不要再发一次。")
@@ -2090,7 +2096,19 @@ actor AutopilotService {
             print("[WCHUD] Autopilot: editAndSend blocked — user is active")
             return .blocked("用户正在活动，已保留在队列")
         }
-        guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
+        guard let existing = pendingSendQueue.first(where: { $0.id == id }) else { return .notFound }
+        // Same two durable refusals as 立即发送: 「编辑并发送」 is a send, and an
+        // edited text does not make an unknown previous outcome known. Without
+        // this the gate that 确认发送 honors is simply not wired on this entry
+        // point — one predicate, four doors.
+        switch Self.durableHold(existing.manualOnlyReason) {
+        case .none:
+            break
+        case .possiblyDelivered, .withdrawn:
+            print("[WCHUD] Autopilot: editAndSend blocked — 上一次发送结果未确认")
+            return .blocked("这条的上一次发送结果没能确认，请先在微信里核对，再决定要不要重发。")
+        }
+        let idx = pendingSendQueue.firstIndex(where: { $0.id == id })!
         var item = pendingSendQueue.remove(at: idx)
         let originalText = item.replyText
         item.replyText = newText

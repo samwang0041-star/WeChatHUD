@@ -303,3 +303,151 @@ final class WithdrawalDurabilityTests: XCTestCase {
         XCTAssertNil(got.lateNightReplyRate, "still no fabricated rate for a quiet night")
     }
 }
+
+/// A refusal that tells the user to press something which does not exist is
+/// worse than no refusal: it is the one instruction they cannot follow. This
+/// copy once named 「编辑并发送」, whose service function has zero callers in
+/// `Views`. Rather than trust review, name the controls the copy depends on and
+/// require each of them to be a real label on screen.
+final class ReferralCopyPointsAtRealControlsTests: XCTestCase {
+    private func viewLabels() throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Views")
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else {
+            XCTFail("cannot enumerate \(root.path)"); return ""
+        }
+        var text = ""
+        for case let url as URL in en where url.pathExtension == "swift" {
+            text += (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        }
+        XCTAssertGreaterThan(text.count, 20_000, "the Views tree scanned nothing")
+        return text
+    }
+
+    func testEveryControlNamedByTheCopyExistsOnScreen() throws {
+        let labels = try viewLabels()
+        var checked = 0
+        for control in ["确认发送", "取消本条", "暂停"] {
+            XCTAssertTrue(labels.contains(control),
+                          "回执文案让用户去按「\(control)」，但 Views 里没有这个名字")
+            checked += 1
+        }
+        XCTAssertGreaterThanOrEqual(checked, 3, "coverage floor: a scan that checked nothing passes")
+        XCTAssertFalse(labels.isEmpty)
+    }
+
+    /// And the copy must stop naming the one that does not exist.
+    func testThePhantomControlNameIsNotRevived() throws {
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift"), encoding: .utf8)
+        XCTAssertFalse(src.contains("编辑并发送"),
+                       "editAndSend has no button; user copy may not point at it")
+        XCTAssertFalse(src.contains("用「编辑并发送」"))
+    }
+}
+
+/// Round 6: the durable cancel marker was skipped for exactly the rows that
+/// needed it, and one of the four send doors never read it at all.
+final class DurableHoldCoverageTests: XCTestCase {
+    private var store: HUDStore!
+    private var reader: WeChatReader!
+    private var service: AutopilotService!
+
+    override func setUpWithError() throws {
+        let tmp = NSTemporaryDirectory() + "hud_holdcov_\(UUID().uuidString).sqlite3"
+        store = HUDStore(dbPath: tmp)
+        try store.open()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reader = WeChatReader(dbDir: root.path, cacheStrategy: .memory)
+        service = AutopilotService(store: store, reader: reader, aiService: AIService())
+    }
+
+    override func tearDown() async throws {
+        try? await service.stop()
+        store.close()
+    }
+
+    /// A row that already awaits a human is the row the card offers 「立即发送」
+    /// for. When the cancel's audit flip fails on such a row, the old
+    /// `manualOnlyReason == nil` guard meant the cancel marker was never written
+    /// — so the durable record still said only 「不能自动发」, and after a restart
+    /// the same text went out to a real person.
+    func testCancelUpgradesAnOrdinaryHoldToTheDurableCancelMarker() async throws {
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我下午给你结论", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1),
+            manualOnlyReason: "已达到本次会话发送上限，转人工确认"
+        )
+        await service.testingEnqueue(item)
+        try store.upsertPendingSend(item, sessionId: sid)
+        try store.insertAutopilotLog(AutopilotLogEntry(
+            id: 0, sessionId: sid, chatUsername: "wxid_peer", chatName: "同事",
+            senderUsername: "", senderName: "同事", triggerMsgUID: "m-hold",
+            triggerText: "在吗", generatedReply: item.replyText, confidence: 0.9,
+            riskLevel: .low, action: .pending, aiReasoning: nil, sentAt: nil,
+            createdAt: Date(), queueId: item.id.uuidString
+        ))
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+        await service.cancelPendingSend(id: item.id)
+
+        let stored = try XCTUnwrap(store.loadPendingSends(sessionId: sid).first { $0.id == item.id })
+        XCTAssertEqual(stored.manualOnlyReason, AutopilotService.cancelNotLandedHoldText,
+                       "撤回没能落库时，耐久标记必须盖过那个更弱的原因")
+        let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+        try await revived.start()
+        let rowId = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: sid).first { $0.triggerMsgUID == "m-hold" }?.id)
+        let permitted = await revived.deliveryStillPermitted(
+            queueId: item.id, logId: rowId, chatUsername: "wxid_peer", requiresQueueRow: false)
+        XCTAssertFalse(permitted, "重启后「立即发送/确认发送」都不该把用户撤回的话发出去")
+        try? await revived.stop()
+    }
+
+    /// One predicate, four doors: 编辑并发送 is a send too, and an edited text
+    /// does not make an unknown previous outcome known.
+    func testEditAndSendRefusesTheDurableHolds() async throws {
+        try await service.start()
+        for reason in [AutopilotService.unverifiedDeliveryHoldText,
+                       AutopilotService.cancelNotLandedHoldText] {
+            let item = PendingSend(
+                id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+                replyText: "原来那句", confidence: 0.9, risk: .low, reasoning: "ok",
+                styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1),
+                manualOnlyReason: reason
+            )
+            await service.testingEnqueue(item)
+            let outcome = await service.editAndSend(id: item.id, newText: "改后的那句",
+                                                    config: AutopilotConfig())
+            guard case .blocked(let message) = outcome else {
+                return XCTFail("编辑并发送 must refuse a row whose last outcome is unknown")
+            }
+            XCTAssertTrue(message.contains("核对"), message)
+            let queue = await service.pendingSendQueue
+            XCTAssertTrue(queue.contains { $0.id == item.id }, "refusing must not consume the row")
+            XCTAssertTrue(queue.first { $0.id == item.id }?.replyText == "原来那句",
+                          "a refusal must not leave the edited text queued in place of the original")
+        }
+        // Positive control: an ordinary manual-only row is the human's to rewrite.
+        let ordinary = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "原来那句", confidence: 0.9, risk: .low, reasoning: "ok",
+            styleScore: 80, scheduledSendTime: Date().addingTimeInterval(-1),
+            manualOnlyReason: "命中敏感词，转人工"
+        )
+        await service.testingEnqueue(ordinary)
+        let outcome = await service.editAndSend(id: ordinary.id, newText: "改掉敏感词之后的那句",
+                                                config: AutopilotConfig())
+        if case .blocked(let message) = outcome {
+            XCTAssertFalse(message.contains("没能确认"), "wrong hold classified: \(message)")
+        }
+    }
+}

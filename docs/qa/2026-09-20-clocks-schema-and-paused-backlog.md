@@ -1467,9 +1467,15 @@ boot time 只留作下界校验。
    不修的理由：给它加一档会立刻把"每一次发送失败"都变成"禁止确认发送"，
    那是把 P0 换成另一个死锁。要修得先在 `SendFailureDisposition` 里把
    "键是否可能已落地"提成枚举字段而不是文案（同 §214 的形状），是一次独立重构。
-3. **拒绝语指向一个不存在的按钮（P2）**：`sendNow` 的拒绝文案让用户"用「编辑并发送」"，
-   而 `editAndSendAutopilot` 在 Views 里零调用点。已把文案改成"先在微信里核对"，
-   但那条路现在确实只有核对 —— 这是产品缺口不是缺陷（用户需要一个"核对完再放行"的按钮）。
+3. **拒绝语指向一个不存在的按钮（P2，文案已改，缺口仍在）**：`sendNow` 的拒绝文案原本
+   让用户"用「编辑并发送」"，而 `editAndSendAutopilot`（`ChatMonitor.swift:2395`）在
+   Views 里零调用点 —— grep「编辑并发送|editAndSend」在 Sources 里只有 3 处命中，
+   全在 Service/Data 层，没有一处是按钮。
+   （自查：这一段第一版写着"已把文案改成…"，其实当时并没有改，是下一轮复核时才发现的
+   —— 文档里的"已修"必须回读一次源码，和代理的结论同样对待。）
+   现在文案改成只指向真实存在的动作（"先在微信里核对；确认没有发出，再取消这条并手动回复"）。
+   剩下的产品缺口：用户需要一个"核对完再放行"的按钮，即 `editAndSend` 的上屏
+   —— 那是新功能，不是质检项，交回给 owner 定价。
 4. **统计口径（P2）**：写失败的转账被 `immediateEntries.count - pending` 归进"已跳过"，
    统计页会把它报成跳过的消息，而它其实是待本人处理。要单开一档"记录失败"才准。
 5. **`loadAutopilotLog` 不读 `queue_id`（P3）**：共享解码器的列表停在 `created_at`，
@@ -1500,3 +1506,38 @@ boot time 只留作下界校验。
 **如果那行日志在正常发送后出现过，则本轮 §128/§129/§191 一系列"不覆盖用户输入"的
 防御在生产里全部等价于没做**（不是"做错了"，是"没人知道有没有生效"）。
 这是这个分支上唯一一处"闸门本身是否工作"悬空的已知项。
+
+## §224 第 6 轮后端确认：P0：无，但耐久标记在它最该生效的那一类行上没写
+
+后端一路专门攻"撤回/静音/暂停之后文本仍抵达发送键"，结论 **P0：无**
+（四条入口在没有写失败的前提下都能拦住；下列都要一次 DB 写失败才成立）。
+三条 P1 里两条落地修了：
+
+1. **`holdRowAcrossRestart` 的 `manualOnlyReason == nil` 早退（P1，已修）**：
+   会话上限 / 过期 / 敏感词 转人工的那一行，恰好是审批卡片会对它显示「立即发送」的那一行。
+   如果这一行的取消翻转写失败，早退守卫让撤回标记**根本不写**，
+   于是盘上留下的唯一事实是"不能自动发"—— 重启后 `durableHoldActive=false`、
+   `queueRowWithdrawn=false`（行还是 pending）、`requiresQueueRow:false` 关掉队列轴 ⇒ 放行。
+   用户先看到「已取消即将发送的回复」，然后那条真的发出去了。
+   修法是取消早退：**「上一次的结果没人知道」优先于「不能自动发」**，直接覆写；
+   具体原因仍然留在审计行自己的文本里。`countAsAwaitingHuman` 保留它自己的守卫（记账不能重复）。
+2. **`editAndSend` 没有那两条拒答（P2→修）**：`sendNow` 上一轮补的耐久检查
+   只接了一个门。"一处谓词要扫它全部消费点"这条规矩我这一轮又违犯了一次。
+   该函数目前在 Views 里零调用点（grep「编辑并发送|editAndSend」在 Sources 只有 3 处、
+   全在 Service/Data 层），所以不可触发 —— 但闸门补齐之前，那条不可达路径是唯一不设防的门。
+   顺带把拒绝文案里指向这个不存在的按钮的指令改掉了（见 §222 第 3 条的复核）。
+3. **legacy `queue_id IS NULL` 的孪生行对两条新轴恒不可见（P1，未修）**：
+   `queue_id` 是 `ALTER TABLE ADD COLUMN` 加的、不回填，老库里所有孪生行都是 NULL，
+   于是 `autopilotLogWithdrawnForQueue(queue_id=?)` 看不见它们被取消的那一行；
+   新代码在 `twinLanded=false` 时也会产同形状。触发需要 upsert + flip 两次写失败，
+   而"给 legacy 行补 link"要么回填要么把文本兜底收紧成"候选唯一"，
+   两者都会改 `twinClaimed` 的语义 —— 与 §222 第 1 条同一个根，留作一轮独立回归。
+
+另外两条被这一路确认**没有**问题：`unrecordedAwaitingHuman` 不会多减
+（`.pending` 的 immediate 只有 forcePending 一支，批量路径的 pending 在 `record` 成功之后才加）；
+`executeSend` 传 `logId: nil` 导致审计行轴在批处理路径不可达 —— 由 `queueRowWithdrawn` 补上，
+只剩上面第 3 条那个 legacy 盲区。
+
+判据：`DurableHoldCoverageTests` 2 条，各带反向变异
+（把早退守卫放回去 ⇒ 第一条红；把 `durableHold(existing.manualOnlyReason)` 换成 `durableHold(nil)` ⇒ 第二条红），
+以及"普通 hold 必须仍可编辑并发送"的正控。
