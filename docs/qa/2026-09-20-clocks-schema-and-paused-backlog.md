@@ -1923,3 +1923,27 @@ RENAME COLUMN total_sent TO total_sent_x` 只打断恢复用的 SELECT。
 `.unreadable` 折进 `.absent`，即旧的 `?? .other` 形状）红 2 条：
 `("other") is not equal to ("work")` 与 `("vip") is not equal to ("watch")`。
 全量 2158 XCTest（+3）绿。
+
+## §239 第 9 轮：对话记忆「读不到」被当成「还没有记忆」，整列覆盖掉 90 天滚动摘要（P1，已修）
+
+`loadConversationMemory`(:3522) 走 `queryOne`（出错即 nil）。`ConversationMemoryUpdater` 拿它
+做两件不可逆的事：(1) 新鲜度门禁 `if let existing = …` —— nil 即"不新鲜"；(2) 合并输入
+`oldMemory?.summary ?? ""` —— nil 即"以前什么都没发生过"。而 `upsertConversationMemory`(:3496)
+是 `DO UPDATE SET summary=excluded.summary, key_topics=…, pending_items=…` 的整列覆盖，
+新摘要只由**最近 30 条**生成 ⇒ 一次读失败就把 90 天滚动摘要连同 topics/pending items
+一起换成短版本，且不会自愈。
+
+修法：`HUDStore.conversationMemoryRead(_:)` 三态（复用存在性 SELECT；行在而解不出算
+`.unreadable`），把决策抽成纯函数 `ConversationMemoryUpdater.memoryRebuildDecision(prior:stalenessSeconds:now:)`
+（`.skipFresh / .skipUnreadable / .rebuild`），`.unreadable` 优先于陈旧判断直接不重建；
+旧记忆从同一次读取复用，不再二次查询（两次查询可以给出不同答案）。
+读函数按参数注入，生产调用点签名不变 —— `AIService` 是具体类、协议里没有
+`isConfigured()`，所以 actor 内部无法用 Mock 驱动模型调用，本轮把可测面收在
+"读出的 prior + 决策函数"这一层，并如实记录：**actor 里那一行 switch 的接线没有行为级
+判据覆盖**（要补得先把 updater 的 AI 依赖换成协议）。
+
+判据：`ConversationMemoryRebuildHonestyTests` 5 条 —— 三态可辨（真注入：改表名让读失败）、
+读不到时决策必须是 `.skipUnreadable`、可读写入时 `.rebuild`（正对照，防止旗子等于永不更新）、
+新鲜时仍限流、被跳过的那一轮之后库里的摘要原样还在。反向变异（删掉 `.unreadable` 那一行，
+即旧的 nil 兼两意）红 2 条：`("rebuild") is not equal to ("skipUnreadable")`。
+全量 2163 XCTest（+5）绿。

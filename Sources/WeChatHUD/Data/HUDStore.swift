@@ -3519,6 +3519,45 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         ])
     }
 
+    /// Row-level three-state read. `loadConversationMemory` collapses 「没有记忆」
+    /// and 「这次读不到」 into nil, and the one consumer that matters merges that nil
+    /// into an empty prior and then writes back over every column — replacing a
+    /// 90-day rolling summary with the last 30 messages.
+    enum ConversationMemoryRead {
+        case value(ConversationMemory)
+        case absent
+        case unreadable
+
+        var entry: ConversationMemory? {
+            if case .value(let memory) = self { return memory }
+            return nil
+        }
+        var isUnreadable: Bool {
+            if case .unreadable = self { return true }
+            return false
+        }
+    }
+
+    func conversationMemoryRead(_ chatUsername: String) -> ConversationMemoryRead {
+        let exists: Int?
+        do {
+            exists = try queryOneThrowing(
+                "SELECT 1 FROM conversation_memory WHERE chat_username=? LIMIT 1",
+                bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, chatUsername, -1, Self.sqliteTransient)
+                },
+                decode: { _ in 1 }
+            )
+        } catch {
+            return .unreadable
+        }
+        guard exists != nil else { return .absent }
+        guard let memory = loadConversationMemory(chatUsername: chatUsername) else {
+            return .unreadable
+        }
+        return .value(memory)
+    }
+
     func loadConversationMemory(chatUsername: String) -> ConversationMemory? {
         queryOne("""
             SELECT chat_username, summary, key_topics, pending_items, shared_context, communication_notes, mood_trend, conversation_phase, stance, message_count_7d, last_updated
