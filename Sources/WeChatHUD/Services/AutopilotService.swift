@@ -1271,7 +1271,11 @@ actor AutopilotService {
             chatUsername: chatUsername, replyText: replyText)
         unresolvedQueueWrites[twin.id] = hold
         holdTwinLog(for: twin.id, kind: hold)
-        holdRowAcrossRestart(twin, kind: hold)
+        // Mirror the held row back into memory: it is still on disk and still
+        // listed after a restart, so leaving it out would have the queue page
+        // answer two different ways across launches — and 「it stays visible」
+        // above would be a comment about a row the user never sees.
+        pendingSendQueue.append(holdRowAcrossRestart(twin, kind: hold))
     }
 
     /// Set of all msgUIDs sent by autopilot — for style isolation.

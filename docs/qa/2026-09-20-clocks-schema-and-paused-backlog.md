@@ -1684,3 +1684,51 @@ P2 三条的处置：
   盘上行仍在，重启后又会出现 —— 界面在两次启动之间对同一条给了不同答案。
 
 三条都在撤回链上，不构成"撤回失败还发出去"，故留作下一轮；本轮只落 §228 这条 P0。
+
+## §230 第 8 轮补：reject 这扇门也放回带标记的行（P2，已修）
+
+`holdTwinAcrossReject` 走 hold 分支时把行从 `pendingSendQueue` 里 `removeAll` 之后再也
+不放回，而盘上的行仍在 —— 于是 §227 那段注释里的「it stays visible」只在 cancel 门成立：
+同一个用户在两次启动之间会看到两个答案（本页说没了，重启后说"仍按住等人工"），并且
+`sendNow` 读的正是内存镜像，这一扇门本会话没有任何东西可拒。
+修在产端：`pendingSendQueue.append(holdRowAcrossRestart(twin, kind: hold))`，放回的是带
+耐久标记的那一份，与 §228 同形。
+
+判据：`testRejectWithFailedFlipHoldsTheTwinInsteadOfDeletingIt` 增加"内存镜像里那一行必须
+带 `cancelNotLandedHoldText`"。反向变异（改回不 append）红 1 条；全量 2135 XCTest +
+70 swift-testing 绿。写这条判据时先撞了一次编译错：`XCTUnwrap` 的表达式参数是
+`@autoclosure`，`await` 放进去不合法 —— 属于判据自己坏掉，已 hoist 成局部变量。
+
+## §231 第 8 轮另两路并行审计的回报：**含 1 条未修 P0**，本轮预算耗尽，原样交棒
+
+回源码状态：**未裁决、未修**。以下是代理给出的证据坐标，下一轮必须先回读源码再定价
+（§228 的教训：上一轮的药也可能是被告）。
+
+- **【P0，未修】DiscussionTracker 把「白名单这一行读不到」当成「用户已取关」，直接
+  DELETE 未分析的持久队列。**
+  (a) `HUDStore.getWhitelistEntry`(:1059) 走 `queryOne`，其 `try?`(:4961) 把 step/prepare
+  错吞成 nil；单行读没有 throwing 兄弟，`whitelistAllRead()`(:1043) 只覆盖全表且全仓仅 2 处调用。
+  (b) `DiscussionTracker.swift:78/103/126/308` 四处 `else { try? store.clearDiscussionMessages(...) }`
+  → `DELETE FROM discussion_queue WHERE chat_username=?`；该表的全部意义是跨扫描存活，删掉后
+  这些消息永不再被抽取（待办/承诺/讨论项静默消失），而白名单水位独立推进，不会重放。
+  (c) 可达：:308 在 AI await 之后、:126 在 drain 循环内。
+  与 §211 定 P0 的夜间回复率同形（一个取值同时代表「没有」与「读不到」），但落点是删除。
+  方向：三态读（复用 `SettingRead` 的 absent/corrupt/unreadable），只有 absent 才清，
+  unreadable 走 `ChatMonitor+Classification.swift:193` 的 `.retry`。
+- **P1（未修）** `AutopilotService.start()`(:320/:325) 用非抛 `currentAutopilotSession()`(:3486)
+  恢复会话 ⇒ nil 兼"读不到"时 `maxSendsPerSession` 从零重计（最多翻倍）且旧 session 的待发行
+  成孤儿（:3491 注释自己承认，并备了 `currentAutopilotSessionThrowing`，但非抛版仍有 4 处调用）。
+- **P1（未修）** `addToWhitelist`(:977-979) 把 `getContact`(:2256) 读不到当 nil 后
+  `?? 默认值` 交给全量覆盖的 `upsertContact`(:2216) ⇒ 悄悄重置 role/roleNote/replyWindowMinutes，
+  与已修的 `updateAutopilotConfig`(:905-915) 完全同形。
+- **P2（未修）** `bulkMessageStats`（`WeChatReader.swift:1774-1808`）分片读失败被 `continue`
+  丢弃且无 partial 标记 → `ChatInsightEngine:384` 的 `?? 0` 把它当"0 条消息"，
+  渲染成「被忽视的高层」/「回复率 0%」；`loadChatActions()`(:1297) 失败＝「从未静音」，
+  会让用户静音过的对话重新弹通知（`ScanEngine:138/151`→:219/:252/:681）。
+- **常驻退化轴：P0：无。** 两处 P1 待核：待确认队列在默认配置下没有退出路径
+  （`pendingSendQueue` 无 TTL/上限、`loadPendingSends` 无 LIMIT，靠用户动作或 `stop()` 才清）；
+  `vip_traces`/`commitment_scans`/`ai_data_ledger`/`review_runs` 四张表零 DELETE
+  （`clearOlderThan` 全仓无调用方，`runRetentionSweep` 显式声明这三张"无声明窗口"）。
+  另 `StyleProfiler.timingCache`(:490) 是上一轮 profileCache 剪枝的**同形状漏改**（TTL 只在读时判）。
+  该轮并排除了句柄/Timer/observer 一全部候选（statementCache cap 24 + finalize、
+  handleCache limit 16 + close、decryptedCache 每轮清、各计时器有 invalidate）。

@@ -611,6 +611,14 @@ final class RejectDoorDurabilityTests: XCTestCase {
         XCTAssertTrue(store.hasPendingSend(id: item.id), "孪生行必须留着当耐久载体")
         let held = try XCTUnwrap(store.loadPendingSends(sessionId: sid).first { $0.id == item.id })
         XCTAssertEqual(held.manualOnlyReason, AutopilotService.cancelNotLandedHoldText)
+        // The reject door used to take the row out of the memory mirror and
+        // leave it only on disk, so the page said 「gone」 until the next launch
+        // said 「held, awaiting a human」 — and `sendNow` read the mirror, which
+        // had nothing to refuse with.
+        let mirror = await service.pendingSendQueue
+        let mirrored = try XCTUnwrap(mirror.first { $0.id == item.id })
+        XCTAssertEqual(mirrored.manualOnlyReason, AutopilotService.cancelNotLandedHoldText,
+                       "reject 这一扇门放回的行也得带耐久标记")
 
         let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
         try await revived.start()
