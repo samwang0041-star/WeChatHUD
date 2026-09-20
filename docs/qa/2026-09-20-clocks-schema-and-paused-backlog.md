@@ -1732,3 +1732,31 @@ P2 三条的处置：
   另 `StyleProfiler.timingCache`(:490) 是上一轮 profileCache 剪枝的**同形状漏改**（TTL 只在读时判）。
   该轮并排除了句柄/Timer/observer 一全部候选（statementCache cap 24 + finalize、
   handleCache limit 16 + close、decryptedCache 每轮清、各计时器有 invalidate）。
+
+## §232 第 9 轮：§231 那条 P0 回源码核实成立，已修
+
+`DiscussionTracker` 的门禁写的是 `store.getWhitelistEntry(...) != nil`，而它的 else 分支
+是 `clearDiscussionMessages` ⇒ `DELETE FROM discussion_queue WHERE chat_username=?`。
+`getWhitelistEntry`(:1059) 走 `queryOne`，其 `try?`(:4963) 把 prepare/step 错误吞成 nil，
+于是「这一行读不到」与「用户已取关」是同一个答案。
+
+危害坐实（不是理论）：`discussion_queue` 是唯一跨扫描存活的载体，白名单水位独立推进、
+不会重放已经翻过去的消息 —— 一次读失败就把尚未分析的待办/承诺/讨论项整段删净，且无任何
+用户可见痕迹。四处都在最容易撞上读失败的时刻：`extract`(:107) 之前、`resumePending`(:134)
+的 drain 循环里、`drainChat`(:159) 每批次前、`extractWindow`(:344) 在 AI await 之后。
+
+仓库里其实早已备好东西并写明规矩：`whitelistRead`(:1013) 三态 `.followed /
+.unfollowed / .unreadable`，注释还特别点名「Callers that *delete* or retire work on a
+false answer must use `whitelistRead(_:)`」，`ChatMonitor+Classification` 也确实照做了 ——
+这是本会话反复出现的形状 B（一个谓词在 N 个消费点里只迁了部分）。
+
+修法：`DiscussionTracker` 内加私有 `scope(_:)`，只有 `.unfollowed` 才允许进入删除分支；
+`.unreadable` 不抽取也不删（下一轮扫描再来）；`.followed` 但 `getWhitelistEntry` 取不到
+载荷（行存在却解不出）同样归入 `.unreadable`，宁可不做也不误删。
+
+判据：`DiscussionQueueScopePurgeTests` 3 条。故障注入用 `ALTER TABLE whitelist RENAME TO
+whitelist_hidden`（模拟迁移中/BUSY 超时/IOERR 下所有对该表的读都报错，而不是回答"没这行"）。
+- 反向验证不是"改坏新代码"而是**直接拿修复前的文件跑**：两条"必须留着"的判据各红一次，
+  失败信息就是 `("0") is not equal to ("2")` —— 队列真的被删空过。
+- 正对照：确证取关（表在、行删）仍清空，证明这条修改没有把"删除"换成"永不删除"。
+全量 2138 XCTest（+3）+ 70 swift-testing 绿；无任何旧判据在保护这个缺陷。

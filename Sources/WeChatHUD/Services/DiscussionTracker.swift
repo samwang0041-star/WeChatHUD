@@ -65,6 +65,35 @@ actor DiscussionTracker {
     /// Run extraction for one chat over the given messages (chronological
     /// or reverse — we normalize). Persists new items via the store.
     /// Returns the number of freshly-inserted items.
+    /// Three-state scope answer. `getWhitelistEntry` returns nil both for 「no such
+    /// row」 and for 「this read failed」, and the negative branch below is a DELETE.
+    /// The durable queue is the only thing that survives between scans, and the
+    /// scan watermark has already moved past those messages, so purging it on a
+    /// transient read error loses the extracted todos/commitments for good.
+    private enum Scope {
+        case followed(WhitelistEntry)
+        case unfollowed
+        case unreadable
+        var proceeds: Bool {
+            if case .followed = self { return true }
+            return false
+        }
+    }
+
+    private func scope(_ chatUsername: String) -> Scope {
+        switch store.whitelistRead(chatUsername) {
+        case .unreadable: return .unreadable
+        case .unfollowed: return .unfollowed
+        case .followed:
+            // Confirmed present but the row could not be decoded — still not a
+            // withdrawal, so it must not reach the DELETE branch.
+            guard let entry = store.getWhitelistEntry(username: chatUsername) else {
+                return .unreadable
+            }
+            return .followed(entry)
+        }
+    }
+
     @discardableResult
     func extract(
         chatUsername: String,
@@ -74,10 +103,11 @@ actor DiscussionTracker {
         myDisplayName: String,
         mySelfNames: Set<String>
     ) async -> Int {
-        guard store.getWhitelistEntry(username: chatUsername) != nil else {
+        let entryScope = scope(chatUsername)
+        if case .unfollowed = entryScope {
             try? store.clearDiscussionMessages(chatUsername: chatUsername)
-            return 0
         }
+        guard entryScope.proceeds else { return 0 }
         // Persist before the first await. Overlapping scans append to the
         // same durable queue while the active caller is awaiting a model.
         do { try store.enqueueDiscussionMessages(messages) }
@@ -99,10 +129,11 @@ actor DiscussionTracker {
         for chat in chats {
             guard !Task.isCancelled else { break }
             guard (retryAfterByChat[chat] ?? 0) <= Date().timeIntervalSince1970 else { continue }
-            guard let entry = store.getWhitelistEntry(username: chat) else {
+            let chatScope = scope(chat)
+            if case .unfollowed = chatScope {
                 try? store.clearDiscussionMessages(chatUsername: chat)
-                continue
             }
+            guard case .followed(let entry) = chatScope else { continue }
             guard let head = try? store.pendingDiscussionMessages(chatUsername: chat, limit: 1).first,
                   head.retryAfter <= Date().timeIntervalSince1970 else { continue }
             guard serviced < 4 else { break }
@@ -122,9 +153,12 @@ actor DiscussionTracker {
         var inserted = 0
         for _ in 0..<maxBatchesPerRun {
             guard !Task.isCancelled else { break }
-            if enforceScope, store.getWhitelistEntry(username: chatUsername) == nil {
-                try? store.clearDiscussionMessages(chatUsername: chatUsername)
-                break
+            if enforceScope {
+                let batchScope = scope(chatUsername)
+                if case .unfollowed = batchScope {
+                    try? store.clearDiscussionMessages(chatUsername: chatUsername)
+                }
+                if !batchScope.proceeds { break }
             }
             guard let batch = try? store.pendingDiscussionMessages(chatUsername: chatUsername), !batch.isEmpty else { break }
             guard batch.allSatisfy({ $0.retryAfter <= Date().timeIntervalSince1970 }) else { break }
@@ -304,9 +338,12 @@ actor DiscussionTracker {
         // A user may revoke this conversation while the network call is in
         // flight. Do not insert results after that scope change.
         guard !Task.isCancelled else { return (0, false) }
-        if enforceScope, store.getWhitelistEntry(username: chatUsername) == nil {
-            try? store.clearDiscussionMessages(chatUsername: chatUsername)
-            return (0, false)
+        if enforceScope {
+            let postScope = scope(chatUsername)
+            if case .unfollowed = postScope {
+                try? store.clearDiscussionMessages(chatUsername: chatUsername)
+            }
+            if !postScope.proceeds { return (0, false) }
         }
 
         // Persist. Each item is keyed by (chat, anchor_msg_uid, content)
