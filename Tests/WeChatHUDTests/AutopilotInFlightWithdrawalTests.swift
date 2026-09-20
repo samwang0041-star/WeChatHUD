@@ -148,9 +148,17 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
             """)
         await service.cancelPendingSend(id: queueId)
 
-        XCTAssertFalse(store.hasPendingSend(id: queueId), "这条路径上队列行删掉了")
+        // 这条断言原来钉的是缺陷本身（旧顺序：先删队列行、再翻日志行）。
+        // 翻转失败 = 取消这件事在盘上根本没发生过，而内存里的 hold 一重启就没了；
+        // 留着队列行才让「取消没生效」是一个用户可以再按一次的状态，而不是
+        // 「队列里没有、日志还 pending」这种只能靠内存 hold 兜住的形状。
+        XCTAssertTrue(store.hasPendingSend(id: queueId),
+                      "翻转没落库就不该删掉耐久的那一半；删了之后重启会留下一个可发送的孤儿形状")
         XCTAssertEqual(store.autopilotLogPendingReply(id: logId), "我下午给你结论",
                        "日志行仍是 pending —— 待确认那颗按钮还活着")
+        XCTAssertEqual(store.loadPendingSends(sessionId: sid).first { $0.id == queueId }?.manualOnlyReason,
+                       AutopilotService.cancelNotLandedHoldText,
+                       "队列行上必须留下可跨重启的撤回标记")
         let viaQueueAxis = await service.deliveryStillPermitted(queueId: queueId, logId: nil, chatUsername: nil)
         XCTAssertFalse(viaQueueAxis, "队列轴上必须记着")
         let viaLogAxis = await service.deliveryStillPermitted(queueId: nil, logId: logId, chatUsername: nil)

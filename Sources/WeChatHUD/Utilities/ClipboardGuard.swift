@@ -14,7 +14,27 @@ enum ClipboardGuard {
         let hadContent: Bool
     }
 
+    /// What this process last put on the general pasteboard inside an open
+    /// save/restore window, recorded at the write itself.
+    ///
+    /// `restore` cannot rely on the caller's `pastedText` alone: `navigateToChat`
+    /// pastes each candidate search name in a loop, so the string on the board is
+    /// not necessarily the one the call site can name. Comparing against a value
+    /// that does not match skips `clearContents()` and leaves the contact's
+    /// nickname on the general pasteboard — the leak the parameter exists to
+    /// close. Both are consulted, so a call site that names its own text still
+    /// works and one that cannot is covered.
+    private(set) static var lastWritten: String?
+
+    static func noteWritten(_ text: String, on pasteboard: NSPasteboard? = nil) {
+        lastWritten = text
+        let pb = pasteboard ?? .general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+    }
+
     static func save() -> SavedState {
+        lastWritten = nil
         let pb = NSPasteboard.general
         let changeCount = pb.changeCount
         let originalItems = pb.pasteboardItems ?? []
@@ -63,8 +83,8 @@ enum ClipboardGuard {
             // user's other devices. Erase it, but only when the pasteboard
             // still holds exactly the string we wrote — content someone else
             // copied since then is not ours to destroy.
-            if state.hadContent, let pastedText, !pastedText.isEmpty,
-               pb.string(forType: .string) == pastedText {
+            let ours = [pastedText, lastWritten].compactMap { $0 }.filter { !$0.isEmpty }
+            if state.hadContent, let current = pb.string(forType: .string), ours.contains(current) {
                 pb.clearContents()
             }
             return

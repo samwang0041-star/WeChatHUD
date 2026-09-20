@@ -136,8 +136,10 @@ final class LateNightRateHonestyTests: XCTestCase {
         config.autoSendEnabled = true
         let result = await service.handleNewMessages([transfer("t-1")], config: config, myUsername: "me")
 
-        XCTAssertTrue(result.logEntries.isEmpty,
-                      "the surface re-reads the log each scan, so an unwritten row would appear once and vanish")
+        // Shown once, never counted: 转账/红包 is the one class where a failed
+        // write must not silently swallow the alert.
+        XCTAssertEqual(result.logEntries.count, 1)
+        XCTAssertEqual(result.logEntries.first?.action, .pending)
         XCTAssertEqual(result.totalPending, 0)
         XCTAssertEqual(store.currentAutopilotSession()?.totalPending ?? 0, 0,
                        "the phantom +1 was persisted and restored across restarts")
@@ -162,27 +164,28 @@ final class LateNightRateHonestyTests: XCTestCase {
         try? await service.stop()
     }
 
-    // MARK: - 确认发送 must not require a queue row it never owned
-
     /// The batch path's credential is the queue row (a 取消 deletes it, so a
     /// missing row means "stop"). A manual 确认发送's credential is the 'pending'
     /// audit row, and its queue twin can be legitimately absent — an enqueue
     /// whose `upsertPendingSend` hit SQLITE_BUSY still inserts the audit row.
     /// Requiring it there made the card permanently unapprovable.
-    func testQueueAxisIsOptionalOnlyForManualApproval() {
-        // Queue row absent + audit row pending: approvable for 确认发送, refused for the batch path.
-        XCTAssertTrue(
-            AutopilotService.mayStillDeliver(
-                paused: false, sessionOpen: true, conversationMuted: false,
-                queueRowLive: nil, approvalRowPending: true),
-            "an audit row with no queue twin used to be unapprovable forever")
+    /// 「queue_id present but the row is gone」 is the durable shape of a cancel,
+    /// and 「queue_id NULL」 is the shape of a reply that never had a twin. They
+    /// have to read differently: collapsing them is what made a card either
+    /// permanently unapprovable or sendable-after-cancel, depending on which way
+    /// the gate was bent.
+    func testQueueAxisReadsGoneTwinAndNoTwinDifferently() {
         XCTAssertFalse(
             AutopilotService.mayStillDeliver(
                 paused: false, sessionOpen: true, conversationMuted: false,
                 queueRowLive: false, approvalRowPending: true),
-            "for the batch path a deleted queue row IS the cancel")
-
-        // The holds that apply to both axes still hold.
+            "a deleted twin IS the user's 取消 — the keystrokes must stop")
+        XCTAssertTrue(
+            AutopilotService.mayStillDeliver(
+                paused: false, sessionOpen: true, conversationMuted: false,
+                queueRowLive: nil, approvalRowPending: true),
+            "no twin claim at all must not lock the card")
+        // The holds that are not about the row's state at all.
         XCTAssertFalse(AutopilotService.mayStillDeliver(
             paused: true, sessionOpen: true, queueRowLive: nil, approvalRowPending: true))
         XCTAssertFalse(AutopilotService.mayStillDeliver(
@@ -199,31 +202,150 @@ final class LateNightRateHonestyTests: XCTestCase {
             paused: false, sessionOpen: true, queueRowLive: nil, approvalRowPending: false))
     }
 
-    /// The pure helper passing is not enough: `requiresQueueRow` can be ignored
-    /// by the actor method and every assertion above still goes green. Drive the
-    /// real gate against a real 'pending' audit row that has no queue twin — the
-    /// shape an enqueue produces when `upsertPendingSend` hits SQLITE_BUSY.
-    func testManualApprovalGateIgnoresTheMissingQueueTwin() async throws {
+    /// The user-visible half: a 取消 whose audit-row write failed must not leave a
+    /// row that a later 确认发送 can send. Flipping the audit row first is what
+    /// makes 「still pending」 mean 「the cancel never happened」, so the queue row
+    /// is kept beside it instead of being deleted on its own.
+    func testCancelThatCannotFlipTheAuditRowKeepsTheQueueRow() async throws {
         try makeService()
         try await service.start()
-        var config = AutopilotConfig()
-        config.autoSendEnabled = true
-        // 转账 goes to a 'pending' audit row and deliberately never enters the queue.
-        _ = await service.handleNewMessages([transfer("t-3")], config: config, myUsername: "me")
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我稍后回你", confidence: 0.9, risk: .low, reasoning: "test",
+            styleScore: 60, scheduledSendTime: Date().addingTimeInterval(60),
+            createdAt: Date()
+        )
+        await service.testingEnqueue(item)
         let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        try store.upsertPendingSend(item, sessionId: sid)
+        let entry = AutopilotLogEntry(
+            id: 0, sessionId: store.currentAutopilotSession()?.id ?? 0,
+            chatUsername: "wxid_peer", chatName: "同事", senderUsername: "", senderName: "同事",
+            triggerMsgUID: "m-1", triggerText: "在吗", generatedReply: "我稍后回你",
+            confidence: 0.9, riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: item.id.uuidString
+        )
+        try store.insertAutopilotLog(entry)
+        XCTAssertTrue(store.hasPendingSend(id: item.id))
+        try store.exec("""
+            CREATE TRIGGER flip_denied BEFORE UPDATE ON autopilot_log
+            BEGIN SELECT RAISE(ABORT, 'disk i/o error'); END
+        """)
+
+        await service.cancelPendingSend(id: item.id)
+
+        XCTAssertTrue(store.hasPendingSend(id: item.id),
+                      "the durable cancel is the audit row; deleting the queue twin alone leaves a sendable shape with no owner")
         let row = try XCTUnwrap(store.loadAutopilotLog(sessionId: sid).first)
-        XCTAssertEqual(row.action, .pending)
-        let ghostQueueId = UUID()
-        XCTAssertFalse(store.hasPendingSend(id: ghostQueueId))
-
-        let approvable = await service.deliveryStillPermitted(
-            queueId: ghostQueueId, logId: row.id, chatUsername: nil, requiresQueueRow: false)
-        XCTAssertTrue(approvable, "确认发送 was locked out by a queue row it never owned")
-
-        let refused = await service.deliveryStillPermitted(
-            queueId: ghostQueueId, logId: row.id, chatUsername: nil)
-        XCTAssertFalse(refused, "the batch path's default must stay: there the missing row IS the cancel")
+        XCTAssertEqual(row.action, .pending, "the trigger proved the flip did not land")
+        let inSessionPermitted = await service.deliveryStillPermitted(
+            queueId: item.id, logId: row.id, chatUsername: nil)
+        XCTAssertFalse(inSessionPermitted,
+                       "in-session the memory hold still refuses")
         try? await service.stop()
+    }
+
+    /// A cancel that fully lands must still refuse after a process restart, where
+    /// every in-memory hold is gone. This is the shape the previous round's
+    /// `requiresQueueRow: false` let through.
+    func testLandedCancelStillRefusesAfterRestart() async throws {
+        try makeService()
+        try await service.start()
+        let item = PendingSend(
+            id: UUID(), chatUsername: "wxid_peer", chatName: "同事", senderName: "同事",
+            replyText: "我稍后回你", confidence: 0.9, risk: .low, reasoning: "test",
+            styleScore: 60, scheduledSendTime: Date().addingTimeInterval(60),
+            createdAt: Date()
+        )
+        await service.testingEnqueue(item)
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        try store.upsertPendingSend(item, sessionId: sid)
+        let entry = AutopilotLogEntry(
+            id: 0, sessionId: store.currentAutopilotSession()?.id ?? 0,
+            chatUsername: "wxid_peer", chatName: "同事", senderUsername: "", senderName: "同事",
+            triggerMsgUID: "m-2", triggerText: "在吗", generatedReply: "我稍后回你",
+            confidence: 0.9, riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: item.id.uuidString
+        )
+        try store.insertAutopilotLog(entry)
+        let rowId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sid).first { $0.action == .pending }).id
+        await service.cancelPendingSend(id: item.id)
+        try? await service.stop()
+
+        XCTAssertFalse(store.hasPendingSend(id: item.id), "the delete landed")
+        XCTAssertNotNil(store.loadAutopilotLog(sessionId: sid).first { $0.id == rowId && $0.action == .skipped })
+
+        let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+        try await revived.start()
+        let rehydratedRow = try XCTUnwrap(
+            store.loadAutopilotLog(sessionId: sid).first { $0.id == rowId })
+        // The flip landed, so the approval axis alone refuses it; the queue axis
+        // agrees. Both have to hold, because a stale `queue_id` on a row that is
+        // no longer there is the only thing distinguishing this from a reply
+        // that never had a twin.
+        let afterRestart = try await revived.deliveryStillPermitted(
+            queueId: item.id, logId: rehydratedRow.id, chatUsername: "wxid_peer")
+        XCTAssertFalse(afterRestart,
+                       "a landed cancel must stay refused once the in-memory holds are gone")
+        try? await revived.stop()
+    }
+
+    /// The fail-closed side of the same axis, written straight into the database
+    /// so it does not depend on which code path produced it: a 'pending' audit
+    /// row that claims a queue twin which is gone is refused. Relaxing the gate
+    /// for manual approval (the previous round's `requiresQueueRow: false`) let
+    /// this row through, and that is the shape an old-code cancel left behind —
+    /// hence the enqueue now refuses to make a twin claim it cannot honour.
+    func testAPendingRowClaimingAGoneTwinIsRefused() async throws {
+        try makeService()
+        try await service.start()
+        let sid = try XCTUnwrap(store.currentAutopilotSession()?.id)
+        let goneTwin = UUID()
+        let entry = AutopilotLogEntry(
+            id: 0, sessionId: sid,
+            chatUsername: "wxid_peer", chatName: "同事", senderUsername: "", senderName: "同事",
+            triggerMsgUID: "m-3", triggerText: "在吗", generatedReply: "我看看",
+            confidence: 0.9, riskLevel: .low, action: .pending,
+            aiReasoning: nil, sentAt: nil, createdAt: Date(),
+            queueId: goneTwin.uuidString
+        )
+        try store.insertAutopilotLog(entry)
+        let rowId = try XCTUnwrap(store.loadAutopilotLog(sessionId: sid).first).id
+        XCTAssertFalse(store.hasPendingSend(id: goneTwin))
+        try? await service.stop()
+
+        let revived = AutopilotService(store: store, reader: reader, aiService: AIService())
+        try await revived.start()
+        let permitted = await revived.deliveryStillPermitted(
+            queueId: goneTwin, logId: rowId, chatUsername: "wxid_peer")
+        XCTAssertFalse(permitted,
+                       "a twin that is gone is the only durable trace of the user's 取消")
+        try? await revived.stop()
+    }
+
+    /// The producer half. `processBatch` owns both facts — whether the queue twin
+    /// write landed, and whether the audit row claims that twin — and a `try?`
+    /// between them is what made the claim false. The consumer side above is
+    /// behaviour-tested; this pins the one line that decides the shape.
+    func testTheTwinClaimIsDerivedFromTheWriteThatLanded() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/WeChatHUD/Services/AutopilotService.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        guard let start = src.range(of: "let twinLanded: Bool"),
+              let end = src.range(of: "private func searchNames",
+                                  range: start.upperBound..<src.endIndex) else {
+            XCTFail("the enqueue block moved — this guard would be reading nothing")
+            return
+        }
+        let region = String(src[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(region.isEmpty, "empty slice means the anchors are wrong")
+        XCTAssertTrue(region.contains("twinLanded = (try? store.upsertPendingSend"),
+                      "the twin write has to be what decides `twinLanded`")
+        XCTAssertTrue(region.contains("queueId: twinLanded ? pendingItem.id.uuidString : nil"),
+                      "queue_id may only be claimed when the twin landed: \(region.prefix(200))")
     }
 }
 

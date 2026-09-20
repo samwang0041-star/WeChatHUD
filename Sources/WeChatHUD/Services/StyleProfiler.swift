@@ -76,13 +76,52 @@ actor StyleProfiler {
         // the autopilot's own wording presented back as "your style".
         let key = Self.cacheKey(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
         if let cached = profileCache[key],
-           Date().timeIntervalSince(cached.refreshedAt) < 1800 {
+           Self.isFresh(refreshedAt: cached.refreshedAt, window: Self.profileCacheTTL) {
             return cached.profile
         }
 
         let profile = await buildProfile(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
         profileCache[key] = (profile, Date())
+        pruneProfileCache()
         return profile
+    }
+
+    /// Cache age, trusted only in one direction.
+    ///
+    /// `Date()` steps: an NTP correction, a DST bug, or the user setting the
+    /// clock can move it either way. A negative `elapsed` used to satisfy every
+    /// `< window` comparison here, so one backwards jump froze the style profile
+    /// — and the late-night rate that gates the 3 a.m. hold — permanently, with
+    /// nothing left to expire the entry. Treating "from the future" as expired
+    /// costs one re-read and keeps the cache honest.
+    nonisolated static func isFresh(refreshedAt: Date, window: TimeInterval, now: Date = Date()) -> Bool {
+        let elapsed = now.timeIntervalSince(refreshedAt)
+        return elapsed >= 0 && elapsed < window
+    }
+
+    static let profileCacheTTL: TimeInterval = 1800
+    /// The key carries a hash of the exclusion set, and that set changes on every
+    /// send — so without a bound this dictionary grew one entry per reply
+    /// decision for the life of a process meant to run 24/7.
+    static let profileCacheCap = 64
+
+    private func pruneProfileCache() {
+        profileCache = Self.pruning(profileCache, ttl: Self.profileCacheTTL,
+                                    cap: Self.profileCacheCap, now: Date())
+    }
+
+    /// The bound, as a pure function so the growth it prevents is testable
+    /// without a 24-hour process. Expired entries go first, then the oldest.
+    nonisolated static func pruning<Value>(
+        _ cache: [String: (profile: Value, refreshedAt: Date)],
+        ttl: TimeInterval, cap: Int, now: Date
+    ) -> [String: (profile: Value, refreshedAt: Date)] {
+        var kept = cache.filter { isFresh(refreshedAt: $0.value.refreshedAt, window: ttl, now: now) }
+        guard kept.count > cap else { return kept }
+        kept = Dictionary(uniqueKeysWithValues: kept.sorted {
+            $0.value.refreshedAt > $1.value.refreshedAt
+        }.prefix(cap).map { ($0.key, $0.value) })
+        return kept
     }
 
     /// The exclusion set can hold hundreds of ids; hashing it keeps the cache
@@ -443,6 +482,10 @@ actor StyleProfiler {
 
     // MARK: - Reply Timing Analysis
 
+    func testingProfileCacheCount() -> Int { profileCache.count }
+
+    static let unmeasuredRetrySeconds: TimeInterval = 60
+
     /// Cached timing profiles keyed by chatUsername.
     private var timingCache: [String: (profile: ReplyTimingProfile, refreshedAt: Date)] = [:]
 
@@ -451,7 +494,9 @@ actor StyleProfiler {
     func getTimingProfile(chatUsername: String) async -> ReplyTimingProfile {
         // Check memory cache
         if let cached = timingCache[chatUsername],
-           Date().timeIntervalSince(cached.refreshedAt) < 3600 {
+           Self.isFresh(refreshedAt: cached.refreshedAt,
+                        window: cached.profile.lateNightReplyRate == nil
+                            ? Self.unmeasuredRetrySeconds : 3600) {
             return cached.profile
         }
         // Check DB cache (refreshed < 24h ago). A row with no rate is a
@@ -470,7 +515,12 @@ actor StyleProfiler {
             // That is not a measurement, so it is neither cached nor written:
             // doing either used to lock the late-night hold for 24 hours on one
             // transient error, and print 「回复率0%」 as if it had been measured.
-            return Self.unmeasuredTimingProfile(chatUsername: chatUsername)
+            // Held briefly so a closed WeChat does not turn every reply decision
+            // into a fresh 500-message read under the reader's global lock.
+            // 60s, not an hour: the next successful read must be able to land.
+            let unmeasured = Self.unmeasuredTimingProfile(chatUsername: chatUsername)
+            timingCache[chatUsername] = (unmeasured, Date())
+            return unmeasured
         }
         timingCache[chatUsername] = (profile, Date())
         try? store.upsertReplyTimingProfile(profile)
@@ -542,11 +592,14 @@ actor StyleProfiler {
         let lateNightReplies = pairedPeerIndices.filter { idx in
             Self.timePeriod(unixTime: chronoArray[idx].createTime) == .lateNight
         }.count
-        let lnReplyRate = totalLateNightIncoming > 0
+        // A chat with no late-night inbound traffic was never observed — that is
+        // not a measured 0%, and printing 「回复率0%」 for it would be the same
+        // fabrication the loader used to commit.
+        let lnReplyRate: Double? = totalLateNightIncoming > 0
             ? Double(lateNightReplies) / Double(totalLateNightIncoming)
-            : 0.0
+            : nil
         // Default: silent if < 20% reply rate with sufficient data
-        let silentAtNight = totalLateNightIncoming > 3 && lnReplyRate < 0.2
+        let silentAtNight = totalLateNightIncoming > 3 && (lnReplyRate ?? 0) < 0.2
 
         let totalSamples = workDelays.count + eveningDelays.count + weekendDelays.count + lateNightDelays.count
 

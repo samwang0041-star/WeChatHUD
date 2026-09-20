@@ -217,9 +217,9 @@ actor AutopilotService {
         var guarded = item
         switch kind {
         case .delivered:
-            guarded.manualOnlyReason = "发送结果没能记账：这条很可能已经发出。请先在微信里核对，不要直接确认。"
+            guarded.manualOnlyReason = Self.unverifiedDeliveryHoldText
         case .cancelled:
-            guarded.manualOnlyReason = "取消没能落库：这条已经撤回，先别确认发送。"
+            guarded.manualOnlyReason = Self.cancelNotLandedHoldText
         }
         if let sid = sessionId {
             try? store.upsertPendingSend(guarded, sessionId: sid)
@@ -491,7 +491,7 @@ actor AutopilotService {
         -> (holds: Bool, reason: String)
     {
         guard let rate else {
-            return (true, "读不到历史消息，这一条的夜间回复率没有测量值")
+            return (true, "这一条的夜间回复率没有测量值（历史读不到，或夜里从来没有往来）")
         }
         return (rate < threshold,
                 "回复率\(String(format: "%.0f%%", rate * 100)) < 阈值\(String(format: "%.0f%%", threshold * 100))")
@@ -597,22 +597,13 @@ actor AutopilotService {
         ) ?? false
     }
 
-    /// - Parameter requiresQueueRow: whether the queue row is this send's
-    ///   credential. For the batch path it is (the row IS the work item, and a
-    ///   取消 deletes it), so a missing row must stop the keystrokes. For a manual
-    ///   确认发送 the credential is the 'pending' audit row, and the queue twin can
-    ///   legitimately be absent — an enqueue whose `upsertPendingSend` hit
-    ///   SQLITE_BUSY still inserts the audit row — so requiring it there locked the
-    ///   card permanently while blaming the user for withdrawing it.
-    ///   The queue-axis *hold* still applies either way.
-    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?,
-                                requiresQueueRow: Bool = true) -> Bool {
+    func deliveryStillPermitted(queueId: UUID?, logId: Int64?, chatUsername: String?) -> Bool {
         let muted = chatUsername.map { conversationIsMuted($0) } ?? false
         return Self.mayStillDeliver(
             paused: isPaused,
             sessionOpen: sessionId != nil,
             conversationMuted: muted,
-            queueRowLive: requiresQueueRow ? queueId.map { store.hasPendingSend(id: $0) } : nil,
+            queueRowLive: queueId.map { store.hasPendingSend(id: $0) },
             approvalRowPending: logId.map { store.autopilotLogPendingReply(id: $0) != nil },
             alreadySentHere: logId.map { unresolvedSentLogWrites.contains($0) } ?? false,
             rejectedHere: logId.map { unresolvedSkippedLogWrites.contains($0) } ?? false,
@@ -714,6 +705,9 @@ actor AutopilotService {
         // Phase 1: Buffer messages for batching
         var immediateEntries: [AutopilotLogEntry] = []
         var ackedMsgUIDs: [String] = []
+        /// '.pending' rows that were shown but never written; see the
+        /// force-pending branch below.
+        var unrecordedAwaitingHuman = 0
         let arrivalNow = Date()
 
         for msg in messages {
@@ -773,9 +767,15 @@ actor AutopilotService {
                         reply: nil, confidence: 0, risk: .high,
                         reasoning: "\(mediaType.rawValue)消息，需本人处理"
                     )
-                    guard record(entry) else {
-                        ackedMsgUIDs.append(msg.msgUID)
-                        continue
+                    if !record(entry) {
+                        // Still shown, still never counted. 转账/红包/小程序 is the
+                        // one class where 「写不进去」 must not quietly become
+                        // 「你没听说过的这张转账」: the row appears in this scan's
+                        // feed so the user hears about it while the raw message is
+                        // still in front of them. What it must not do is raise
+                        // 待确认 — there is no row for a human to resolve, and
+                        // `sessionPending` only ever falls when one is.
+                        unrecordedAwaitingHuman += 1
                     }
                     immediateEntries.append(entry)
                     ackedMsgUIDs.append(msg.msgUID)
@@ -844,7 +844,8 @@ actor AutopilotService {
         // and must count toward sessionPending, not skipped, or the approval
         // badge under-counts and their approve decrements an unraised counter.
         var sent = 0
-        var pending = immediateEntries.filter { $0.action == .pending }.count
+        var pending = max(0, immediateEntries.filter { $0.action == .pending }.count
+                              - unrecordedAwaitingHuman)
         var skipped = immediateEntries.count - pending
 
         let allExpired = isPaused ? [] : batchTimers.filter { now >= $0.value }.map(\.key)
@@ -1030,8 +1031,7 @@ actor AutopilotService {
             // thing checked before the send key.
             gate: { [weak self] in
                 await self?.deliveryStillPermitted(
-                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername,
-                    requiresQueueRow: false
+                    queueId: twinQueueId, logId: logId, chatUsername: chatUsername
                 ) ?? false
             }
         )
@@ -1654,8 +1654,18 @@ actor AutopilotService {
             manualOnlyReason: holdReason
         )
         pendingSendQueue.append(pendingItem)
+        // The log row's `queue_id` is a claim that a queue twin exists: the
+        // delivery gate reads 「twin gone」 as 「the user withdrew this」 and stops the
+        // keystrokes. Writing it after a swallowed `upsertPendingSend` failure
+        // made the claim false and locked the 确认发送 card permanently, while
+        // relaxing the gate instead (a `requiresQueueRow` flag) also unlocked a
+        // cancel whose delete had landed — the dangerous direction. So the claim
+        // is only made when the write actually landed.
+        let twinLanded: Bool
         if let sid = self.sessionId {
-            try? store.upsertPendingSend(pendingItem, sessionId: sid)
+            twinLanded = (try? store.upsertPendingSend(pendingItem, sessionId: sid)) != nil
+        } else {
+            twinLanded = false
         }
 
         // Update session stats
@@ -1673,7 +1683,7 @@ actor AutopilotService {
             action: finalAction,
             reply: replyText, confidence: decision.confidence, risk: risk,
             reasoning: reasoningWithScore,
-            queueId: pendingItem.id.uuidString
+            queueId: twinLanded ? pendingItem.id.uuidString : nil
         )
     }
 
@@ -1924,14 +1934,14 @@ actor AutopilotService {
             ?? pendingSendRows().first(where: { $0.id == id })
         guard let item else { return }
         pendingSendQueue.removeAll { $0.id == id }
-        let deleteLanded: Bool
-        do {
-            try store.deletePendingSend(id: id)
-            deleteLanded = true
-        } catch {
-            deleteLanded = false
-            print("[WCHUD] Autopilot: 取消的队列行没删掉: \(error)")
-        }
+        // The flip order used to be delete-then-flip, and that is the whole
+        // reason this block has to be read as a sequence: the audit row is the
+        // only *durable* record that a human withdrew the reply (the in-memory
+        // holds are empty after a restart), so a flip that failed while the
+        // delete had already landed left a row reading 'pending' with no twin
+        // and no holder — and 确认发送 after the next launch typed out text the
+        // user had cancelled. Flip first, and a failed flip means the cancel
+        // never happened: the card stays, and pressing it again works.
         // Resolve the pending log twin too — without this the approval UI
         // keeps a live 确认发送 button for the reply the user just canceled.
         // Only a flipped pending row decrements: an auto-item's twin was
@@ -1948,6 +1958,21 @@ actor AutopilotService {
             flipped = 0
             logLanded = false
             print("[WCHUD] Autopilot: 取消的审计行没写回: \(error)")
+        }
+        let deleteLanded: Bool
+        if logLanded {
+            do {
+                try store.deletePendingSend(id: id)
+                deleteLanded = true
+            } catch {
+                deleteLanded = false
+                print("[WCHUD] Autopilot: 取消的队列行没删掉: \(error)")
+            }
+        } else {
+            // The audit row still says 'pending', so the queue row has to stay
+            // beside it. Removing the durable half of a cancel that did not
+            // record is what left nothing to refuse the next send.
+            deleteLanded = false
         }
         if !deleteLanded || !logLanded {
             // The UI has already printed 已取消. Until the write lands this row is
@@ -1975,6 +2000,29 @@ actor AutopilotService {
         case notFound
     }
 
+    /// The two durable hold texts `holdRowAcrossRestart` writes, exposed so the
+    /// classifier below cannot drift away from the writer.
+    static let unverifiedDeliveryHoldText = "发送结果没能记账：这条很可能已经发出。请先在微信里核对，不要直接确认。"
+    static let cancelNotLandedHoldText = "取消没能落库：这条已经撤回，先别确认发送。"
+
+    /// What a row's `manual_only_reason` claims about the *previous* attempt.
+    /// Only these two shapes mean 「上一次动作的结果没人知道」 — every other
+    /// manual-only reason (敏感词、群聊、置信度不足) is an ordinary hold that a
+    /// human is entitled to override with 立即发送.
+    enum DurableSendHold: Equatable {
+        case none
+        case possiblyDelivered
+        case withdrawn
+    }
+
+    nonisolated static func durableHold(_ reason: String?) -> DurableSendHold {
+        switch reason {
+        case unverifiedDeliveryHoldText: return .possiblyDelivered
+        case cancelNotLandedHoldText: return .withdrawn
+        default: return .none
+        }
+    }
+
     /// Send a pending message immediately (skip remaining delay).
     func sendNow(id: UUID, config: AutopilotConfig) async -> ManualSendOutcome {
         // Fix 3: don't remove from queue if paused — keep it safe
@@ -1983,7 +2031,25 @@ actor AutopilotService {
             return .blocked("用户正在活动，已保留在队列")
         }
         guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
-        let item = pendingSendQueue.remove(at: idx)
+        let item = pendingSendQueue[idx]
+        // 「立即发送」 is the one surface that bypasses the 确认发送 gate, and the
+        // approval workspace offers it precisely for rows like this one. Both
+        // durable holds mean the same thing: the last attempt's outcome is
+        // unknown, so typing again can only duplicate text a real person may
+        // already have. `unresolvedQueueWrites`, which used to be the only thing
+        // refusing, is memory-only and is empty after exactly the restart the
+        // warning was persisted to survive.
+        switch Self.durableHold(item.manualOnlyReason) {
+        case .none:
+            break
+        case .possiblyDelivered:
+            print("[WCHUD] Autopilot: sendNow blocked — 发送结果未记账，可能已经发出")
+            return .blocked("这条的发送结果没能记账，很可能已经发出去了。请先在微信里核对，确认没发出去再用「编辑并发送」。")
+        case .withdrawn:
+            print("[WCHUD] Autopilot: sendNow blocked — 用户已撤回这条")
+            return .blocked("这条你已经取消了，只是没能落库。请先在微信里核对，不要再发一次。")
+        }
+        pendingSendQueue.remove(at: idx)
         if let sid = sessionId {
             try? store.upsertPendingSend(item, sessionId: sid)
         }

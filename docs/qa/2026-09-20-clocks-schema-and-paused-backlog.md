@@ -1267,3 +1267,121 @@ db+wal 字节里读得到 canary（夹具真的建立了泄漏），再断言迁
    同样只在纯函数层被测过。
 3. 900pt 这个窗口下限处的余量我没有量到具体像素 —— 上面说的是"演示态有余量 +
    增量 22.5pt"，不是"900pt 下证明不裁"。
+
+## §211 夜间回复率：读库侧凭空伪造的第二个字段（P0，第 4 轮）
+
+代理报「`loadReplyTimingProfile` 把 `silent_at_night` 位重建成 0.0/1.0」。回源码坐实：
+`ReplyTimingProfile.lateNightReplyRate` 是非可选 `Double`，库里根本没有这一列，
+读出来的一行永远由那个布尔位决定 —— 于是两个方向都错：
+
+- 历史读不到（微信关闭 / 换号 / 锁库）→ `defaultTimingProfile(silent:true, rate:0.0)`
+  被缓存 1 小时并写库 24 小时 → 凌晨的自动回复整天被锁，且回执对用户宣称「回复率0%」；
+- 真实测到 0.35（`silent=false`）→ 重启后读回 1.0 → 把阈值从 0.2 提到 0.5 的那一次改动
+  恰好让凌晨拦截静默失效（0.35 与 1.0 都 ≥ 阈值，所以没有任何一条测试会红）。
+
+修法是把"没测到"变成类型里能表达的状态：字段 `Double?`，新增
+`late_night_reply_rate REAL NOT NULL DEFAULT -1`（-1 = 从没测过，历史行天然落在这一档），
+`buildTimingProfile` 读失败返回 nil（不缓存、不写库），判断收进
+`lateNightHold(rate:threshold:) -> (holds: Bool, reason: String)`。
+两条分支都拦（凌晨发给真人是不可逆的一半），但只有真测到的值才允许被印成百分比。
+
+同一形状在计算侧还有一处：`totalLateNightIncoming == 0` 时 `lnReplyRate = 0.0`
+仍然是"测到 0%"，改成 nil（没有夜里的往来 ≠ 夜里不回）。
+
+## §212 写失败仍然记账：第 5 个待确认口径（P1）
+
+`insertAutopilotLog` 的 7 个调用点里 3 个用 `try?`、3 个用只打印的 `catch`，
+然后照样 `pending += 1`。这条比"读不到印 0"更糟，因为它是**耐久**的：
+`sessionPending` 只有"解决一行"才会减，而那一行从没写进去；
+`persistSessionCounts` 又把它写库、`start()` 读回来 —— 一次磁盘忙就留下一个
+用户永远清不掉、且跨重启存活的 +1。统一收进 `record(_:) -> Bool`，
+调用点由结果决定显示与记账；消息仍然 ack（不 ack 会让每个扫描周期再花一次 AI）。
+
+例外是 转账/红包/小程序 这一支：它是"必须有本人听到"的类别，
+所以保留显示、只从计数里扣掉（`unrecordedAwaitingHuman`）。
+代理主张"直接不显示"，我判为过度收口 —— 那是把"写不进去"变成"你没听说过的这张转账"。
+
+## §213 我上一轮的药被这一轮攻成 P0：`requiresQueueRow` 已撤回（P0）
+
+第 4 轮我为了解开"有 pending 审计行、无队列孪生行 ⇒ 永久不可确认"，
+给 `deliveryStillPermitted` 加了 `requiresQueueRow`，让手动确认忽略队列轴。
+代理攻击成立：**「队列行没了」正是"用户取消过"的唯一耐久痕迹**
+（取消 = 删队列行 + 翻日志行；翻失败时旧顺序已经删了行），
+拆掉这一轴等于让重启后的 确认发送 把用户明确撤回的话再敲一遍。
+
+根因不在闸门而在**生产者撒谎**：`processBatch` 用 `try?` 写队列孪生行，
+无论成败都把 `queue_id` 盖到日志行上。所以"行没了"这一形状同时被
+"取消过"和"从没写进去过"两种事实共用 —— 这才是不可判定的来源。
+
+两处一起改，`requiresQueueRow` 删掉：
+1. 队列孪生写成功才声称它存在：`queueId: twinLanded ? … : nil`；
+2. `cancelPendingSend` 改成先翻日志行、再删队列行；翻失败就不删
+   （取消没发生 = 卡片还在、可以再按一次；旧顺序留下的是"队列没行、日志还 pending"
+   这种只能靠内存 hold 兜住的形状）。
+
+**复写了一条保护缺陷的老测试**：`testFailedCancelWriteHoldsBothIdAxes`
+原来断言的正是"翻转失败但队列行已删除"。已改写并补上
+"队列行必须留着且带 `cancelNotLandedHoldText`"。历史库里已经存在该形状的行
+按 fail-closed 处理（不可确认、原始消息仍在收件箱），不做数据治愈 ——
+无法区分它来自旧代码的取消还是从未写入的孪生。
+
+## §214 立即发送绕过了自己写的警告（P0）
+
+`holdRowAcrossRestart` 把「这条很可能已经发出」写到队列行的
+`manual_only_reason` 上，注释明写是为了跨重启存活；但只有自动路径读它。
+`sendNow` 完全不读 `manualOnlyReason`，而审批卡片恰好只对这类行显示「立即发送」
+—— 于是那条警告的唯一作用是被下一次敲键覆盖掉。
+新增 `durableHold(_:) -> .none | .possiblyDelivered | .withdrawn`，
+按写入方使用的**常量**做全等判断（两个文案提为 `unverifiedDeliveryHoldText` /
+`cancelNotLandedHoldText`，写侧与判侧同源，杜绝字符串漂移），
+`sendNow` 对两档都拒绝且**不消费队列行**。普通人工档（敏感词/群聊/置信度）
+仍然允许立即发送，并有正控测试钉住"不是把所有 hold 都挡住"。
+
+## §215 缓存：一个无界键和一个不单向的时钟（P1/P2）
+
+`profileCache` 的键含 `excludeMsgUIDs` 的哈希，而那个集合每次发送都在变 ⇒
+每次决策产生一个新键；全仓唯一的 `invalidateCache()` 没有调用者。
+24/7 进程里等于按小时漏 StyleProfile（含 fewShotExamples）。
+补 `pruning(ttl:cap:)`（纯函数）+ 写在插入之后。
+
+接线判据的教训：`pruning` 的单测全绿，而把 `pruneProfileCache()` 从写路径删掉
+**仍然全绿** —— 于是加了 `testingProfileCacheCount()` 直接驱动 `getProfile` 104 次，
+第一次跑出 104 > 64（我当时正把变异留在树里）。这条测试同时是界线和牙。
+
+`Date()` 的年龄只在一个方向上可信：`elapsed < window` 对负数同样成立，
+一次回跳就让 `refreshedAt` 永远"在未来"，风格画像与夜间回复率被永久冻结。
+`isFresh` 统一要求 `elapsed >= 0`。读失败的 timing 画像补 60 秒负缓存
+（1 小时会重新造出"锁死一整天"，0 秒会让微信关闭时每次决策重扫 500 条）。
+
+## §216 剪贴板：调用点说不出它最终粘的是什么（P2，第 3 轮药的收尾）
+
+第 3 轮给 `ClipboardGuard.restore` 加了 `pastedText`，但 `navigateToChat`
+是在循环里逐个候选名粘贴的，调用点能命名的 `chatName` 未必是板上那串 ——
+比较不相等 ⇒ 跳过 `clearContents()` ⇒ 联系人昵称留在通用剪贴板。
+改成由写侧记账：`ClipboardGuard.noteWritten(text, on:)` 在真正
+`clearContents()+setString` 的那一刻记下，restore 同时接受调用点命名与写侧记账，
+两者都对不上时（用户自己复制过东西）仍然不清。
+门禁保留：所有 `restore(` 调用点必须显式命名 `pastedText`，并带"至少扫到 3 处"的覆盖度下限。
+
+## §217 本轮判阴与定价
+
+1. 代理主张「`AIAuditPrivacy.persistRawText` 应该 `#if DEBUG`」—— 判阴：
+   这个 app 只以 release 形态运行，`#if DEBUG` 等于把开关永久焊死，
+   而用户需要它来排查一次真实的打码误伤。改为把文件头注释写准（不是 debug-only、
+   保留期就是常规 14 天）。
+2. 「`WeChatReader` 快照目录的 pid 复用会让明文快照永存」—— 成立但未修：
+   需要 `sysctl KERN_PROC_PID` 取进程启动时间与目录 mtime 比较，
+   或落一个 owner 标记文件；另外 legacy 目录（无 pid 后缀）目前是**无条件删**，
+   同机第二实例会被误删。要动的是跨平台启动时间语义，留待单独一轮，
+   并且它不改变"重启后会被自己清理"这一现状的严重性排序。
+3. 「`ConversationMemoryUpdater` / `ChatMonitor+DailyReport` 的窗口该迁单调钟」——
+   部分不成立：前者的 anchor 是**持久** `lastUpdated`（迁单调会破坏跨重启语义），
+   后者只影响"是否重复生成一次日报"。已给 StyleProfiler 的两处补 `elapsed >= 0`，
+   这两处是内存 anchor、且被冻结的是护栏本身。
+4. 「`ChatAnalyzer` 把读不到说成 concluded」—— 字面不成立（OnDemandAnalysis
+   的"读取消息失败/没有找到消息记录"是分开的），但相邻缺陷成立：
+   读到 0 条**可读**内容（全表情/媒体、或被群分析过滤空）也产出 `concluded`，
+   在 `ActionPanelView` 渲染成绿色「已定」并被缓存。未修原因：需要新增一档状态
+   + 两处生产者 + 一个 `analysisType` bump 才能让旧缓存失效，
+   属产品口径（"没内容可读"要不要单独成一档）而不是纯缺陷，交回给 owner 定价。
+5. 崩溃窗口里的剪贴板残留：要修只能把聊天原文写进哨兵文件，比泄漏本身更糟 —— 不做。

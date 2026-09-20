@@ -871,8 +871,7 @@ enum WeChatLauncher {
         guard inputBoxIsSafeToOverwrite(readValue: readInputBoxValue(input)) else {
             return .failed(.inputHasUnsentDraft)
         }
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        ClipboardGuard.noteWritten(text, on: pasteboard)
         postCmdKey(kVK_ANSI_V)
         // Keep the reply on the pasteboard until the queued paste event is consumed.
         guard await pause(0.15) else {
@@ -1007,8 +1006,9 @@ enum WeChatLauncher {
             _ = AXUIElementSetAttributeValue(search, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             postCmdKey(kVK_ANSI_A)
             guard await pause(0.05), isWeChatFrontmost(app) else { return .lostForeground }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(chatName, forType: .string)
+            // Recorded by the guard, because which candidate ends up on the
+            // board is decided here and not by the restore call site.
+            ClipboardGuard.noteWritten(chatName)
             postCmdKey(kVK_ANSI_V)
             guard await pause(index == 0 ? 0.4 : 0.25) else { return .lostForeground }
             var sawMatch = false
