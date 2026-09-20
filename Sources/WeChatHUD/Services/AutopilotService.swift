@@ -212,7 +212,14 @@ actor AutopilotService {
     ///
     /// Precondition: the row is still on disk. Calling this after a delete that
     /// landed would write the row back and resurrect a canceled draft.
-    private func holdRowAcrossRestart(_ item: PendingSend, kind: UnresolvedQueueWrite) {
+    ///
+    /// Returns the held copy because the caller may own a second mirror of the
+    /// same row: the in-memory queue feeds both 「立即发送」 and the orange
+    /// banner, and `upsertPendingSend` overwrites `manual_only_reason` wholesale.
+    /// Re-queueing a pre-hold copy would leave the hold on disk with nothing to
+    /// read it, until the next send attempt wrote that stale copy straight back.
+    @discardableResult
+    private func holdRowAcrossRestart(_ item: PendingSend, kind: UnresolvedQueueWrite) -> PendingSend {
         // No `manualOnlyReason == nil` guard here, unlike `countAsAwaitingHuman`.
         // A row that already awaits a human (会话上限 / 过期 / 敏感词) is exactly the
         // row the approval card offers 「立即发送」 for — and if this cancel's audit
@@ -231,6 +238,7 @@ actor AutopilotService {
             try? store.upsertPendingSend(guarded, sessionId: sid)
         }
         countAsAwaitingHuman(item)
+        return guarded
     }
 
     /// What this process is holding back, for the behaviour tests and the
@@ -2010,7 +2018,11 @@ actor AutopilotService {
         // Nothing queued is nothing that can be sent — that is a withdrawal,
         // not a failure to withdraw.
         guard let item else { return .withdrawn }
-        let requeueable = item
+        // The copy that goes back into the memory mirror must be the one that
+        // carries the hold, not the pre-cancel snapshot: `sendNow` reads
+        // `manualOnlyReason` off this array, and re-upserting an unheld copy
+        // would also write the disk marker back to its old value.
+        var heldCopy: PendingSend?
         pendingSendQueue.removeAll { $0.id == id }
         // The flip order used to be delete-then-flip, and that is the whole
         // reason this block has to be read as a sequence: the audit row is the
@@ -2064,7 +2076,7 @@ actor AutopilotService {
             // delete that *did* land would resurrect a draft the user canceled —
             // the durable hold has to be a fallback for a row still on disk, not
             // a second author of rows that are gone.
-            if !deleteLanded { holdRowAcrossRestart(item, kind: hold) }
+            if !deleteLanded { heldCopy = holdRowAcrossRestart(item, kind: hold) }
         }
         if flipped > 0 {
             sessionPending = max(0, sessionPending - 1)
@@ -2076,7 +2088,7 @@ actor AutopilotService {
             // meant the orange durable-hold banner could never appear in this
             // session — only after a restart. The row IS still queued and held.
             pendingSendQueue.removeAll { $0.id == id }
-            pendingSendQueue.append(requeueable)
+            pendingSendQueue.append(heldCopy ?? item)
         }
         if logLanded && deleteLanded { return .withdrawn }
         return .held(reason: logLanded

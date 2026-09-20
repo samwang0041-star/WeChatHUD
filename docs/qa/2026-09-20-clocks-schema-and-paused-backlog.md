@@ -1636,3 +1636,51 @@ P2 三条的处置：
 写这两条判据时第一条测试自己先红了两次：一次是忘了插审计行（没有孪生可翻时
 翻转"成功"是正确的），一次是 `.cancelled` 忘了带参数 —— 都属于判据自己坏掉，
 不是被测对象坏掉。
+
+## §228 第 8 轮：第 7 轮那颗药自己把耐久标记抹了（P0，已修）
+
+第 7 轮让 `cancelPendingSend` 在删队列行失败时把行放回内存队列，好让「请再按一次
+取消」指得到一颗真存在的按钮。复核代理（只读，审 `git show HEAD`）指出放回去的是
+**hold 之前的那份快照**，回源码确认成立：
+
+- `let requeueable = item` 在写耐久标记之前取值；`holdRowAcrossRestart` 只
+  `upsertPendingSend(guarded)` 改盘，不动内存数组。
+- 于是内存镜像里那行的 `manualOnly_reason` 还是旧值，而 `sendNow` 的耐久判据读的正是
+  这份内存副本 ⇒ 本会话「立即发送」不拦（队列页那条橙色横幅同样不出现，即第 7 轮
+  第 2 项也没达成）。
+- 更坏的是它不止"少一道内存闸"：`upsertPendingSend` 是
+  `manual_only_reason = excluded.manual_only_reason` 整列覆写，这次放行的「立即发送」
+  会顺手把盘上唯一的耐久痕迹写回旧值。之后审计行仍是 pending、`queueRowWithdrawn`
+  为假、`approvePending` 走 `requiresQueueRow: false` ⇒ 重启后确认发送（一键）或
+  自动发送（零点击）把用户撤回的话敲给真人 —— 与 §213/§218/§219 定 P0 的同一形状。
+
+修在产端而不是再叠一层判据：`holdRowAcrossRestart` 改为 `@discardableResult` 返回
+带标记的那一份，`cancelPendingSend` 放回 `heldCopy ?? item`。
+
+判据：`RejectDoorDurabilityTests.testACancelThatDidNotLandKeepsItsCardVisible` 从
+「行还在队列里」升级到走完整链路 —— 内存镜像带标记 → `sendNow` 拦下 → 拦下之后盘上
+标记仍在。反向变异（放回 `item`）红 3 条，第三条正是"标记被覆写回旧值"，即代理预测
+的破坏链在测试里真演了一遍。全量：2135 XCTest + 70 swift-testing 全绿。
+
+自查记录：第一次跑反向变异时我把 `--filter` 写成了 `CancelReceiptHonestyTests`，而这条
+测试其实在 `RejectDoorDurabilityTests`，于是"变异存活、0 failures"是**跑错了套件**造出来
+的假绿，不是判据弱。上一轮刚把"@MainActor XCTestCase 不被收集"记进记忆，同一族（绿灯
+可能来自根本没跑）在同一个 session 里第二次差点骗过我。
+
+## §229 第 8 轮定价为未修（1 P1 + 1 P1 + 1 P2，均在撤回链上）
+
+- **P1** `holdTwinAcrossReject` 找不到孪生行时 `guard let twin else { return }` 静默
+  返回，调用方仍回报 `.held("…已经按住…")` ⇒ 用户读到一句没有两条耐久轴支撑的承诺。
+  触发用的是单层 Optional 的 `autopilotLogQueueId`，而不是 `approvePending` 那套三态
+  `autopilotLogQueueIdRead`（§200 同族）。方向：读失败/确无孪生要分两样说，且回报值
+  必须由实际写了什么决定。
+- **P1** `ApprovalWorkspaceView` 那颗「取消本条」：回执现在在两次 `await` 之后才写，
+  而 §225-1 的清空发生在 `onChange(of: selected?.id)`（早于落地）⇒ 按完立刻换选中，
+  橙色横幅会挂到另一条详情下；且这颗按钮没有 `confirmSend` 那样的 `isSending` 闩，
+  双击会起两个 Task（`target` 是值拷贝，id 不会错，第二次走 `.wasNotPending`）。
+  上一轮修的跨行陈旧回执被新加的 await 复活了一半。
+- **P2** `rejectPending` 走 hold 分支时把行从内存队列 `removeAll` 后再不放回（与
+  `cancelPendingSend` 门不对称），:1233 那句「it stays visible」在 reject 这扇门不成立；
+  盘上行仍在，重启后又会出现 —— 界面在两次启动之间对同一条给了不同答案。
+
+三条都在撤回链上，不构成"撤回失败还发出去"，故留作下一轮；本轮只落 §228 这条 P0。

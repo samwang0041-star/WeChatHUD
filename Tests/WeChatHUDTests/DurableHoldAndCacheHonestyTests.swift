@@ -652,6 +652,22 @@ final class RejectDoorDurabilityTests: XCTestCase {
         let queue = await service.pendingSendQueue
         XCTAssertTrue(queue.contains { $0.id == item.id },
                       "提示让用户再按一次，就不能先把那颗按钮拿掉")
+        // Visibility alone was not enough: the copy put back was the pre-cancel
+        // snapshot, so the row the queue page and 「立即发送」 actually read carried
+        // no hold, and the next upsert wrote the disk marker back to its old
+        // value — the durable hold survived a restart only if nobody touched it.
+        let mirrored = try XCTUnwrap(queue.first { $0.id == item.id })
+        XCTAssertEqual(mirrored.manualOnlyReason, AutopilotService.cancelNotLandedHoldText,
+                       "放回内存镜像的必须是带耐久标记的那一份，sendNow 读的就是这里")
+        let sendOutcome = await service.sendNow(id: item.id, config: AutopilotConfig())
+        guard case .blocked(let why) = sendOutcome else {
+            return XCTFail("内存副本不带标记时「立即发送」会放行: \(sendOutcome)")
+        }
+        XCTAssertTrue(why.contains("撤回") || why.contains("核对"), why)
+        let afterBlockedSend = try XCTUnwrap(
+            store.loadPendingSends(sessionId: sid).first { $0.id == item.id })
+        XCTAssertEqual(afterBlockedSend.manualOnlyReason, AutopilotService.cancelNotLandedHoldText,
+                       "被拦下的这次「立即发送」不能顺手把耐久标记覆写回旧值")
         try? await service.stop()
     }
 }
