@@ -957,6 +957,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         category: WhitelistCategory,
         attentionLevel: WhitelistAttentionLevel = .watch
     ) throws {
+        // Read the existing contact *before* anything is written, so a failed
+        // read can cost us the merge without costing us the follow.
+        let existingContact = contactRead(username)
+
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
             INSERT OR REPLACE INTO whitelist(
@@ -972,19 +976,30 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             "\(now)"
         ])
 
-        let existingContact = getContact(username: username)
         let contactLevel: AttentionLevel = attentionLevel == .vip ? .vip : .whitelist
-        let contactRole = existingContact?.role ?? defaultContactRole(for: category)
-        let roleNote = existingContact?.roleNote ?? ""
-        let replyWindow = existingContact?.replyWindowMinutes ?? contactRole.defaultReplyWindowMinutes
+        let stored: ContactEntry?
+        switch existingContact {
+        case .unreadable:
+            // Following a chat is what the user asked for; quietly rebuilding the
+            // contact row from defaults would reset a role and reply window this
+            // app only failed to read. Leave the contact alone — the follow holds,
+            // and the next successful pass merges without inventing values.
+            print("[WCHUD] contacts 行读不到，跳过合并写入（保留既有 role/replyWindow）")
+            return
+        case .absent:
+            stored = nil
+        case .value(let contact):
+            stored = contact
+        }
+        let contactRole = stored?.role ?? defaultContactRole(for: category)
 
         try upsertContact(
             username: username,
             displayName: displayName,
             attentionLevel: contactLevel,
             role: contactRole,
-            roleNote: roleNote,
-            replyWindowMinutes: replyWindow
+            roleNote: stored?.roleNote ?? "",
+            replyWindowMinutes: stored?.replyWindowMinutes ?? contactRole.defaultReplyWindowMinutes
         )
     }
 
@@ -2251,6 +2266,43 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             "\(now)",
             "\(now)"
         ])
+    }
+
+    /// `getContact` answers nil both for 「no such contact」 and for 「this read
+    /// failed」 (`queryOne` swallows prepare/step errors), and the only consumer
+    /// that matters merges that nil into defaults and then writes the row back
+    /// with every column overwritten. Same shape as ``whitelistRead(_:)``.
+    enum ContactRead {
+        case value(ContactEntry)
+        case absent
+        /// The query failed, or a row exists but could not be decoded.
+        case unreadable
+
+        var kindDescription: String {
+            switch self {
+            case .value: return "value"
+            case .absent: return "absent"
+            case .unreadable: return "unreadable"
+            }
+        }
+    }
+
+    func contactRead(_ username: String) -> ContactRead {
+        let exists: Int?
+        do {
+            exists = try queryOneThrowing(
+                "SELECT 1 FROM contacts WHERE username=? LIMIT 1",
+                bind: { stmt in
+                    sqlite3_bind_text(stmt, 1, username, -1, Self.sqliteTransient)
+                },
+                decode: { _ in 1 }
+            )
+        } catch {
+            return .unreadable
+        }
+        guard exists != nil else { return .absent }
+        guard let contact = getContact(username: username) else { return .unreadable }
+        return .value(contact)
     }
 
     func getContact(username: String) -> ContactEntry? {

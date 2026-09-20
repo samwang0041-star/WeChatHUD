@@ -1760,3 +1760,25 @@ whitelist_hidden`（模拟迁移中/BUSY 超时/IOERR 下所有对该表的读�
   失败信息就是 `("0") is not equal to ("2")` —— 队列真的被删空过。
 - 正对照：确证取关（表在、行删）仍清空，证明这条修改没有把"删除"换成"永不删除"。
 全量 2138 XCTest（+3）+ 70 swift-testing 绿；无任何旧判据在保护这个缺陷。
+
+## §233 第 9 轮：`addToWhitelist` 把「联系人读不到」写成默认值（P1，已修）
+
+§231 第 3 条回源码核实成立。`addToWhitelist` 先 `INSERT OR REPLACE INTO whitelist`，再
+`getContact(username:)`（走 `queryOne`，`try?` 吞掉 prepare/step 错误）拿旧值，然后
+`existingContact?.role ?? 默认` 交给 `upsertContact` —— 而它是
+`ON CONFLICT DO UPDATE SET role/excluded...` 的整列覆盖。于是「这次读不到」与「这人从来没有
+联系人记录」同一个答案，一次读失败就把用户手工设的 role / role_note / reply_window_minutes
+悄悄重置成默认；`ReplyDebtScorer` 与收件箱排序据此再算一遍「超时」。与已修的
+`updateAutopilotConfig`（"refusing to write over a config that could not be read"）同形，
+也是形状 B：三态化做过了，消费点漏了。
+
+修法照 `whitelistRead` 的既有约定补 `HUDStore.ContactRead`（`.value / .absent / .unreadable`，
+行存在但解不出也算 `.unreadable`），并把读挪到任何写之前；`unreadable` 时**只跳过这次合并写**：
+关注本身仍然成功（抛错会让 `ChatMonitor` 三处 `try? addToWhitelist` 静默不关注，那是另一种
+用户可见损失），只是不拿默认值去覆盖读不到的东西。
+
+判据：`ContactMergeHonestyTests` 4 条 —— 三态各自可辨（含真故障注入：把 `contacts` 表改名，
+让 SELECT 报 `no such table` 而不是回答"没有这行"）；正常路径的合并语义仍生效（正对照，
+证明不是把"覆盖"换成"永不写"）；读失败下不抛错且 roleNote/replyWindowMinutes 保持；
+读失败下关注确实写进去了。反向变异（把 `.unreadable` 塌回 `.absent`）红 3 条，其中一条正是
+`("absent") is not equal to ("unreadable")`。全量 2142 XCTest（+4）+ 70 swift-testing 绿。
