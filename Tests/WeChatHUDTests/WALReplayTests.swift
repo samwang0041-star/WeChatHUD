@@ -36,7 +36,7 @@ final class WALReplayTests: XCTestCase {
                 // applyWAL MAC-verifies page-1 frames — a repeating-byte
                 // fixture page must carry a real MAC or the check (correctly)
                 // fails. Salt sits inline at bytes 0..<16 for page 1.
-                var bodyWithIV = page.subdata(in: 16..<4032)
+                let bodyWithIV = page.subdata(in: 16..<4032)
                 let mac = WeChatFixtureEncrypt.pageMAC(
                     key: macKey, dbSalt: page.prefix(16),
                     bodyWithIV: bodyWithIV, pageNumber: 1)

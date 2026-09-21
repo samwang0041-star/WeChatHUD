@@ -4,6 +4,7 @@ import Foundation
 actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
     private var candidatesByRange: [DateRange: [ScopeCandidate]] = [:]
     private var defaultCandidates: [ScopeCandidate] = []
+    private var scopeUnreadable = false
     private var samplesByUsername: [String: [String]] = [:]
     private var messagesByUsername: [String: [MessageInfo]] = [:]
     private var relationByUsername: [String: Relation] = [:]
@@ -20,6 +21,11 @@ actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
         defaultCandidates = items
     }
 
+    /// 「这次没读到名单」—— 与「没有可回顾的对话」是两件事。
+    func setScopeUnreadable() {
+        scopeUnreadable = true
+    }
+
     func setSamples(_ samples: [String], for username: String) {
         samplesByUsername[username] = samples
     }
@@ -34,9 +40,10 @@ actor MockScopeCandidatesProvider: ScopeCandidatesProvider {
 
     // MARK: - ScopeCandidatesProvider
 
-    func candidates(in range: DateRange) async -> [ScopeCandidate] {
-        if let exact = candidatesByRange[range] { return exact }
-        return defaultCandidates
+    func candidates(in range: DateRange) async -> ScopeCandidatesRead {
+        if scopeUnreadable { return .unreadable }
+        if let exact = candidatesByRange[range] { return .value(exact) }
+        return .value(defaultCandidates)
     }
 
     func sampleMessages(for usernames: [String], in range: DateRange, limit: Int) async -> [String: [String]] {

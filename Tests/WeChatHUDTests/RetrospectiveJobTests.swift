@@ -241,4 +241,63 @@ struct RetrospectiveJobTests {
             Issue.record("Expected completed, got \(job.state)")
         }
     }
+
+    /// 上面那条是这一条的正对照：名单**读得到**、只是没有可回顾的对话 → 照样
+    /// `completed` / `chatCount 0`，那是真事实。读不到则是另一件事 —— 它曾经也走
+    /// 空数组，于是在回顾历史里留下「跑过了，0 个对话」。
+    @Test("Unreadable follow list fails the run instead of archiving 0 对话")
+    func unreadableScope() async throws {
+        let store = try tempStore()
+        let mockAI = MockAIService()
+        let provider = MockScopeCandidatesProvider()
+        await provider.setScopeUnreadable()
+        let mq = MockMessageQuery()
+
+        let job = RetrospectiveJob(store: store, aiService: mockAI,
+                                   scopeCandidatesProvider: provider, messageQuery: mq)
+        job.run(mode: .thisWeek, myUsername: "wxid_self", myDisplayName: "我")
+        await waitForCompletion(job)
+
+        #expect(job.state == .failed(CompanionInteractionCopy.retrospectiveScopeUnreadable))
+        // 判据的另一半在库里：一行 review_runs 都没有，才不会有人翻历史时看到
+        // 「0 个对话」并据此以为名单是空的。
+        #expect(store.latestReviewRunAnyStatus() == nil,
+                "读不到名单不能收进历史：那行会声称用户谁也没关注")
+    }
+
+    /// 真实适配器那条腿：mock 只证明 job 会照第三种答案行事，这条证明
+    /// `ChatMonitorScopeProvider` 真的会给得出来（而不是永远 `.value([])`）。
+    @Test("Real scope provider answers unreadable when the follow list cannot be read")
+    func realProviderUnreadable() async throws {
+        let store = try tempStore()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wchud-scope-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let reader = WeChatReader(
+            keysPath: root.appendingPathComponent("absent-keys.json").path,
+            dbDir: root.appendingPathComponent("synthetic/db_storage").path,
+            cacheStrategy: .memory
+        )
+        let monitor = ChatMonitor(reader: reader, store: store,
+                                  aiService: AIService(config: AIConfig()))
+        let provider = ChatMonitorScopeProvider(monitor: monitor)
+        let range = ScopeResolver.range(.thisWeek)
+
+        // 正对照：名单读得到时是一个值（这里谁也没关注，所以是空的价值，不是 unreadable）。
+        switch await provider.candidates(in: range) {
+        case .value(let items):
+            #expect(items.isEmpty, "没有关注时是「空范围」，不是「读不到」")
+        case .unreadable:
+            Issue.record("名单读得到就不许报读不到，否则这条门只是「永远说读不到」")
+        }
+
+        try store.exec("ALTER TABLE whitelist RENAME TO whitelist_hidden")
+
+        switch await provider.candidates(in: range) {
+        case .unreadable:
+            break
+        case .value(let items):
+            Issue.record("读不到名单却给了 \(items.count) 个候选：范围无从谈起")
+        }
+    }
 }

@@ -13,9 +13,18 @@ actor ChatMonitorScopeProvider: ScopeCandidatesProvider {
         self.monitor = monitor
     }
 
-    func candidates(in range: DateRange) async -> [ScopeCandidate] {
-        guard let monitor else { return [] }
-        let whitelist = monitor.hudStore.getWhitelist()
+    func candidates(in range: DateRange) async -> ScopeCandidatesRead {
+        // A deallocated monitor is also 「读不到」: this provider's only source of
+        // the follow list is gone, and the empty scope that used to come back
+        // here archived the run as if the user follows nobody.
+        guard let monitor else { return .unreadable }
+        let whitelist: [WhitelistEntry]
+        switch monitor.hudStore.whitelistAllRead() {
+        case .value(let entries):
+            whitelist = entries
+        case .unreadable:
+            return .unreadable
+        }
         let myUname = monitor.myUsername
         var out: [ScopeCandidate] = []
         for entry in whitelist {
@@ -34,7 +43,7 @@ actor ChatMonitorScopeProvider: ScopeCandidatesProvider {
                 myMsgCountInRange: myCount
             ))
         }
-        return out
+        return .value(out)
     }
 
     func sampleMessages(for usernames: [String], in range: DateRange, limit: Int) async -> [String: [String]] {

@@ -176,6 +176,7 @@ enum CompanionInteractionCopy {
     static let retrospectiveUnavailable = "这次回顾没能完成。请再试一次。"
     static let retrospectiveCancelled = "这次回顾已停住。可以再生成一次。"
     static let retrospectiveCouldNotStart = "这次回顾没能开始。请重试。"
+    static let retrospectiveScopeUnreadable = "暂时读不到关注名单，这次回顾没有开始。请稍后再试一次。"
 
     static func retrospectivePartial(_ names: [String]) -> String {
         let shown = names.prefix(3).joined(separator: "、")

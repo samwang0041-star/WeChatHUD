@@ -18,9 +18,19 @@ protocol MessageQuery: Sendable {
 
 /// Adapter protocol for the four queries `RetrospectiveJob` makes against
 /// the conversation source. Real impl is `ChatMonitorScopeProvider`.
+///
+/// `[ScopeCandidate]` used to carry both answers at once: a failed follow-list
+/// read returned `[]`, and the job archived that as 「completed, 0 对话」 — a row
+/// in 回顾 history claiming the user follows nobody, which is a different fact
+/// from 「这段时间没有可回顾的对话」.
+enum ScopeCandidatesRead: Sendable {
+    case value([ScopeCandidate])
+    case unreadable
+}
+
 protocol ScopeCandidatesProvider: Sendable {
     /// All whitelist conversations with at least one message in `range`.
-    func candidates(in range: DateRange) async -> [ScopeCandidate]
+    func candidates(in range: DateRange) async -> ScopeCandidatesRead
     /// First N sample messages per chat — fed to `GroupScreener` for
     /// is-this-work-related triage. Plain text strings, no metadata.
     func sampleMessages(for usernames: [String], in range: DateRange, limit: Int) async -> [String: [String]]

@@ -2194,3 +2194,37 @@ SQLITE_ROW` 会把它当成"读完了"）。结果是同一个对话只剩一个
 `ConversationMemoryUpdater:29`、`ClassifierCLI:265`、`ChatMonitorScopeProvider:18`、
 `HUDStore:4809`（迁移）。其中 `ChatMonitorScopeProvider` 读不到会把回顾定成 `chatCount=0`，
 `ChatMonitor+ChatNaming:173` 会让已命名的关注对象被重复推断，接着收。
+
+## §251 回顾的范围也该有第三种答案（已修），以及一次「测试目标 0 警告」的错账
+
+`ScopeCandidatesProvider.candidates(in:)` 原来返回 `[ScopeCandidate]`：名单读不到就是 `[]`，
+job 照常 `insertReviewRun(chatCount: 0)` —— 回顾历史里多一行「跑过了，0 个对话」。那是关于
+「你关注了谁」的断言，而这次根本没读到名单。改成 `ScopeCandidatesRead`（`value` / `unreadable`）：
+适配器在名单读不到、或 monitor 已释放时回 `unreadable`；job 在写历史行**之前**就
+`state = .failed(retrospectiveScopeUnreadable)` 返回，一行都不留。
+
+判据两条，都带正对照。`RetrospectiveJobTests` 里原有的「空候选 → completed / chatCount 0」就是
+新那条的正对照（名单读得到、这段时间确实没有可回顾的对话，那是真事实）；新加的读不到那条断言
+`.failed` 且 `latestReviewRunAnyStatus() == nil`。另一条打真实适配器：先断言读得到时是 `.value`
+（否则这条门只是「永远说读不到」），再把 whitelist 改名，断言 `.unreadable`。变异验证：两处退回
+旧写法，对应测试全部转红，文件已还原并复查了只属于本次修复的锚点。
+
+**错账**：§249、§250 我写过「测试目标 0 warning」，那是**增量缓存**给的假象 —— 那两次 `swift test`
+没有重编任何测试文件，所以编译器一句都没说。这轮为了让新测试真正编译而 `touch` 了全部测试文件，
+一次冒出 **14 条测试目标警告**（生产目标仍是 0）。顺手修掉最省事的一条
+（`WALReplayTests:39` 的 `var bodyWithIV` → `let`），其余 13 条是老账，不是这次改动带来的，记在这里：
+
+- `AutopilotInFlightWithdrawalTests:149/185/225/481`、`DurableHoldAndCacheHonestyTests:407`：
+  `cancelPendingSend(id:)` 有返回值（`CancelOutcome`）却当语句用。
+- `DiscussionDueAtStorageTests:99/142`、`DiscussionVisibilityInvariantTests:59/77/81/116`：
+  `try` 里没有会抛的调用。
+- `DiscussionVisibilityInvariantTests:75`：`cutoff` 声明后再没被用过（下一行用的是 `legacyCutoff`）。
+- `SafeNumberTests:31`：`1e400` 字面量溢出到 inf。
+
+教训与 §249 同族但方向相反：那次是「文档说干净、构建其实不干净」，这次是「日志说 0 警告，
+而那只是没重编」。**要断言零警告，必须先从干净状态重编**（`touch` 全部源码或清 `.build`），
+只看增量输出不算证据。
+
+本条修完后 `getWhitelist()` 在服务侧还剩 9 处：`AutopilotService:384`、`:2666`、`ChatMonitor:1674`、
+`ChatMonitor+ChatNaming:173`、`ProductSelfCheck:40`、`:60`、`ConversationMemoryUpdater:29`、
+`ClassifierCLI:265`、`HUDStore:4809`（迁移）。

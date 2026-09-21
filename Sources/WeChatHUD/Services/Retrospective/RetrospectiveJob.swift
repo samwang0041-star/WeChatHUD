@@ -95,7 +95,17 @@ final class RetrospectiveJob: ObservableObject {
         state = .resolvingScope
         if bailIfCancelled(runID: nil, reason: "before scope") { return }
         let dateRange = ScopeResolver.range(mode)
-        let allCandidates = await scopeCandidatesProvider.candidates(in: dateRange)
+        let allCandidates: [ScopeCandidate]
+        switch await scopeCandidatesProvider.candidates(in: dateRange) {
+        case .value(let candidates):
+            allCandidates = candidates
+        case .unreadable:
+            // 名单读不到就没有范围。空数组会让这次运行以「0 个对话」收进历史 ——
+            // 那是一条关于「你关注了谁」的断言，而这次根本没读到名单。停在
+            // insertReviewRun 之前：不留一行假装跑过的记录。
+            state = .failed(CompanionInteractionCopy.retrospectiveScopeUnreadable)
+            return
+        }
         let filtered = ScopeResolver.filter(candidates: allCandidates).prefix(config.maxChatsPerRun)
         let chatsToAnalyze = Array(filtered)
         if bailIfCancelled(runID: nil, reason: "after scope") { return }
