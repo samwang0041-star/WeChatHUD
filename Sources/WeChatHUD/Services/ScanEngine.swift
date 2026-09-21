@@ -61,6 +61,19 @@ enum ScanEngine {
                 print("[WCHUD] chat_actions 读不到，跳过本轮扫描（不把「没有规则」当成规则）")
                 return nil
             }
+
+            // 同一条理由，这次是名单本身：`whitelist` 就是这一轮的范围。
+            // 读不到时 `whitelistSet` 会空成空集 —— 已关注的会话看起来没被
+            // 关注，于是被下面的 autopilot 通吃（那个 pass 专门排除白名单里的
+            // 会话），把消息排进错误的管线并推进水位。跳过本轮，下次重试。
+            let whitelist: [WhitelistEntry]
+            switch store.whitelistAllRead() {
+            case .value(let entries):
+                whitelist = entries
+            case .unreadable:
+                print("[WCHUD] whitelist 读不到，跳过本轮扫描（不把「没有关注」当成范围）")
+                return nil
+            }
             let nowEpoch = Int(Date().timeIntervalSince1970)
 
             let sessions: [SessionInfo]
@@ -72,7 +85,6 @@ enum ScanEngine {
             }
             let myUname = await readerActor.myUsername()
             let myDisplayName = await readerActor.displayName(for: myUname)
-            let whitelist = store.getWhitelist()
             let whitelistSet = Set(whitelist.map { $0.id })
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
             // One snapshot of every admission input, so the per-message decision

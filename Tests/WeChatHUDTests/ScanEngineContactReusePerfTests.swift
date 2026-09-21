@@ -188,6 +188,27 @@ final class ScanEngineContactReusePerfTests: XCTestCase {
                      "读不到也不能把没扫过的会话基线到最新一条")
     }
 
+    /// 白名单就是这一轮的范围。读不到时 `whitelistSet` 会空成空集，于是已关注的
+    /// 会话看起来「没被关注」，落进下面那条专门排除白名单的 autopilot 通路，被
+    /// 排进错误的管线并把水位推过去。跳过本轮，下次重试。
+    func testUnreadableWhitelistSkipsTheRoundInsteadOfMakingFollowedChatsStrangers() async throws {
+        let fixture = try WeChatReaderPerfFixture()
+        defer { fixture.cleanUp() }
+        let reader = try makeCostFixture(fixture).reader
+        let store = try fixture.makeStore()
+        defer { store.close() }
+        try seed(store)
+        try store.exec("ALTER TABLE whitelist RENAME TO whitelist_hidden")
+
+        let scanned = try await scan(reader, store: store, autopilotActive: true)
+        XCTAssertNil(scanned,
+                     "读不到关注名单就没有这一轮的范围：跳过，而不是把已关注的当成没关注")
+        XCTAssertTrue(store.loadPendingAutopilotInbound().isEmpty,
+                      "空名单会让已关注的会话落进 autopilot 那条只扫非白名单的通路")
+        XCTAssertNil(store.getAutopilotCursor(username: Chats.seedMe),
+                     "跳过就不能推水位")
+    }
+
     func testScanEngineDoesNotQueryContactsPerMessageOnTheWhitelistPath() throws {
         let source = try String(
             contentsOf: URL(fileURLWithPath: #filePath)

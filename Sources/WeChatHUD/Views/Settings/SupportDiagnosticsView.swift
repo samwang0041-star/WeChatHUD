@@ -94,7 +94,14 @@ struct SupportDiagnosticsView: View {
     }
 
     private var countSummary: String {
-        "关注 \(store.getWhitelist().count) · 待分类 \(store.classificationQueueCount()) · 草稿 \(store.workspaceDraftCount())"
+        // 「读不到」不是 0。诊断页正是用户来问「到底怎么了」的地方，
+        // 这里写「关注 0」会让人以为关注名单被清空了。
+        let followed: String
+        switch store.whitelistAllRead() {
+        case .value(let entries): followed = "\(entries.count)"
+        case .unreadable: followed = "读不到"
+        }
+        return "关注 \(followed) · 待分类 \(store.classificationQueueCount()) · 草稿 \(store.workspaceDraftCount())"
     }
 
     private var keyState: String {

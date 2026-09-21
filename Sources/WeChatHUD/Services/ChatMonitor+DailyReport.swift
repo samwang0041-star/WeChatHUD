@@ -275,14 +275,16 @@ extension ChatMonitor {
     }
 
 
-    func exportReport() -> URL? {
+    /// `into` exists for tests: the real call site exports to the Desktop, and a
+    /// test that wrote there would litter the user's machine.
+    func exportReport(into directory: URL? = nil) -> URL? {
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
         let dateStr = df.string(from: Date())
         let filename = "WeChatHUD-\(dateStr).md"
-        let desktop = FileManager.default.homeDirectoryForCurrentUser
+        let folder = directory ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop")
-            .appendingPathComponent(filename)
+        let desktop = folder.appendingPathComponent(filename)
 
         var md = "# WeChatHUD 报告 — \(dateStr)\n\n"
 
@@ -336,12 +338,20 @@ extension ChatMonitor {
         }
 
         // Whitelist stats
-        let whitelist = store.getWhitelist()
-        md += "## 关注对象 (\(whitelist.count))\n\n"
-        let vips = whitelist.filter { $0.attentionLevel == .vip }
-        let watches = whitelist.filter { $0.attentionLevel == .watch }
-        md += "- VIP: \(vips.count) 人\n"
-        md += "- 关注: \(watches.count) 人\n\n"
+        // 「读不到」不是 0：导出件是会被存档的，写「关注对象 (0)」等于留了
+        // 一份看起来像「你把关注全清了」的记录。
+        switch store.whitelistAllRead() {
+        case .value(let whitelist):
+            md += "## 关注对象 (\(whitelist.count))\n\n"
+            let vips = whitelist.filter { $0.attentionLevel == .vip }
+            let watches = whitelist.filter { $0.attentionLevel == .watch }
+            md += "- VIP: \(vips.count) 人\n"
+            md += "- 关注: \(watches.count) 人\n\n"
+        case .unreadable:
+            md += "## 关注对象\n\n"
+            md += "- 这次没能读到关注名单，VIP / 关注人数暂缺。\n"
+            md += "- 下次同步后再导出一次即可补上。\n\n"
+        }
 
         md += "---\n*由 WeChatHUD 自动生成*\n"
 

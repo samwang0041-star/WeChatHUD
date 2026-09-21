@@ -132,6 +132,7 @@ enum CompanionInteractionCopy {
    }
    static let followListUnreadableAdmission = "暂时读不到关注名单，这一页的范围先不要改。请再试一次。"
     static let followListUnreadableEdit = "暂时读不到关注名单，这次没有改关注。请稍后再试一次。"
+    static let followListUnreadableMissedReplies = "暂时读不到关注名单，这次没找出没回的消息。请稍后再试一次。"
     static func watchedMemberAdded(name: String) -> String {
         "已添加重点成员：\(name)"
     }

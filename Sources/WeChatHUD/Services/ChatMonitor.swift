@@ -2723,11 +2723,33 @@ final class ChatMonitor: ObservableObject {
     var silencedConversationsRead: [SilencedConversation]? {
         let now = Int(Date().timeIntervalSince1970)
         guard let actions = store.chatActionsRead() else { return nil }
-        var names: [String: String] = [:]
-        for entry in store.getWhitelist() { names[entry.id] = entry.displayName }
+        // 名字要按「查得到就用，查不到就说读不到」来给。原来收尾是
+        // `?? $0.key`，于是管理页会印出 wxid —— 而静音的常常正是没被关注的
+        // 群，白名单里根本没有它，naming pass 早就拒绝把账号 id 当名字了。
+        var pickerNames: [String: String] = [:]
+        if case .value(let entries) = store.whitelistAllRead() {
+            for entry in entries {
+                let name = entry.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                // 与 `storedDisplayName` 同一道闸：名字字段里万一是原始 id，
+                // 那也是 id，不是名字。
+                if !name.isEmpty, !ContactIdentityIndex.isRawChatIdentifier(name) {
+                    pickerNames[entry.id] = name
+                }
+            }
+        }
         return actions
             .filter { $0.value.isPermanentlySilenced(nowEpoch: now) }
-            .map { SilencedConversation(username: $0.key, displayName: names[$0.key] ?? $0.key) }
+            .map { action in
+                SilencedConversation(
+                    username: action.key,
+                    displayName: pickerNames[action.key] ?? ContactIdentityIndex.visibleName(
+                        username: action.key,
+                        stored: store.storedDisplayName(action.key),
+                        alias: store.chatAlias(for: action.key),
+                        readerName: reader.displayName(for: action.key)
+                    )
+                )
+            }
             .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
     }
 

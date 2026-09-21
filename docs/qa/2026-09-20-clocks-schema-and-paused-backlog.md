@@ -2158,3 +2158,39 @@ SQLITE_ROW` 会把它当成"读完了"）。结果是同一个对话只剩一个
 
 清完：`swift build -c release` 0 warning / 0 error；`swift test` `TEST_EXIT=0`，
 2279 XCTest（10 skipped、0 失败）+ 70 swift-testing，测试目标 0 warning。
+
+## §250 再往下一格：还有五处把「读不到关注名单」写成了事实（已修）
+
+§249 结尾留了 14 处 `getWhitelist()`，这轮先收会变成用户看得见那句话的五处。它们的
+共同点是：`[]` 同时意味着「没人被关注」和「这次没读到」，而这个空数组会直接落到屏幕上。
+
+1. **静音清单**（`ChatMonitor.silencedConversationsRead`）：收尾是 `names[key] ?? key`。
+   静音的常常正是**没被关注的群**，白名单里根本没有它 → 管理页印出 wxid。改成先批量读
+   `whitelistAllRead`（名字字段里万一是原始 id 也当 id，与 `storedDisplayName` 同一道闸），
+   查不到再走 `ContactIdentityIndex.visibleName`；两份来源都读不到 = 「暂时读不到名字」。
+2. **诊断**（`countSummary`）：`getWhitelist().count` 读不到就写「关注 0」。诊断页正是用户
+   来问「到底怎么了」的地方，改成 `whitelistAllRead` → 「关注 读不到」。
+3. **日报导出**：`## 关注对象 (0)`。导出件会被存档，0 会被读成「你把关注全清了」；读不到时
+   写「这次没能读到关注名单，VIP / 关注人数暂缺」并给出下一步。顺手给 `exportReport(into:)`
+   加了目标目录参数（默认桌面），否则这条测试得往用户桌面上写字。
+4. **没回**（`refreshMissedReplies`）：读不到 → 空名单 → 这一页打印「关注的私聊和群 @ 都回过了」，
+   一句关于完整性的断言。改成开走之前 fail closed，新增同族文案 `followListUnreadableMissedReplies`。
+5. **扫描**（`ScanEngine.performScan`，最高杠杆那处）：读不到白名单时 `whitelistSet` 空成空集，
+   已关注的会话看起来「没被关注」—— 于是被下面那条**专门排除白名单**的 autopilot 通路通吃，
+   消息排进错误的管线并把水位推过去。照既有先例（`chat_actions 读不到` → 跳过本轮）跳过本轮，
+   下次重试；护栏就写在那个 guard 旁边，免得下次有人又把它简化回 `getWhitelist()`。
+
+判据（`WhitelistScopeHonestyTests` 5 条 + `ScanEngineContactReusePerfTests` 1 条）**都带正对照**：
+读得到时必须是真名字 / 真数字，否则这条门只是「永远说读不到」。诊断那条是源码闸
+（`countSummary` 是视图私有计算属性，没有行为接缝），闸的是「走了哪份读法」而不是字符串。
+
+**变异验证**：四处修复逐一退回旧写法（含把导出的 `whitelistAllRead` 换回 `getWhitelist()`），
+对应测试全部转红，4 个文件全部还原；还原后按 §248 复查了只属于本次修复的锚点，并搜索过
+变异残留（0 命中）。全量 **2285 XCTest（+6，10 skipped、0 失败）+ 70 swift-testing**，
+`TEST_EXIT=0`；`swift build -c release` 0 warning / 0 error。
+
+仍未做：`getWhitelist()` 还剩 10 处调用点 —— `AutopilotService:384`、`:2666`、
+`ChatMonitor:1674`、`ChatMonitor+ChatNaming:173`、`ProductSelfCheck:40`、`:60`、
+`ConversationMemoryUpdater:29`、`ClassifierCLI:265`、`ChatMonitorScopeProvider:18`、
+`HUDStore:4809`（迁移）。其中 `ChatMonitorScopeProvider` 读不到会把回顾定成 `chatCount=0`，
+`ChatMonitor+ChatNaming:173` 会让已命名的关注对象被重复推断，接着收。

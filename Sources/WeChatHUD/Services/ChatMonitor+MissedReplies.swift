@@ -22,7 +22,17 @@ extension ChatMonitor {
         }
 
         let rules = AdmissionRules.load(store: store)
-        let whitelist = store.getWhitelist()
+        // 读不到关注名单，就没有「该回谁」的范围。原来的空数组会让这一页
+        // 打印「都回过了」—— 那是一句关于完整性的断言，而这次根本没看到名单。
+        let whitelist: [WhitelistEntry]
+        switch store.whitelistAllRead() {
+        case .value(let entries):
+            whitelist = entries
+        case .unreadable:
+            missedReplyLoading = false
+            missedReplyError = CompanionInteractionCopy.followListUnreadableMissedReplies
+            return
+        }
         let readerRef = reader
         let myUname = myUsername
         let myDisplay = myDisplayName
