@@ -236,7 +236,7 @@ struct ChatInsightView: View {
 
    @ViewBuilder
    private var detailArea: some View {
-       if let chatId = selectedChat {
+       if selectedChat != nil {
             if let chat = detailChat {
                 ChatInsightDetailView(
                     chatUsername: chat.username,

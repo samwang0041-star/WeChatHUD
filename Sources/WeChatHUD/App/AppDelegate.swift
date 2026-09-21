@@ -922,8 +922,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// `completion` is `@Sendable` because AppKit's animation-group completion
+    /// handler is; every caller here only hops back to the main queue.
     @MainActor
-    private func animateToastAlpha(to value: CGFloat, duration: TimeInterval, completion: (() -> Void)? = nil) {
+    private func animateToastAlpha(to value: CGFloat, duration: TimeInterval, completion: (@Sendable () -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = duration
             ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)

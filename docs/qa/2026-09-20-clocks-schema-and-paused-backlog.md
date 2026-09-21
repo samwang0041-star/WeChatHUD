@@ -2142,3 +2142,19 @@ SQLITE_ROW` 会把它当成"读完了"）。结果是同一个对话只剩一个
 （静音清单显示名回落到 wxid）、`ChatMonitor+MissedReplies:25`、`ChatMonitor+DailyReport:339`
 （导出会写「关注对象 (0)」）、`ChatMonitorScopeProvider:18`、`SupportDiagnosticsView:97`
 （诊断写「关注 0」）。这些不在本提交里，别把本提交当成那条轴收完。
+
+提交之后按 AGENTS.md 的「release 零警告」又跑了一遍，红：本机 Swift 6.3.3 + macOS 28 SDK 下
+共 9 条警告，其中 7 条是本链带进来的 —— 全量测试跑绿不等于构建干净，这两个门禁看的是不同东西。
+
+- `CompanionGuideView` 的 `GuideCard` 把 `content` 声明在 `index` 之前，5 处
+  `GuideCard(…, index: n) { … }` 的尾随闭包只能向后匹配（`#TrailingClosureMatching`）。
+  把 `index` 挪到 `content` 前面即可，调用点形状一个字都不用改。
+- `AppDelegate.animateToastAlpha` 的 `completion` 是非 Sendable 的 `(() -> Void)?`，
+  直接交给 AppKit 的 animation-group completion（`@Sendable`）。参数加 `@Sendable`；
+  两个调用点只捕获 weak self（`@MainActor` 类隐式 Sendable）和一个 UInt64，没有跨界风险。
+- `ChatInsightView.detailArea` 改写后不再读 `chatId`（正文已改用 `detailChat` 的字段），
+  改 `if selectedChat != nil` 保留原分支语义。
+- 另两条（`PreviewRuntime` 两处 `try?` 结果未用）早于本链，同一标准顺手清掉：`_ = try?`。
+
+清完：`swift build -c release` 0 warning / 0 error；`swift test` `TEST_EXIT=0`，
+2279 XCTest（10 skipped、0 失败）+ 70 swift-testing，测试目标 0 warning。

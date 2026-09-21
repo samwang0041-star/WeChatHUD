@@ -242,10 +242,15 @@ private struct GuideCard<Content: View>: View {
     let icon: String
     let tint: Color
     let title: String
-    @ViewBuilder let content: Content
     /// Stagger position within the guide. The page is a long form, so the
     /// cards arrive in reading order rather than all at once.
+    ///
+    /// Declared before `content` on purpose: an unlabeled trailing closure
+    /// only matches the *last* parameter, and these cards are always written
+    /// as `GuideCard(…, index: n) { … }`. Putting `content` first made the
+    /// compiler reach backwards for it (`#TrailingClosureMatching`).
     var index: Int = 0
+    @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

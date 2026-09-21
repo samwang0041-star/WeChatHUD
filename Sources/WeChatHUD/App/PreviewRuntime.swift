@@ -410,7 +410,7 @@ enum PreviewRuntime {
                 dueAt: index == 2 ? nil : now.addingTimeInterval(Double(index + 1) * 3600), confidence: 0.9, promptVersion: "preview")
         }
         for item in store.loadDiscussionItems() where item.promptVersion == "preview" && item.status != .pending {
-            try? store.updateDiscussionItemStatus(id: item.id, status: .pending)
+            _ = try? store.updateDiscussionItemStatus(id: item.id, status: .pending)
         }
         // Keep demo records isolated and stable so native edit/filter flows
         // can be verified without touching any real contact or promise.
@@ -473,7 +473,7 @@ enum PreviewRuntime {
             )
         }
         for commitment in store.loadCommitments() where commitment.promptVersion == "preview" && commitment.status != .pending {
-            try? store.updateCommitmentStatus(msgUID: commitment.msgUID, status: .pending)
+            _ = try? store.updateCommitmentStatus(msgUID: commitment.msgUID, status: .pending)
         }
         monitor.reloadAIData()
         monitor.stats.syncStatus = .ok
