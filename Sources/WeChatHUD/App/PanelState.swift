@@ -94,8 +94,22 @@ final class PanelState: ObservableObject {
     /// When set, SettingsView should navigate to this tab on open.
     @Published var pendingSettingsTab: String?
     @Published var pendingDiscussionScope: DiscussionScope?
-    /// When opening 待办 from 聊天回顾 / 今日小结, keep the same conversation.
-    @Published var pendingDiscussionChatUsername: String?
+   /// When opening 待办 from 聊天回顾 / 今日小结, keep the same conversation.
+   @Published var pendingDiscussionChatUsername: String?
+   /// When leaving 洞察 to 关注谁, keep the conversation that asked to be followed.
+   @Published var insightSelectedChatUsername: String?
+
+   /// After that chat is followed from 关注谁, go back to 洞察 instead of
+   /// leaving the user on the contacts page.
+    /// A receipt is shown as a toast so it survives the tab switch — the
+    /// scan page's in-card status line is destroyed with the view.
+    func returnToInsightIfResuming(_ username: String, receipt: String? = nil) {
+       guard insightSelectedChatUsername == username else { return }
+        if let receipt, !receipt.isEmpty {
+            showToast(receipt)
+        }
+       pendingSettingsTab = "insight"
+   }
     /// Hover inbox vs in-island task preview (figures 19 / 20).
     @Published var islandSurface: IslandSurface = .inbox
     /// Which inbox row currently shows its action panel. One at a time so a
@@ -157,6 +171,14 @@ final class PanelState: ObservableObject {
     /// chat because Accessibility isn't granted). Nil = no toast.
     @Published var toastMessage: String? = nil
     private var toastTimer: Timer?
+
+    /// The standalone toast is shrinking back toward the island.
+    ///
+    /// Enter scales from the island (0.95, top-anchored). Exit used to be
+    /// window-alpha only, so the toast faded in place instead of returning
+    /// the way it arrived. AppDelegate flips this for the exit beat; the
+    /// SwiftUI toast reads it to reverse the scale.
+    @Published var toastCollapsing: Bool = false
 
     /// True while an in-place context-briefing card is expanded
     /// (notification banner or conversation detail). Drives the taller
@@ -251,6 +273,7 @@ final class PanelState: ObservableObject {
     func setAutopilotPopoverOpen(_ expanded: Bool) {
         autopilotPopoverOpen = expanded
         refreshTransientIslandHold()
+        NotificationCenter.default.post(name: .hudIslandNeedsResize, object: nil)
     }
 
     private func refreshTransientIslandHold() {
@@ -285,6 +308,7 @@ final class PanelState: ObservableObject {
     /// spamming doesn't queue up stale messages.
     func showToast(_ message: String, duration: TimeInterval = 4) {
         toastTimer?.invalidate()
+        toastCollapsing = false
         toastMessage = message
         // .common so the toast still expires while a menu is tracking —
         // default-mode timers freeze under event-tracking and a held-open

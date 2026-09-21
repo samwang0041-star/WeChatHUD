@@ -66,9 +66,9 @@ final class AIDailyReportGeneratorTests: XCTestCase {
         let template = "HL:\n{highlights}\nAC:\n{actions}\nR:\n{risks}"
         let prompt = generator.formatPrompt(template: template, report: report)
 
-        XCTAssertTrue(prompt.contains("暂无高亮数据"))
-        XCTAssertTrue(prompt.contains("暂无待办"))
-        XCTAssertTrue(prompt.contains("暂无风险"))
+        XCTAssertTrue(prompt.contains("今天没有高亮。"))
+        XCTAssertTrue(prompt.contains("今天没有待办。"))
+        XCTAssertTrue(prompt.contains("今天没有风险。"))
     }
 
     func testFormatPromptHighlightsCapped() {
@@ -173,7 +173,7 @@ final class AIDailyReportGeneratorTests: XCTestCase {
         let prompt = generator.formatPrompt(template: "今日未读: {unread_count}\n{actions}", report: report)
 
         XCTAssertTrue(prompt.contains("今日未读: 0"))
-        XCTAssertTrue(prompt.contains("暂无待办"))
+        XCTAssertTrue(prompt.contains("今天没有待办。"))
     }
 
     func testHistoricalTemplateRewriteDoesNotChangeQuotedSourceText() {

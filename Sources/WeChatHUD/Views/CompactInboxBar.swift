@@ -43,7 +43,9 @@ struct CompactInboxBar: View {
                 leftWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(CompanionPressStyle())
+            // Wash, not scale: CompanionPressStyle shrinks the wing while the
+            // black silhouette stays put, so the glyph detaches from the island.
+            .buttonStyle(IslandRowButtonStyle(paintsHover: false))
             .accessibilityLabel(leftWingCopy.accessibilityLabel)
             .accessibilityValue(accessibilityStatus)
             .help(leftWingCopy.help)
@@ -65,7 +67,7 @@ struct CompactInboxBar: View {
                 rightWing.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(IslandRowButtonStyle(paintsHover: false))
             .accessibilityLabel("打开今天")
             .help("打开今天")
             .padding(.leading, 6)
@@ -169,6 +171,12 @@ struct CompactInboxBar: View {
     }
 
     private func syncPeekPills(_ peeking: Bool) {
+        // Reduce Motion: no 60ms entrance delay and no 6pt slide. The spec
+        // wants peek chrome "already there", not "late, then a jump".
+        if CompanionMotion.reduceMotion {
+            pillsVisible = peeking
+            return
+        }
         if peeking {
             pillsVisible = false
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
@@ -192,9 +200,9 @@ struct CompactInboxBar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(IslandRowButtonStyle(paintsHover: false))
         .opacity(pillsVisible ? 1 : 0)
-        .offset(x: pillsVisible ? 0 : (alignment == .trailing ? -6 : 6))
+        .offset(x: CompanionMotion.reduceMotion ? 0 : (pillsVisible ? 0 : (alignment == .trailing ? -6 : 6)))
         .transaction { $0.animation = CompanionMotion.ease() }
         .accessibilityLabel(leftWingCopy.accessibilityLabel)
         .accessibilityValue(island.glance)

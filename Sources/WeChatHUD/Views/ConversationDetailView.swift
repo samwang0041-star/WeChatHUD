@@ -16,10 +16,15 @@ struct ConversationDetailView: View {
     @State private var suggestionMessage: String?
     @State private var replyText = ""
     @State private var isSending = false
-    @State private var sendResult: String?
-    @State private var needsOperationPermission = false
-    @State private var sendSucceeded = false
-    @State private var showSendConfirm = false
+   @State private var sendResult: String?
+   @State private var isSavingDraft = false
+    @State private var copyReceipt: String?
+    @State private var copyReceiptFailed = false
+    @State private var sendConfirmError: String?
+   @State private var needsOperationPermission = false
+   @State private var sendSucceeded = false
+    @State private var permissionSettingsError: String?
+   @State private var showSendConfirm = false
     @State private var sourceSavedDraftID: Int64?
     @State private var isRenaming = false
     @State private var transcriptRows: [FocusedTranscript.Row] = []
@@ -83,25 +88,40 @@ struct ConversationDetailView: View {
         }
         .companionDialogBackdrop(showSendConfirm) {
             if showSendConfirm {
-                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, dark: true, onClose: { showSendConfirm = false }) {
+                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, dark: true, onClose: { if !isSending { showSendConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 14) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: chatName, text: replyText))
                             .companionFont(size: 13)
                             .foregroundStyle(.white.opacity(0.85))
                             .fixedSize(horizontal: false, vertical: true)
+                        if let sendConfirmError {
+                            Text(sendConfirmError)
+                                .companionFont(size: 13)
+                                .foregroundStyle(Color.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.sendConfirmBack) { showSendConfirm = false }
                                 .foregroundStyle(.white)
-                            Button(CompanionProductCopy.sendConfirmAction) {
-                                showSendConfirm = false
-                                Task { await sendReply() }
+                                .companionBusyHold(isSending, "正在发送")
+                            Button {
+                                Task {
+                                    let succeeded = await sendReply()
+                                    if succeeded { showSendConfirm = false }
+                                }
+                            } label: {
+                                Text(isSending ? "正在发送…" : CompanionProductCopy.sendConfirmAction)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
                             .disabled(isSending)
+                            .help(isSending ? "正在发送" : "")
+                            .accessibilityHint(isSending ? "正在发送" : "")
                         }
                     }
+                    .companionAnimation(CompanionMotion.ease(), value: sendConfirmError)
                 }
             }
         }
@@ -143,6 +163,17 @@ struct ConversationDetailView: View {
         return "未发送"
     }
 
+    private var composerTextEmpty: Bool {
+        replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var copyHelp: String {
+        if isSavingDraft { return "正在保存草稿" }
+        if composerTextEmpty { return "先写回复" }
+        if let copyReceipt { return copyReceipt }
+        return "复制回复到剪贴板"
+    }
+
     private var composerStatusDetail: String {
         if sendSucceeded { return "这条回复已在微信中核对。" }
         if sendResult == CompanionProductCopy.sendUncertain { return "先到微信查看，不要重复发送。" }
@@ -156,10 +187,75 @@ struct ConversationDetailView: View {
         panelState.previewSendReceipt = nil
     }
 
-    // MARK: - Reply Composer
+    private func saveComposerDraft() {
+        guard !isSavingDraft, !isSending, !composerTextEmpty else { return }
+        isSavingDraft = true
+        needsOperationPermission = false
+        Task { @MainActor in
+            defer { isSavingDraft = false }
+            do {
+                try monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText, replacingDraftID: sourceSavedDraftID)
+                // Saving a draft is not a send — the receipt goes
+                // through the toast channel so the composer status
+                // never reads "已发送" for text still in 草稿.
+                sendSucceeded = false
+                sourceSavedDraftID = nil
+                replyText = ""
+                panelState.showToast("已存为草稿")
+            } catch {
+                if case HUDStoreError.draftNotFound = error {
+                    sendResult = "这条草稿已被删除，回复内容仍保留"
+                } else {
+                    sendResult = "草稿未保存，请重试"
+                }
+                sendSucceeded = false
+            }
+        }
+    }
+
+    private func recordSendFailure(_ message: String) {
+        sendResult = message
+        sendConfirmError = message
+       sendSucceeded = false
+   }
+
+    private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
+              NSWorkspace.shared.open(url) else {
+            permissionSettingsError = "系统设置未能打开，请从苹果菜单打开系统设置，再允许微信操作权限。"
+            return
+        }
+        permissionSettingsError = nil
+    }
+
+    /// Copy is not a send — marking sendSucceeded would flip the composer
+    /// status to "已发送" for unsent text. The copy receipt is its own line,
+    /// so a successful copy cannot paint the send-failure chrome.
+    private func copyReplyToClipboard() {
+        let ok = CompanionClipboard.write(replyText)
+        copyReceipt = ok ? CompanionInteractionCopy.replyCopied : CompanionInteractionCopy.copyFailed
+        copyReceiptFailed = !ok
+    }
+
+   // MARK: - Reply Composer
 
     private var replyComposer: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let copyReceipt {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(copyReceipt)
+                        .companionFont(size: 12)
+                        .foregroundColor(copyReceiptFailed ? .orange : CompanionPalette.islandMint)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if copyReceiptFailed {
+                        Button("再复制一次", action: copyReplyToClipboard)
+                            .buttonStyle(CompanionPressStyle())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .transition(.companionStatusReveal)
+            }
             if let result = sendResult {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(result)
@@ -171,33 +267,39 @@ struct ConversationDetailView: View {
                             Button("查看微信") {
                                 monitor.openWeChatChat(chatUsername)
                             }
-                            .buttonStyle(.link)
+                            .buttonStyle(CompanionPressStyle())
                         } else {
                             Button("去微信核对") {
                                 monitor.openWeChatChat(chatUsername)
                             }
-                            .buttonStyle(.link)
-                            Button("复制回复") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(replyText, forType: .string)
-                            }
-                            .buttonStyle(.link)
+                            .buttonStyle(CompanionPressStyle())
+                            Button("复制回复", action: copyReplyToClipboard)
+                            .buttonStyle(CompanionPressStyle())
                         }
-                        if needsOperationPermission {
-                            Button("检查微信操作权限") {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                            .buttonStyle(.link)
-                        }
+                       if needsOperationPermission {
+                           Button("检查微信操作权限") {
+                                openAccessibilitySettings()
+                           }
+                          .buttonStyle(CompanionPressStyle())
+                      }
+                  }
+                    if let permissionSettingsError {
+                        Text(permissionSettingsError)
+                            .companionFont(size: 12)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.companionStatusReveal)
                     }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
+               }
+               .padding(.horizontal, 12)
+               .padding(.top, 8)
+               .transition(.companionStatusReveal)
             }
             replyControls
         }
+       .companionAnimation(CompanionMotion.ease(), value: sendResult)
+        .companionAnimation(CompanionMotion.ease(), value: permissionSettingsError)
+        .companionAnimation(CompanionMotion.ease(), value: copyReceipt)
     }
 
     private var replyControls: some View {
@@ -236,7 +338,7 @@ struct ConversationDetailView: View {
                     // before the user has done anything it reports nothing.
                     // It earns its line back once a send, copy or failure makes
                     // "not sent" a fact rather than a starting condition.
-                    if sendSucceeded || sendResult != nil {
+                    if sendSucceeded || sendResult != nil || copyReceipt != nil {
                         Text(composerStatusTitle)
                             .companionFont(size: 11, weight: .medium)
                             .companionDimmedForeground(0.55)
@@ -252,55 +354,40 @@ struct ConversationDetailView: View {
                         .scaleEffect(0.6)
                         .frame(width: 28, height: 28)
                 } else {
-                    Button("存为草稿") {
-                        guard !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-                        needsOperationPermission = false
-                        do {
-                            try monitor.saveDraft(chatUsername: chatUsername, chatName: chatName, text: replyText, replacingDraftID: sourceSavedDraftID)
-                            // Saving a draft is not a send — the receipt goes
-                            // through the toast channel so the composer status
-                            // never reads "已发送" for text still in 草稿.
-                            sendSucceeded = false
-                            sourceSavedDraftID = nil
-                            replyText = ""
-                            panelState.showToast("已存为草稿")
-                        } catch {
-                            if case HUDStoreError.draftNotFound = error {
-                                sendResult = "这条草稿已被删除，回复内容仍保留"
-                            } else {
-                                sendResult = "草稿未保存，请重试"
-                            }
-                            sendSucceeded = false
-                        }
+
+                    Button(action: saveComposerDraft) {
+                        Text(isSavingDraft ? "正在保存…" : "存为草稿")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("存为草稿，可在「草稿」里继续编辑")
+                    .disabled(composerTextEmpty || isSavingDraft)
+                    .help(isSavingDraft ? "正在保存草稿" : (composerTextEmpty ? "先写回复" : "存为草稿，可在「草稿」里继续编辑"))
+                    .accessibilityHint(isSavingDraft ? "正在保存草稿" : (composerTextEmpty ? "先写回复" : ""))
 
                     Button("复制") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(replyText, forType: .string)
-                        // Copy is not a send — marking sendSucceeded would flip
-                        // the composer status to "已发送" for unsent text.
-                        sendResult = "回复已复制，发送前请核对收件人。"
-                        sendSucceeded = false
+                        copyReplyToClipboard()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    .disabled(composerTextEmpty || isSavingDraft)
+                    .help(copyHelp)
+                    .accessibilityHint(copyHelp)
 
                     Button("发送…") {
-                        guard !replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                        guard !composerTextEmpty, !isSavingDraft else { return }
+                        sendConfirmError = nil
                         showSendConfirm = true
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .companionFont(size: 12, weight: .semibold)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(CompanionPalette.jade, in: Capsule())
-                    .opacity(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
-                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(composerTextEmpty || isSavingDraft ? 0.45 : 1)
+                    .disabled(composerTextEmpty || isSavingDraft)
+                    .help(isSavingDraft ? "正在保存草稿" : (composerTextEmpty ? "先写回复" : ""))
+                    .accessibilityHint(isSavingDraft ? "正在保存草稿" : (composerTextEmpty ? "先写回复" : ""))
                 }
             }
         }
@@ -308,11 +395,12 @@ struct ConversationDetailView: View {
         .padding(.vertical, 8)
     }
 
-    private func sendReply() async {
-        guard !isSending else { return }
+    @discardableResult
+    private func sendReply() async -> Bool {
+        guard !isSending else { return false }
         let draftAtSend = replyText
         let text = draftAtSend.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else { return false }
         isSending = true
         needsOperationPermission = false
         defer { isSending = false }
@@ -320,21 +408,18 @@ struct ConversationDetailView: View {
         // Keep the entire previous window, not only its latest row: repeated
         // identical replies must not turn an old message into a new receipt.
         guard let baseline = await monitor.messagesForSendReceipt(chatUsername: chatUsername, limit: 20) else {
-            sendResult = "无法读取发送前记录，草稿已保留，请在微信中核对后回复"
-            sendSucceeded = false
-            return
+            recordSendFailure("发之前没能核对上一条，草稿还在。请到微信里看过再发。")
+            return false
         }
         let previousIDs = Set(baseline.map(\.id))
         let startedAt = Int(Date().timeIntervalSince1970)
         if PreviewRuntime.isEnabled {
-            sendResult = CompanionProductCopy.sendUncertain
-            sendSucceeded = false
-            return
+            recordSendFailure(CompanionProductCopy.sendUncertain)
+            return false
         }
         guard let config = monitor.loadAutopilotConfig() else {
-            sendResult = ChatMonitor.unreadableConfigNotice
-            sendSucceeded = false
-            return
+            recordSendFailure(ChatMonitor.unreadableConfigNotice)
+            return false
         }
         let sendKey = config.sendKey
         // `chatName` is the HUD label, which may be a local alias WeChat has
@@ -365,6 +450,8 @@ struct ConversationDetailView: View {
         if confirmed {
             sendResult = CompanionProductCopy.sendSuccess(name: chatName)
             sendSucceeded = true
+            sendConfirmError = nil
+            copyReceipt = nil
             if replyText == draftAtSend { replyText = "" }
             // Record as positive AI feedback if the reply came from a suggestion
             if suggestions.contains(where: { $0.text == text }) {
@@ -386,10 +473,10 @@ struct ConversationDetailView: View {
                 )
             }
         } else {
-            sendResult = result.failureMessage ?? CompanionProductCopy.sendUncertain
-            sendSucceeded = false
+            recordSendFailure(result.failureMessage ?? CompanionProductCopy.sendUncertain)
         }
         if confirmed { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { sendResult = nil } }
+        return confirmed
     }
 
     // MARK: - Header
@@ -403,8 +490,10 @@ struct ConversationDetailView: View {
                 Image(systemName: "chevron.left")
                     .companionFont(size: 11, weight: .semibold)
                     .companionDimmedForeground(0.6)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("返回收件箱")
 
             let isGroup = MessageHelpers.isGroupChat(chatUsername)
@@ -429,10 +518,10 @@ struct ConversationDetailView: View {
                     Image(systemName: "pencil")
                         .companionFont(size: 11, weight: .semibold)
                         .companionDimmedForeground(0.55)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandIconButtonStyle())
                 .help("给这个会话起个名字")
                 .accessibilityLabel("给这个会话起个名字")
             }
@@ -493,10 +582,18 @@ struct ConversationDetailView: View {
             if transcriptRows.isEmpty && PreviewRuntime.isEnabled && !hasTranscriptFocus {
                 previewTranscript
             } else if transcriptRows.isEmpty {
-                Text("暂无消息记录")
-                    .companionFont(size: 13)
-                    .companionDimmedForeground(0.35)
-                    .padding(.vertical, 6)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("这段对话暂时没有本地消息。")
+                       .companionFont(size: 13)
+                        .companionDimmedForeground(0.35)
+                    Button("在微信中查看") {
+                        monitor.openWeChatChat(chatUsername)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.islandMint)
+                    .accessibilityLabel("在微信中查看这段对话")
+                }
+                .padding(.vertical, 6)
             } else {
                 ForEach(Array(transcriptRows.enumerated()), id: \.offset) { index, msg in
                     messageBubble(sender: msg.sender, body: msg.body, highlighted: msg.isFocus)
@@ -577,7 +674,7 @@ struct ConversationDetailView: View {
                         .background(Color.accentColor.opacity(0.1))
                         .cornerRadius(4)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                 }
             }
             .padding(.trailing, 14)
@@ -590,20 +687,25 @@ struct ConversationDetailView: View {
                         .companionDimmedForeground(0.4)
                 }
                 .padding(.vertical, 6)
+                .transition(.companionStatusReveal)
             } else if suggestions.isEmpty {
                 Text(suggestionMessage ?? (hasReplyDebtContext ? "点击「生成建议」获取 AI 回复建议" : "当前没有待回复上下文"))
                     .companionFont(size: 10)
                     .companionDimmedForeground(0.3)
                     .padding(.vertical, 4)
+                    .transition(.companionStatusReveal)
             } else {
                 ForEach(Array(suggestions.enumerated()), id: \.offset) { _, suggestion in
                     suggestionRow(suggestion)
                 }
+                .transition(.companionStatusReveal)
             }
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        .companionAnimation(CompanionMotion.ease(), value: isLoadingSuggestions)
+        .companionAnimation(CompanionMotion.ease(), value: suggestions.count)
     }
 
     private func suggestionRow(_ suggestion: AIReplySuggester.Suggestion) -> some View {
@@ -655,47 +757,62 @@ private struct SuggestionRowView: View {
     let onAdopt: (String) -> Void
     @State private var hovered = false
     @State private var copied = false
+    @State private var copyFailed = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(suggestion.text)
-                    .companionFont(size: 13)
-                    .companionDimmedForeground(0.88)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button(action: {
-                    WeChatLauncher.copyText(suggestion.text)
-                    copied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
-                }) {
-                    Image(systemName: copied ? "checkmark.circle.fill" : "doc.on.doc")
-                        .companionFont(size: 10)
-                        .foregroundColor(copied ? .green : .white.opacity(0.4))
+        HStack(alignment: .top, spacing: 4) {
+            Button(action: { onAdopt(suggestion.text) }) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(suggestion.text)
+                        .companionFont(size: 13)
+                        .companionDimmedForeground(0.88)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Text(suggestion.tone)
+                            .companionFont(size: 10)
+                            .companionDimmedForeground(0.4)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.white.opacity(0.06))
+                            .cornerRadius(3)
+                        Text(suggestion.rationale)
+                            .companionFont(size: 10)
+                            .companionDimmedForeground(0.3)
+                            .lineLimit(1)
+                    }
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .padding(.leading, 6)
+                .padding(.trailing, 4)
+                .background(hovered ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
+                .cornerRadius(4)
+                .contentShape(Rectangle())
             }
-            HStack(spacing: 6) {
-                Text(suggestion.tone)
+            .buttonStyle(CompanionPressStyle())
+            .accessibilityLabel("采用这条建议")
+            .onHover { hovered = $0 }
+            .companionAnimation(CompanionMotion.hover(), value: hovered)
+
+            Button(action: {
+                let ok = CompanionClipboard.write(suggestion.text)
+                copied = ok
+                copyFailed = !ok
+                if ok {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                }
+            }) {
+                Image(systemName: copied ? "checkmark.circle.fill" : (copyFailed ? "exclamationmark.triangle.fill" : "doc.on.doc"))
                     .companionFont(size: 10)
-                    .companionDimmedForeground(0.4)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.white.opacity(0.06))
-                    .cornerRadius(3)
-                Text(suggestion.rationale)
-                    .companionFont(size: 10)
-                    .companionDimmedForeground(0.3)
-                    .lineLimit(1)
+                    .foregroundColor(copied ? CompanionPalette.islandMint : (copyFailed ? .orange : .white.opacity(0.4)))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(IslandIconButtonStyle())
+            .help(copied ? CompanionInteractionCopy.copied : (copyFailed ? CompanionInteractionCopy.copyFailed : "复制这条建议"))
+            .accessibilityLabel("复制这条建议")
+            .companionAnimation(CompanionMotion.ease(), value: copied)
+            .companionAnimation(CompanionMotion.ease(), value: copyFailed)
         }
-        .padding(.vertical, 4)
-        .padding(.horizontal, 6)
-        .background(hovered ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
-        .cornerRadius(4)
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .companionAnimation(CompanionMotion.hover(), value: hovered)
-        .onTapGesture { onAdopt(suggestion.text) }
     }
 }

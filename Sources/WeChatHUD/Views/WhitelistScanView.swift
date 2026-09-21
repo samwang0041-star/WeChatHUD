@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct WhitelistScanView: View {
-    @EnvironmentObject private var store: HUDStore
-    @EnvironmentObject var monitor: ChatMonitor
+   @EnvironmentObject private var store: HUDStore
+   @EnvironmentObject var monitor: ChatMonitor
+
+    @EnvironmentObject var panelState: PanelState
 
     @State private var isScanning = false
     @State private var results: [ScanResultItem] = []
@@ -14,6 +16,27 @@ struct WhitelistScanView: View {
     @State private var scanTask: Task<Void, Never>?
     @State private var activeScanID: UUID?
     @State private var pendingRemoveDismissed: ScanDismissedEntry?
+   @State private var isRemovingDismissed = false
+    @State private var didCompleteScan = false
+
+   private enum ScanWrite: Equatable {
+        case accept(String)
+        case dismiss(String)
+        case acceptDismissed(String)
+        case acceptAll
+        case dismissAll
+
+        var help: String {
+            switch self {
+            case .accept, .acceptDismissed, .acceptAll: return "正在添加关注"
+            case .dismiss, .dismissAll: return "正在忽略建议"
+            }
+        }
+    }
+
+    @State private var busyWrite: ScanWrite?
+
+    private var isWriting: Bool { busyWrite != nil }
 
     struct ScanResultItem: Identifiable {
         let id: String
@@ -71,11 +94,25 @@ struct WhitelistScanView: View {
                 if !pendingResults.isEmpty {
                     Text("\(pendingResults.count) 条待处理")
                         .font(.system(size: 11)).foregroundColor(.secondary)
-                    Button("全部接受") { acceptAll() }
+                    Button {
+                        commit(.acceptAll) { acceptAll() }
+                    } label: {
+                        Text(busyWrite == .acceptAll ? "正在添加…" : "全部接受")
+                    }
                         .tint(CompanionPalette.accent)
                         .buttonStyle(.borderedProminent).controlSize(.small)
-                    Button("全部忽略") { dismissAll() }
+                        .disabled(isWriting)
+                        .help(isWriting ? (busyWrite?.help ?? "") : "")
+                        .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
+                    Button {
+                        commit(.dismissAll) { dismissAll() }
+                    } label: {
+                        Text(busyWrite == .dismissAll ? "正在忽略…" : "全部忽略")
+                    }
                         .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(isWriting)
+                        .help(isWriting ? (busyWrite?.help ?? "") : "")
+                        .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
                 }
             }
             .padding(.bottom, 12)
@@ -85,13 +122,14 @@ struct WhitelistScanView: View {
                     .font(.system(size: 11))
                     .foregroundColor(statusIsError ? .red : .secondary)
                     .padding(.bottom, 8)
+                    .transition(.companionStatusReveal)
             }
 
             if isScanning, let scanProgress {
                 HStack(spacing: 8) {
                     ProgressView(value: Double(scanProgress.completed), total: Double(max(scanProgress.total, 1)))
                         .frame(maxWidth: 180)
-                    Text("读取消息 \(scanProgress.completed)/\(scanProgress.total)")
+                    Text("正在读取会话 \(scanProgress.completed)/\(scanProgress.total)")
                         .font(.system(size: 11)).foregroundColor(.secondary)
                     if scanProgress.failed > 0 {
                         Text("不可读 \(scanProgress.failed)")
@@ -104,12 +142,35 @@ struct WhitelistScanView: View {
             // Scrollable results
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if !results.isEmpty && pendingResults.isEmpty && !isScanning {
-                        Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
-                            .font(.system(size: 12)).foregroundColor(.secondary)
+                   if !results.isEmpty && pendingResults.isEmpty && !isScanning {
+                       Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
+                           .font(.system(size: 12)).foregroundColor(.secondary)
+                   }
+
+                    if results.isEmpty && groupedResults.isEmpty && !isScanning && dismissed.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(didCompleteScan
+                                 ? "这一轮没有待处理的建议。已关注的人仍在「关注谁」里。"
+                                 : "还没有扫描建议。开始扫描后，近期会话会出现在这里。")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                            if didCompleteScan {
+                                Button("查看已关注") {
+                                    NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                                }
+                                .buttonStyle(CompanionPressStyle())
+                                .foregroundStyle(CompanionPalette.jadeInk)
+                                .accessibilityLabel("去关注谁查看已关注的人")
+                            } else {
+                                Button("开始扫描") { startScan() }
+                                    .buttonStyle(CompanionPressStyle())
+                                    .foregroundStyle(CompanionPalette.jadeInk)
+                                    .accessibilityLabel("开始扫描值得关注的对话")
+                            }
+                        }
                     }
 
-                    ForEach(groupedResults, id: \.0) { category, items in
+                   ForEach(groupedResults, id: \.0) { category, items in
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
                                 Circle().fill(colorFor(category)).frame(width: 8, height: 8)
@@ -145,19 +206,44 @@ struct WhitelistScanView: View {
         }
         .onAppear { loadDismissed() }
         .onDisappear { cancelScan() }
-        .alert("删除这条忽略记录？", isPresented: Binding(
-            get: { pendingRemoveDismissed != nil },
-            set: { if !$0 { pendingRemoveDismissed = nil } }
-        )) {
-            Button("删除", role: .destructive) {
-                if let entry = pendingRemoveDismissed {
-                    pendingRemoveDismissed = nil
-                    removeDismissed(entry)
+        .companionAnimation(CompanionMotion.ease(), value: statusMessage)
+        .companionDialogBackdrop(pendingRemoveDismissed != nil) {
+            if let entry = pendingRemoveDismissed {
+                CompanionDialog(title: "删除这条忽略记录？", onClose: { if !isRemovingDismissed { pendingRemoveDismissed = nil } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("删除后该联系人可能重新出现在以后的扫描建议中。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if statusIsError, let statusMessage {
+                            Text(statusMessage)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("取消") { pendingRemoveDismissed = nil }
+                                .companionBusyHold(isRemovingDismissed, "正在删除这条忽略记录")
+                            Button(role: .destructive) {
+                                guard !isRemovingDismissed else { return }
+                                isRemovingDismissed = true
+                                Task { @MainActor in
+                                    let ok = removeDismissed(entry)
+                                    isRemovingDismissed = false
+                                    if ok { pendingRemoveDismissed = nil }
+                                }
+                            } label: {
+                                Text(isRemovingDismissed ? "正在删除忽略记录…" : "删除")
+                            }
+                            .disabled(isRemovingDismissed)
+                            .help(isRemovingDismissed ? "正在删除这条忽略记录" : "")
+                            .accessibilityHint(isRemovingDismissed ? "正在删除这条忽略记录" : "")
+                        }
+                    }
                 }
             }
-            Button("取消", role: .cancel) { pendingRemoveDismissed = nil }
-        } message: {
-            Text("删除后该联系人可能重新出现在以后的扫描建议中。")
         }
     }
 
@@ -187,18 +273,32 @@ struct WhitelistScanView: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Text("\(item.recentCount) 条/45天")
+                    Text("\(item.recentCount) 条 / 45 天")
                         .font(.system(size: 10)).foregroundColor(.secondary)
                     Text(item.reason)
                         .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
                 }
             }
             Spacer()
-            Button("加入") { accept(item) }
+            Button {
+                commit(.accept(item.id)) { accept(item) }
+            } label: {
+                Text(busyWrite == .accept(item.id) ? "正在添加…" : "加入")
+            }
                 .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent).controlSize(.mini)
-            Button("忽略") { dismiss(item) }
+                .disabled(isWriting)
+                .help(isWriting ? (busyWrite?.help ?? "") : "")
+                .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
+            Button {
+                commit(.dismiss(item.id)) { dismiss(item) }
+            } label: {
+                Text(busyWrite == .dismiss(item.id) ? "正在忽略…" : "忽略")
+            }
                 .buttonStyle(.bordered).controlSize(.mini)
+                .disabled(isWriting)
+                .help(isWriting ? (busyWrite?.help ?? "") : "")
+                .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
     }
@@ -212,11 +312,21 @@ struct WhitelistScanView: View {
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
             Spacer()
-            Button("添加关注") { acceptDismissed(entry) }
+            Button {
+                commit(.acceptDismissed(entry.username)) { acceptDismissed(entry) }
+            } label: {
+                Text(busyWrite == .acceptDismissed(entry.username) ? "正在添加…" : "添加关注")
+            }
                 .tint(CompanionPalette.accent)
                 .buttonStyle(.borderedProminent).controlSize(.mini)
+                .disabled(isWriting)
+                .help(isWriting ? (busyWrite?.help ?? "") : "")
+                .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
             Button("删除", role: .destructive) { pendingRemoveDismissed = entry }
                 .buttonStyle(.bordered).controlSize(.mini)
+                .disabled(isWriting)
+                .help(isWriting ? (busyWrite?.help ?? "") : "")
+                .accessibilityHint(isWriting ? (busyWrite?.help ?? "") : "")
                 .foregroundStyle(.red)
                 .tint(.red)
         }
@@ -235,16 +345,17 @@ struct WhitelistScanView: View {
                 category: cat,
                 attentionLevel: .watch
             )
-            if let idx = results.firstIndex(where: { $0.id == item.id }) {
-                results[idx].accepted = true
-            }
-            setStatus("已添加关注：\(displayName(for: item.username, fallback: item.displayName))")
-            print("[WCHUD] AI scan: accepted \(item.username)")
-        } catch {
-            setStatus("添加关注失败：\(displayName(for: item.username, fallback: item.displayName))", isError: true)
-            print("[WCHUD] AI scan: accept failed for \(item.username): \(error)")
-        }
-    }
+           if let idx = results.firstIndex(where: { $0.id == item.id }) {
+               results[idx].accepted = true
+           }
+          setStatus("已添加关注：\(displayName(for: item.username, fallback: item.displayName))")
+            panelState.returnToInsightIfResuming(
+                item.username,
+                receipt: "已添加关注：\(displayName(for: item.username, fallback: item.displayName))")
+       } catch {
+           setStatus("没能添加关注：\(displayName(for: item.username, fallback: item.displayName))。请重试。", isError: true)
+       }
+   }
 
     private func dismiss(_ item: ScanResultItem) {
         do {
@@ -252,13 +363,11 @@ struct WhitelistScanView: View {
             results.removeAll { $0.id == item.id }
             loadDismissed()
             showDismissed = true
-            setStatus("已忽略：\(displayName(for: item.username, fallback: item.displayName))")
-            print("[WCHUD] AI scan: dismissed \(item.username)")
-        } catch {
-            setStatus("忽略失败：\(displayName(for: item.username, fallback: item.displayName))", isError: true)
-            print("[WCHUD] AI scan: dismiss failed for \(item.username): \(error)")
-        }
-    }
+           setStatus("已忽略：\(displayName(for: item.username, fallback: item.displayName))")
+       } catch {
+           setStatus("没能忽略这条建议：\(displayName(for: item.username, fallback: item.displayName))。请重试。", isError: true)
+       }
+   }
 
     private func acceptAll() {
         let items = pendingResults
@@ -279,25 +388,27 @@ struct WhitelistScanView: View {
                 category: .other,
                 attentionLevel: .watch
             )
-            try store.undismissScanResult(username: entry.username)
-            loadDismissed()
-            setStatus("已从忽略列表添加关注：\(displayName(for: entry.username, fallback: entry.displayName))")
-            print("[WCHUD] AI scan: accepted dismissed \(entry.username)")
-        } catch {
-            setStatus("从忽略列表添加关注失败：\(displayName(for: entry.username, fallback: entry.displayName))", isError: true)
-            print("[WCHUD] AI scan: accept dismissed failed for \(entry.username): \(error)")
-        }
-    }
+           try store.undismissScanResult(username: entry.username)
+           loadDismissed()
+          setStatus("已从忽略列表添加关注：\(displayName(for: entry.username, fallback: entry.displayName))")
+            panelState.returnToInsightIfResuming(
+                entry.username,
+                receipt: "已从忽略列表添加关注：\(displayName(for: entry.username, fallback: entry.displayName))")
+       } catch {
+           setStatus("没能从忽略列表添加关注：\(displayName(for: entry.username, fallback: entry.displayName))。请重试。", isError: true)
+       }
+   }
 
-    private func removeDismissed(_ entry: ScanDismissedEntry) {
+    @discardableResult
+    private func removeDismissed(_ entry: ScanDismissedEntry) -> Bool {
         do {
             try store.undismissScanResult(username: entry.username)
             loadDismissed()
-            setStatus("已删除忽略记录：\(displayName(for: entry.username, fallback: entry.displayName))")
-            print("[WCHUD] AI scan: removed dismissed \(entry.username)")
-        } catch {
-            setStatus("删除忽略记录失败：\(displayName(for: entry.username, fallback: entry.displayName))", isError: true)
-            print("[WCHUD] AI scan: remove dismissed failed for \(entry.username): \(error)")
+           setStatus("已删除忽略记录：\(displayName(for: entry.username, fallback: entry.displayName))")
+           return true
+       } catch {
+           setStatus("没能删除忽略记录：\(displayName(for: entry.username, fallback: entry.displayName))。请重试。", isError: true)
+           return false
         }
     }
 
@@ -306,6 +417,15 @@ struct WhitelistScanView: View {
     private func setStatus(_ message: String, isError: Bool = false) {
         statusMessage = message
         statusIsError = isError
+    }
+
+    private func commit(_ write: ScanWrite, _ work: @escaping () -> Void) {
+        guard busyWrite == nil, !isRemovingDismissed else { return }
+        busyWrite = write
+        Task { @MainActor in
+            defer { busyWrite = nil }
+            work()
+        }
     }
 
     private func displayName(for username: String, fallback: String) -> String {
@@ -318,10 +438,11 @@ struct WhitelistScanView: View {
     private func startScan() {
         guard !isScanning else { return }
         let scanID = UUID()
-        activeScanID = scanID
-        isScanning = true
-        results = []
-        statusMessage = nil
+       activeScanID = scanID
+       isScanning = true
+        didCompleteScan = false
+       results = []
+       statusMessage = nil
         statusIsError = false
         scanProgress = ContactRecommendationScanSource.Progress(
             completed: 0, total: 0, succeeded: 0, failed: 0, empty: 0
@@ -349,19 +470,21 @@ struct WhitelistScanView: View {
                 scanTask = nil
                 isScanning = false
                 scanProgress = nil
-                if error is CancellationError { return }
-                setStatus("候选联系人读取失败。请检查微信连接和数据目录后重试。", isError: true)
-                return
+               if error is CancellationError { return }
+                didCompleteScan = true
+               setStatus("没能读到近期会话。请确认微信已连接后再试一次。", isError: true)
+               return
             }
 
             guard activeScanID == scanID, !Task.isCancelled else { return }
             guard !scan.candidates.isEmpty else {
                 activeScanID = nil
                 scanTask = nil
-                isScanning = false
-                scanProgress = nil
-                setStatus("没有可扫描的候选联系人。请先同步微信并添加或发现联系人。")
-                return
+               isScanning = false
+               scanProgress = nil
+                didCompleteScan = true
+               setStatus("现在没有可扫描的会话。连上微信后，近期聊天会出现在这里。")
+               return
             }
 
             let batchItems = scan.messageBundles.map { bundle in
@@ -415,27 +538,29 @@ struct WhitelistScanView: View {
             }
             isScanning = false
             scanProgress = nil
-            scanTask = nil
-            activeScanID = nil
+           scanTask = nil
+           activeScanID = nil
 
-            if scan.failures.count > 0 && allResults.isEmpty {
-                setStatus("消息读取失败：\(scan.failures.count) 个候选无法读取，未生成推荐。请检查微信数据目录后重试。", isError: true)
+            didCompleteScan = true
+
+          if scan.failures.count > 0 && allResults.isEmpty {
+                setStatus("有 \(scan.failures.count) 个会话读不到，这次没有推荐。请确认微信已连接后再试。", isError: true)
             } else if scan.failures.count > 0 && failedChunks > 0 {
-                setStatus("部分消息不可读：\(scan.failures.count) 个候选失败；另有 \(failedChunks) 个 AI 批次失败，已显示 \(allResults.count) 条结果。", isError: true)
+                setStatus("有些会话读不完整，有些推荐没写出来。目前显示 \(allResults.count) 条，可再试一次。", isError: true)
             } else if scan.failures.count > 0 {
-                setStatus("部分消息不可读：\(scan.failures.count) 个候选失败，已显示 \(allResults.count) 条结果。", isError: true)
+                setStatus("有 \(scan.failures.count) 个会话读不完整，目前显示 \(allResults.count) 条。可再试一次。", isError: true)
             } else if batchItems.isEmpty {
-                setStatus("找到 \(scan.candidates.count) 个候选联系人，但没有可分析的最近消息。", isError: false)
+                setStatus("找到一些近期会话，但还没有可整理的消息。", isError: false)
             } else if failedChunks > 0 && allResults.isEmpty {
-                setStatus("AI 推荐失败：\(failedChunks) 个批次没有返回可用结果，请检查 AI 连接后重试。", isError: true)
+                setStatus("没能写出推荐。请到「AI 服务」看连接，再试一次。", isError: true)
             } else if failedChunks > 0 {
-                setStatus("部分 AI 推荐失败：\(failedChunks) 个批次失败，已显示其余批次的 \(allResults.count) 条结果。", isError: true)
+                setStatus("有些推荐没写出来，目前显示 \(allResults.count) 条。可再试一次。", isError: true)
             } else if allResults.isEmpty {
                 setStatus("扫描完成，没有新的建议。")
             } else if scan.emptyMessageCount > 0 {
-                setStatus("扫描完成，已显示 \(allResults.count) 条建议；另有 \(scan.emptyMessageCount) 个候选没有最近消息。")
+                setStatus("扫描完成，已显示 \(allResults.count) 条建议；另有一些会话还没有最近消息。")
             } else {
-                setStatus("扫描完成，已生成 \(allResults.count) 条建议。")
+                setStatus("扫描完成，已列出 \(allResults.count) 条建议。")
             }
         }
     }

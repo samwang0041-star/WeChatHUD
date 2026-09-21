@@ -17,6 +17,7 @@ struct CompanionSetupCard: View {
     @State private var candidates: [String] = []
     @State private var readiness: OnboardingReadiness?
     @State private var aiSetupExpanded = false
+    @State private var isRechecking = false
 
     var body: some View {
         // Readiness is assembled once per relevant event (rescan/recompute) and
@@ -28,15 +29,16 @@ struct CompanionSetupCard: View {
         let databaseReadable = readiness.map { $0.directoryReady && $0.keyFileReadable } ?? false
         let aiConfigured = readiness?.aiConfigurationValid ?? false
         let aiConnectionTested = readiness?.aiConnectionTested ?? false
+        let followListUnreadable = readiness?.followListUnreadable ?? false
         let hasScope = (readiness?.trackedConversationCount ?? 0) > 0
-        let allReady = connected && aiConfigured && aiConnectionTested && hasScope
+        let allReady = connected && aiConfigured && aiConnectionTested && hasScope && !followListUnreadable
         return Group {
         if readiness != nil && !PreviewRuntime.isEnabled && !allReady {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     Label(FirstLaunchGuide.setupCardTitle, systemImage: "sparkles").font(.headline)
                     Spacer()
-                    Button("使用指南") { navigate(.guide) }.buttonStyle(.link)
+                    Button("使用指南") { navigate(.guide) }.buttonStyle(CompanionPressStyle())
                 }
                 healthStrip(databaseReadable: databaseReadable, connected: connected, aiConnectionTested: aiConnectionTested)
                 Text(FirstLaunchGuide.setupCardSubtitle)
@@ -51,7 +53,11 @@ struct CompanionSetupCard: View {
                 } else if !aiConnectionTested {
                     aiStep(.testAI)
                 }
-                if !hasScope {
+                if followListUnreadable {
+                    step(OnboardingReadinessAction.chooseContacts.title,
+                         detail: CompanionInteractionCopy.followListUnreadableEdit,
+                         icon: "person.2", tab: .contacts)
+                } else if !hasScope {
                     step(OnboardingReadinessAction.chooseContacts.title,
                          detail: FirstLaunchGuide.setupStepDetail(.chooseContacts),
                          icon: "person.2", tab: .contacts)
@@ -80,14 +86,26 @@ struct CompanionSetupCard: View {
                 Label("一键体检", systemImage: "stethoscope")
                     .font(.callout.weight(.medium))
                 Spacer()
-                Button("重新检测") { rescan() }
-                    .buttonStyle(.link)
+                Button {
+                    guard !isRechecking else { return }
+                    isRechecking = true
+                    Task { @MainActor in
+                        rescan()
+                        isRechecking = false
+                    }
+                } label: {
+                    Text(isRechecking ? "正在检测…" : "重新检测")
+                }
+                    .buttonStyle(CompanionPressStyle())
+                    .disabled(isRechecking)
+                    .help(isRechecking ? "正在重新检测连接" : "")
+                    .accessibilityHint(isRechecking ? "正在重新检测连接" : "")
                     .accessibilityIdentifier("setup.recheck")
             }
             HStack(spacing: 16) {
-                healthLight(ok: databaseReadable, label: "数据库可读")
+                healthLight(ok: databaseReadable, label: "聊天可读")
                 healthLight(ok: connected, label: "微信已连接")
-                healthLight(ok: aiConnectionTested, label: "AI 可达")
+                healthLight(ok: aiConnectionTested, label: "AI 能用")
             }
         }
         .padding(12)
@@ -114,7 +132,7 @@ struct CompanionSetupCard: View {
     private func aiStep(_ action: OnboardingReadinessAction) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withMotion(CompanionMotion.ease(0.15)) { aiSetupExpanded.toggle() }
+                withMotion(CompanionMotion.ease()) { aiSetupExpanded.toggle() }
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: action.systemImage).foregroundStyle(Color.accentColor).frame(width: 24)
@@ -130,7 +148,7 @@ struct CompanionSetupCard: View {
                 .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("setup.aiButler")
             if aiSetupExpanded {
@@ -138,13 +156,15 @@ struct CompanionSetupCard: View {
                     FirstLaunchAISetupView()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button("更多 AI 设置") { navigate(.aiButler) }
-                        .buttonStyle(.link)
+                        .buttonStyle(CompanionPressStyle())
                 }
                 .padding(12)
                 .background(Color.accentColor.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityIdentifier("setup.ai.inline")
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: aiSetupExpanded)
     }
 
     private func rescan() {
@@ -172,7 +192,7 @@ struct CompanionSetupCard: View {
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("setup.\(tab.rawValue)")
     }

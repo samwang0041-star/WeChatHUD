@@ -54,6 +54,20 @@ struct InsightSessionEntry: Identifiable {
     let messageCount: Int
 }
 
+/// `selectedChat` is a username. Overview cards and AI briefing lines often
+/// only have a display name, so a tap that assigns the name lands in the
+/// unmatched branch and redraws the overview — a jump that does nothing.
+enum InsightChatIdentity {
+    static func resolve(_ raw: String, names: [String: String]) -> String? {
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+        if names.keys.contains(token) { return token }
+        let matches = names.compactMap { key, value in value == token ? key : nil }
+        guard matches.count == 1 else { return nil }
+        return matches[0]
+    }
+}
+
 @MainActor
 final class InsightStore: ObservableObject {
     @Published var allStats: [String: ChatStatsData] = [:]
@@ -88,7 +102,29 @@ final class InsightStore: ObservableObject {
         )
     }
 
-    /// What made this reload happen.
+    func chatNameMap(whitelist: [WhitelistEntry]) -> [String: String] {
+        var names = Dictionary(uniqueKeysWithValues: allStats.map { ($0.key, $0.value.chatName) })
+        for entry in whitelist {
+            names[entry.id] = entry.displayName
+        }
+        for session in otherActiveSessions {
+            names[session.id] = session.displayName
+        }
+        return names
+    }
+
+    func resolveChatID(_ raw: String, whitelist: [WhitelistEntry]) -> String? {
+       InsightChatIdentity.resolve(raw, names: chatNameMap(whitelist: whitelist))
+   }
+
+    /// `getWhitelist` answers `[]` for both nobody-followed and a failed read.
+    /// The empty-state button that says 「关注谁」 is only honest in the first case.
+    func isFollowListUnreadable(store: HUDStore) -> Bool {
+        if case .unreadable = store.whitelistAllRead() { return true }
+        return false
+    }
+
+   /// What made this reload happen.
     enum ReloadTrigger {
         /// The user opened the page or changed window / scope / date.
         case userInitiated
@@ -199,11 +235,24 @@ final class InsightStore: ObservableObject {
         }
     }
 
-    func filteredWhitelist(store: HUDStore, searchText: String) -> [WhitelistEntry] {
-        let all = store.getWhitelist()
-        let filtered = searchText.isEmpty
-            ? all
-            : all.filter { $0.displayName.localizedCaseInsensitiveContains(searchText) }
+   func filteredWhitelist(store: HUDStore, searchText: String) -> [WhitelistEntry] {
+        let all: [WhitelistEntry]
+        switch store.whitelistAllRead() {
+        case .unreadable:
+            return []
+        case .value(let entries):
+            all = entries
+        }
+      let filtered = searchText.isEmpty
+           ? all
+            : all.filter { entry in
+                let title = ContactIdentityIndex.visibleName(
+                    username: entry.id,
+                    stored: store.storedDisplayName(entry.id),
+                    readerName: entry.displayName)
+                return title.localizedCaseInsensitiveContains(searchText)
+                    || entry.displayName.localizedCaseInsensitiveContains(searchText)
+            }
         return filtered.sorted { lhs, rhs in
             let leftHasMessages = allStats[lhs.id]?.messagesByHour.isEmpty == false ? 1 : 0
             let rightHasMessages = allStats[rhs.id]?.messagesByHour.isEmpty == false ? 1 : 0
@@ -292,18 +341,15 @@ final class InsightStore: ObservableObject {
     }
 
     private func repairStaleDisplayNames(store: HUDStore, reader: WeChatReader) {
-        for entry in store.getWhitelist() {
-            let name = entry.displayName
-            guard MessageHelpers.isGroupChat(name) || name.hasPrefix("wxid_") else { continue }
-            let resolved = reader.displayName(for: entry.id)
-            guard resolved != entry.id && resolved != name else { continue }
-            try? store.addToWhitelist(
-                username: entry.id,
-                displayName: resolved,
-                isGroup: entry.isGroup,
-                category: entry.category,
-                attentionLevel: entry.attentionLevel
-            )
+        // Name-only repair. addToWhitelist is INSERT OR REPLACE and would
+        // reset added_at / auto_suggested. The scan-loop repair rewrites
+        // uninformative names without clobbering follow metadata.
+        _ = ChatMonitor.repairStaleChatNames(store: store) { username in
+            let resolved = reader.displayName(for: username)
+            guard !resolved.isEmpty,
+                  resolved != username,
+                  !ContactIdentityIndex.isRawChatIdentifier(resolved) else { return nil }
+            return resolved
         }
     }
 }

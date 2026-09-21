@@ -76,15 +76,15 @@ enum WeChatLauncher {
             case .pastedBoxChanged: return "粘贴之后输入框的内容又变了，助手没有按下发送。请在微信里核对输入框，再决定要不要发。"
             case .automationHostMissing: return "浮窗主程序没有运行，已停止自动操作，微信不会收到任何内容。"
             case .weChatNotRunning:
-                return "微信未运行"
+                return "微信还没打开。请先打开微信，再试一次。"
             case .accessibilityDenied:
                 return "macOS 尚未允许当前应用操作微信。若系统开关已开启，请重新打开 WeChatHUD 后再试。"
             case .lostForeground:
-                return "微信窗口失去焦点，已取消发送"
+                return "微信窗口不在最前面，已取消发送。请把微信放到前面后再试。"
             case .chatMismatch:
-                return "当前聊天与目标不一致，已取消发送"
+                return "当前打开的聊天不是要发的那一位，已取消发送。请打开对应对话后再试。"
             case .inputNotFound:
-                return "未找到微信输入框"
+                return "没找到微信输入框。请把微信聊天窗口放到前面，点进要发的对话后再试。"
             }
         }
     }
@@ -738,10 +738,13 @@ enum WeChatLauncher {
 
     /// Copy arbitrary text to the user's clipboard. Used by the
     /// Cmd+Click shortcut on message rows.
-    static func copyText(_ text: String) {
+    /// Named copy buttons must inspect the Bool and put a receipt on the
+    /// control that was pressed — the pasteboard itself has no on-screen artifact.
+    @discardableResult
+    static func copyText(_ text: String) -> Bool {
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(text, forType: .string)
+        return pb.setString(text, forType: .string)
     }
 
     /// Send a text message to a chat by name. Opens the chat, pastes

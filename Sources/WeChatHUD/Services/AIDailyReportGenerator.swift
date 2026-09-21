@@ -164,9 +164,9 @@ actor AIDailyReportGenerator {
         // Recalled messages are source-day events, so their count remains
         // factual in a historical report. Current-state counters above do not.
         let recalled = "\(metrics.recalledMessageCount)"
-        let emptyHighlights = historical ? "这一天没有已记录的高亮（不代表没有发生对话）。" : "暂无高亮数据"
-        let emptyActions = historical ? "历史报告未保存待办的当前状态，不能据此判断无待办。" : "暂无待办"
-        let emptyRisks = historical ? "历史报告未保存风险的当前状态，不能据此判断无风险。" : "暂无风险"
+        let emptyHighlights = historical ? "这一天没有已记录的高亮（不代表没有发生对话）。" : "今天没有高亮。"
+        let emptyActions = historical ? "历史报告未保存待办的当前状态，不能据此判断无待办。" : "今天没有待办。"
+        let emptyRisks = historical ? "历史报告未保存风险的当前状态，不能据此判断无风险。" : "今天没有风险。"
 
         let formatted = templateForReport
             .replacingOccurrences(of: "{report_date}", with: Self.reportDateLine(report.date))

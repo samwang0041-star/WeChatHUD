@@ -86,23 +86,28 @@ actor ReviewTodoManager {
 
     // MARK: - Four-state operations (Spec §3.3)
 
-    func markCompleted(todoID: Int) {
-        store.updateTodoStatus(todoID: todoID, status: .completed, completedAt: Date())
+    @discardableResult
+    func markCompleted(todoID: Int) -> Bool {
+        store.updateTodoStatus(todoID: todoID, status: .completed, completedAt: Date()) > 0
     }
 
-    func snooze(todoID: Int, until: Date) {
-        store.updateTodoStatus(todoID: todoID, status: .snoozed, snoozedTo: until)
+    @discardableResult
+    func snooze(todoID: Int, until: Date) -> Bool {
+        store.updateTodoStatus(todoID: todoID, status: .snoozed, snoozedTo: until) > 0
     }
 
-    func markNotMine(todoID: Int) {
-        store.updateTodoStatus(todoID: todoID, status: .notMine)
+    @discardableResult
+    func markNotMine(todoID: Int) -> Bool {
+        store.updateTodoStatus(todoID: todoID, status: .notMine) > 0
     }
 
-    func delegate(todoID: Int, to: String) {
-        store.updateTodoStatus(todoID: todoID, status: .delegated, delegatedTo: to)
+    @discardableResult
+    func delegate(todoID: Int, to: String) -> Bool {
+        store.updateTodoStatus(todoID: todoID, status: .delegated, delegatedTo: to) > 0
     }
 
-    func archive(todoID: Int) {
-        store.updateTodoStatus(todoID: todoID, status: .archived)
+    @discardableResult
+    func archive(todoID: Int) -> Bool {
+        store.updateTodoStatus(todoID: todoID, status: .archived) > 0
     }
 }

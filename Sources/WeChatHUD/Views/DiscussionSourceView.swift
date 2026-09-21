@@ -13,6 +13,7 @@ struct DiscussionSourceView: View {
     @State private var messages: [MessageInfo] = []
     @State private var failure: String?
     @State private var loading = true
+    @State private var reloadToken = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -26,8 +27,11 @@ struct DiscussionSourceView: View {
                     if let onClose { onClose() } else { dismiss() }
                 } label: {
                     Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionIconButtonStyle())
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("关闭原文")
             }
@@ -38,9 +42,16 @@ struct DiscussionSourceView: View {
             }
             Divider()
             if loading {
-                ProgressView("读取本地聊天记录…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("正在读取原文…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if messages.isEmpty {
                 ContentUnavailableView("暂时无法显示原始讨论", systemImage: "text.bubble", description: Text(failure ?? "本机未保留这个时间窗口的记录，或当前账号无法读取。AI 提取内容不等同于已验证的原文。"))
+                Button("再试一次") { reloadToken += 1 }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .disabled(loading)
+                    .help(loading ? "正在读取原文" : "")
+                    .accessibilityHint(loading ? "正在读取原文" : "")
+                    .accessibilityLabel("再试一次读取原文")
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
@@ -79,7 +90,7 @@ struct DiscussionSourceView: View {
         }
         .padding(embedded ? 16 : 24)
         .frame(minWidth: embedded ? 280 : 640, minHeight: embedded ? 360 : 560, alignment: .topLeading)
-        .task(id: item.id) {
+        .task(id: "\(item.id)-\(reloadToken)") {
             // The host leaves this view in place while the selection changes
             // underneath it — clicking another row, the range pill, a search
             // term, or a background scan auto-completing the open item — and a
@@ -117,7 +128,7 @@ struct DiscussionSourceView: View {
                     return
                 }
                 messages = verified
-            } catch { failure = "读取失败。请在连接与数据中检查账号目录和访问材料，然后重试。" }
+            } catch { failure = CompanionInteractionCopy.discussionSourceReadFailed }
         }
     }
 }

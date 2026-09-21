@@ -105,7 +105,7 @@ struct InsightHeroSection: View {
             }
             Spacer()
             Button(action: onGenerate) {
-                Text("开始分析")
+                Text(isLoading ? "正在分析…" : "开始分析")
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
@@ -113,6 +113,8 @@ struct InsightHeroSection: View {
             .tint(CompanionPalette.accent)
             .buttonStyle(.borderedProminent)
             .disabled(isLoading)
+            .help(isLoading ? "正在汇总今天的聊天" : "")
+            .accessibilityHint(isLoading ? "正在汇总今天的聊天" : "")
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

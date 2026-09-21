@@ -41,7 +41,7 @@ enum FirstLaunchGuide {
 
     static let welcomeNeeds = [
         "这台 Mac 已安装并登录微信",
-        "可选：一个 AI 服务的访问密钥，用来写摘要和回复草稿"
+        "可选：一个 AI 服务的访问凭据，用来写摘要和回复草稿"
     ]
 
     static let welcomeCapabilities: [(icon: String, title: String, detail: String)] = [
@@ -227,7 +227,22 @@ enum FirstLaunchGuide {
         if forbiddenFirstRunJargon.contains(where: { text.contains($0) }) {
             return "这次准备没有完成，请重试。"
         }
+        if looksLikeImplementationError(text) {
+            return "这次准备没有完成，请重试。"
+        }
         return text.hasSuffix("。") ? text : text + "。"
+    }
+
+    /// Implementation leftovers that escaped the named mappings above — sqlite
+    /// lock text, file paths, Cocoa codes. First-run copy must not carry them.
+    private static func looksLikeImplementationError(_ text: String) -> Bool {
+        let needles = [
+            "sqlite", "sqlerror", "database is locked", "cannot query",
+            "errno", "posix", "nscocoa", "task_for_pid",
+            ".db", "/users/", "/tmp/", "/var/"
+        ]
+        let lowered = text.lowercased()
+        return needles.contains(where: { lowered.contains($0) })
     }
 
     // MARK: - AI / contacts
@@ -248,7 +263,7 @@ enum FirstLaunchGuide {
     static func remainingActionDetail(_ action: OnboardingReadinessAction) -> String {
         switch action {
         case .wechatConnection: return "回到上一步，打开微信并允许读取。"
-        case .configureAI: return "选一个服务，填入密钥，点测试连接。"
+        case .configureAI: return "选一个服务，填入访问凭据，点测试连接。"
         case .testAI: return "设置已保存，还差一次测试。"
         case .chooseContacts: return "先加一个人或一个群。"
         }
@@ -330,7 +345,7 @@ enum FirstLaunchGuide {
     static func setupStepDetail(_ action: OnboardingReadinessAction) -> String {
         switch action {
         case .wechatConnection: return "打开微信并允许读取。有时需要重新登录一次微信，聊天不会被改动。"
-        case .configureAI: return "选一个服务，填入密钥，再点测试连接。"
+        case .configureAI: return "选一个服务，填入访问凭据，再点测试连接。"
         case .testAI: return "配置已填写，还差一次明确的连接测试。"
         case .chooseContacts: return "先加一个人或一个群。"
         }

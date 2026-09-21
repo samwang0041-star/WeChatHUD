@@ -164,6 +164,11 @@ final class AdmissionConfigWriteGateTests: XCTestCase {
                       "reload 必须吃这份判据，否则被测的分类只是界面上的死代码")
         XCTAssertFalse(view.contains("config = store.loadAdmissionConfig()"),
                        "整份覆盖的页不许再用默认值兜底 hydrate")
+        XCTAssertFalse(view.contains("followed = store.getWhitelist()"),
+                       "关注名单读不到时不许被写成空名单")
+        XCTAssertTrue(view.contains("whitelistAllRead"))
+        XCTAssertTrue(view.contains("followListUnreadable"))
+        XCTAssertTrue(view.contains("CompanionInteractionCopy.followListUnreadableAdmission"))
         let body = view.components(separatedBy: "private func save() {").last ?? ""
         XCTAssertTrue(body.split(separator: "\n").prefix(3).joined()
             .contains("guard loaded, loadError == nil else { return }"),

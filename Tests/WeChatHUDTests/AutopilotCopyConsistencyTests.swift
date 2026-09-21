@@ -139,9 +139,11 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
         XCTAssertTrue(source.text.contains("NotificationCenter.default.post(name: .hudSwitchTab, object: \"aiService\")"))
     }
 
-    func testOpenEverythingRowSaysItOpensANewWindow() throws {
+    func testOpenEverythingRowOpensTheCompanion() throws {
         let source = try InboxViewSource.load()
-        XCTAssertTrue(source.text.contains("查看全部（新窗口）"), "the row opens the detail window")
+        XCTAssertTrue(source.text.contains("更多 — 查看全部"))
+        XCTAssertTrue(source.text.contains("CompanionProductCopy.openCompanion"))
+        XCTAssertFalse(source.text.contains("新窗口"))
         XCTAssertFalse(source.text.contains("更多 — 查看详情"), "the old label promised in-place expansion")
     }
 }

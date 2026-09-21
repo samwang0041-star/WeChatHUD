@@ -116,3 +116,7 @@ Default canonical labels. See `docs/agents/triage-labels.md`.
 ### Domain docs
 
 Single-context repo (one `CONTEXT.md` + `docs/adr/` at root). See `docs/agents/domain.md`.
+
+### UI craft
+
+Views motion or interaction: read `docs/design/ui-language.md` and load `emil-design-eng` plus `apple-design` (emilkowalski/skills). Route every animation through `CompanionMotion`.

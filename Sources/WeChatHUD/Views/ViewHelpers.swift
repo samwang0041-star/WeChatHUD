@@ -40,6 +40,28 @@ enum RelativeTimeFormatter {
         if label == unknown { return label }
         return label == "刚刚" ? "刚刚\(suffix)" : "\(label)\(suffix)"
     }
+
+    /// Elapsed duration, same spaced words as the relative clock.
+    /// Zero or unknown stays a dash so a KPI is not "0 秒".
+    static func durationLabel(_ seconds: Double) -> String {
+        if seconds <= 0 { return "--" }
+        if seconds < 60 { return "\(Int(seconds)) 秒" }
+        if seconds < 3600 { return "\(Int(seconds / 60)) 分钟" }
+        return String(format: "%.1f 小时", seconds / 3600)
+    }
+
+    /// Wall-clock elapsed time for a session or tooltip. Hours keep the
+    /// leftover minutes instead of rounding to one decimal hour.
+    static func elapsedLabel(_ interval: TimeInterval) -> String {
+        let total = max(0, Int(interval.rounded()))
+        if total < 60 { return "\(total) 秒" }
+        let minutes = total / 60
+        if minutes < 60 { return "\(minutes) 分钟" }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        if rest == 0 { return "\(hours) 小时" }
+        return "\(hours) 小时 \(rest) 分钟"
+    }
 }
 
 /// Human-readable relative time string for a given date.

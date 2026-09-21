@@ -303,10 +303,30 @@ final class RelationshipRadarTests: XCTestCase {
         let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
         await monitor.refreshRelationshipRadarAfterScan(now: day("2026-09-01"))
         XCTAssertGreaterThanOrEqual(store.loadRelationshipRadarSnapshot(chatUsername: "wxid_peer")?.silenceDays ?? 0, 10)
-        XCTAssertFalse(store.loadRelationshipRadarSnapshot(chatUsername: "wxid_peer")?.summary.contains("13800138000") ?? false)
+       XCTAssertFalse(store.loadRelationshipRadarSnapshot(chatUsername: "wxid_peer")?.summary.contains("13800138000") ?? false)
+   }
+
+    func testDisplayNameDoesNotPrintWxidWhenContactsAreUnreadable() throws {
+        let path = NSTemporaryDirectory() + "radar-name-\(UUID().uuidString).sqlite3"
+        let store = HUDStore(dbPath: path)
+        try store.open()
+        defer {
+            store.close()
+            for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+        }
+        try store.upsertContact(username: "wxid_boss", displayName: "老板",
+                                attentionLevel: .vip, role: .boss, replyWindowMinutes: 15)
+        XCTAssertEqual(RelationshipRadarService.displayName(for: "wxid_boss", store: store), "老板")
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+        XCTAssertEqual(
+            RelationshipRadarService.displayName(for: "wxid_boss", store: store),
+            ContactIdentityIndex.unreadableNamePlaceholder)
+        XCTAssertNotEqual(
+            RelationshipRadarService.displayName(for: "wxid_boss", store: store),
+            "wxid_boss")
     }
 
-    private func day(_ value: String) -> Date {
+   private func day(_ value: String) -> Date {
         let parts = value.split(separator: "-").compactMap { Int($0) }
         return Calendar.current.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2])) ?? Date()
     }

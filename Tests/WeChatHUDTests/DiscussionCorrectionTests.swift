@@ -67,7 +67,7 @@ final class DiscussionCorrectionTests: XCTestCase {
             feedback(4, note: "peer", action: "marked_dismissed")
         ]
         XCTAssertEqual(DiscussionCorrection.hint(entries: entries, chatUsername: "peer"), "确认忽略；责任人改为对方")
-        XCTAssertEqual(DiscussionCorrection.hint(entries: entries, chatUsername: "missing"), "暂无")
+        XCTAssertEqual(DiscussionCorrection.hint(entries: entries, chatUsername: "missing"), "还没有修正")
     }
 
     /// The hint is meant to carry the *most recent* corrections from this chat.

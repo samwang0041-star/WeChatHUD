@@ -59,11 +59,13 @@ struct RelationshipRadarCard: View {
 struct RelationshipRadarView: View {
     @EnvironmentObject var store: HUDStore
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
 
     @State private var loaded: [RelationshipRadarSnapshot] = []
     @State private var selectedUsername: String?
     @State private var filter: RadarFilter = .all
     @State private var refreshing = false
+    @State private var refreshError: String?
 
     private enum RadarFilter: String, CaseIterable {
         case all = "全部"
@@ -110,9 +112,21 @@ struct RelationshipRadarView: View {
     private var workspaceBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             toolbar
+            if let refreshError {
+                Label(refreshError, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.companionStatusReveal)
+                    .accessibilityLabel(refreshError)
+            }
             Divider().background(Color.secondary.opacity(0.2))
-            if visibleSnapshots.isEmpty {
+            if loaded.isEmpty {
                 emptyState
+            } else if visibleSnapshots.isEmpty {
+                filterEmptyState
             } else {
                 HSplitView {
                     snapshotList
@@ -123,6 +137,7 @@ struct RelationshipRadarView: View {
             }
         }
         .workspaceGround()
+        .companionAnimation(CompanionMotion.ease(), value: refreshError)
         .accessibilityIdentifier("workspace.relationshipRadar.pane")
     }
 
@@ -144,7 +159,7 @@ struct RelationshipRadarView: View {
                 Task { await refreshNow() }
             } label: {
                 if refreshing {
-                    ProgressView().controlSize(.small)
+                    Label("正在刷新…", systemImage: "arrow.clockwise")
                 } else {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
@@ -152,7 +167,9 @@ struct RelationshipRadarView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(refreshing)
-            .accessibilityLabel("刷新关系雷达")
+            .help(refreshing ? "正在刷新关系雷达" : "")
+            .accessibilityLabel(refreshing ? "正在刷新关系雷达" : "刷新关系雷达")
+            .accessibilityHint(refreshing ? "正在刷新关系雷达" : "")
         }
         .padding(.vertical, 12)
     }
@@ -191,7 +208,7 @@ struct RelationshipRadarView: View {
                                       : Color.clear)
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionRowPressStyle())
                     .accessibilityLabel(displayName(snap))
                     .accessibilityValue(listSubtitle(snap))
                 }
@@ -287,7 +304,8 @@ struct RelationshipRadarView: View {
     }
 
     private var emptyState: some View {
-        ContentUnavailableView(
+        VStack(spacing: 12) {
+            ContentUnavailableView(
             "还没有跨天关系信号",
             systemImage: "point.3.connected.trianglepath.dotted",
             // The toolbar on this very page already says 本机计算 · 不自动发消息;
@@ -299,6 +317,30 @@ struct RelationshipRadarView: View {
             // 「态度。」 stranded alone under two full lines.
             description: Text("先在「聊天回顾」里分析两天以上\n单天分析不会填态度")
         )
+            Button("打开聊天回顾") {
+                panelState.pendingSettingsTab = SettingsView.Tab.insight.rawValue
+            }
+            .buttonStyle(CompanionPressStyle())
+            .foregroundStyle(CompanionPalette.jadeInk)
+            .accessibilityLabel("打开聊天回顾，分析两天以上才会出现态度")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var filterEmptyState: some View {
+        VStack(spacing: 12) {
+            ContentUnavailableView(
+                "这个筛选下没有对话",
+                systemImage: "line.3.horizontal.decrease.circle",
+                description: Text("「\(filter.rawValue)」目前没有匹配的跨天信号。")
+            )
+            Button("看全部") {
+                withMotion(CompanionMotion.pageChange()) { filter = .all }
+            }
+            .buttonStyle(CompanionPressStyle())
+            .foregroundStyle(CompanionPalette.jadeInk)
+            .accessibilityLabel("看全部关系信号")
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -330,9 +372,15 @@ struct RelationshipRadarView: View {
         refreshing = true
         defer { refreshing = false }
         let storeRef = store
-        _ = await ChatMonitor.runOffMain {
-            (try? RelationshipRadarService.refreshAll(store: storeRef, force: true)) ?? 0
+        let succeeded = await ChatMonitor.runOffMain {
+            do {
+                _ = try RelationshipRadarService.refreshAll(store: storeRef, force: true)
+                return true
+            } catch {
+                return false
+            }
         }
+        refreshError = succeeded ? nil : "刷新没有完成，现在还是上次的关系信号。请再试一次。"
         reload()
     }
 
@@ -348,7 +396,7 @@ struct RelationshipRadarView: View {
     }
 
     static func silenceSuffix(_ snap: RelationshipRadarSnapshot) -> String {
-        snap.silenceDays >= 3 ? " · 沉默\(snap.silenceDays)天" : ""
+            snap.silenceDays >= 3 ? " · 沉默 \(snap.silenceDays) 天" : ""
     }
 
     private func silenceSuffix(_ snap: RelationshipRadarSnapshot) -> String {

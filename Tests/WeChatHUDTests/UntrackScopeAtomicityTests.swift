@@ -99,7 +99,8 @@ final class UntrackScopeAtomicityTests: XCTestCase {
         let item = InboxBuilder.build(replyDebtItems: [debt], notifications: [], dismissed: [:])[0]
         monitor.replyDebtItems = [debt]
 
-        monitor.untrackInboxItem(item)
+        XCTAssertFalse(monitor.untrackInboxItem(item))
+        XCTAssertEqual(monitor.inboxActionError, CompanionInteractionCopy.untrackFailed)
 
         XCTAssertTrue(store.isWhitelisted("chat-a"))
         XCTAssertEqual(monitor.replyDebtItems.count, 1,

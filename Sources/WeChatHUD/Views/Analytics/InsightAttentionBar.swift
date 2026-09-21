@@ -29,7 +29,8 @@ struct InsightAttentionBar: View {
                         actionItemRow(
                             source: item.source,
                             what: item.what,
-                            urgency: item.urgency
+                            urgency: item.urgency,
+                            chatUsername: item.chatUsername
                         )
                     }
                 } else {
@@ -67,8 +68,8 @@ struct InsightAttentionBar: View {
         }
     }
 
-    private func actionItemRow(source: String, what: String, urgency: String) -> some View {
-        Button(action: { onJumpToChat(source) }) {
+    private func actionItemRow(source: String, what: String, urgency: String, chatUsername: String?) -> some View {
+        Button(action: { onJumpToChat(chatUsername ?? source) }) {
             HStack(alignment: .top, spacing: 8) {
                 Circle()
                     .fill(urgency == "高" ? Color.red : urgency == "中" ? Color.orange : Color.gray)
@@ -93,7 +94,7 @@ struct InsightAttentionBar: View {
             .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
     }
 
     private func actionCountRow(icon: String, text: String, color: Color) -> some View {

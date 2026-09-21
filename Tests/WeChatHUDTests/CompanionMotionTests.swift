@@ -18,7 +18,8 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertTrue(CompanionMotion.reduceMotion)
         XCTAssertNil(CompanionMotion.ease(0.2))
         XCTAssertNil(CompanionMotion.ease())
-        XCTAssertNil(CompanionMotion.easeIn(0.2))
+        XCTAssertNil(CompanionMotion.enter())
+        XCTAssertNil(CompanionMotion.exit())
         XCTAssertNil(CompanionMotion.easeOut(0.25))
         XCTAssertNil(CompanionMotion.spring)
         XCTAssertNil(CompanionMotion.springResponse(response: 0.6, dampingFraction: 0.8))
@@ -31,10 +32,12 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertNil(CompanionMotion.closeMorph)
         XCTAssertNil(CompanionMotion.pageChange())
         XCTAssertNil(CompanionMotion.rowExpand())
+        XCTAssertNil(CompanionMotion.islandRowExpand())
         XCTAssertNil(CompanionMotion.drawer())
         XCTAssertNil(CompanionMotion.dialog())
         XCTAssertNil(CompanionMotion.complete())
         XCTAssertNil(CompanionMotion.saveReceipt())
+        XCTAssertNil(CompanionMotion.pulse())
     }
 
     func testAllAnimationsNonNilWhenMotionEnabled() {
@@ -42,7 +45,8 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertFalse(CompanionMotion.reduceMotion)
         XCTAssertNotNil(CompanionMotion.ease(0.2))
         XCTAssertNotNil(CompanionMotion.ease())
-        XCTAssertNotNil(CompanionMotion.easeIn(0.2))
+        XCTAssertNotNil(CompanionMotion.enter())
+        XCTAssertNotNil(CompanionMotion.exit())
         XCTAssertNotNil(CompanionMotion.easeOut(0.25))
         XCTAssertNotNil(CompanionMotion.spring)
         XCTAssertNotNil(CompanionMotion.springResponse(response: 0.6, dampingFraction: 0.8))
@@ -54,11 +58,13 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertNotNil(CompanionMotion.openMorph)
         XCTAssertNotNil(CompanionMotion.closeMorph)
         XCTAssertNotNil(CompanionMotion.rowExpand())
+        XCTAssertNotNil(CompanionMotion.islandRowExpand())
         XCTAssertNotNil(CompanionMotion.drawer())
         XCTAssertNotNil(CompanionMotion.dialog())
         XCTAssertNotNil(CompanionMotion.complete())
         XCTAssertNotNil(CompanionMotion.saveReceipt())
         XCTAssertNotNil(CompanionMotion.pageChange())
+        XCTAssertNotNil(CompanionMotion.pulse())
     }
 
     func testIslandFrameTimingReportsSixtyHertzCadence() {
@@ -158,9 +164,85 @@ final class CompanionMotionTests: XCTestCase {
         XCTAssertLessThan(CompanionMotion.hoverDuration, CompanionMotion.easeDuration)
     }
 
-    func testPageChangeIsLongerThanInPlaceDisclosure() {
-        XCTAssertGreaterThan(CompanionMotion.pageChangeDuration, CompanionMotion.easeDuration)
-        XCTAssertLessThanOrEqual(CompanionMotion.pageChangeDuration, 0.28)
+    func testPageChangeStaysSnappyForFrequentTabs() {
+        // Settings tabs are tens/day. Keep them snappy and under the 200ms
+        // popover band; a longer swap than in-place disclosure made every
+        // sidebar click feel like the app was catching up.
+        XCTAssertLessThanOrEqual(CompanionMotion.pageChangeDuration, 0.20)
+        XCTAssertGreaterThanOrEqual(CompanionMotion.pageChangeDuration, 0.14)
+        XCTAssertLessThanOrEqual(CompanionMotion.pageChangeDuration, CompanionMotion.easeDuration)
+    }
+
+    func testWorkspaceRowExpandStaysInsideTheInlineBudget() {
+        XCTAssertEqual(CompanionMotion.rowExpandDuration, 0.20, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(CompanionMotion.rowExpandDuration, 0.30)
+        XCTAssertLessThan(CompanionMotion.rowExpandDuration, CompanionMotion.morphExpandResponse)
+    }
+
+    func testToastExitIsFasterThanEnterAndBothStayUnderTheUICap() {
+        XCTAssertLessThan(CompanionMotion.exitDuration, CompanionMotion.enterDuration)
+        XCTAssertLessThanOrEqual(CompanionMotion.enterDuration, 0.30)
+        XCTAssertGreaterThanOrEqual(CompanionMotion.exitDuration, 0.12)
+        XCTAssertLessThanOrEqual(CompanionMotion.exitDuration, 0.20)
+    }
+
+    func testPressAndHoverStayOnTheHouseEaseOutFamily() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/WeChatHUD/Views/CompanionMotion.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(source.contains("static func easeOut(_ duration: TimeInterval) -> Animation?"))
+        XCTAssertTrue(source.contains("strongEaseOut(duration)"))
+        XCTAssertTrue(source.contains("easeOut(pressDuration)"))
+        XCTAssertFalse(
+            source.contains(": .easeOut(duration"),
+            "CompanionMotion.easeOut/press must not use SwiftUI's weak system easeOut"
+        )
+        XCTAssertTrue(source.contains("static var systemDefault: Animation? { ease() }"))
+        XCTAssertFalse(source.contains(": .default"))
+    }
+
+    func testToastWindowAppearsWithEnterAndLeavesWithExitUnlessReduceMotion() {
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: false, wantsVisible: true, panelVisible: true, reduceMotion: false
+            ),
+            .animateShow
+        )
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: false, wantsVisible: true, panelVisible: true, reduceMotion: true
+            ),
+            .snapShow
+        )
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: true, wantsVisible: true, panelVisible: true, reduceMotion: false
+            ),
+            .retarget
+        )
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: true, wantsVisible: false, panelVisible: true, reduceMotion: false
+            ),
+            .animateHide
+        )
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: true, wantsVisible: false, panelVisible: false, reduceMotion: false
+            ),
+            .snapHide
+        )
+        XCTAssertEqual(
+            CompanionMotion.toastWindowAction(
+                windowVisible: false, wantsVisible: true, panelVisible: false, reduceMotion: false
+            ),
+            .snapHide
+        )
     }
 
     func testExpandMorphIsSlowerAndPoppierThanCollapse() {

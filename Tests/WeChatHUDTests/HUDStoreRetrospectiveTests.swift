@@ -191,10 +191,11 @@ struct HUDStoreRetrospectiveTests {
             carryCount: 0, lastUserActionAt: nil
         )
         let id = store.insertReviewTodo(t)!
-        store.updateTodoStatus(todoID: id, status: .completed, completedAt: Date())
+        #expect(store.updateTodoStatus(todoID: id, status: .completed, completedAt: Date()) == 1)
         let after = store.todos(for: runID, statuses: [.completed]).first
         #expect(after?.status == .completed)
         #expect(after?.completedAt != nil)
+        #expect(store.updateTodoStatus(todoID: 999_999, status: .completed, completedAt: Date()) == 0)
     }
 
     @Test("bumpTodoCarry increments carry_count and updates last_run_id")

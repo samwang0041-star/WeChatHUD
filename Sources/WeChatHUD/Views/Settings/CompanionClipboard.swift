@@ -34,10 +34,9 @@ enum CompanionClipboard {
         NSPasteboard.general.string(forType: .string)
     }
 
-    static func write(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+    @discardableResult
+    static func write(_ text: String) -> Bool {
+        WeChatLauncher.copyText(text)
     }
 
     static func menuItems(fieldText: String, clipboard: String?, writable: Bool, secure: Bool = false) -> [MenuItem] {
@@ -296,16 +295,39 @@ struct CompanionCopyableText: View {
     let text: String
     var monospaced: Bool = false
     var lineLimit: Int? = nil
+    var weight: Font.Weight = .regular
+    @State private var copyFeedback: String?
+    @State private var copyGeneration = 0
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 13, design: monospaced ? .monospaced : .default))
-            .textSelection(.enabled)
-            .lineLimit(lineLimit)
-            .truncationMode(.middle)
-            .contextMenu {
-                Button("复制") { CompanionClipboard.write(text) }
-                    .disabled(text.isEmpty)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(text)
+                .font(.system(size: 13, weight: weight, design: monospaced ? .monospaced : .default))
+                .textSelection(.enabled)
+                .lineLimit(lineLimit)
+                .truncationMode(.middle)
+            if let copyFeedback {
+                Text(copyFeedback)
+                    .font(.system(size: 12))
+                    .foregroundStyle(copyFeedback == CompanionInteractionCopy.copied ? CompanionPalette.jadeInk : .orange)
+                    .transition(.companionStatusReveal)
             }
+        }
+        .contextMenu {
+            Button("复制") { copyText() }
+                .disabled(text.isEmpty)
+        }
+        .companionAnimation(CompanionMotion.ease(), value: copyFeedback)
+    }
+
+    private func copyText() {
+        copyGeneration += 1
+        let token = copyGeneration
+        let ok = CompanionClipboard.write(text)
+        copyFeedback = ok ? CompanionInteractionCopy.copied : CompanionInteractionCopy.copyFailed
+        guard ok else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if copyGeneration == token { copyFeedback = nil }
+        }
     }
 }

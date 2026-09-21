@@ -28,9 +28,15 @@ final class InsightDataLoader {
         window: InsightTimeWindow,
         scope: InsightScope
     ) async -> LoadOutcome {
-        let whitelist = store.getWhitelist()
-        let whitelistIds = Set(whitelist.map(\.id))
-        let whitelistMap = Self.whitelistLookup(whitelist)
+        let whitelist: [WhitelistEntry]
+        switch store.whitelistAllRead() {
+        case .unreadable:
+            return .unreadable(notice: "暂时读不到关注名单，这一页的范围先不要采信。请稍后再进来一次。")
+        case .value(let entries):
+            whitelist = entries
+        }
+       let whitelistIds = Set(whitelist.map(\.id))
+       let whitelistMap = Self.whitelistLookup(whitelist)
         let selfNames = await readerActor.mySelfNames()
         let cutoff = cutoffTimestamp(for: window)
 
@@ -71,14 +77,13 @@ final class InsightDataLoader {
             let session = sessionMap[chatUsername]
             let isGroup = session?.isGroup ?? MessageHelpers.isGroupChat(chatUsername)
             let isWhitelisted = whitelistIds.contains(chatUsername)
-            let entry = whitelistMap[chatUsername]
-            let name: String
-            if let displayName = entry?.displayName {
-                name = displayName
-            } else {
-                name = await readerActor.displayName(for: chatUsername)
-            }
-            let category = entry?.category ?? .other
+           let entry = whitelistMap[chatUsername]
+            let name = ContactIdentityIndex.visibleName(
+                username: chatUsername,
+                stored: store.storedDisplayName(chatUsername),
+                readerName: await readerActor.displayName(for: chatUsername)
+            )
+           let category = entry?.category ?? .other
             var topSenders: [(name: String, count: Int)] = []
             for pair in bulk.senderCounts.sorted(by: { $0.value > $1.value }) {
                 let senderName = await readerActor.displayName(for: pair.key)

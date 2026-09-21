@@ -15,6 +15,7 @@ struct RetrospectiveTabView: View {
     @State private var currentState: RetrospectiveJob.State = .idle
     @State private var isRunning = false
     @State private var errorText: String?
+    @State private var commandError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -24,24 +25,30 @@ struct RetrospectiveTabView: View {
                 runningPanel
             }
 
-            if let errorText {
+           if let errorText {
                 messagePanel(
                     icon: "exclamationmark.triangle.fill",
                     title: "回顾没有完成",
                     detail: errorText,
-                    tint: .orange
+                    tint: .orange,
+                    actionTitle: isRunning ? "正在生成…" : (latestRun == nil ? "生成本次回顾" : "重新生成"),
+                    actionEnabled: !isRunning,
+                    action: { runJob() }
                 )
-            }
+                .transition(.companionStatusReveal)
+           }
 
-            if let run = latestRun {
-                resultView(run: run)
-            } else if !isRunning {
-                emptyState
-            }
+           if let run = latestRun {
+               resultView(run: run)
+            } else if !isRunning, errorText == nil {
+               emptyState
+           }
         }
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.black.opacity(0.94))
+        .companionAnimation(CompanionMotion.ease(), value: errorText)
+        .companionAnimation(CompanionMotion.ease(), value: commandError)
         .onAppear {
             currentState = monitor.retrospectiveJob.state
             apply(state: currentState)
@@ -66,20 +73,22 @@ struct RetrospectiveTabView: View {
 
             Spacer()
 
-            // Only once a run exists. Before that the empty-state card owns the
-            // single "generate" action, and a second prominent button in the
-            // header was both a duplicate control and a false label — there is
-            // nothing to re-generate.
-            if latestRun != nil {
+           // Only once a run exists. Before that the empty-state card owns the
+           // single "generate" action, and a second prominent button in the
+           // header was both a duplicate control and a false label — there is
+           // nothing to re-generate.
+            if latestRun != nil, errorText == nil {
                 Button {
                     runJob()
                 } label: {
-                    Label(isRunning ? "生成中" : "重新生成", systemImage: isRunning ? "hourglass" : "arrow.clockwise")
-                }
-                .tint(.cyan)
+                    Label(isRunning ? "正在生成…" : "重新生成", systemImage: isRunning ? "hourglass" : "arrow.clockwise")
+               }
+               .tint(.cyan)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(isRunning)
+                .help(isRunning ? "正在生成回顾" : "")
+                .accessibilityHint(isRunning ? "正在生成回顾" : "")
             }
         }
     }
@@ -211,9 +220,17 @@ struct RetrospectiveTabView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("待办", icon: "checklist")
 
+            if let commandError {
+                Text(commandError)
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.companionStatusReveal)
+            }
+
             let pending = todos.filter { $0.status == .pending }
             if pending.isEmpty {
-                placeholderLine("暂无待办。")
+                placeholderLine("这次回顾没有待办。")
             } else {
                 ForEach(pending.prefix(8)) { todo in
                     todoRow(todo)
@@ -228,7 +245,7 @@ struct RetrospectiveTabView: View {
             sectionTitle("高亮信息", icon: "highlighter")
 
             if highlights.isEmpty {
-                placeholderLine("暂无高亮信息。")
+                placeholderLine("这次回顾没有高亮。")
             } else {
                 ForEach(highlights.prefix(10)) { highlight in
                     highlightRow(highlight)
@@ -258,10 +275,9 @@ struct RetrospectiveTabView: View {
             Spacer(minLength: 8)
 
             Button("完成") {
-                monitor.hudStore.updateTodoStatus(todoID: todo.id, status: .completed, completedAt: Date())
-                refreshLatestRun()
+                completeTodo(todo)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(CompanionPressStyle())
             .controlSize(.small)
             .foregroundColor(.cyan.opacity(0.9))
         }
@@ -322,7 +338,15 @@ struct RetrospectiveTabView: View {
             .padding(.vertical, 4)
     }
 
-    private func messagePanel(icon: String, title: String, detail: String, tint: Color) -> some View {
+    private func messagePanel(
+        icon: String,
+        title: String,
+        detail: String,
+        tint: Color,
+        actionTitle: String? = nil,
+        actionEnabled: Bool = true,
+        action: (() -> Void)? = nil
+    ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
@@ -335,6 +359,17 @@ struct RetrospectiveTabView: View {
                     .font(.system(size: 12))
                     .companionDimmedForeground(0.56)
                     .fixedSize(horizontal: false, vertical: true)
+                if let actionTitle, let action {
+                    Button(action: action) {
+                        Text(actionTitle)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(tint)
+                    .disabled(!actionEnabled)
+                    .help(actionEnabled ? "" : "正在生成回顾")
+                    .accessibilityHint(actionEnabled ? "" : "正在生成回顾")
+                    .padding(.top, 4)
+                }
             }
         }
         .padding(12)
@@ -418,6 +453,20 @@ struct RetrospectiveTabView: View {
         }
     }
 
+    private func completeTodo(_ todo: ReviewTodo) {
+        let changes = monitor.hudStore.updateTodoStatus(
+            todoID: todo.id,
+            status: .completed,
+            completedAt: Date()
+        )
+        guard changes > 0 else {
+            commandError = CompanionInteractionCopy.retrospectiveTodoCompleteFailed
+            return
+        }
+        commandError = nil
+        refreshLatestRun()
+    }
+
     private func runJob() {
         errorText = nil
         isRunning = true
@@ -438,13 +487,13 @@ struct RetrospectiveTabView: View {
             // The job's own run id is not threaded through on purpose: the row
             // the page shows and the abandonment flag must come from one read.
             refreshLatestRun()
-        case .partial(_, let failedChats):
-            isRunning = false
-            errorText = failedChats.isEmpty ? nil : "部分对话分析失败：\(failedChats.prefix(3).joined(separator: "、"))"
+       case .partial(_, let failedChats):
+           isRunning = false
+            errorText = failedChats.isEmpty ? nil : CompanionInteractionCopy.retrospectivePartial(failedChats)
             refreshLatestRun()
         case .failed(let message):
-            isRunning = false
-            errorText = message
+           isRunning = false
+            errorText = CompanionInteractionCopy.displayableRetrospectiveFailure(message)
             refreshLatestRun()
         case .idle:
             isRunning = false

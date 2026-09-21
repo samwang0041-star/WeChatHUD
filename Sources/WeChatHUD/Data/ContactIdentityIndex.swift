@@ -31,7 +31,50 @@ struct ContactIdentityIndex {
     /// raw username put account ids like `preview-colleague` on screen in the
     /// middle of fully named rows; the id is just as meaningless to a reader
     /// as a nameless group's `…@chatroom` id.
-    static let unnamedContactPlaceholder = "未命名联系人"
+   static let unnamedContactPlaceholder = "未命名联系人"
+
+    /// The contacts/whitelist row exists or might exist, but this read failed.
+    /// Distinct from 未命名: that one means we looked and there is no name.
+   static let unreadableNamePlaceholder = "暂时读不到名字"
+
+    /// User-facing name for a username. Alias wins, then a stored name, then a
+    /// live WeChat name. An unreadable store is not 「this is the wxid」.
+    static func visibleName(
+        username: String,
+        stored: HUDStore.StoredDisplayNameRead,
+        alias: String? = nil,
+        readerName: String? = nil
+    ) -> String {
+        let trimmedAlias = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedAlias.isEmpty { return trimmedAlias }
+        switch stored {
+        case .value(let name):
+            return name
+        case .unreadable:
+            return unreadableNamePlaceholder
+        case .absent:
+            let reader = readerName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !reader.isEmpty,
+               reader != username,
+               !isUninformativeChatName(reader) {
+                return reader
+            }
+            if isRawChatIdentifier(username) {
+                return MessageHelpers.isGroupChat(username)
+                    ? unnamedGroupPlaceholder
+                    : unnamedContactPlaceholder
+            }
+           return reader.isEmpty ? username : reader
+       }
+   }
+
+    /// Letter for a 28pt avatar. Placeholders and raw ids are not initials —
+    /// the row should use a person glyph instead of "w" or "暂".
+    static func avatarMonogram(from visibleName: String) -> String? {
+        let trimmed = visibleName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isUninformativeChatName(trimmed) else { return nil }
+        return String(trimmed.prefix(1))
+    }
 
     /// Builds the user-facing label for a group member list, e.g.
     /// `群聊 · 赖豪、张沛、索洛诺勋`. Group names come from WeChat, so a
@@ -174,7 +217,10 @@ struct ContactIdentityIndex {
     /// re-resolving once a member-derived name becomes available.
     static func isUninformativeChatName(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == unnamedGroupPlaceholder || isRawChatIdentifier(trimmed)
+        return trimmed == unnamedGroupPlaceholder
+            || trimmed == unnamedContactPlaceholder
+            || trimmed == unreadableNamePlaceholder
+            || isRawChatIdentifier(trimmed)
     }
 }
 

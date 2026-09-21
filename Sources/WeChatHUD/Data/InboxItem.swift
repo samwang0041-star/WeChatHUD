@@ -182,7 +182,7 @@ extension InboxItem {
         case .autopilotReview: return "待确认回复"
         case .aiLoading: return "AI 正在整理"
         case .aiFailed: return "分析暂不可用"
-        case .syncIssue: return "同步异常"
+        case .syncIssue: return "暂时读不到"
         case .idle: return ""
         }
     }

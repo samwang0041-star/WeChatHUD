@@ -17,7 +17,46 @@ struct ChatInsightView: View {
     @StateObject private var insightStore = InsightStore()
 
     var body: some View {
-        GeometryReader { geometry in
+        VStack(spacing: 0) {
+            if let error = insightStore.reloadError {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("再试一次") { reloadInsightStats() }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("再试一次读取洞察")
+                   Button("知道了") { insightStore.reloadError = nil }
+                       .buttonStyle(CompanionPressStyle())
+                       .accessibilityLabel("知道了")
+               }
+               .padding(.horizontal, 16)
+               .padding(.vertical, 10)
+               .transition(.companionStatusReveal)
+           }
+            if let error = insightCoordinator.briefingError {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("再试一次") { monitor.refreshInsightInBackground(force: true) }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("再试一次分析关注的对话")
+                    Button("知道了") { insightCoordinator.briefingError = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .accessibilityLabel("知道了")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .transition(.companionStatusReveal)
+            }
+            GeometryReader { geometry in
             if geometry.size.width >= 800 {
                 HSplitView {
                     // The smallest supported window leaves this page about
@@ -36,15 +75,30 @@ struct ChatInsightView: View {
                 }
             }
         }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+       .companionAnimation(CompanionMotion.ease(), value: insightStore.reloadError)
+        .companionAnimation(CompanionMotion.ease(), value: insightCoordinator.briefingError)
         .task(id: detailChat.map { statsKey(for: $0) }) { await loadDetailStats() }
-        .task {
-            reloadInsightStats()
-            // `--preview-insight-overview` keeps the overview selected so the
-            // page can be screenshotted; every real launch lands on a chat.
-            if selectedChat == nil, !PreviewRuntime.opensInsightOverviewByDefault {
-                selectedChat = store.getWhitelist().first?.id
+       .task {
+           reloadInsightStats()
+           // `--preview-insight-overview` keeps the overview selected so the
+           // page can be screenshotted; every real launch lands on a chat.
+            if selectedChat == nil {
+                if let resume = panelState.insightSelectedChatUsername {
+                    selectedChat = resume
+                } else if !PreviewRuntime.opensInsightOverviewByDefault {
+                    if case .value(let entries) = store.whitelistAllRead() {
+                        selectedChat = entries.first?.id
+                    }
+                }
             }
+            if let chatId = selectedChat {
+                await monitor.resumeInsightChatIfNeeded(chatUsername: chatId, date: selectedDate)
+            }
+       }
+        .onChange(of: selectedChat) { _, newValue in
+            panelState.insightSelectedChatUsername = newValue
         }
         .onChange(of: monitor.stats.lastSyncAt) { _, _ in
             // Every completed scan stamps this, empty or not, and one reload is
@@ -58,14 +112,12 @@ struct ChatInsightView: View {
         .onChange(of: insightStore.selectedScope) { _, _ in
             reloadInsightStats()
         }
-        .onChange(of: selectedDate) { _, newDate in
-            guard let chatId = selectedChat else { return }
-            // Clear existing result for this chat so re-analysis triggers
-            insightCoordinator.chatInsights.removeValue(forKey: chatId)
-            Task {
-                await monitor.analyzeOneChat(chatUsername: chatId, date: newDate)
-            }
-        }
+       .onChange(of: selectedDate) { _, newDate in
+           guard let chatId = selectedChat else { return }
+           Task {
+                await monitor.analyzeOneChatOnDateChange(chatUsername: chatId, date: newDate)
+           }
+       }
     }
 
     private var conversationSidebar: some View {
@@ -76,10 +128,10 @@ struct ChatInsightView: View {
             reader: reader,
             selectedChat: $selectedChat,
             searchText: $searchText,
-            onAnalyzeChat: { chatUsername in
-                guard insightCoordinator.result(for: chatUsername, date: selectedDate) == nil else { return }
-                Task { await monitor.analyzeOneChat(chatUsername: chatUsername, date: selectedDate) }
-            },
+           onAnalyzeChat: { chatUsername in
+               guard insightCoordinator.result(for: chatUsername, date: selectedDate) == nil else { return }
+                Task { await monitor.analyzeOneChatIfFollowed(chatUsername: chatUsername, date: selectedDate) }
+           },
             selectedDate: selectedDate
         )
     }
@@ -106,17 +158,43 @@ struct ChatInsightView: View {
         let category: WhitelistCategory
     }
 
-    private var detailChat: DetailChat? {
-        guard let chatId = selectedChat else { return nil }
-        if let entry = store.getWhitelist().first(where: { $0.id == chatId }) {
-            return DetailChat(username: chatId, displayName: entry.displayName,
-                              isGroup: entry.isGroup, category: entry.category)
-        }
-        if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
-            return DetailChat(username: chatId, displayName: session.displayName,
-                              isGroup: session.isGroup, category: .other)
-        }
-        return nil
+   private var detailChat: DetailChat? {
+       guard let chatId = selectedChat else { return nil }
+        switch store.whitelistEntryRead(chatId) {
+        case .value(let entry):
+            return DetailChat(
+                username: chatId,
+                displayName: visibleTitle(username: chatId, fallback: entry.displayName),
+                isGroup: entry.isGroup,
+                category: entry.category)
+       case .unreadable:
+            if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
+                return DetailChat(
+                    username: chatId,
+                    displayName: visibleTitle(username: chatId, fallback: session.displayName),
+                    isGroup: session.isGroup,
+                    category: .other)
+            }
+            return DetailChat(
+                username: chatId,
+                displayName: ContactIdentityIndex.unreadableNamePlaceholder,
+                isGroup: MessageHelpers.isGroupChat(chatId),
+                category: .other)
+       case .absent:
+           break
+       }
+      if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
+           return DetailChat(username: chatId, displayName: visibleTitle(username: chatId, fallback: session.displayName),
+                             isGroup: session.isGroup, category: .other)
+       }
+       return nil
+   }
+
+    private func visibleTitle(username: String, fallback: String?) -> String {
+        ContactIdentityIndex.visibleName(
+            username: username,
+            stored: store.storedDisplayName(username),
+            readerName: fallback)
     }
 
     private func statsKey(for chat: DetailChat) -> String {
@@ -156,45 +234,29 @@ struct ChatInsightView: View {
         insightStore.primeDayStats(stats, date: date)
     }
 
-    @ViewBuilder
-    private var detailArea: some View {
-        if let chatId = selectedChat {
-            if let entry = store.getWhitelist().first(where: { $0.id == chatId }) {
+   @ViewBuilder
+   private var detailArea: some View {
+       if let chatId = selectedChat {
+            if let chat = detailChat {
                 ChatInsightDetailView(
-                    chatUsername: chatId,
-                    chatName: entry.displayName,
-                    isGroup: entry.isGroup,
-                    category: entry.category,
-                    stats: detailChat.flatMap(detailStats),
-                    result: insightCoordinator.result(for: chatId, date: selectedDate),
+                    chatUsername: chat.username,
+                    chatName: chat.displayName,
+                    isGroup: chat.isGroup,
+                    category: chat.category,
+                    stats: detailStats(for: chat),
+                    result: insightCoordinator.result(for: chat.username, date: selectedDate),
                     insightCoordinator: insightCoordinator,
                     selectedDate: $selectedDate
                 )
                 .environmentObject(monitor)
-                .id(chatId)
-            } else if let session = insightStore.otherActiveSessions.first(where: { $0.id == chatId }) {
-                let stats = detailStats(for: DetailChat(
-                    username: chatId, displayName: session.displayName,
-                    isGroup: session.isGroup, category: .other))
-                ChatInsightDetailView(
-                    chatUsername: chatId,
-                    chatName: session.displayName,
-                    isGroup: session.isGroup,
-                    category: .other,
-                    stats: stats,
-                    result: nil,
-                    insightCoordinator: insightCoordinator,
-                    selectedDate: $selectedDate
-                )
-                .environmentObject(monitor)
-                .id(chatId)
+                .id(chat.username)
             } else {
                 overviewDashboard
             }
-        } else {
-            overviewDashboard
-        }
-    }
+       } else {
+           overviewDashboard
+       }
+   }
 
     private var overviewDashboard: some View {
         InsightOverviewDashboard(
@@ -202,15 +264,16 @@ struct ChatInsightView: View {
             insightCoordinator: monitor.insightCoordinator,
             store: store,
             onRefresh: { monitor.refreshInsightInBackground(force: true) },
-            onCopyReport: {
-                CompanionClipboard.write(
-                    InsightOverviewReport.markdown(
-                        overview: insightStore.overview,
-                        briefing: monitor.insightCoordinator.globalBriefing
-                    )
-                )
-            },
-            onSelectChat: { selectedChat = $0 },
+           onSelectChat: { raw in
+                let whitelist: [WhitelistEntry]
+                switch store.whitelistAllRead() {
+                case .value(let entries): whitelist = entries
+                case .unreadable: whitelist = []
+                }
+                if let id = insightStore.resolveChatID(raw, whitelist: whitelist) {
+                   selectedChat = id
+               }
+           },
             onExpandModule: { expandedModules.insert($0) },
             selectedDate: $selectedDate,
             expandedRadarFindingID: $expandedRadarFindingID,

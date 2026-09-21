@@ -65,7 +65,9 @@ struct IslandGlowLayer: View {
                 )
         }
         .allowsHitTesting(false)
-        .transaction { $0.animation = CompanionMotion.easeOut(0.25) }
+        // Glow hue and hairline are status, not an entrance. Hover-band
+        // 100ms — a VIP flip should not linger like a 250ms toast.
+        .transaction { $0.animation = CompanionMotion.easeOut(CompanionMotion.hoverDuration) }
     }
 
     private var outerShape: IslandShape {

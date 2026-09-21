@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import QuartzCore
 
 // MARK: - Animation debug logging (lazy)
 
@@ -56,6 +57,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// painted inside the panel, so a toast in the ~312×34 compact island
     /// could never be seen. This floats just below the island instead.
     private var toastWindow: NSPanel?
+    /// Generation of the in-flight hide. Hide completion must match this or
+    /// a toast that arrived mid-fade would be ordered out by the stale run.
+    private var toastHideGeneration: UInt64 = 0
     private var relaunchWaitTask: Task<Void, Never>?
     /// The onboarding window is owned here instead of being looked up by
     /// title, so dismissal always targets exactly this window and a second
@@ -839,15 +843,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// popping over WeChat mid-send would be worse than a delayed one.
     @MainActor
     private func syncToastWindow() {
-        guard let message = panelState.toastMessage, panel.isVisible else {
+        let wantsVisible = panelState.toastMessage != nil
+        let windowVisible = toastWindow?.isVisible == true
+        let panelVisible = panel.isVisible
+        let action = CompanionMotion.toastWindowAction(
+            windowVisible: windowVisible,
+            wantsVisible: wantsVisible,
+            panelVisible: panelVisible
+        )
+        switch action {
+        case .snapHide:
+            toastHideGeneration &+= 1
+            panelState.toastCollapsing = false
+            toastWindow?.alphaValue = 1
             toastWindow?.orderOut(nil)
-            return
+        case .animateHide:
+            dismissToastAnimated()
+        case .snapShow, .animateShow, .retarget:
+            guard let message = panelState.toastMessage else { return }
+            presentToast(message, action: action)
         }
+    }
+
+    @MainActor
+    private func presentToast(_ message: String, action: CompanionMotion.ToastWindowAction) {
+        toastHideGeneration &+= 1
         if toastWindow == nil { toastWindow = makeToastPanel() }
         guard let toastWindow else { return }
 
         let host = NSHostingView(
-            rootView: IslandToastContent(message: message)
+            rootView: IslandToastContent(message: message, playsEnter: action == .animateShow)
                 .environmentObject(panelState)
                 .environmentObject(monitor)
         )
@@ -867,7 +892,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             y: islandScreen.minY - 6 - size.height
         )
         toastWindow.setFrame(NSRect(origin: origin, size: size), display: true)
-        toastWindow.orderFrontRegardless()
+        if action == .animateShow {
+            panelState.toastCollapsing = false
+            toastWindow.alphaValue = 0
+            toastWindow.orderFrontRegardless()
+            animateToastAlpha(to: 1, duration: CompanionMotion.enterDuration)
+        } else {
+            panelState.toastCollapsing = false
+            toastWindow.alphaValue = 1
+            toastWindow.orderFrontRegardless()
+        }
+    }
+
+    @MainActor
+    private func dismissToastAnimated() {
+        guard let toastWindow, toastWindow.isVisible else { return }
+        toastHideGeneration &+= 1
+        let generation = toastHideGeneration
+        panelState.toastCollapsing = true
+        animateToastAlpha(to: 0, duration: CompanionMotion.exitDuration) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard generation == self.toastHideGeneration else { return }
+                guard self.panelState.toastMessage == nil else { return }
+                self.panelState.toastCollapsing = false
+                self.toastWindow?.orderOut(nil)
+                self.toastWindow?.alphaValue = 1
+            }
+        }
+    }
+
+    @MainActor
+    private func animateToastAlpha(to value: CGFloat, duration: TimeInterval, completion: (() -> Void)? = nil) {
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = duration
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            self.toastWindow?.animator().alphaValue = value
+        }, completionHandler: completion)
     }
 
     private func makeToastPanel() -> NSPanel {
@@ -903,6 +964,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Hidden first, the collapse lands instantly and the mask is already
         // the compact pill before WeChat takes focus.
         panel.orderOut(nil)
+        toastHideGeneration &+= 1
+        toastWindow?.alphaValue = 1
         toastWindow?.orderOut(nil)
         panelState.collapseAndYield(duration: 4)
 

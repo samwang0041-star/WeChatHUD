@@ -37,6 +37,8 @@ final class BriefingRetryTests: XCTestCase {
         XCTAssertTrue(retrying.isLoading, "重试必须真的再问一次 AI")
         XCTAssertNotNil(retrying.briefing, "刷新期间旧简报继续显示，卡片不能空掉")
         XCTAssertEqual(retrying.briefing?.situation, Self.staleBriefing().situation)
+        XCTAssertEqual(retrying.errorMessage, "上次没取到",
+                       "刷新期间错误条还在，重试按钮才能改成正在重试")
     }
 
     /// The card's error branch only renders when a briefing exists, so the button

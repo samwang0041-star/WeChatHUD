@@ -9,7 +9,7 @@ struct MissedReplyFeed: View {
     @Binding var window: MissedReplyFinder.Window
     @Binding var customStart: Date
     @Binding var customEnd: Date
-    let query: String
+    @Binding var query: String
     @State private var expandedID: String?
 
     private var visible: [MissedReplyFinder.Item] {
@@ -26,6 +26,14 @@ struct MissedReplyFeed: View {
     /// line above it.
     private var coverageCaveat: String? { monitor.missedReplyCoverage?.caveat }
 
+    private var widerMissedWindow: MissedReplyFinder.Window? {
+        switch window {
+        case .today: return .last3Days
+        case .last3Days: return .last7Days
+        case .last7Days, .custom: return nil
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             rangePills
@@ -40,6 +48,7 @@ struct MissedReplyFeed: View {
                         .accessibilityLabel("结束日期")
                 }
                 .controlSize(.small)
+                .transition(.companionStatusReveal)
             }
             if !visible.isEmpty, let caveat = coverageCaveat {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -55,6 +64,8 @@ struct MissedReplyFeed: View {
             content
         }
         .onAppear(perform: reload)
+        .companionAnimation(CompanionMotion.drawer(), value: window)
+        .companionAnimation(CompanionMotion.ease(), value: monitor.missedReplyError)
         .onChange(of: window) { _, _ in reload() }
         .onChange(of: customStart) { _, _ in if window == .custom { reload() } }
         .onChange(of: customEnd) { _, _ in if window == .custom { reload() } }
@@ -84,34 +95,59 @@ struct MissedReplyFeed: View {
             .padding(.vertical, 24)
             .companionSurface()
         } else if let error = monitor.missedReplyError {
-            ContentUnavailableView(
-                "没读完",
-                systemImage: "exclamationmark.triangle",
-                description: Text(error)
-            )
+            VStack(spacing: 12) {
+                ContentUnavailableView(
+                    "没读完",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(error)
+                )
+                Button("再试一次") { reload() }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .disabled(monitor.missedReplyLoading)
+                    .help(monitor.missedReplyLoading ? "正在读取没回的消息" : "")
+                    .accessibilityHint(monitor.missedReplyLoading ? "正在读取没回的消息" : "")
+                    .accessibilityLabel(monitor.missedReplyLoading ? "正在读取没回的消息" : "再试一次读取没回的消息")
+            }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
             .companionSurface()
+            .transition(.companionStatusReveal)
         } else if visible.isEmpty {
             // 「没有遗漏」 is a completeness claim; it may only be made when the
             // walk actually covered everything. A search that matched nothing is
             // a different fact and keeps its own explanation.
             let caveat = coverageCaveat
-            ContentUnavailableView(
-                !query.isEmpty
-                    ? "没有匹配的消息"
-                    : (caveat == nil
-                        ? CompanionInteractionCopy.missedRepliesAllClear
-                        : CompanionInteractionCopy.missedRepliesPartial),
-                systemImage: !query.isEmpty
-                    ? "magnifyingglass"
-                    : (caveat == nil ? "checkmark.bubble" : "exclamationmark.bubble"),
-                description: Text(
+            VStack(spacing: 12) {
+                ContentUnavailableView(
                     !query.isEmpty
-                        ? "试试联系人姓名或消息里的关键词。"
-                        : (caveat ?? CompanionInteractionCopy.missedRepliesEmpty)
+                        ? "没有匹配的消息"
+                        : (caveat == nil
+                            ? CompanionInteractionCopy.missedRepliesAllClear
+                            : CompanionInteractionCopy.missedRepliesPartial),
+                    systemImage: !query.isEmpty
+                        ? "magnifyingglass"
+                        : (caveat == nil ? "checkmark.bubble" : "exclamationmark.bubble"),
+                    description: Text(
+                        !query.isEmpty
+                            ? "试试联系人姓名或消息里的关键词。"
+                            : (caveat ?? CompanionInteractionCopy.missedRepliesEmpty)
+                    )
                 )
-            )
+                if !query.isEmpty {
+                    Button("清除搜索") { query = "" }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("清除搜索")
+                }
+                else if let wider = widerMissedWindow {
+                    Button(wider.label) {
+                        withMotion(CompanionMotion.pageChange()) { window = wider }
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .accessibilityLabel("看\(wider.label)没回的消息")
+                }
+            }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 24)
             .companionSurface()
@@ -158,7 +194,7 @@ struct MissedReplyFeed: View {
                     }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
 
             Text(item.preview)
                 .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
@@ -185,9 +221,11 @@ struct MissedReplyFeed: View {
                         .foregroundStyle(.secondary)
                 }
                 .controlSize(.regular)
+                .transition(.companionStatusReveal)
             }
         }
         .companionSurface()
+        .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
     }
 
     private func reload() {

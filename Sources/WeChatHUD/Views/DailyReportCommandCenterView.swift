@@ -14,9 +14,16 @@ struct DailyReportCommandCenterView: View {
     @State private var hoveredRiskID: String?
     @State private var commandStates: [DailyReportCommandState] = []
     @State private var loadedDateKey: String?
+    @State private var copyFeedback: CopyFeedback = .idle
+    @State private var copyGeneration = UUID()
+    @State private var commandError: String?
 
     init(isWorkspace: Bool = true) {
         self.isWorkspace = isWorkspace
+    }
+
+    private enum CopyFeedback: Equatable {
+        case idle, copied, failed
     }
 
     /// Leading/trailing inset for this page's own blocks.
@@ -45,6 +52,21 @@ struct DailyReportCommandCenterView: View {
 
     var body: some View {
         return VStack(alignment: .leading, spacing: 0) {
+            if let commandError {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(commandError)
+                        .font(.system(size: isWorkspace ? 13 : 11))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("知道了") { self.commandError = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                }
+                .padding(.horizontal, cardInset)
+                .padding(.vertical, 8)
+                .transition(.companionStatusReveal)
+            }
             if let report = monitor.dailyReport {
                 let key = report.date.dailyReportDateKey
                 if loadedDateKey != key {
@@ -66,12 +88,15 @@ struct DailyReportCommandCenterView: View {
                 loadingView
             } else if let error = monitor.dailyReportError {
                 emptyStateWithRetry("小结没写出来：\(error)")
-            } else {
-                emptyStateWithRetry("还没有今日小结。连上微信后再整理。")
-            }
+                    .transition(.companionStatusReveal)
+           } else {
+                emptyStateWithRetry(todayEmptyCopy)
+           }
         }
         .foregroundStyle(.primary)
+        .companionAnimation(CompanionMotion.ease(), value: commandError)
         .background(isWorkspace ? WorkspacePage.ground : Color(nsColor: .windowBackgroundColor))
+        .companionAnimation(CompanionMotion.ease(), value: monitor.dailyReportError)
         .onAppear { reloadCommandStates() }
         .onChange(of: monitor.dailyReport?.date) { _, _ in reloadCommandStates() }
         .onChange(of: monitor.dailyReportGeneratedAt) { _, _ in reloadCommandStates() }
@@ -202,36 +227,56 @@ struct DailyReportCommandCenterView: View {
     private var sourceUnavailableView: some View {
         let isHistorical = monitor.dailyReport.map { !Calendar.current.isDateInToday($0.date) } ?? false
         return VStack(alignment: .leading, spacing: 8) {
-            Label(isHistorical ? "这一天暂无可用记录" : "今日来源未验证", systemImage: "exclamationmark.triangle")
+            Label(isHistorical ? "没有这一天的可用记录" : "今日来源未验证", systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.orange)
             Text(isHistorical
                  ? "没有找到这一天可用于整理的消息或事项。可以查看其他日期，或在连接微信后重新整理。"
-                 : "尚无成功同步记录，当前没有足够的今日微信来源，暂不能判断是否有待处理事项。")
+                 : "还没有成功读到今天的微信，当前没有足够来源，不能判断有没有待处理事项。")
                 .font(.system(size: isWorkspace ? 14 : 11))
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !isHistorical {
-                Text("请连接微信并完成一次成功同步后，再刷新日报。")
+                Text("请先连上微信并完成一次读取，再刷新日报。")
                     .font(.system(size: isWorkspace ? 14 : 11))
                     .foregroundColor(.secondary)
             }
-            Button(action: {
-                guard !monitor.dailyReportIsLoading else { return }
-                Task { await monitor.loadDailyReport(force: true) }
-            }) {
-                Text("重新生成")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.accentColor)
+            HStack(spacing: 12) {
+               Button(action: {
+                   guard !monitor.dailyReportIsLoading else { return }
+                   Task { await monitor.loadDailyReport(force: true) }
+               }) {
+                    Text(monitor.dailyReportIsLoading ? "正在生成…" : "重新生成")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.accentColor)
+              }
+              .buttonStyle(CompanionPressStyle())
+                .disabled(monitor.dailyReportIsLoading)
+                .help(monitor.dailyReportIsLoading ? "正在整理今日小结" : "")
+                .accessibilityHint(monitor.dailyReportIsLoading ? "正在整理今日小结" : "")
+                .accessibilityLabel(monitor.dailyReportIsLoading ? "正在生成日报" : "重新生成日报")
+               if !isHistorical {
+                    Button("检查连接") {
+                        panelState.pendingSettingsTab = "system"
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .accessibilityLabel("检查微信连接")
+                }
             }
-            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, headerInset)
-        .padding(.vertical, 18)
+       .padding(.vertical, 18)
+   }
+
+    private var todayEmptyCopy: String {
+        if monitor.stats.lastSyncAt == nil { return "还没有今日小结。连上微信后再整理。" }
+        if !monitor.store.hasWhitelistEntries() { return "还没有今日小结。先选要关注的对话。" }
+        return "还没有今日小结。点重新生成即可整理。"
     }
 
-    private func emptyStateWithRetry(_ text: String) -> some View {
+   private func emptyStateWithRetry(_ text: String) -> some View {
         VStack(spacing: 8) {
             Text(text)
                 .font(.system(size: 11))
@@ -243,16 +288,30 @@ struct DailyReportCommandCenterView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("重新生成")
+                    Text(monitor.dailyReportIsLoading ? "正在生成…" : "重新生成")
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundColor(.accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .disabled(monitor.dailyReportIsLoading)
-            .accessibilityLabel("重新生成日报")
-        }
-        .frame(maxWidth: .infinity)
+            .help(monitor.dailyReportIsLoading ? "正在整理今日小结" : "")
+            .accessibilityHint(monitor.dailyReportIsLoading ? "正在整理今日小结" : "")
+            .accessibilityLabel(monitor.dailyReportIsLoading ? "正在生成日报" : "重新生成日报")
+            if monitor.stats.lastSyncAt == nil {
+                Button("检查连接") { panelState.pendingSettingsTab = "system" }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                   .accessibilityLabel("检查微信连接后再生成日报")
+           }
+            else if !monitor.store.hasWhitelistEntries() {
+                Button("关注谁") { panelState.pendingSettingsTab = "contacts" }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .accessibilityLabel("去选要关注的对话后再生成日报")
+            }
+       }
+       .frame(maxWidth: .infinity)
         .padding(.horizontal, headerInset)
         .padding(.vertical, 14)
     }
@@ -331,13 +390,11 @@ struct DailyReportCommandCenterView: View {
                 .cornerRadius(1.5)
 
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(action.content)
-                        .font(.system(size: isWorkspace ? 14 : 11, weight: isUrgent ? .semibold : .medium))
-                        .foregroundColor(.primary)
-                        .lineLimit(2)
-                    Spacer(minLength: 4)
-                }
+                Text(action.content)
+                    .font(.system(size: isWorkspace ? 14 : 11, weight: isUrgent ? .semibold : .medium))
+                    .foregroundColor(.primary)
+                    .lineLimit(isWorkspace ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: isWorkspace)
 
                 HStack(spacing: 6) {
                     urgencyChip(action.urgency)
@@ -379,7 +436,13 @@ struct DailyReportCommandCenterView: View {
             }
 
             HStack(spacing: 4) {
-                Button(action: { monitor.markDailyReportActionDone(action) }) {
+                Button(action: {
+                    if monitor.markDailyReportActionDone(action) {
+                        commandError = nil
+                    } else {
+                        commandError = CompanionInteractionCopy.dailyReportCompleteFailed
+                    }
+                }) {
                     actionButtonLabel(
                         icon: "checkmark",
                         title: "标记完成",
@@ -387,7 +450,7 @@ struct DailyReportCommandCenterView: View {
                         background: Color.green.opacity(0.12)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .help("标记完成")
                 .accessibilityLabel("将日报事项标记为完成：\(action.content)")
 
@@ -408,7 +471,7 @@ struct DailyReportCommandCenterView: View {
                     .padding(.vertical, 3)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .help("到「待办」页看这个对话的事项")
                 .accessibilityLabel("查看待办：\(action.content)")
             }
@@ -429,10 +492,12 @@ struct DailyReportCommandCenterView: View {
         let isExpanded = expandedByDefault ? !historicalHighlightsCollapsed : showHighlights
         return VStack(alignment: .leading, spacing: 0) {
             Button(action: {
-                if expandedByDefault {
-                    historicalHighlightsCollapsed.toggle()
-                } else {
-                    showHighlights.toggle()
+                withMotion(CompanionMotion.ease()) {
+                    if expandedByDefault {
+                        historicalHighlightsCollapsed.toggle()
+                    } else {
+                        showHighlights.toggle()
+                    }
                 }
             }) {
                 HStack(spacing: 4) {
@@ -440,7 +505,7 @@ struct DailyReportCommandCenterView: View {
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .companionAnimation(CompanionMotion.ease(0.2), value: isExpanded)
+                        .companionAnimation(CompanionMotion.ease(), value: isExpanded)
                     Image(systemName: "star.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.yellow.opacity(0.85))
@@ -464,19 +529,21 @@ struct DailyReportCommandCenterView: View {
                 ForEach(highlights) { highlight in
                     highlightCard(highlight)
                 }
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: isExpanded)
     }
 
     private func risksSection(_ risks: [DailyReportRisk]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { showRisks.toggle() }) {
+            Button(action: { withMotion(CompanionMotion.ease()) { showRisks.toggle() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showRisks ? 90 : 0))
-                        .companionAnimation(CompanionMotion.ease(0.2), value: showRisks)
+                        .companionAnimation(CompanionMotion.ease(), value: showRisks)
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.orange.opacity(0.85))
@@ -500,19 +567,21 @@ struct DailyReportCommandCenterView: View {
                 ForEach(risks) { risk in
                     riskCard(risk)
                 }
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: showRisks)
     }
 
     private func completedSection(_ actions: [DailyReportAction]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { showCompleted.toggle() }) {
+            Button(action: { withMotion(CompanionMotion.ease()) { showCompleted.toggle() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showCompleted ? 90 : 0))
-                        .companionAnimation(CompanionMotion.ease(0.2), value: showCompleted)
+                        .companionAnimation(CompanionMotion.ease(), value: showCompleted)
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 10))
                         .foregroundColor(.green.opacity(0.8))
@@ -547,8 +616,10 @@ struct DailyReportCommandCenterView: View {
                     .padding(.horizontal, cardInset)
                     .padding(.vertical, 3)
                 }
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: showCompleted)
     }
 
     private func highlightCard(_ highlight: DailyReportHighlight) -> some View {
@@ -605,19 +676,24 @@ struct DailyReportCommandCenterView: View {
 
             Spacer(minLength: 4)
 
-            if isHovered {
-                Button(action: { monitor.dismissDailyReportRisk(risk) }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .frame(width: 22, height: 20)
-                        .background(Color.primary.opacity(0.08))
-                        .cornerRadius(4)
+            Button(action: {
+                if monitor.dismissDailyReportRisk(risk) {
+                    commandError = nil
+                } else {
+                    commandError = CompanionInteractionCopy.dailyReportDismissFailed
                 }
-                .buttonStyle(.plain)
-                .help("忽略此风险")
-                .accessibilityLabel("忽略风险：\(risk.description)")
+            }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(isHovered ? 0.08 : 0.04))
+                    .cornerRadius(4)
             }
+            .buttonStyle(CompanionPressStyle())
+            .opacity(isHovered ? 1 : 0.55)
+            .help("忽略此风险")
+            .accessibilityLabel("忽略风险：\(risk.description)")
         }
         .padding(.horizontal, cardInset)
         .padding(.vertical, 4)
@@ -678,17 +754,19 @@ struct DailyReportCommandCenterView: View {
                     .lineSpacing(2)
                     .padding(8)
                     .companionPanelFace(radius: 5)
-                Button(action: { WeChatLauncher.copyText(draft) }) {
+                Button(action: { copyDraft(draft) }) {
                     HStack(spacing: 3) {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: copyDraftIcon)
                             .font(.system(size: isWorkspace ? 12 : 9))
-                        Text("复制小结")
+                        Text(copyDraftTitle)
                             .font(.system(size: isWorkspace ? 13 : 10, weight: .medium))
                     }
-                    .foregroundColor(.secondary)
+                    .foregroundColor(copyDraftTint)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .accessibilityLabel("复制微信日报草稿")
+                .accessibilityValue(copyDraftValue)
+                .companionAnimation(CompanionMotion.ease(), value: copyFeedback)
             }
             .padding(.top, 6)
         } label: {
@@ -699,6 +777,51 @@ struct DailyReportCommandCenterView: View {
         .padding(.horizontal, cardInset)
         .padding(.top, 6)
         .padding(.bottom, 8)
+    }
+
+    private var copyDraftIcon: String {
+        switch copyFeedback {
+        case .copied: return "checkmark.circle.fill"
+        case .failed: return "exclamationmark.triangle.fill"
+        case .idle: return "doc.on.doc"
+        }
+    }
+
+    private var copyDraftTitle: String {
+        switch copyFeedback {
+        case .copied: return CompanionInteractionCopy.copied
+        case .failed: return CompanionInteractionCopy.copyFailed
+        case .idle: return "复制小结"
+        }
+    }
+
+    private var copyDraftTint: Color {
+        switch copyFeedback {
+        case .copied: return CompanionPalette.jadeInk
+        case .failed: return .orange
+        case .idle: return .secondary
+        }
+    }
+
+    private var copyDraftValue: String {
+        switch copyFeedback {
+        case .copied: return CompanionInteractionCopy.copied
+        case .failed: return CompanionInteractionCopy.copyFailed
+        case .idle: return ""
+        }
+    }
+
+    private func copyDraft(_ draft: String) {
+        let token = UUID()
+        copyGeneration = token
+        if CompanionClipboard.write(draft) {
+            copyFeedback = .copied
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if copyGeneration == token { copyFeedback = .idle }
+            }
+        } else {
+            copyFeedback = .failed
+        }
     }
 
     @ViewBuilder

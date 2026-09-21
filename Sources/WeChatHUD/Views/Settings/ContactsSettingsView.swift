@@ -33,7 +33,7 @@ struct ContactsSettingsView: View {
                 WhitelistScanView()
             case .blockRules:
                 organizeBack
-                BlockRulesSubView()
+                BlockRulesSubView(organizeTab: $selectedSubTab)
             case .silenced:
                 organizeBack
                 SilencedChatsSubView()
@@ -42,8 +42,8 @@ struct ContactsSettingsView: View {
     }
 
     private var organizeBack: some View {
-        Button("返回关注列表") { selectedSubTab = .contacts }
-            .buttonStyle(.plain)
+        Button("返回关注列表") { withMotion(CompanionMotion.pageChange()) { selectedSubTab = .contacts } }
+            .buttonStyle(CompanionPressStyle())
             .foregroundStyle(CompanionPalette.jadeInk)
             .font(.system(size: 13, weight: .medium))
     }
@@ -72,9 +72,11 @@ private enum ContactLevelFilter: String, CaseIterable {
 
 private struct ContactsListSubView: View {
     @Binding var organizeTab: ContactsSettingsView.SubTab
-    @EnvironmentObject private var store: HUDStore
-    @EnvironmentObject private var monitor: ChatMonitor
-    @EnvironmentObject private var reader: WeChatReader
+   @EnvironmentObject private var store: HUDStore
+   @EnvironmentObject private var monitor: ChatMonitor
+   @EnvironmentObject private var reader: WeChatReader
+
+    @EnvironmentObject private var panelState: PanelState
 
     @State private var contacts: [ContactEntry] = []
     @State private var searchText = ""
@@ -92,6 +94,8 @@ private struct ContactsListSubView: View {
     @State private var isLoadingCandidates = false
     @State private var candidateLoadError: String?
     @State private var didLoad = false
+    @State private var isAddingContacts = false
+    @State private var isDeletingContact = false
 
     private var filtered: [ContactEntry] {
         contacts.filter { contact in
@@ -108,7 +112,7 @@ private struct ContactsListSubView: View {
     }
 
     private func isGroupContact(_ contact: ContactEntry) -> Bool {
-        MessageHelpers.isGroupChat(contact.username) || store.getWhitelistEntry(username: contact.username)?.isGroup == true
+        ContactWhitelistTracking.isGroup(store: store, username: contact.username)
     }
 
     private var selectedContact: ContactEntry? {
@@ -135,12 +139,12 @@ private struct ContactsListSubView: View {
                 }
 
                 Menu("更多") {
-                    Button("什么会提醒我") { organizeTab = .rules }
+                    Button("什么会提醒我") { withMotion(CompanionMotion.pageChange()) { organizeTab = .rules } }
                     Divider()
                     Button("批量整理关系") { monitor.startContactInference(contacts: contacts) }
-                    Button("推荐关注") { organizeTab = .aiScan }
-                    Button("不看谁") { organizeTab = .blockRules }
-                    Button("静音") { organizeTab = .silenced }
+                    Button("推荐关注") { withMotion(CompanionMotion.pageChange()) { organizeTab = .aiScan } }
+                    Button("不看谁") { withMotion(CompanionMotion.pageChange()) { organizeTab = .blockRules } }
+                    Button("静音") { withMotion(CompanionMotion.pageChange()) { organizeTab = .silenced } }
                     if monitor.contactInferenceStatus?.isRunning == true {
                         Button("停止整理") { monitor.cancelContactInference() }
                     }
@@ -150,6 +154,20 @@ private struct ContactsListSubView: View {
 
             }
             .companionSurface(padding: 10)
+
+            if let error = operationError, pendingDeleteContact == nil {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                    Spacer(minLength: 8)
+                    Button("知道了") { self.operationError = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                }
+                .padding(.horizontal, 4)
+                .transition(.companionStatusReveal)
+            }
 
                 HStack(spacing: 8) {
                     CompanionFilterPill(title: "全部 \(contacts.count)", selected: selectedFilter == .all, tint: SettingsView.Tab.contacts.accentColor) { selectedFilter = .all }
@@ -167,8 +185,29 @@ private struct ContactsListSubView: View {
             HSplitView {
                 List {
                     if filtered.isEmpty {
-                        emptyState(icon: "person.crop.circle.badge.questionmark", text: "没有匹配联系人", hint: "换个关键词或级别筛选")
-                            .listRowSeparator(.hidden)
+                        VStack(spacing: 10) {
+                            if contacts.isEmpty {
+                                emptyState(icon: "person.crop.circle.badge.plus", text: "还没有关注的人", hint: "添加之后，助手才知道该看谁。")
+                               Button(CompanionProductCopy.addFollow) { openAddFollow() }
+                                    .tint(CompanionPalette.jade)
+                                    .buttonStyle(.borderedProminent)
+                                   .controlSize(.small)
+                            } else {
+                                emptyState(icon: "person.crop.circle.badge.questionmark", text: "没有匹配联系人", hint: "换个关键词或级别筛选")
+                                if !searchText.isEmpty {
+                                    Button("清除搜索") { searchText = "" }
+                                        .buttonStyle(.bordered)
+                                } else if selectedFilter != .all {
+                                    Button("看全部") {
+                                        withMotion(CompanionMotion.pageChange()) { selectedFilter = .all }
+                                    }
+                                    .buttonStyle(CompanionPressStyle())
+                                    .foregroundStyle(CompanionPalette.jadeInk)
+                                    .accessibilityLabel("看全部联系人")
+                                }
+                            }
+                        }
+                        .listRowSeparator(.hidden)
                     } else {
                         contactGroup(level: .vip, title: "重点关注", color: .orange)
                         contactGroup(level: .whitelist, title: "关注", color: CompanionPalette.accent)
@@ -188,7 +227,9 @@ private struct ContactsListSubView: View {
 
                 ContactInspectorView(
                     contact: selectedContact,
-                    whitelistEntry: selectedContact.flatMap { store.getWhitelistEntry(username: $0.username) },
+                    hasContacts: !contacts.isEmpty,
+                    onAddFollow: openAddFollow,
+                    typeLabel: selectedContact.map { ContactWhitelistTracking.typeLabel(store: store, username: $0.username) } ?? "",
                     profile: selectedContact.flatMap { store.getRelationshipProfile(username: $0.username) },
                     inferenceStatus: monitor.contactInferenceStatus,
                     onEdit: { editingContact = $0 },
@@ -206,16 +247,54 @@ private struct ContactsListSubView: View {
             .background(CompanionPalette.canvas)
         }
         .onReceive(NotificationCenter.default.publisher(for: .hudAddContact)) { _ in
-            addSearchText = ""
-            selectedAddUsernames = []
-            addKind = .all
-            candidateReloadToken += 1
-            showAddPopover = true
+            openAddFollow()
         }
-        .companionDialogBackdrop(showAddPopover) {
+        .companionDialogBackdrop(showAddPopover || pendingDeleteContact != nil) {
             if showAddPopover {
-                CompanionDialog(title: CompanionProductCopy.addFollow, onClose: { showAddPopover = false }) {
+                CompanionDialog(title: CompanionProductCopy.addFollow, onClose: { if !isAddingContacts { showAddPopover = false } }) {
                     addContactDialog
+                }
+            }
+            else if let contact = pendingDeleteContact {
+                CompanionDialog(title: "确认删除联系人？", onClose: { if !isDeletingContact { pendingDeleteContact = nil } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("会忘掉助手对这个人的关注和整理结果。微信里的聊天记录不会被删。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let operationError {
+                            Text(operationError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("取消") { pendingDeleteContact = nil }
+                                .companionBusyHold(isDeletingContact, "正在删除这个联系人")
+                            Button(role: .destructive) {
+                                guard !isDeletingContact else { return }
+                                isDeletingContact = true
+                                Task { @MainActor in
+                                    let ok = deleteContact(contact)
+                                    isDeletingContact = false
+                                    if ok {
+                                        panelState.showToast(
+                                            CompanionInteractionCopy.contactRemoved(name: contact.displayName))
+                                        if selectedContactID == contact.username { selectedContactID = nil }
+                                        pendingDeleteContact = nil
+                                        reload()
+                                    }
+                                }
+                            } label: {
+                                Text(isDeletingContact ? "正在删除联系人…" : "删除联系人")
+                            }
+                            .disabled(isDeletingContact)
+                            .help(isDeletingContact ? "正在删除这个联系人" : "")
+                            .accessibilityHint(isDeletingContact ? "正在删除这个联系人" : "")
+                        }
+                    }
                 }
             }
         }
@@ -224,30 +303,7 @@ private struct ContactsListSubView: View {
             await loadContactCandidatesAsync()
         }
         .onAppear { if !didLoad { reload(); didLoad = true } }
-        .alert("联系人操作失败", isPresented: Binding(
-            get: { operationError != nil },
-            set: { if !$0 { operationError = nil } }
-        )) {
-            Button("知道了") { operationError = nil }
-        } message: {
-            Text(operationError ?? "请重试")
-        }
-        .alert("确认删除联系人？", isPresented: Binding(
-            get: { pendingDeleteContact != nil },
-            set: { if !$0 { pendingDeleteContact = nil } }
-        )) {
-            Button("取消", role: .cancel) { pendingDeleteContact = nil }
-            Button("删除联系人", role: .destructive) {
-                guard let contact = pendingDeleteContact else { return }
-                pendingDeleteContact = nil
-                if deleteContact(contact) {
-                    if selectedContactID == contact.username { selectedContactID = nil }
-                    reload()
-                }
-            }
-        } message: {
-            Text("会忘掉助手对这个人的关注和整理结果。微信里的聊天记录不会被删。")
-        }
+        .companionAnimation(CompanionMotion.ease(), value: operationError)
         .sheet(item: $editingContact) { contact in
             ContactEditSheet(
                 contact: contact,
@@ -313,6 +369,19 @@ private struct ContactsListSubView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
+                            .transition(.companionStatusReveal)
+                    }
+                    if !addSearchText.isEmpty {
+                        Button("清除搜索") { addSearchText = "" }
+                            .buttonStyle(.bordered)
+                            .accessibilityLabel("清除搜索")
+                    } else if addKind != .all {
+                        Button("看全部") {
+                            withMotion(CompanionMotion.pageChange()) { addKind = .all }
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("看全部可添加的对话")
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
@@ -341,7 +410,7 @@ private struct ContactsListSubView: View {
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionRowPressStyle())
                         .accessibilityLabel(selectedAddUsernames.contains(contact.username) ? "取消选择 \(contact.displayName)" : "选择 \(contact.displayName)")
                     }
                 }
@@ -352,12 +421,25 @@ private struct ContactsListSubView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("取消") { showAddPopover = false }
-                Button(CompanionProductCopy.addFollow) { addSelectedContacts() }
+                    .companionBusyHold(isAddingContacts, "正在添加关注")
+                Button {
+                    guard !isAddingContacts else { return }
+                    isAddingContacts = true
+                    Task { @MainActor in
+                        addSelectedContacts()
+                        isAddingContacts = false
+                    }
+                } label: {
+                    Text(isAddingContacts ? "正在添加关注…" : CompanionProductCopy.addFollow)
+                }
                     .tint(CompanionPalette.jade)
                     .buttonStyle(.borderedProminent)
-                    .disabled(selectedAddUsernames.isEmpty)
+                    .disabled(selectedAddUsernames.isEmpty || isAddingContacts)
+                    .help(isAddingContacts ? "正在添加关注" : (selectedAddUsernames.isEmpty ? "先选要关注的对话" : ""))
+                    .accessibilityHint(isAddingContacts ? "正在添加关注" : (selectedAddUsernames.isEmpty ? "先选要关注的对话" : ""))
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: candidateLoadError)
     }
 
     private func addCandidates() -> [(username: String, displayName: String, isGroup: Bool)] {
@@ -395,6 +477,14 @@ private struct ContactsListSubView: View {
             .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
     }
 
+    private func openAddFollow() {
+        addSearchText = ""
+        selectedAddUsernames = []
+        addKind = .all
+        candidateReloadToken += 1
+        showAddPopover = true
+    }
+
     private func addSelectedContacts() {
         let chosen = addCandidates().filter { selectedAddUsernames.contains($0.username) }
         do {
@@ -410,10 +500,15 @@ private struct ContactsListSubView: View {
                     replyWindowMinutes: ContactRole.colleague.defaultReplyWindowMinutes
                 )
             }
-            reload()
-            showAddPopover = false
-            selectedAddUsernames = []
-        } catch {
+           reload()
+           showAddPopover = false
+           selectedAddUsernames = []
+           for contact in chosen {
+                panelState.returnToInsightIfResuming(
+                    contact.username,
+                    receipt: "已添加关注：\(contact.displayName)")
+           }
+       } catch {
             operationError = "添加联系人失败，原设置未改变。请重试。"
         }
     }
@@ -426,17 +521,15 @@ private struct ContactsListSubView: View {
         var errors: [String] = []
         do {
             _ = try await readerActor.refreshContactsIfChanged()
-        } catch {
-            errors.append("联系人索引读取失败，请检查微信数据目录和密钥后重试。")
-            print("[WCHUD] contacts settings: refresh contact index failed: \(error)")
-        }
-        let indexed = await readerActor.allContacts()
-        do {
-            _ = try await readerActor.sessions()
-        } catch {
-            errors.append("最近会话读取失败；可先使用已读取的联系人索引，或重试。")
-            print("[WCHUD] contacts settings: load sessions failed: \(error)")
-        }
+       } catch {
+           errors.append(CompanionInteractionCopy.contactsIndexFailed)
+       }
+       let indexed = await readerActor.allContacts()
+       do {
+           _ = try await readerActor.sessions()
+       } catch {
+           errors.append(CompanionInteractionCopy.contactsSessionsFailed)
+       }
         cachedAddWechatContacts = indexed
         candidateLoadError = errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
@@ -482,7 +575,7 @@ private struct ContactsListSubView: View {
                     // Was "120m": an English unit, and a bare number that never
                     // said 120 minutes of *what*. The detail pane below calls the
                     // same value 分钟没回算超时.
-                    Text("\(contact.replyWindowMinutes)分")
+                    Text("\(contact.replyWindowMinutes) 分钟")
                         .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
                         .help("超过 \(contact.replyWindowMinutes) 分钟没回，这条就标成超时")
                         .accessibilityLabel("\(contact.replyWindowMinutes) 分钟没回算超时")
@@ -502,7 +595,7 @@ private struct ContactsListSubView: View {
             .cornerRadius(6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
         .accessibilityLabel(contact.displayName)
         .contextMenu {
             Button("编辑") {
@@ -513,7 +606,7 @@ private struct ContactsListSubView: View {
                 ForEach([AttentionLevel.vip, .whitelist, .greylist], id: \.self) { level in
                     if level != contact.attentionLevel {
                         Button(attentionLevelTitle(level)) {
-                            if saveContact(contact, level: level) { reload() }
+                            if saveContact(contact, level: level, announce: true) { reload() }
                         }
                     }
                 }
@@ -526,23 +619,36 @@ private struct ContactsListSubView: View {
     }
 
     @discardableResult
-    private func saveContact(_ contact: ContactEntry, level: AttentionLevel) -> Bool {
-        let whitelistEntry = store.getWhitelistEntry(username: contact.username)
-        do {
-            try store.saveContactTracking(
-                username: contact.username,
-                displayName: contact.displayName,
-                isGroup: whitelistEntry?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
-                category: whitelistEntry?.category ?? whitelistCategory(for: contact.role),
-                attentionLevel: level,
-                role: contact.role,
-                roleNote: contact.roleNote,
-                replyWindowMinutes: contact.replyWindowMinutes
-            )
-            return true
-        } catch {
-            operationError = "联系人级别未保存，原设置仍保留。请重试。"
+    private func saveContact(_ contact: ContactEntry, level: AttentionLevel, announce: Bool = false) -> Bool {
+        switch ContactWhitelistTracking.fields(store: store, username: contact.username, role: contact.role) {
+        case .unreadable(let message):
+            operationError = message
+            if announce { panelState.showToast(message) }
             return false
+        case .fields(let fields):
+            do {
+                try store.saveContactTracking(
+                    username: contact.username,
+                    displayName: contact.displayName,
+                    isGroup: fields.isGroup,
+                    category: fields.category,
+                    attentionLevel: level,
+                    role: contact.role,
+                    roleNote: contact.roleNote,
+                   replyWindowMinutes: contact.replyWindowMinutes
+               )
+                let receipt = CompanionInteractionCopy.followLevelChanged(
+                    levelTitle: attentionLevelTitle(level),
+                    name: contact.displayName)
+                panelState.returnToInsightIfResuming(contact.username, receipt: receipt)
+                if announce { panelState.showToast(receipt) }
+                return true
+            } catch {
+                let message = "联系人级别未保存，原设置仍保留。请重试。"
+                operationError = message
+                if announce { panelState.showToast(message) }
+                return false
+            }
         }
     }
 
@@ -569,7 +675,9 @@ private struct ContactsListSubView: View {
 
 private struct ContactInspectorView: View {
     let contact: ContactEntry?
-    let whitelistEntry: WhitelistEntry?
+    let hasContacts: Bool
+    let onAddFollow: () -> Void
+    let typeLabel: String
     let profile: RelationshipProfile?
     let inferenceStatus: ContactInferenceStatus?
     let onEdit: (ContactEntry) -> Void
@@ -593,8 +701,16 @@ private struct ContactInspectorView: View {
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } else {
+            } else if hasContacts {
                 emptyState(icon: "person.text.rectangle", text: "选择一个人或一个群", hint: "看看助手会不会提醒你、以及怎么看待这段关系")
+            } else {
+                VStack(spacing: 10) {
+                    emptyState(icon: "person.crop.circle.badge.plus", text: "还没有关注的人", hint: "添加之后，助手才知道该看谁。")
+                   Button(CompanionProductCopy.addFollow) { onAddFollow() }
+                        .tint(CompanionPalette.jade)
+                        .buttonStyle(.borderedProminent)
+                       .controlSize(.small)
+                }
             }
         }
         .background(CompanionPalette.canvas)
@@ -642,7 +758,7 @@ private struct ContactInspectorView: View {
             sectionTitle("这个对话", systemImage: "info.circle")
             // One vocabulary for one fact: this row said 私聊 while the
             // 账号信息 block above called the same thing 联系人.
-            infoRow("类型", value: (MessageHelpers.isGroupChat(contact.username) || whitelistEntry?.isGroup == true) ? "群聊" : "私聊")
+            infoRow("类型", value: typeLabel)
             if contact.replyWindowMinutes > 0 {
                 infoRow("多久算超时", value: "\(contact.replyWindowMinutes) 分钟没回算超时")
             }
@@ -658,7 +774,7 @@ private struct ContactInspectorView: View {
                     onInfer(contact)
                 } label: {
                     if inferenceStatus?.isRunning == true {
-                        ProgressView().controlSize(.mini)
+                        Label("正在整理…", systemImage: "arrow.clockwise")
                     } else {
                         Label("重新整理", systemImage: "arrow.clockwise")
                     }
@@ -667,7 +783,8 @@ private struct ContactInspectorView: View {
                 .controlSize(.small)
                 .accessibilityLabel("重新整理这个人")
                 .disabled(inferenceStatus?.isRunning == true)
-                .help("后台重新推断这个联系人")
+                .help(inferenceStatus?.isRunning == true ? "正在推断关系" : "后台重新推断这个联系人")
+                .accessibilityHint(inferenceStatus?.isRunning == true ? "正在推断关系" : "")
             }
 
             if let profile {
@@ -778,17 +895,35 @@ private struct ContactInspectorView: View {
 private struct BlockRulesSubView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var monitor: ChatMonitor
+    @Binding var organizeTab: ContactsSettingsView.SubTab
 
     @State private var ignoredSenders: [IgnoredSenderRule] = []
     @State private var didLoad = false
+    @State private var busyRestoreKey: String?
+    @State private var restoreError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if ignoredSenders.isEmpty {
-                emptyState(icon: "person.slash", text: "没有忽略的发送人", hint: "通过消息右键菜单添加忽略规则")
+                VStack(spacing: 10) {
+                    emptyState(icon: "person.slash", text: "没有忽略的发送人", hint: "按人全局设置在「什么会提醒我」，按对话则在消息上右键。")
+                    Button("什么会提醒我") {
+                        withMotion(CompanionMotion.pageChange()) { organizeTab = .rules }
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .accessibilityLabel("去什么会提醒我添加忽略规则")
+                }
             } else {
                 Text("被忽略的发送人不计入未读统计。要按人全局设置，用「什么会提醒我」。")
                     .font(.system(size: 11)).foregroundColor(.secondary)
+                if let restoreError {
+                    Label(restoreError, systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.companionStatusReveal)
+                }
 
                 SettingsSection {
                     ForEach(Array(ignoredSenders.enumerated()), id: \.element.id) { idx, rule in
@@ -799,20 +934,37 @@ private struct BlockRulesSubView: View {
                             // so saying "所有对话" is the honest subtitle.
                             subtitle: rule.scope == .global ? "所有对话都不提醒" : rule.chatName
                         ) {
-                            Button("恢复") {
-                                monitor.unignoreSender(
+                            Button {
+                                let key = "\(rule.chatUsername)|\(rule.senderUsername)"
+                                guard busyRestoreKey == nil else { return }
+                                busyRestoreKey = key
+                                restoreError = nil
+                                let ok = monitor.unignoreSender(
                                     chatUsername: rule.chatUsername,
                                     senderUsername: rule.senderUsername,
                                     senderName: rule.senderName
                                 )
-                                reload()
+                                busyRestoreKey = nil
+                                if ok {
+                                    reload()
+                                } else {
+                                    restoreError = monitor.inboxActionError
+                                        ?? "屏蔽规则未能恢复，原规则仍保留。请重试。"
+                                }
+                            } label: {
+                                Text(busyRestoreKey == "\(rule.chatUsername)|\(rule.senderUsername)" ? "正在恢复…" : "恢复")
                             }
                             .controlSize(.small)
+                            .buttonStyle(CompanionPressStyle())
+                            .disabled(busyRestoreKey != nil)
+                            .help(busyRestoreKey != nil ? "正在恢复提醒" : "")
+                            .accessibilityHint(busyRestoreKey != nil ? "正在恢复提醒" : "")
                         }
                     }
                 }
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: restoreError)
         .onAppear { if !didLoad { reload(); didLoad = true } }
     }
 
@@ -823,6 +975,9 @@ private struct BlockRulesSubView: View {
 
 private struct SilencedChatsSubView: View {
     @EnvironmentObject var monitor: ChatMonitor
+    @EnvironmentObject var panelState: PanelState
+    @State private var busyUnmute: String?
+    @State private var unmuteError: String?
 
     var body: some View {
         let silenced = monitor.silencedConversationsRead
@@ -830,7 +985,13 @@ private struct SilencedChatsSubView: View {
             if let silenced {
                 if silenced.isEmpty {
                     // Readable and empty really is 「没人被静音」.
-                    emptyState(icon: "speaker.slash", text: "没有静音的对话", hint: "在收件箱中右键点击消息，选择“静音此对话”")
+                    VStack(spacing: 10) {
+                        emptyState(icon: "speaker.slash", text: "没有静音的对话", hint: "在今天或收件箱的消息上右键，选择“静音此对话”。")
+                        Button("打开今天") { panelState.pendingSettingsTab = "today" }
+                            .buttonStyle(CompanionPressStyle())
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                            .accessibilityLabel("打开今天，从一条消息静音对话")
+                    }
                 } else {
                     // The old sentence only claimed the inbox half. A mute also
                     // suppresses the banner and — since this round — stops the
@@ -838,6 +999,13 @@ private struct SilencedChatsSubView: View {
                     // was already queued, which is the part worth saying out loud.
                     Text("已静音的对话不会出现在收件箱、不会弹提醒，助手也不会替你回复它。")
                         .font(.system(size: 11)).foregroundColor(.secondary)
+                    if let unmuteError {
+                        Label(unmuteError, systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.companionStatusReveal)
+                    }
 
                     SettingsSection {
                         ForEach(Array(silenced.enumerated()), id: \.element.id) { idx, item in
@@ -848,10 +1016,24 @@ private struct SilencedChatsSubView: View {
                                 icon: "speaker.slash.fill",
                                 iconColor: .red.opacity(0.5)
                             ) {
-                                Button("取消静音") {
-                                    monitor.unsilenceConversation(username: item.username)
+                                Button {
+                                    guard busyUnmute == nil else { return }
+                                    busyUnmute = item.username
+                                    unmuteError = nil
+                                    let ok = monitor.unsilenceConversation(username: item.username)
+                                    busyUnmute = nil
+                                    if !ok {
+                                        unmuteError = monitor.inboxActionError
+                                            ?? "未能取消静音，这条对话仍然保持静音。请重试。"
+                                    }
+                                } label: {
+                                    Text(busyUnmute == item.username ? "正在取消静音…" : "取消静音")
                                 }
                                 .controlSize(.small)
+                                .buttonStyle(CompanionPressStyle())
+                                .disabled(busyUnmute != nil)
+                                .help(busyUnmute != nil ? "正在取消静音" : "")
+                                .accessibilityHint(busyUnmute != nil ? "正在取消静音" : "")
                             }
                         }
                     }
@@ -870,6 +1052,7 @@ private struct SilencedChatsSubView: View {
                     .controlSize(.small)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: unmuteError)
     }
 }
 
@@ -899,8 +1082,9 @@ struct ContactEditSheet: View {
     let onSave: () -> Void
     let onError: (String) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedLevel: AttentionLevel
+   @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var panelState: PanelState
+   @State private var selectedLevel: AttentionLevel
     @State private var selectedRole: ContactRole
     @State private var roleNote: String
     @State private var replyWindow: Int
@@ -912,6 +1096,8 @@ struct ContactEditSheet: View {
     @State private var isInferring = false
     @State private var inferenceError: String?
     @State private var customName: String = ""
+    @State private var isSaving = false
+    @State private var saveError: String?
 
     init(
         contact: ContactEntry,
@@ -947,12 +1133,37 @@ struct ContactEditSheet: View {
                     }
                 }
                 Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存") { save() }.keyboardShortcut(.defaultAction)
+                Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .companionBusyHold(isSaving, "正在保存联系人设置")
+                Button {
+                    guard !isSaving else { return }
+                    isSaving = true
+                    Task { @MainActor in
+                        save()
+                        isSaving = false
+                    }
+                } label: {
+                    Text(isSaving ? "正在保存…" : "保存")
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving)
+                .help(isSaving ? "正在保存联系人设置" : "")
+                .accessibilityHint(isSaving ? "正在保存联系人设置" : "")
             }
             .padding()
 
             Divider()
+
+            if let saveError {
+                Text(saveError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .transition(.companionStatusReveal)
+            }
 
             Form {
                 Section("显示名称") {
@@ -963,7 +1174,7 @@ struct ContactEditSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("账号信息") {
                         LabeledContent("微信 ID", value: contact.username)
-                        LabeledContent("类型", value: MessageHelpers.isGroupChat(contact.username) || store.getWhitelistEntry(username: contact.username)?.isGroup == true ? "群聊" : "联系人")
+                        LabeledContent("类型", value: ContactWhitelistTracking.typeLabel(store: store, username: contact.username))
                     }
                 }
 
@@ -1034,18 +1245,22 @@ struct ContactEditSheet: View {
                                 .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Button("重新推断") { runInference() }
+                            Button(isInferring ? "正在推断…" : "重新推断") { runInference() }
                                 .controlSize(.small)
                                 .disabled(isInferring)
+                                .help(isInferring ? "正在推断关系" : "")
+                                .accessibilityHint(isInferring ? "正在推断关系" : "")
                         }
                     } else {
                         HStack {
                             Text("还不知道这个人是谁")
                                 .font(.caption).foregroundColor(.secondary)
                             Spacer()
-                            Button(isInferring ? "推断中…" : "开始推断") { runInference() }
+                            Button(isInferring ? "正在推断…" : "开始推断") { runInference() }
                                 .controlSize(.small)
                             .disabled(isInferring)
+                            .help(isInferring ? "正在推断关系" : "")
+                            .accessibilityHint(isInferring ? "正在推断关系" : "")
                         }
                     }
                     if let inferenceError {
@@ -1053,10 +1268,13 @@ struct ContactEditSheet: View {
                             .font(.caption)
                             .foregroundColor(.red)
                             .fixedSize(horizontal: false, vertical: true)
+                            .transition(.companionStatusReveal)
                     }
                 }
             }
             .formStyle(.grouped)
+            .companionAnimation(CompanionMotion.ease(), value: inferenceError)
+            .companionAnimation(CompanionMotion.ease(), value: saveError)
             .onAppear { loadRelProfile() }
         }
         .frame(width: 420, height: 520)
@@ -1094,7 +1312,16 @@ struct ContactEditSheet: View {
     }
 
     private func save() {
-        let whitelistEntry = store.getWhitelistEntry(username: contact.username)
+        saveError = nil
+        let tracking: (isGroup: Bool, category: WhitelistCategory)
+        switch ContactWhitelistTracking.fields(store: store, username: contact.username, role: selectedRole) {
+        case .unreadable(let message):
+            saveError = message
+            onError(message)
+            return
+        case .fields(let fields):
+            tracking = fields
+        }
         // The name the user chose here wins over WeChat's own label, and it
         // has to be written to every table that cached the old one.
         let trimmedName = customName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1103,7 +1330,14 @@ struct ContactEditSheet: View {
         // holds the old alias.
         let displayName: String
         if trimmedName.isEmpty {
-            try? store.removeChatAlias(username: contact.username)
+            do {
+                try store.removeChatAlias(username: contact.username)
+            } catch {
+                let message = "联系人设置未完整保存，编辑窗口仍保持打开。请重试；微信聊天记录不受影响。"
+                saveError = message
+                onError(message)
+                return
+            }
             displayName = monitor.displayName(for: contact.username)
         } else {
             displayName = trimmedName
@@ -1113,8 +1347,8 @@ struct ContactEditSheet: View {
                 try store.saveContactTracking(
                     username: contact.username,
                     displayName: displayName,
-                    isGroup: whitelistEntry?.isGroup ?? MessageHelpers.isGroupChat(contact.username),
-                    category: whitelistEntry?.category ?? whitelistCategory(for: selectedRole),
+                    isGroup: tracking.isGroup,
+                    category: tracking.category,
                     attentionLevel: selectedLevel,
                     role: selectedRole,
                     roleNote: roleNote,
@@ -1139,12 +1373,17 @@ struct ContactEditSheet: View {
             }
             // Reload published lists so the rename shows up in the inbox,
             // commitments and workspace without waiting for the next scan.
-            monitor.reloadAIData()
-            monitor.rebuildInbox()
-            onSave()
-            dismiss()
+           monitor.reloadAIData()
+           monitor.rebuildInbox()
+            let receipt = CompanionInteractionCopy.contactSettingsSaved(name: displayName)
+            panelState.returnToInsightIfResuming(contact.username, receipt: receipt)
+            panelState.showToast(receipt)
+           onSave()
+           dismiss()
         } catch {
-            onError("联系人设置未完整保存，编辑窗口仍保持打开。请重试；微信聊天记录不受影响。")
+            let message = "联系人设置未完整保存，编辑窗口仍保持打开。请重试；微信聊天记录不受影响。"
+            saveError = message
+            onError(message)
         }
     }
 
@@ -1154,6 +1393,53 @@ struct ContactEditSheet: View {
     ]
 
 
+}
+
+private enum ContactWhitelistTracking {
+    enum Outcome {
+        case fields((isGroup: Bool, category: WhitelistCategory))
+        case unreadable(String)
+    }
+
+    enum Kind {
+        case group, person, unreadable
+    }
+
+    static func kind(store: HUDStore, username: String) -> Kind {
+        if MessageHelpers.isGroupChat(username) { return .group }
+        switch store.whitelistEntryRead(username) {
+        case .unreadable: return .unreadable
+        case .absent: return .person
+        case .value(let entry): return entry.isGroup ? .group : .person
+        }
+    }
+
+    static func isGroup(store: HUDStore, username: String) -> Bool {
+        kind(store: store, username: username) == .group
+    }
+
+    static func typeLabel(store: HUDStore, username: String) -> String {
+        switch kind(store: store, username: username) {
+        case .group: return "群聊"
+        case .person: return "私聊"
+        case .unreadable: return "暂时读不到"
+        }
+    }
+
+    static func fields(
+        store: HUDStore,
+        username: String,
+        role: ContactRole
+    ) -> Outcome {
+        switch store.whitelistEntryRead(username) {
+        case .unreadable:
+            return .unreadable(CompanionInteractionCopy.followLevelUnreadable)
+        case .absent:
+            return .fields((MessageHelpers.isGroupChat(username), whitelistCategory(for: role)))
+        case .value(let entry):
+            return .fields((entry.isGroup, entry.category))
+        }
+    }
 }
 
 private func whitelistCategory(for role: ContactRole) -> WhitelistCategory {

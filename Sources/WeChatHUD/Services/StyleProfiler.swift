@@ -16,9 +16,12 @@ actor StyleProfiler {
     }
 
     /// A snapshot of the user's communication style with a specific contact.
-    struct StyleProfile {
-        let contactRole: ContactRole
-        let replyTone: ReplyTone
+   struct StyleProfile {
+        /// Missing means the contacts row could not be read. A missing row is
+        /// acquaintance — that is a real answer. Unreadable must not be cached
+        /// as a 熟人 default or the next 30 minutes of suggestions stay wrong.
+        let contactRole: ContactRole?
+       let replyTone: ReplyTone
         /// Average message length in characters.
         let avgLength: Int
         /// Message length distribution (P25/P50/P75).
@@ -80,10 +83,13 @@ actor StyleProfiler {
             return cached.profile
         }
 
-        let profile = await buildProfile(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
-        profileCache[key] = (profile, Date())
-        pruneProfileCache()
-        return profile
+       let profile = await buildProfile(chatUsername: chatUsername, excludeMsgUIDs: excludeMsgUIDs)
+        // An unreadable contacts row must not freeze 熟人 defaults for the TTL.
+        if profile.contactRole != nil {
+            profileCache[key] = (profile, Date())
+            pruneProfileCache()
+        }
+       return profile
     }
 
     /// Cache age, trusted only in one direction.
@@ -133,23 +139,48 @@ actor StyleProfiler {
         return "\(chatUsername)#excl\(hasher.finalize())"
     }
 
-    /// Build a generic profile for a contact role (when no chat history).
-    func getDefaultProfile(role: ContactRole) -> StyleProfile {
-        let len = defaultLength(for: role)
-        return StyleProfile(
-            contactRole: role,
-            replyTone: role.defaultReplyTone,
-            avgLength: len,
-            lengthP25: max(1, len / 2),
-            lengthP50: len,
-            lengthP75: len * 2,
-            usesEmoji: role == .friend || role == .family,
-            frequentPhrases: defaultPhrases(for: role),
+   /// Build a generic profile for a contact role (when no chat history).
+   func getDefaultProfile(role: ContactRole) -> StyleProfile {
+       let len = defaultLength(for: role)
+       return StyleProfile(
+           contactRole: role,
+           replyTone: role.defaultReplyTone,
+           avgLength: len,
+           lengthP25: max(1, len / 2),
+           lengthP50: len,
+           lengthP75: len * 2,
+           usesEmoji: role == .friend || role == .family,
+           frequentPhrases: defaultPhrases(for: role),
+           fewShotExamples: [],
+           messagePairs: [],
+           toneDescription: describeTone(avgLen: len, usesEmoji: role == .friend || role == .family, role: role),
+           punctuationStyle: "（没有）",
+           sentenceStyle: "（没有）",
+           typingRhythm: .singleMessage
+       )
+   }
+
+    private func defaultProfile(for role: ContactRole?) -> StyleProfile {
+        guard let role else { return roleUnknownDefaultProfile() }
+        return getDefaultProfile(role: role)
+    }
+
+    /// Contacts read failed. Do not pretend this person is 熟人.
+    private func roleUnknownDefaultProfile() -> StyleProfile {
+        StyleProfile(
+            contactRole: nil,
+            replyTone: .professional,
+            avgLength: 20,
+            lengthP25: 10,
+            lengthP50: 20,
+            lengthP75: 40,
+            usesEmoji: false,
+            frequentPhrases: [],
             fewShotExamples: [],
             messagePairs: [],
-            toneDescription: describeTone(avgLen: len, usesEmoji: role == .friend || role == .family, role: role),
-            punctuationStyle: "（暂无数据）",
-            sentenceStyle: "（暂无数据）",
+            toneDescription: "关系读不到，不按熟人默认语气",
+            punctuationStyle: "（没有）",
+            sentenceStyle: "（没有）",
             typingRhythm: .singleMessage
         )
     }
@@ -161,18 +192,18 @@ actor StyleProfiler {
 
     // MARK: - Private
 
-    private func buildProfile(chatUsername: String, excludeMsgUIDs: Set<String> = []) async -> StyleProfile {
-        let contact = store.getContact(username: chatUsername)
-        let role = contact?.role ?? .acquaintance
-        let tone = role.defaultReplyTone
+   private func buildProfile(chatUsername: String, excludeMsgUIDs: Set<String> = []) async -> StyleProfile {
 
-        // Get recent messages for this chat (increased to 500 for deeper analysis)
-        let messages: [MessageInfo]
-        do {
-            messages = try reader.getMessages(chatUsername: chatUsername, limit: 500)
-        } catch {
-            return getDefaultProfile(role: role)
-        }
+        let role = InboxContextBuilder.resolvedSenderRole(store: store, chatUsername: chatUsername)
+        let tone = role?.defaultReplyTone ?? .professional
+
+       // Get recent messages for this chat (increased to 500 for deeper analysis)
+       let messages: [MessageInfo]
+       do {
+           messages = try reader.getMessages(chatUsername: chatUsername, limit: 500)
+       } catch {
+            return defaultProfile(for: role)
+       }
 
         let myUname = reader.myUsername()
         let myDisplay = reader.displayName(for: myUname)
@@ -182,10 +213,10 @@ actor StyleProfiler {
                 && !excludeMsgUIDs.contains(msg.id)
         }
 
-        // Cold start: < 20 messages → unreliable analysis, use role-based defaults
-        guard outgoing.count >= 20 else {
-            return getDefaultProfile(role: role)
-        }
+       // Cold start: < 20 messages → unreliable analysis, use role-based defaults
+       guard outgoing.count >= 20 else {
+            return defaultProfile(for: role)
+       }
 
         // --- Length distribution ---
         let lengths = outgoing.map { $0.text.count }.sorted()
@@ -273,7 +304,7 @@ actor StyleProfiler {
     private func analyzePunctuation(_ msgs: [MessageInfo]) -> String {
         var noPunct = 0, period = 0, ellipsis = 0, exclaim = 0, question = 0, tilde = 0
         let total = msgs.count
-        guard total > 0 else { return "（暂无数据）" }
+        guard total > 0 else { return "（没有）" }
 
         for msg in msgs {
             let t = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,7 +334,7 @@ actor StyleProfiler {
         var shortFrag = 0, mediumComplete = 0, longDetailed = 0
         var subjectOmitted = 0
         let total = msgs.count
-        guard total > 0 else { return "（暂无数据）" }
+        guard total > 0 else { return "（没有）" }
 
         let subjectStarters = ["我", "你", "他", "她", "它", "我们", "你们", "他们", "这", "那"]
 
@@ -433,32 +464,34 @@ actor StyleProfiler {
         return .singleMessage
     }
 
-    private func describeTone(avgLen: Int, usesEmoji: Bool, role: ContactRole) -> String {
-        var parts: [String] = []
-        if avgLen < 10 {
-            parts.append("极简风格，喜欢短消息")
-        } else if avgLen < 30 {
-            parts.append("简洁风格，言简意赅")
-        } else {
-            parts.append("详细风格，喜欢完整表达")
+    private func describeTone(avgLen: Int, usesEmoji: Bool, role: ContactRole?) -> String {
+       var parts: [String] = []
+       if avgLen < 10 {
+           parts.append("极简风格，喜欢短消息")
+       } else if avgLen < 30 {
+           parts.append("简洁风格，言简意赅")
+       } else {
+           parts.append("详细风格，喜欢完整表达")
+       }
+       if usesEmoji {
+           parts.append("经常使用 emoji")
+       }
+        if let role {
+            switch role.defaultReplyTone {
+            case .reporting:
+                parts.append("语气偏汇报式")
+            case .professional:
+                parts.append("语气正式专业")
+            case .collaborative:
+                parts.append("语气协作平等")
+            case .casual:
+                parts.append("语气随意自然")
+            case .polite:
+                parts.append("语气礼貌客气")
+            }
         }
-        if usesEmoji {
-            parts.append("经常使用 emoji")
-        }
-        switch role.defaultReplyTone {
-        case .reporting:
-            parts.append("语气偏汇报式")
-        case .professional:
-            parts.append("语气正式专业")
-        case .collaborative:
-            parts.append("语气协作平等")
-        case .casual:
-            parts.append("语气随意自然")
-        case .polite:
-            parts.append("语气礼貌客气")
-        }
-        return parts.joined(separator: "，")
-    }
+       return parts.joined(separator: "，")
+   }
 
     private func defaultLength(for role: ContactRole) -> Int {
         switch role {

@@ -12,9 +12,11 @@ struct AdmissionSettingsView: View {
     @EnvironmentObject private var store: HUDStore
     @EnvironmentObject private var reader: WeChatReader
     @EnvironmentObject private var monitor: ChatMonitor
+    @EnvironmentObject private var panelState: PanelState
 
     @State private var config = AdmissionConfig()
     @State private var followed: [WhitelistEntry] = []
+    @State private var followListUnreadable = false
     @State private var memberRules: [GroupMemberRule] = []
     @State private var globalMuted: [IgnoredSenderRule] = []
     @State private var loaded = false
@@ -25,6 +27,10 @@ struct AdmissionSettingsView: View {
     /// what is stored.
     @State private var loadError: String?
     @State private var loadIsCorrupt = false
+
+    /// Distinguishes a failed `saveAdmissionConfig` (retry writes the form) from
+    /// a failed row write (retry is clicking the same control again).
+    @State private var configSaveFailed = false
 
     @State private var picker: PickerTarget?
 
@@ -85,18 +91,14 @@ struct AdmissionSettingsView: View {
                     store: store,
                     existing: memberRules,
                     onAdd: { chat, chatName, sender, senderName in
-                        do {
-                            try store.addGroupMemberRule(
-                                chatUsername: chat,
-                                chatName: chatName,
-                                senderUsername: sender,
-                                senderName: senderName
-                            )
-                            reload()
-                            monitor.refreshNow()
-                        } catch {
-                            self.error = "没能保存，请重试。"
-                        }
+                        try store.addGroupMemberRule(
+                            chatUsername: chat,
+                            chatName: chatName,
+                            senderUsername: sender,
+                            senderName: senderName
+                        )
+                        reload()
+                        monitor.refreshNow()
                     }
                 )
             case .mutedPerson:
@@ -104,24 +106,28 @@ struct AdmissionSettingsView: View {
                     store: store,
                     existing: globalMuted,
                     onAdd: { username, name in
-                        do {
-                            try store.ignoreSenderEverywhere(
-                                senderUsername: username,
-                                senderName: name
-                            )
-                            reload()
-                            monitor.refreshNow()
-                        } catch {
-                            self.error = "没能保存，请重试。"
-                        }
+                        try store.ignoreSenderEverywhere(
+                            senderUsername: username,
+                            senderName: name
+                        )
+                        reload()
+                        monitor.refreshNow()
                     }
                 )
             case .quietGroup:
                 QuietGroupPickerSheet(
                     groups: addableQuietGroups,
                     onPick: { group in
+                        let previous = config.atMutedGroups
                         config.atMutedGroups.insert(group.id)
-                        save()
+                        do {
+                            try persistAdmissionConfig()
+                            error = nil
+                            configSaveFailed = false
+                        } catch {
+                            config.atMutedGroups = previous
+                            throw error
+                        }
                     }
                 )
             }
@@ -148,6 +154,7 @@ struct AdmissionSettingsView: View {
                 Label(loadError, systemImage: "exclamationmark.triangle")
                     .font(.callout)
                     .foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
                 HStack(spacing: 10) {
                     Button("重新读取规则") { reload() }
                         .controlSize(.small)
@@ -156,16 +163,27 @@ struct AdmissionSettingsView: View {
                             .controlSize(.small)
                     }
                 }
+                .transition(.companionStatusReveal)
             }
             if let error {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 4)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                    Spacer(minLength: 8)
+                    if configSaveFailed {
+                        Button("重试保存规则", action: save)
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .transition(.companionStatusReveal)
             }
         }
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .companionAnimation(CompanionMotion.ease(), value: loadError)
+        .companionAnimation(CompanionMotion.ease(), value: error)
     }
 
     // MARK: - Summary
@@ -242,7 +260,7 @@ struct AdmissionSettingsView: View {
                         .padding(.vertical, 10)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionRowPressStyle())
                     if mode != AdmissionMode.allCases.last { SettingsRowDivider() }
                 }
             }
@@ -262,17 +280,27 @@ struct AdmissionSettingsView: View {
                 ) {
                     Button("添加") { picker = .groupMember }
                         .controlSize(.small)
+                        .disabled(followListUnreadable || followedGroups.isEmpty)
+                        .help(followListUnreadable ? "暂时读不到关注名单" : (followedGroups.isEmpty ? "先在「关注谁」里添加群" : "添加群里的重点成员"))
                 }
 
-                if memberRules.isEmpty {
-                    SettingsRowDivider()
-                    Text("还没有设置。适合用在「群里只有两三个人值得看」的场合。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
+               if memberRules.isEmpty {
+                   SettingsRowDivider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("还没有设置。适合用在「群里只有两三个人值得看」的场合。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button("添加") { picker = .groupMember }
+                            .buttonStyle(CompanionPressStyle())
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                            .disabled(followListUnreadable || followedGroups.isEmpty)
+                            .help(followListUnreadable ? "暂时读不到关注名单" : (followedGroups.isEmpty ? "先在「关注谁」里添加群" : "添加群里的重点成员"))
+                            .accessibilityLabel("添加群里的重点成员")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+               } else {
                     ForEach(groupedMemberRules, id: \.group) { group in
                         SettingsRowDivider()
                         VStack(alignment: .leading, spacing: 6) {
@@ -288,14 +316,24 @@ struct AdmissionSettingsView: View {
                                         .font(.system(size: 13))
                                     Spacer(minLength: 4)
                                     Button("移除") {
-                                        try? store.removeGroupMemberRule(
-                                            chatUsername: rule.chatUsername,
-                                            senderUsername: rule.senderUsername
-                                        )
-                                        reload()
-                                        monitor.refreshNow()
+                                        do {
+                                            try store.removeGroupMemberRule(
+                                                chatUsername: rule.chatUsername,
+                                                senderUsername: rule.senderUsername
+                                            )
+                                            error = nil
+                                            configSaveFailed = false
+                                            reload()
+                                            monitor.refreshNow()
+                                            panelState.showToast(
+                                                CompanionInteractionCopy.watchedMemberRemoved(name: rule.senderName))
+                                        } catch {
+                                            self.error = "没能保存，请重试。"
+                                            configSaveFailed = false
+                                        }
                                     }
                                     .controlSize(.small)
+                                    .buttonStyle(CompanionPressStyle())
                                 }
                             }
                         }
@@ -334,16 +372,38 @@ struct AdmissionSettingsView: View {
                 ) {
                     Button("添加") { picker = .quietGroup }
                         .controlSize(.small)
-                        .disabled(addableQuietGroups.isEmpty)
+                        .disabled(followListUnreadable || addableQuietGroups.isEmpty)
+                        .help(quietGroupAddHelp)
+                        .accessibilityHint(quietGroupAddHelp)
                 }
 
-                if followedGroups.isEmpty {
+                if followListUnreadable {
                     SettingsRowDivider()
-                    Text("还没有关注的群。先在「关注的人」里添加群。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(CompanionInteractionCopy.followListUnreadableAdmission)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button("再试一次") { reload() }
+                            .buttonStyle(CompanionPressStyle())
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else if followedGroups.isEmpty {
+                    SettingsRowDivider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("还没有关注的群。先在「关注的人」里添加群。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button("关注谁") {
+                            NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("去关注谁添加群")
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else if quietGroups.isEmpty {
                     SettingsRowDivider()
                     Text("所有关注的群，@ 你时都会弹出来。")
@@ -356,10 +416,22 @@ struct AdmissionSettingsView: View {
                         SettingsRowDivider()
                         SettingsRow(group.displayName) {
                             Button("恢复弹出") {
+                                let previous = config.atMutedGroups
                                 config.atMutedGroups.remove(group.id)
-                                save()
+                                do {
+                                    try persistAdmissionConfig()
+                                    error = nil
+                                    configSaveFailed = false
+                                    panelState.showToast(
+                                        CompanionInteractionCopy.quietGroupRestored(name: group.displayName))
+                                } catch {
+                                    config.atMutedGroups = previous
+                                    self.error = "设置没保存成功，请重试。"
+                                    configSaveFailed = true
+                                }
                             }
                             .controlSize(.small)
+                            .buttonStyle(CompanionPressStyle())
                         }
                     }
                 }
@@ -386,6 +458,13 @@ struct AdmissionSettingsView: View {
         followedGroups.filter { !config.atMutedGroups.contains($0.id) }
     }
 
+    private var quietGroupAddHelp: String {
+        if followListUnreadable { return "暂时读不到关注名单" }
+        if followedGroups.isEmpty { return "先在「关注谁」里添加群" }
+        if addableQuietGroups.isEmpty { return "关注的群都已经在名单里" }
+        return "添加群"
+    }
+
     // MARK: - Muted people
 
     private var mutedSection: some View {
@@ -400,27 +479,43 @@ struct AdmissionSettingsView: View {
                     Button("添加") { picker = .mutedPerson }
                         .controlSize(.small)
                 }
-                if globalMuted.isEmpty {
-                    SettingsRowDivider()
-                    Text("还没有拉黑任何人。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
+               if globalMuted.isEmpty {
+                   SettingsRowDivider()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("还没有设为不提醒的人。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button("添加") { picker = .mutedPerson }
+                            .buttonStyle(CompanionPressStyle())
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                            .accessibilityLabel("添加不提醒的人")
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+               } else {
                     ForEach(globalMuted, id: \.id) { rule in
                         SettingsRowDivider()
                         SettingsRow(rule.senderName, subtitle: rule.senderUsername) {
                             Button("恢复") {
-                                try? store.unignoreSender(
-                                    chatUsername: HUDStore.globalIgnoreScopeKey,
-                                    senderUsername: rule.senderUsername,
-                                    senderName: rule.senderName
-                                )
-                                reload()
-                                monitor.refreshNow()
+                                do {
+                                    try store.unignoreSender(
+                                        chatUsername: HUDStore.globalIgnoreScopeKey,
+                                        senderUsername: rule.senderUsername,
+                                        senderName: rule.senderName
+                                    )
+                                    error = nil
+                                    configSaveFailed = false
+                                    reload()
+                                    monitor.refreshNow()
+                                    panelState.showToast(
+                                        CompanionInteractionCopy.mutedPersonRestored(name: rule.senderName))
+                                } catch {
+                                    self.error = "没能保存，请重试。"
+                                    configSaveFailed = false
+                                }
                             }
                             .controlSize(.small)
+                            .buttonStyle(CompanionPressStyle())
                         }
                     }
                 }
@@ -446,7 +541,13 @@ struct AdmissionSettingsView: View {
             loadIsCorrupt = needsExplicitOverwrite
             loaded = false
         }
-        followed = store.getWhitelist()
+        switch store.whitelistAllRead() {
+        case .value(let entries):
+            followed = entries
+            followListUnreadable = false
+        case .unreadable:
+            followListUnreadable = true
+        }
         memberRules = store.loadGroupMemberRules()
         globalMuted = store.loadIgnoredSenders().filter { $0.scope == .global }
     }
@@ -489,7 +590,7 @@ struct AdmissionSettingsView: View {
     /// named button — it throws away the 群 @ 静默 list.
     private func rebuildFromDefaults() {
         guard (try? store.saveAdmissionConfig(AdmissionConfig())) != nil else {
-            error = "默认规则也没写进去：数据库可能正被占用。请稍后再试一次。"
+            error = "默认规则也没写进去：本机设置可能正被占用。请稍后再试一次。"
             return
         }
         reload()
@@ -498,12 +599,21 @@ struct AdmissionSettingsView: View {
     private func save() {
         guard loaded, loadError == nil else { return }
         do {
-            try store.saveAdmissionConfig(config)
+            try persistAdmissionConfig()
             error = nil
-            monitor.refreshNow()
+            configSaveFailed = false
         } catch {
             self.error = "设置没保存成功，请重试。"
+            configSaveFailed = true
         }
+    }
+
+    private func persistAdmissionConfig() throws {
+        guard loaded, loadError == nil else {
+            throw HUDStoreError.sqlError("admission config not writable")
+        }
+        try store.saveAdmissionConfig(config)
+        monitor.refreshNow()
     }
 }
 
@@ -518,11 +628,17 @@ private struct GroupMemberPickerSheet: View {
     let reader: WeChatReader
     let store: HUDStore
     let existing: [GroupMemberRule]
-    let onAdd: (String, String, String, String) -> Void
+
+    let onAdd: (String, String, String, String) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var panelState: PanelState
     @State private var selectedGroup: WhitelistEntry?
     @State private var search = ""
+    @State private var savingKey: String?
+    @State private var saveError: String?
+
+    private var isSaving: Bool { savingKey != nil }
 
     private var members: [(username: String, name: String)] {
         guard let selectedGroup else { return [] }
@@ -558,6 +674,7 @@ private struct GroupMemberPickerSheet: View {
             if selectedGroup != nil {
                 TextField("搜索群成员", text: $search)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("搜索群成员")
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
@@ -580,15 +697,23 @@ private struct GroupMemberPickerSheet: View {
                                         .font(.system(size: 11))
                                         .foregroundStyle(.secondary)
                                 } else {
-                                    Button("添加") {
-                                        onAdd(
-                                            selectedGroup.id,
-                                            selectedGroup.displayName,
-                                            member.username,
-                                            member.name
-                                        )
+                                    Button {
+                                        commit(key: member.username, receipt: CompanionInteractionCopy.watchedMemberAdded(name: member.name)) {
+                                            try onAdd(
+                                                selectedGroup.id,
+                                                selectedGroup.displayName,
+                                                member.username,
+                                                member.name
+                                            )
+                                        }
+                                    } label: {
+                                        Text(savingKey == member.username ? "正在保存…" : "添加")
                                     }
                                     .controlSize(.small)
+                                    .buttonStyle(CompanionPressStyle())
+                                    .disabled(isSaving)
+                                    .help(isSaving ? "正在保存提醒规则" : "")
+                                    .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
                                 }
                             }
                             .padding(.vertical, 3)
@@ -611,7 +736,7 @@ private struct GroupMemberPickerSheet: View {
                                 .padding(.vertical, 5)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CompanionRowPressStyle())
                         }
                     }
                 }
@@ -620,14 +745,40 @@ private struct GroupMemberPickerSheet: View {
             HStack {
                 if selectedGroup != nil {
                     Button("换一个群") { selectedGroup = nil; search = "" }
+                        .companionBusyHold(isSaving, "正在保存提醒规则")
                 }
                 Spacer()
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving)
+                    .help(isSaving ? "正在保存提醒规则" : "")
+                    .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
+            }
+            if let saveError {
+                Text(saveError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
             }
         }
         .padding(16)
         .frame(width: 380, height: 420, alignment: .topLeading)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
+    }
+
+    private func commit(key: String, receipt: String, _ work: @escaping () throws -> Void) {
+        guard savingKey == nil else { return }
+        savingKey = key
+        saveError = nil
+        Task { @MainActor in
+            defer { savingKey = nil }
+            do {
+                try work()
+                panelState.showToast(receipt)
+            } catch {
+                saveError = "没能保存，请重试。"
+            }
+        }
     }
 }
 
@@ -636,10 +787,16 @@ private struct GroupMemberPickerSheet: View {
 /// Pick a followed group whose @s should stop interrupting.
 private struct QuietGroupPickerSheet: View {
     let groups: [WhitelistEntry]
-    let onPick: (WhitelistEntry) -> Void
+
+    let onPick: (WhitelistEntry) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var panelState: PanelState
     @State private var search = ""
+    @State private var savingKey: String?
+    @State private var saveError: String?
+
+    private var isSaving: Bool { savingKey != nil }
 
     private var filtered: [WhitelistEntry] {
         let all = groups.sorted { $0.displayName < $1.displayName }
@@ -656,6 +813,7 @@ private struct QuietGroupPickerSheet: View {
                 .foregroundStyle(.secondary)
             TextField("搜索群", text: $search)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索群")
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(filtered, id: \.id) { group in
@@ -665,8 +823,16 @@ private struct QuietGroupPickerSheet: View {
                                 .foregroundStyle(.secondary)
                             Text(group.displayName).font(.system(size: 13))
                             Spacer(minLength: 4)
-                            Button("不弹出") { onPick(group) }
+                            Button {
+                                commit(key: group.id, receipt: CompanionInteractionCopy.quietGroupSilenced(name: group.displayName)) { try onPick(group) }
+                            } label: {
+                                Text(savingKey == group.id ? "正在保存…" : "不弹出")
+                            }
                                 .controlSize(.small)
+                                .buttonStyle(CompanionPressStyle())
+                                .disabled(isSaving)
+                                .help(isSaving ? "正在保存提醒规则" : "")
+                                .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
                         }
                         .padding(.vertical, 3)
                     }
@@ -677,20 +843,51 @@ private struct QuietGroupPickerSheet: View {
                 Spacer()
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving)
+                    .help(isSaving ? "正在保存提醒规则" : "")
+                    .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
+            }
+            if let saveError {
+                Text(saveError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
             }
         }
         .padding(16)
         .frame(width: 380, height: 420, alignment: .topLeading)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
+    }
+
+    private func commit(key: String, receipt: String, _ work: @escaping () throws -> Void) {
+        guard savingKey == nil else { return }
+        savingKey = key
+        saveError = nil
+        Task { @MainActor in
+            defer { savingKey = nil }
+            do {
+                try work()
+                panelState.showToast(receipt)
+            } catch {
+                saveError = "没能保存，请重试。"
+            }
+        }
     }
 }
 
 private struct MutedPersonPickerSheet: View {
     let store: HUDStore
     let existing: [IgnoredSenderRule]
-    let onAdd: (String, String) -> Void
+
+    let onAdd: (String, String) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var panelState: PanelState
     @State private var search = ""
+    @State private var savingKey: String?
+    @State private var saveError: String?
+
+    private var isSaving: Bool { savingKey != nil }
 
     private var contacts: [ContactEntry] {
         let all = store.loadContacts().sorted { $0.displayName < $1.displayName }
@@ -714,6 +911,7 @@ private struct MutedPersonPickerSheet: View {
                 .foregroundStyle(.secondary)
             TextField("搜索联系人", text: $search)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索联系人")
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(contacts, id: \.username) { contact in
@@ -721,14 +919,22 @@ private struct MutedPersonPickerSheet: View {
                             Text(contact.displayName).font(.system(size: 13))
                             Spacer(minLength: 4)
                             if alreadyMuted(contact.username) {
-                                Text("已拉黑")
-                                    .font(.system(size: 11))
+                                Text("已不提醒")
+                                   .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                             } else {
-                                Button("不提醒") {
-                                    onAdd(contact.username, contact.displayName)
+                                Button {
+                                    commit(key: contact.username, receipt: CompanionInteractionCopy.mutedPersonAdded(name: contact.displayName)) {
+                                        try onAdd(contact.username, contact.displayName)
+                                    }
+                                } label: {
+                                    Text(savingKey == contact.username ? "正在保存…" : "不提醒")
                                 }
                                 .controlSize(.small)
+                                .buttonStyle(CompanionPressStyle())
+                                .disabled(isSaving)
+                                .help(isSaving ? "正在保存提醒规则" : "")
+                                .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
                             }
                         }
                         .padding(.vertical, 3)
@@ -740,9 +946,34 @@ private struct MutedPersonPickerSheet: View {
                 Spacer()
                 Button("完成") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(isSaving)
+                    .help(isSaving ? "正在保存提醒规则" : "")
+                    .accessibilityHint(isSaving ? "正在保存提醒规则" : "")
+            }
+            if let saveError {
+                Text(saveError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
             }
         }
         .padding(16)
         .frame(width: 380, height: 420, alignment: .topLeading)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
+    }
+
+    private func commit(key: String, receipt: String, _ work: @escaping () throws -> Void) {
+        guard savingKey == nil else { return }
+        savingKey = key
+        saveError = nil
+        Task { @MainActor in
+            defer { savingKey = nil }
+            do {
+                try work()
+                panelState.showToast(receipt)
+            } catch {
+                saveError = "没能保存，请重试。"
+            }
+        }
     }
 }

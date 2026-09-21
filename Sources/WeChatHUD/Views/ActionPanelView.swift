@@ -40,6 +40,25 @@ struct ActionPanelView: View {
     @State private var replyState: ReplyState = .idle
     @State private var replyRequested: Bool = false
     @State private var generationKey: String = ""
+    @State private var isRestoring = false
+    @State private var restoreError: String?
+
+    private var replyPhase: Int {
+        switch replyState {
+        case .idle: return 0
+        case .loading: return 1
+        case .results: return 2
+        case .error: return 3
+        }
+    }
+
+    private var analysisPhase: Int {
+        switch analysisState {
+        case .idle, .loading: return 0
+        case .groupResult, .privateResult: return 1
+        case .error: return 2
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -54,13 +73,21 @@ struct ActionPanelView: View {
 
             primaryCTAs
 
+            if let restoreError {
+                errorRowWithRetry(label: restoreError, retry: { runPrimaryCTA() })
+                    .transition(.companionStatusReveal)
+            }
+
             switch replyState {
             case .loading:
                 loadingRow(label: "正在生成回复建议…")
+                    .transition(.companionStatusReveal)
             case .results(let replies) where !replies.isEmpty:
                 replySuggestionsView(replies)
-            case .error:
-                errorRowWithRetry(label: "回复建议生成失败", retry: { runReplySuggestions() })
+                    .transition(.companionStatusReveal)
+           case .error:
+                errorRowWithRetry(label: CompanionInteractionCopy.replySuggestionsFailed, retry: { runReplySuggestions() })
+                   .transition(.companionStatusReveal)
             default:
                 EmptyView()
             }
@@ -79,6 +106,9 @@ struct ActionPanelView: View {
                 .frame(maxHeight: .infinity)
         }
         .onAppear { prepareForCurrentItem(reset: generationKey != itemGenerationKey) }
+        .companionAnimation(CompanionMotion.ease(), value: replyPhase)
+        .companionAnimation(CompanionMotion.ease(), value: analysisPhase)
+        .companionAnimation(CompanionMotion.ease(), value: restoreError)
         .onChange(of: itemGenerationKey) { _, _ in
             prepareForCurrentItem(reset: true)
         }
@@ -108,9 +138,11 @@ struct ActionPanelView: View {
                     .foregroundColor(IslandInk.tertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .transition(.companionStatusReveal)
 
         case .groupResult(let result):
             groupHeadlineCard(result)
+                .transition(.companionStatusReveal)
 
         case .privateResult(let result):
             headlineCard(
@@ -119,14 +151,19 @@ struct ActionPanelView: View {
                 context: privateContext(result),
                 vibe: privateVibe(result)
             )
+            .transition(.companionStatusReveal)
 
-        case .error(let message):
-            headlineCard(
-                title: "分析暂不可用",
-                primary: item.aiSummary ?? item.preview,
-                context: message,
-                vibe: nil
-            )
+       case .error(let message):
+            VStack(alignment: .leading, spacing: 6) {
+                headlineCard(
+                    title: "分析暂不可用",
+                    primary: item.aiSummary ?? item.preview,
+                    context: CompanionInteractionCopy.displayableAnalysisFailure(message),
+                    vibe: nil
+                )
+                errorRowWithRetry(label: "再试一次整理", retry: { runAnalysis() })
+            }
+            .transition(.companionStatusReveal)
         }
     }
 
@@ -394,16 +431,14 @@ struct ActionPanelView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .islandMeta()
-                    Text(item.primaryCTATitle)
-                        .islandButton()
+                    Text(isRestoring ? "正在恢复…" : item.primaryCTATitle)
                 }
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity, minHeight: IslandMetrics.buttonHeight)
-                .padding(.vertical, 6)
-                .background(CompanionPalette.jade, in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(IslandPillButtonStyle(emphasized: true))
+            .disabled(isRestoring)
+            .help(isRestoring ? "正在恢复这条消息" : "")
+            .accessibilityHint(isRestoring ? "正在恢复这条消息" : "")
             }
 
             if item.replySuggestionMode != .hidden {
@@ -415,17 +450,14 @@ struct ActionPanelView: View {
                             Image(systemName: "lightbulb.fill")
                                 .islandMeta()
                         }
-                        Text(item.replySuggestionButtonTitle)
-                            .islandButton()
+                        Text(replyIsLoading ? "正在生成…" : item.replySuggestionButtonTitle)
                     }
-                    .foregroundColor(IslandInk.primary)
-                    .frame(maxWidth: .infinity, minHeight: IslandMetrics.buttonHeight)
-                    .padding(.vertical, 6)
-                    .background(IslandInk.chip, in: Capsule())
-                    .overlay(Capsule().strokeBorder(IslandInk.divider, lineWidth: 0.5))
+                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(CompanionPressStyle())
+                .buttonStyle(IslandPillButtonStyle())
                 .disabled(replyIsLoading)
+                .help(replyIsLoading ? "正在生成回复建议" : "")
+                .accessibilityHint(replyIsLoading ? "正在生成回复建议" : "")
             }
         }
     }
@@ -474,16 +506,18 @@ struct ActionPanelView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(suggestion.recommended
-                ? CompanionPalette.jade.opacity(0.12)
-                : Color.white.opacity(0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(suggestion.recommended ? CompanionPalette.jade.opacity(0.24) : IslandInk.divider, lineWidth: 0.5)
             )
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(IslandInboxRowButtonStyle(
+            highlighted: false,
+            resting: suggestion.recommended
+                ? CompanionPalette.jade.opacity(0.12)
+                : Color.white.opacity(0.04),
+            cornerRadius: 8
+        ))
     }
 
     // MARK: - Actions
@@ -497,6 +531,7 @@ struct ActionPanelView: View {
             analysisState = .idle
             replyState = .idle
             replyRequested = false
+            restoreError = nil
         }
         generationKey = itemGenerationKey
         applyPrefetch()
@@ -540,9 +575,9 @@ struct ActionPanelView: View {
                 analysisState = .groupResult(g)
             } else if let p = entry.privateAnalysis {
                 analysisState = .privateResult(p)
-            } else if entry.analysisAttempted {
-                analysisState = .error(entry.analysisError ?? "分析失败，可能是 AI 服务超时")
-            }
+           } else if entry.analysisAttempted {
+                analysisState = .error(CompanionInteractionCopy.displayableAnalysisFailure(entry.analysisError))
+           }
         }
 
         let isReplyWaitable: Bool = {
@@ -565,7 +600,11 @@ struct ActionPanelView: View {
             panelState.showChatDetail(chatUsername: item.chatUsername,
                                       chatName: monitor.displayName(for: item.chatUsername))
         case .handled:
-            monitor.restoreInboxItem(item)
+            guard !isRestoring else { return }
+            isRestoring = true
+            let ok = monitor.restoreInboxItem(item)
+            isRestoring = false
+            restoreError = ok ? nil : CompanionInteractionCopy.inboxRestoreFailed
         default:
             monitor.openWeChatChat(item.chatUsername)
         }
@@ -598,18 +637,18 @@ struct ActionPanelView: View {
                 let (result, err) = await monitor.analyzeGroupChat(item: item)
                 guard generationKey == expectedKey else { return }
                 if let result = result {
-                    analysisState = .groupResult(result)
-                } else {
-                    analysisState = .error(err ?? "分析失败")
-                }
-            } else {
-                let (result, err) = await monitor.analyzePrivateChat(item: item)
-                guard generationKey == expectedKey else { return }
-                if let result = result {
-                    analysisState = .privateResult(result)
-                } else {
-                    analysisState = .error(err ?? "分析失败")
-                }
+                   analysisState = .groupResult(result)
+               } else {
+                    analysisState = .error(CompanionInteractionCopy.displayableAnalysisFailure(err))
+               }
+           } else {
+               let (result, err) = await monitor.analyzePrivateChat(item: item)
+               guard generationKey == expectedKey else { return }
+               if let result = result {
+                   analysisState = .privateResult(result)
+               } else {
+                    analysisState = .error(CompanionInteractionCopy.displayableAnalysisFailure(err))
+               }
             }
         }
     }

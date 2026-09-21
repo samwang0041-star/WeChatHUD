@@ -19,9 +19,12 @@ enum SecretStoreError: Error, Equatable, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .persistFailed(let message): return "无法保存密钥: \(message)"
-        case .readbackMismatch: return "密钥写入后读回不一致，已保留原值"
-        case .unavailable: return "系统钥匙串不可用"
+        case .persistFailed:
+            return "访问凭据没能保存，请重试。"
+        case .readbackMismatch:
+            return "访问凭据写完后读回来对不上，已保留原来的。"
+        case .unavailable:
+            return "这台 Mac 现在存不了访问凭据，请重试。"
         }
     }
 }

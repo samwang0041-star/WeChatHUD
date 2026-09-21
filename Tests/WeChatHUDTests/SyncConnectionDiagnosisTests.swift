@@ -41,13 +41,22 @@ final class SyncConnectionDiagnosisTests: XCTestCase {
             SyncConnectionDiagnosis.noDatabaseFiles.message,
             SyncConnectionDiagnosis.ready("/account").message
         ]
-        for message in messages {
-            XCTAssertFalse(message.contains("db_storage"), message)
-            XCTAssertFalse(message.contains("白名单"), message)
-        }
-    }
+       for message in messages {
+           XCTAssertFalse(message.contains("db_storage"), message)
+          XCTAssertFalse(message.contains("白名单"), message)
+            XCTAssertFalse(message.contains("数据目录"), message)
+            XCTAssertFalse(message.contains("账号目录"), message)
+       }
+        let loose = SyncConnectionDiagnosis.looseKeyPermissions.message
+        XCTAssertTrue(loose.contains("收紧权限"), loose)
+       XCTAssertFalse(loose.contains("chmod"), loose)
+       XCTAssertFalse(loose.contains("终端"), loose)
+        let unreadable = SyncConnectionDiagnosis.directoryUnreadable.message
+        XCTAssertTrue(unreadable.contains("整块磁盘"), unreadable)
+        XCTAssertFalse(unreadable.contains("系统设置 →"), unreadable)
+   }
 
-    func testConnectionFooterDoesNotAskForAuthorizationWhenSendIsReady() {
+   func testConnectionFooterDoesNotAskForAuthorizationWhenSendIsReady() {
         XCTAssertEqual(
             SyncSettingsView.connectionFooter(readingReady: false, sendReady: false),
             "先连接微信。发送回复还需要系统授权。"

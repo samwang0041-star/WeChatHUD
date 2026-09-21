@@ -2,14 +2,15 @@ import XCTest
 @testable import WeChatHUD
 
 final class ImageUnderstandingServiceTests: XCTestCase {
-    func testPromptContextUsesOCRTextAsImageContent() {
-        let result = ImageUnderstandingResult(
-            filePath: "/tmp/image.png",
-            ocrText: "演唱会 7点入场\n带身份证",
-            errorMessage: nil
-        )
+   func testPromptContextUsesOCRTextAsImageContent() {
+       let result = ImageUnderstandingResult(
+           filePath: "/tmp/image.png",
+           ocrText: "演唱会 7点入场\n带身份证",
+           errorMessage: nil
+       )
 
-        XCTAssertTrue(result.promptContext.contains("图片识别/OCR文字"))
+        XCTAssertTrue(result.promptContext.contains("图片里出现的文字"))
+        XCTAssertFalse(result.promptContext.contains("OCR"))
         XCTAssertTrue(result.promptContext.contains("演唱会 7点入场 带身份证"))
     }
 
@@ -17,10 +18,23 @@ final class ImageUnderstandingServiceTests: XCTestCase {
         let result = ImageUnderstandingResult(
             filePath: nil,
             ocrText: "",
-            errorMessage: "未找到本地图片文件"
+            errorMessage: nil
         )
 
-        XCTAssertTrue(result.promptContext.contains("未找到本地图片文件"))
-        XCTAssertTrue(result.promptContext.contains("不能判断图片具体内容"))
+        XCTAssertTrue(result.promptContext.contains("本机没有这份图"))
+        XCTAssertFalse(result.promptContext.contains("OCR"))
+        XCTAssertFalse(result.promptContext.contains("dat"))
+    }
+
+    func testUnreadableImageDoesNotNameTheCacheOrOCR() {
+        let result = ImageUnderstandingResult(
+            filePath: "/tmp/foo.dat",
+            ocrText: "",
+            errorMessage: "encrypted"
+        )
+        XCTAssertTrue(result.promptContext.contains("读不出图上的字"))
+        XCTAssertFalse(result.promptContext.contains("OCR"))
+        XCTAssertFalse(result.promptContext.contains("加密"))
+        XCTAssertFalse(result.promptContext.contains("dat"))
     }
 }

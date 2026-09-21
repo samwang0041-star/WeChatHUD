@@ -60,6 +60,7 @@ struct InboxView: View {
     @State private var undoTimer: Timer? = nil
     @State private var showHandled = false
     @State private var showAllPassiveUpdates = false
+    @State private var restoringHandledID: String?
 
     var body: some View {
         let activeItems = monitor.inboxItems
@@ -69,6 +70,16 @@ struct InboxView: View {
         VStack(alignment: .leading, spacing: 0) {
             if panelState.islandSurface != .firstLaunch {
                 header
+            }
+            if panelState.autopilotPopoverOpen, panelState.islandSurface != .firstLaunch {
+                AutopilotPopoverView(close: {
+                    withMotion(CompanionMotion.islandRowExpand()) {
+                        panelState.setAutopilotPopoverOpen(false)
+                    }
+                })
+                .padding(.horizontal, IslandMetrics.sectionInset)
+                .padding(.bottom, 8)
+                .transition(.islandDetailReveal)
             }
             if panelState.islandSurface == .inbox {
                 // The brand block is an invitation, not chrome. It shows
@@ -81,6 +92,7 @@ struct InboxView: View {
                     islandSectionRow
                 }
                 islandStatusBanner
+                islandInboxActionError
             }
 
             if panelState.islandSurface == .firstLaunch {
@@ -104,23 +116,23 @@ struct InboxView: View {
                         InboxRowView(item: item, islandCatalog: true, onDismiss: {
                             guard monitor.dismissInboxItem(item) else { return }
                             undoAction = "已忽略"
-                            withMotion(CompanionMotion.easeOut(0.25)) { undoItem = item }
+                            withMotion(CompanionMotion.enter()) { undoItem = item }
                             scheduleUndoExpiry()
                         }, onSnooze: { date in
                             guard monitor.snoozeInboxItem(item, until: date) else { return }
                             undoAction = CompanionProductCopy.snoozeReceipt(until: date)
-                            withMotion(CompanionMotion.easeOut(0.25)) { undoItem = item }
+                            withMotion(CompanionMotion.enter()) { undoItem = item }
                             scheduleUndoExpiry()
                         }, onSilence: {
                             guard monitor.silenceInboxItem(item) else { return }
                             undoAction = "已静音"
-                            withMotion(CompanionMotion.easeOut(0.25)) { undoItem = item }
+                            withMotion(CompanionMotion.enter()) { undoItem = item }
                             scheduleUndoExpiry()
                         })
                     }
 
-                    if hiddenPassiveCount > 0 || showAllPassiveUpdates {
-                        Button(action: { showAllPassiveUpdates.toggle() }) {
+if hiddenPassiveCount > 0 || showAllPassiveUpdates {
+                        Button(action: { withMotion(CompanionMotion.islandRowExpand()) { showAllPassiveUpdates.toggle() } }) {
                             Text(showAllPassiveUpdates ? "收起普通更新" : "还有 \(hiddenPassiveCount) 条普通更新")
                                 .islandMicro()
                                 .foregroundColor(IslandInk.meta)
@@ -135,9 +147,9 @@ struct InboxView: View {
                     let hiddenTotalCount = max(0, activeItems.count - visibleItems.count - hiddenPassiveCount)
                     if hiddenTotalCount > 0 {
                         Button(action: { panelState.showDetail() }) {
-                            // This opens the separate detail window, not an
-                            // in-place expansion, so the label says so.
-                            Text("+\(hiddenTotalCount) 更多 — 查看全部（新窗口）")
+                            // Same destination as the bottom-bar 查看全部: the
+                            // companion workspace, not an in-place expansion.
+                            Text("+\(hiddenTotalCount) 更多 — 查看全部")
                                 .islandMicro()
                                 .foregroundColor(IslandInk.meta)
                                 .padding(.horizontal, IslandMetrics.sectionInset)
@@ -146,15 +158,15 @@ struct InboxView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(IslandRowButtonStyle())
+                        .help(CompanionProductCopy.openCompanion)
+                        .accessibilityLabel(CompanionProductCopy.openCompanion)
                     }
 
                     // Undo bar
                     if let undo = undoItem {
                         undoBar(item: undo, action: undoAction)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else if let snooze = panelState.islandSnoozeUndo {
                         undoBar(item: snooze.item, action: CompanionProductCopy.snoozeReceipt(until: snooze.until))
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
                     // Handled section (collapsed by default)
@@ -167,6 +179,8 @@ struct InboxView: View {
                 workspaceBar
             }
         }
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: panelState.autopilotPopoverOpen)
+        .companionAnimation(CompanionMotion.ease(), value: monitor.inboxActionError)
     }
 
     /// List header. Replaces the 24pt bold "现在有 N 件事需要你" headline:
@@ -184,8 +198,8 @@ struct InboxView: View {
                 .islandSection()
                 .foregroundStyle(IslandInk.meta)
             Spacer(minLength: 8)
-            // Sync state lives in this fixed slot — the "同步中" indicator
-            // occupies exactly where the fresh-sync label sits, so a refresh starting
+            // Sync state lives in this fixed slot — the "正在同步" indicator
+           // occupies exactly where the fresh-sync label sits, so a refresh starting
             // or finishing never changes the panel's measured height. The
             // old syncing banner was a whole row that popped in and out,
             // and every insertion moved the window.
@@ -195,8 +209,8 @@ struct InboxView: View {
                         .controlSize(.mini)
                         .scaleEffect(0.55)
                         .frame(width: 8, height: 8)
-                   Text("同步中")
-                       .islandMicro()
+                   Text("正在同步")
+                      .islandMicro()
                         // Tertiary/quaternary are chrome only (IslandInk doc):
                         // sync state is something the user reads, so it stays
                         // on the `meta` step.
@@ -249,10 +263,10 @@ struct InboxView: View {
                 CompanionStatusDot(tint: .orange, level: .attention, pulsing: false, size: 7)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 4) {
-                    // Fact, then the move. The button below is the action, so
-                    // the sentence names what state WeChat has to be in rather
-                    // than repeating the button verb.
-                    Text("暂时读不到新消息，微信可能没开着或没登录。")
+                   // Fact, then the move. The button below is the action, so
+                   // the sentence names what state WeChat has to be in rather
+                   // than repeating the button verb.
+                    Text(islandConnectionFact)
                     if let last = monitor.stats.lastSyncAt {
                         // syncLabel already carries the "同步" suffix
                         // ("270 分钟前同步"), so prefixing it here read as
@@ -261,13 +275,13 @@ struct InboxView: View {
                         Text("上次同步 \(RelativeTimeFormatter.relativeLabel(last))")
                             .foregroundStyle(IslandInk.tertiary)
                     }
-                    Button("检查连接") {
+                    Button(islandConnectionMove) {
                         panelState.pendingSettingsTab = "system"
                         panelState.showDetail()
                     }
                     .buttonStyle(IslandRowButtonStyle())
                     .foregroundStyle(CompanionPalette.islandMint)
-                    .help(CompanionInteractionCopy.needWeChatRunning)
+                    .help(islandConnectionHelp)
                 }
             }
             .islandRowBody()
@@ -279,10 +293,31 @@ struct InboxView: View {
         }
     }
 
+    @ViewBuilder
+    private var islandInboxActionError: some View {
+        if let error = monitor.inboxActionError {
+            HStack(alignment: .top, spacing: 8) {
+                Text(error)
+                    .islandRowBody()
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("知道了") { monitor.inboxActionError = nil }
+                    .buttonStyle(IslandRowButtonStyle())
+                    .islandMicro()
+                    .foregroundStyle(CompanionPalette.islandMint)
+                    .accessibilityLabel("知道了")
+            }
+            .padding(.horizontal, IslandMetrics.sectionInset)
+            .padding(.vertical, 9)
+            .transition(.companionStatusReveal)
+        }
+    }
+
     private var workspaceBar: some View {
         HStack(spacing: 10) {
-            Button {
-                panelState.islandSurface = .tasks
+Button {
+                withMotion(CompanionMotion.islandRowExpand()) { panelState.islandSurface = .tasks }
             } label: {
                 barAction(glyph: "checklist", title: "待办", ink: IslandInk.secondary)
             }
@@ -386,8 +421,8 @@ struct InboxView: View {
                     Circle()
                         .fill(Color.green.opacity(0.7))
                         .frame(width: 5, height: 5)
-                   Text("都处理好了")
-                       .islandMicro()
+                   Text("没有待处理")
+                      .islandMicro()
                         .foregroundColor(IslandInk.meta)
                 }
             }
@@ -408,6 +443,8 @@ struct InboxView: View {
                     Image(systemName: "gearshape.fill")
                         .font(.system(size: 11))
                         .foregroundColor(IslandInk.tertiary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(IslandIconButtonStyle())
                 .help(CompanionProductCopy.openCompanion)
@@ -445,7 +482,7 @@ struct InboxView: View {
             Spacer()
             Button("撤销") {
                 guard monitor.restoreInboxItem(item) else { return }
-                withMotion(CompanionMotion.easeIn(0.2)) {
+                withMotion(CompanionMotion.exit()) {
                     undoItem = nil
                     panelState.islandSnoozeUndo = nil
                 }
@@ -460,14 +497,18 @@ struct InboxView: View {
         .padding(.horizontal, IslandMetrics.sectionInset)
         .padding(.vertical, 7)
         .background(IslandInk.hover)
+        // Same top-anchored scale as every other island disclosure. A bottom
+        // slide was a layout-property animation and left/entered a different
+        // edge from the toast that hangs off this same island.
+        .transition(.islandDetailReveal)
     }
 
     // MARK: - Handled Section
 
     private var handledSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Section header (tap to expand/collapse)
-            Button(action: { withMotion(CompanionMotion.rowExpand()) { showHandled.toggle() } }) {
+// Section header (tap to expand/collapse)
+            Button(action: { withMotion(CompanionMotion.islandRowExpand()) { showHandled.toggle() } }) {
                 HStack(spacing: 6) {
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
@@ -478,8 +519,8 @@ struct InboxView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(IslandInk.quaternary)
-                        .rotationEffect(.degrees(showHandled ? 180 : 0))
-                        .companionAnimation(CompanionMotion.rowExpand(), value: showHandled)
+.rotationEffect(.degrees(showHandled ? 180 : 0))
+                        .companionAnimation(CompanionMotion.islandRowExpand(), value: showHandled)
                     Rectangle()
                         .fill(IslandInk.divider)
                         .frame(height: 1)
@@ -493,9 +534,11 @@ struct InboxView: View {
             if showHandled {
                 ForEach(monitor.handledItems) { item in
                     handledRow(item)
+                        .transition(.islandDetailReveal)
                 }
             }
-        }
+}
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: showHandled)
     }
 
     private func handledRow(_ item: InboxItem) -> some View {
@@ -517,15 +560,30 @@ struct InboxView: View {
             }
             Spacer()
             statusLabel(item)
-            Button(action: { monitor.restoreInboxItem(item) }) {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(IslandInk.tertiary)
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+            Button {
+                guard restoringHandledID == nil else { return }
+                restoringHandledID = item.id
+                monitor.restoreInboxItem(item)
+                restoringHandledID = nil
+            } label: {
+                Group {
+                    if restoringHandledID == item.id {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(IslandInk.tertiary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
             }
             .buttonStyle(IslandIconButtonStyle())
-            .accessibilityLabel("恢复这条消息")
+            .disabled(restoringHandledID != nil)
+            .help(restoringHandledID != nil ? "正在恢复这条消息" : "恢复这条消息")
+            .accessibilityLabel(restoringHandledID == item.id ? "正在恢复这条消息" : "恢复这条消息")
+            .accessibilityHint(restoringHandledID != nil ? "正在恢复这条消息" : "")
         }
         .padding(.horizontal, IslandMetrics.sectionInset)
         .padding(.vertical, 5)
@@ -562,11 +620,19 @@ struct InboxView: View {
                     .foregroundColor(IslandInk.tertiary)
                     .multilineTextAlignment(.center)
             }
-            if !monitor.handledItems.isEmpty {
-                Button("查看已处理") { showHandled = true }
-                    .buttonStyle(.bordered)
+            if let move = islandEmptyMove {
+                Button(move.title, action: move.run)
+                    .buttonStyle(IslandRowButtonStyle())
+                    .foregroundStyle(CompanionPalette.islandMint)
+                    .help(move.hint)
+                    .accessibilityLabel(move.title)
+                    .accessibilityHint(move.hint)
+            }
+if !monitor.handledItems.isEmpty {
+                Button("查看已处理") { withMotion(CompanionMotion.islandRowExpand()) { showHandled = true } }
+                    .buttonStyle(IslandRowButtonStyle())
+                    .foregroundStyle(CompanionPalette.islandMint)
                     .controlSize(.small)
-                    .tint(.white)
             }
             if let syncAt = monitor.stats.lastSyncAt {
                Label(syncLabel(syncAt), systemImage: "arrow.triangle.2.circlepath")
@@ -578,8 +644,7 @@ struct InboxView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 18)
         .padding(.vertical, 10)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(islandEmptyCopy + (islandEmptyDetail.map { " \($0)" } ?? ""))
+        .accessibilityElement(children: .contain)
     }
 
     /// The two AI facts the empty-state copy branches on. They used to be
@@ -631,19 +696,91 @@ struct InboxView: View {
         return nil
     }
 
-    private var islandStatusBannerShowsCopy: Bool {
+    /// One next step, matching the empty copy. The banner already owns
+    /// 检查连接 for WeChat errors, so this stays off that path.
+    private var islandEmptyMove: (title: String, hint: String, run: () -> Void)? {
         switch monitor.stats.syncStatus {
-        case .error, .waitingForWeChat, .accountSwitched: return true
-        default: return false
+        case .syncing, .error, .waitingForWeChat, .accountSwitched:
+            return nil
+        default:
+            break
         }
+        if monitor.stats.lastSyncAt == nil {
+            return (
+                title: "连接微信",
+                hint: "打开连接引导",
+                run: { NotificationCenter.default.post(name: .hudShowOnboarding, object: nil) }
+            )
+        }
+        if !monitor.store.hasWhitelistEntries() {
+            return (
+                title: "关注谁",
+                hint: "选择要整理的对话",
+                run: {
+                    panelState.pendingSettingsTab = "contacts"
+                    panelState.showDetail()
+                }
+            )
+        }
+        let ai = aiReadiness
+        if !ai.configured || !ai.tested {
+            return (
+                title: "设置 AI",
+                hint: "配置并测试 AI 服务",
+                run: {
+                    panelState.pendingSettingsTab = "aiButler"
+                    panelState.showDetail()
+                }
+            )
+        }
+        if hasOpenWorkForIsland {
+            return (
+                title: "查看待办",
+                hint: "打开岛内待办",
+run: {
+                    withMotion(CompanionMotion.islandRowExpand()) { panelState.islandSurface = .tasks }
+                }
+            )
+        }
+        return nil
     }
 
-    private var islandEmptyCopy: String {
-        switch monitor.stats.syncStatus {
-        case .syncing:
-            return "正在同步…"
-        case .error, .waitingForWeChat, .accountSwitched:
-            return "暂时读不到新消息。请确认微信已经打开并登录。"
+   private var islandStatusBannerShowsCopy: Bool {
+       switch monitor.stats.syncStatus {
+       case .error, .waitingForWeChat, .accountSwitched: return true
+       default: return false
+       }
+   }
+
+    private var islandConnectionSwitched: Bool {
+        if case .accountSwitched = monitor.stats.syncStatus { return true }
+        return false
+    }
+
+    private var islandConnectionFact: String {
+        islandConnectionSwitched
+            ? CompanionInteractionCopy.accountSwitched
+            : CompanionInteractionCopy.wechatUnreadable
+    }
+
+    private var islandConnectionMove: String {
+        islandConnectionSwitched ? "选定当前账号" : "检查连接"
+    }
+
+    private var islandConnectionHelp: String {
+        islandConnectionSwitched
+            ? CompanionInteractionCopy.accountSwitchedEmpty
+            : CompanionInteractionCopy.needWeChatRunning
+    }
+
+   private var islandEmptyCopy: String {
+       switch monitor.stats.syncStatus {
+      case .syncing:
+          return "正在同步…"
+        case .accountSwitched:
+            return CompanionInteractionCopy.accountSwitchedEmpty
+        case .error, .waitingForWeChat:
+            return CompanionInteractionCopy.wechatUnreadableEmpty
         default:
             return FirstLaunchGuide.compactEmpty(
                 wechatConnected: monitor.stats.lastSyncAt != nil,
@@ -664,7 +801,7 @@ struct InboxView: View {
         undoTimer?.invalidate()
         undoTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { _ in
             Task { @MainActor in
-                withMotion(CompanionMotion.easeIn(0.2)) { undoItem = nil }
+                withMotion(CompanionMotion.exit()) { undoItem = nil }
                 undoTimer = nil
             }
         }
@@ -681,6 +818,8 @@ private struct IslandTaskPreview: View {
     @State private var receipt: String?
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
     @State private var itemsCache = DiscussionItemsCache()
+    @State private var isUndoing = false
+    @State private var undoError: String?
 
     /// Resolved once per body evaluation; reading it from a row would re-sort
     /// the whole pending corpus for every row drawn.
@@ -705,8 +844,8 @@ private struct IslandTaskPreview: View {
                 // Back chevron returns to the inbox; "待办" is the title
                 // of THIS surface — labelling the back button with the
                 // current page's name read as navigating to itself.
-                Button {
-                    panelState.islandSurface = .inbox
+Button {
+                    withMotion(CompanionMotion.islandRowExpand()) { panelState.islandSurface = .inbox }
                 } label: {
                     Image(systemName: "chevron.left")
                         .frame(width: 22, height: 22)
@@ -741,12 +880,8 @@ private struct IslandTaskPreview: View {
                         expandedID = itemsCache.items(surfacedDiscussionItems, scope: value, query: "", history: false).first?.id
                     } label: {
                         Text(value.rawValue)
-                            .companionFont(size: IslandType.meta, weight: scope == value ? .semibold : .regular)
-                            .foregroundStyle(scope == value ? Color.white : IslandInk.secondary)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(scope == value ? CompanionPalette.jade : IslandInk.hover, in: Capsule())
                     }
-                    .buttonStyle(CompanionPressStyle())
+                    .buttonStyle(IslandPillButtonStyle(emphasized: scope == value))
                     .accessibilityAddTraits(scope == value ? .isSelected : [])
                 }
             }
@@ -755,6 +890,7 @@ private struct IslandTaskPreview: View {
                     .islandRowBody()
                     .foregroundStyle(IslandInk.tertiary)
                     .padding(.vertical, 8)
+                islandTaskEmptyMove
             } else {
                 ForEach(items.prefix(4)) { item in
                     islandTaskRow(item)
@@ -764,19 +900,41 @@ private struct IslandTaskPreview: View {
                 HStack {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.islandMint)
                     Text(receipt).islandRowBody().foregroundStyle(IslandInk.primary)
+                    if let undoError {
+                        Text(undoError)
+                            .islandRowBody()
+                            .foregroundStyle(Color.orange)
+                            .transition(.companionStatusReveal)
+                    }
                     Spacer()
                     if let undo {
-                        Button("撤销") {
-                            try? monitor.setDiscussionItemStatus(id: undo.id, status: undo.status)
-                            self.undo = nil
-                            self.receipt = nil
+                        Button {
+                            guard !isUndoing else { return }
+                            isUndoing = true
+                            Task { @MainActor in
+                                defer { isUndoing = false }
+                                do {
+                                    try monitor.setDiscussionItemStatus(id: undo.id, status: undo.status)
+                                    self.undo = nil
+                                    self.receipt = nil
+                                    undoError = nil
+                                } catch {
+                                    undoError = "撤销没有成功，请重试。"
+                                }
+                            }
+                        } label: {
+                            Text(isUndoing ? "正在撤销…" : "撤销")
                         }
                         .foregroundStyle(CompanionPalette.islandMint)
                         .buttonStyle(IslandRowButtonStyle())
+                        .disabled(isUndoing)
+                        .help(isUndoing ? "正在撤销刚才的操作" : "")
+                        .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
                     }
                 }
                 .padding(8)
                 .background(CompanionPalette.jade.opacity(0.85), in: Capsule())
+                .transition(.companionStatusReveal)
             }
             Button("查看全部待办") { openWorkspace() }
                 .buttonStyle(IslandRowButtonStyle())
@@ -786,6 +944,8 @@ private struct IslandTaskPreview: View {
         }
         .padding(.horizontal, IslandMetrics.sectionInset)
         .padding(.bottom, 12)
+        .companionAnimation(CompanionMotion.ease(), value: receipt)
+        .companionAnimation(CompanionMotion.ease(), value: undoError)
         .onAppear {
             // The cache keeps these lookups to one sort per distinct scope.
             if itemsCache.items(surfacedDiscussionItems, scope: scope, query: "", history: false).isEmpty {
@@ -838,8 +998,8 @@ private struct IslandTaskPreview: View {
                 }
                 .buttonStyle(IslandIconButtonStyle())
                 .accessibilityLabel("标记完成")
-                Button {
-                    withMotion(CompanionMotion.rowExpand()) {
+Button {
+                    withMotion(CompanionMotion.islandRowExpand()) {
                         expandedID = expanded ? nil : item.id
                     }
                 } label: {
@@ -858,6 +1018,7 @@ private struct IslandTaskPreview: View {
                     .foregroundStyle(IslandInk.quaternary)
             }
             if expanded {
+                VStack(alignment: .leading, spacing: 8) {
                 if let detail = item.detail, !detail.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("下一步").islandMeta().foregroundStyle(IslandInk.tertiary)
@@ -874,6 +1035,8 @@ private struct IslandTaskPreview: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.mini)
                 }
+                }
+                .transition(.islandDetailReveal)
             }
         }
         .padding(9)
@@ -882,6 +1045,63 @@ private struct IslandTaskPreview: View {
             if expanded {
                 Capsule().fill(CompanionPalette.jade).frame(width: 3).padding(.vertical, 8)
             }
+}
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: expanded)
+    }
+
+    private var islandOtherScopeWithItems: DiscussionScope? {
+        let candidates: [DiscussionScope]
+        switch scope {
+        case .mine: candidates = [.theirs, .shared]
+        case .theirs: candidates = [.mine, .shared]
+        default: candidates = [.mine, .theirs]
+        }
+        for candidate in candidates {
+            if !itemsCache.items(surfacedDiscussionItems, scope: candidate, query: "", history: false).isEmpty {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private var islandTaskEmptyMove: some View {
+        let hidden = monitor.discussionStrictness.hidden(from: monitor.discussionItems)
+        let other = islandOtherScopeWithItems
+        if let other {
+            Button(other.rawValue) {
+                withMotion(CompanionMotion.pageChange()) {
+                    scope = other
+                    expandedID = itemsCache.items(surfacedDiscussionItems, scope: other, query: "", history: false).first?.id
+                }
+            }
+            .buttonStyle(IslandRowButtonStyle())
+            .foregroundStyle(CompanionPalette.islandMint)
+            .accessibilityLabel("去\(other.rawValue)")
+        } else if !hidden.isEmpty {
+            Button("切到「全记」") {
+                withMotion(CompanionMotion.pageChange()) {
+                    monitor.setDiscussionStrictness(.everything)
+                }
+            }
+            .buttonStyle(IslandRowButtonStyle())
+            .foregroundStyle(CompanionPalette.islandMint)
+            .accessibilityLabel("切到全记，查看收起的待办")
+        } else if monitor.stats.lastSyncAt == nil {
+            Button("连接微信") {
+                NotificationCenter.default.post(name: .hudShowOnboarding, object: nil)
+            }
+            .buttonStyle(IslandRowButtonStyle())
+            .foregroundStyle(CompanionPalette.islandMint)
+            .accessibilityLabel("打开连接引导")
+        } else if !monitor.store.hasWhitelistEntries() {
+            Button("关注谁") {
+                panelState.pendingSettingsTab = "contacts"
+                panelState.showDetail()
+            }
+            .buttonStyle(IslandRowButtonStyle())
+            .foregroundStyle(CompanionPalette.islandMint)
+            .accessibilityLabel("选择要整理的对话")
         }
     }
 
@@ -931,9 +1151,12 @@ struct IslandFirstLaunchView: View {
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 9)
-                    .background(CompanionPalette.jade, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(IslandInboxRowButtonStyle(
+                highlighted: false,
+                resting: CompanionPalette.jade,
+                cornerRadius: 10
+            ))
             .accessibilityIdentifier("island.firstLaunch.connect")
             Button(FirstLaunchGuide.skipCTA) {
                 panelState.islandSurface = .inbox

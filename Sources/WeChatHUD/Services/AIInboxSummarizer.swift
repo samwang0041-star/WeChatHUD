@@ -33,7 +33,7 @@ actor AIInboxSummarizer {
         let started = Date()
         if context.mediaType == nil,
            !MessageHelpers.isReadableAIContent(context.triggerMessageText, allowMediaPlaceholder: false) {
-            let summary = "暂无可读内容"
+            let summary = CompanionInteractionCopy.analysisNoMessages
             await audit(input: context.triggerMessageText, output: summary, latencyMs: 0, status: .ok, error: nil, model: nil)
             return summary
         }
@@ -67,7 +67,7 @@ actor AIInboxSummarizer {
 
         let userPrompt = template
             .replacingOccurrences(of: "{sender_name}", with: AIService.oneLine(context.triggerMessage.senderName))
-            .replacingOccurrences(of: "{sender_role}", with: context.senderRole.rawValue)
+            .replacingOccurrences(of: "{sender_role}", with: context.senderRolePromptToken)
             .replacingOccurrences(of: "{chat_name}", with: AIService.oneLine(context.triggerMessage.chatName))
             .replacingOccurrences(of: "{chat_kind}", with: context.isGroupChat ? "群聊" : "私聊")
             .replacingOccurrences(of: "{message_body}", with: renderMessageBody(context))

@@ -66,8 +66,8 @@ final class ApprovalWorkspaceTests: XCTestCase {
                      "receipt = .problem(CompanionProductCopy.sendUncertain)"] {
             XCTAssertFalse(view.contains(dead), "绕过守卫的直写回来了：\(dead)")
         }
-        XCTAssertEqual(view.components(separatedBy: "postReceipt(").count - 1, 8,
-                       "详情窗的每一次回执都要过守卫（1 处定义 + 7 处调用）")
+        XCTAssertEqual(view.components(separatedBy: "postReceipt(").count - 1, 9,
+                       "详情窗的每一次回执都要过守卫（1 处定义 + 8 处调用）")
     }
 
     /// 「取消本条」 used to have no latch at all, so a double tap started two
@@ -75,16 +75,38 @@ final class ApprovalWorkspaceTests: XCTestCase {
     func testCancelButtonLatchesLikeConfirmSendDoes() throws {
         let view = try String(contentsOf: sourceRoot.appendingPathComponent(
             "Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
-        let buttonStart = try XCTUnwrap(view.range(of: "Button(\"取消本条\")")).lowerBound
+        let buttonStart = try XCTUnwrap(view.range(of: "正在取消…\" : \"取消本条\"")).lowerBound
         let pieces = view[buttonStart...].components(separatedBy: ".buttonStyle(.bordered)")
         let button = pieces.first ?? ""
-        XCTAssertTrue(button.contains("guard !isCancelling else { return }"))
+        XCTAssertTrue(button.contains("guard !actionBusy else { return }"))
         XCTAssertTrue(button.contains("isCancelling = true"))
         XCTAssertTrue(button.contains("defer { isCancelling = false }"),
                       "闩只在任务开始时放、不在结束时收，等于第二次永远点不动")
         let afterStyle = pieces.count > 1 ? pieces[1] : ""
-        XCTAssertTrue(afterStyle.prefix(80).contains(".disabled(isCancelling)"),
+        XCTAssertTrue(afterStyle.prefix(120).contains(".disabled(actionBusy)"),
                       "闩没有接到这颗按钮上：点下去以后还是能再点一次")
+    }
+
+    func testSaveDraftButtonLatchesLikeConfirmSendDoes() throws {
+        let view = try String(contentsOf: sourceRoot.appendingPathComponent(
+            "Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("Text(isSavingDraft ? \"正在保存…\" : \"保存修改\")"))
+        XCTAssertTrue(view.contains("isSavingDraft = true"))
+        XCTAssertTrue(view.contains("defer { isSavingDraft = false }"))
+        XCTAssertTrue(view.contains("正在保存草稿"))
+        XCTAssertTrue(view.contains("private var actionBusy: Bool { isSending || isCancelling || isSavingDraft }"))
+    }
+
+    func testPendingSendOpensInTheDetailPaneInsteadOfAnEmptyInstruction() throws {
+        let view = try String(contentsOf: sourceRoot.appendingPathComponent(
+            "Views/ApprovalWorkspaceView.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("if let pending = selectedPending"))
+        XCTAssertTrue(view.contains("pendingDetail(pending)"))
+        XCTAssertTrue(view.contains(".textSelection(.enabled)"))
+        XCTAssertTrue(view.contains("showsActionsOnly: true"))
+        XCTAssertFalse(view.contains("立即发送或取消都可以在左侧完成"))
+        XCTAssertTrue(view.contains("selectedPendingID = item.id"))
+        XCTAssertTrue(view.contains("selectedPendingID = nil"))
     }
 
     private var sourceRoot: URL {

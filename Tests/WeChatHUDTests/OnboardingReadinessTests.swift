@@ -29,4 +29,12 @@ final class OnboardingReadinessTests: XCTestCase {
         XCTAssertTrue(readiness.remainingActions.isEmpty)
         XCTAssertTrue(readiness.remainingSteps.isEmpty)
     }
+
+    func testUnreadableFollowListIsNotNobody() {
+        let readiness = OnboardingReadiness(
+            directoryReady: true, keyFileReadable: true, hasSuccessfulSync: true,
+            aiConfigurationValid: true, aiConnectionTested: true,
+            trackedConversationCount: 0, followListUnreadable: true)
+        XCTAssertFalse(readiness.remainingActions.contains(.chooseContacts))
+    }
 }

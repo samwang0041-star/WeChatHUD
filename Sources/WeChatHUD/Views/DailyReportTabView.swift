@@ -32,6 +32,7 @@ struct DailyReportTabView: View {
         }
         .foregroundStyle(.primary)
         .workspaceGround()
+        .companionAnimation(CompanionMotion.ease(), value: exportMessage)
         .onChange(of: monitor.dailyReportViewedDate) { _, _ in
             if scope == .weekly { reloadWeeklyCatalog() }
         }
@@ -80,20 +81,33 @@ struct DailyReportTabView: View {
     private func exportStatus(_ message: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle")
-            Text(message).lineLimit(1)
-            if let exportedReportURL {
-                Button("打开结果") {
-                    NSWorkspace.shared.activateFileViewerSelecting([exportedReportURL])
-                }
-                .buttonStyle(.link)
-                .accessibilityLabel("打开导出的日报")
-            }
+            Text(message)
+                .lineLimit(isWorkspace ? nil : 2)
+                .fixedSize(horizontal: false, vertical: isWorkspace)
+          if let exportedReportURL {
+              Button("打开结果") {
+                   if !CompanionFinder.reveal(exportedReportURL) {
+                       exportMessage = "小结已导出。没能打开访达，请到桌面查看文件。"
+                   }
+              }
+              .buttonStyle(CompanionPressStyle())
+              .accessibilityLabel("打开导出的日报")
+           } else if exportFailed {
+               Button("打开桌面") {
+                    if !CompanionFinder.openDesktop() {
+                        exportMessage = "小结没能保存到桌面。也没能打开访达，请到桌面查看。"
+                    }
+               }
+               .buttonStyle(CompanionPressStyle())
+               .accessibilityLabel("打开桌面")
+           }
             Spacer(minLength: 0)
         }
         .font(.system(size: isWorkspace ? 12 : 11))
         .foregroundColor(exportFailed ? .red : .secondary)
         .padding(.horizontal, isWorkspace ? 0 : 14)
         .padding(.bottom, 6)
+        .transition(.companionStatusReveal)
     }
 
     private var workspaceToolbar: some View {
@@ -107,18 +121,26 @@ struct DailyReportTabView: View {
                 Spacer()
                 Button(action: previousDay) {
                     Image(systemName: "chevron.left")
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.bordered)
                 .disabled(monitor.dailyReportIsLoading)
+                .help(previousDayHoldReason ?? "")
+                .accessibilityHint(previousDayHoldReason ?? "")
                 .accessibilityLabel(scope == .weekly ? "上一周" : "前一天")
                 Text(scope == .weekly ? weekRangeText(monitor.dailyReportViewedDate) : dateText(monitor.dailyReportViewedDate))
                     .font(.system(size: 14, weight: .semibold))
                     .frame(minWidth: 96)
                 Button(action: nextDay) {
                     Image(systemName: "chevron.right")
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.bordered)
                 .disabled(!canGoNext || monitor.dailyReportIsLoading)
+                .help(nextDayHoldReason ?? "")
+                .accessibilityHint(nextDayHoldReason ?? "")
                 .accessibilityLabel(scope == .weekly ? "下一周" : "后一天")
                Button(action: exportReport) {
                    Label("导出", systemImage: "square.and.arrow.up")
@@ -126,12 +148,14 @@ struct DailyReportTabView: View {
                .tint(SettingsView.Tab.dailyReport.accentColor)
                .buttonStyle(.borderedProminent)
                .disabled(monitor.dailyReportIsLoading || (scope == .daily && monitor.dailyReport == nil))
+               .help(exportHoldReason ?? "")
+               .accessibilityHint(exportHoldReason ?? "")
                .accessibilityLabel("导出今日小结")
             }
             if monitor.dailyReportIsLoading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在整理").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("正在整理…").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -156,10 +180,15 @@ struct DailyReportTabView: View {
                 // 本周推进.
                 Text("本周相关的事里，已完成 \(done.count) 件，还有 \(pending.count) 件要跟进。")
                     .workspaceTitle()
-                if pending.isEmpty && done.isEmpty {
-                    Text("这一周还没有整理出事项。连上微信并关注对话后会出现在这里。")
-                        .foregroundStyle(.secondary)
-                } else {
+               if pending.isEmpty && done.isEmpty {
+                   VStack(alignment: .leading, spacing: 8) {
+                        let connected = monitor.stats.lastSyncAt != nil
+                        let watching = monitor.store.hasWhitelistEntries()
+                        Text(weeklyEmptyCopy(connected: connected, watching: watching))
+                            .foregroundStyle(.secondary)
+                        weeklyEmptyMove(connected: connected, watching: watching)
+                   }
+               } else {
                     if !done.isEmpty {
                         Text("已经推进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                        ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
@@ -195,7 +224,7 @@ struct DailyReportTabView: View {
                                 Button("查看待办") {
                                     panelState.pendingSettingsTab = "tasks"
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(CompanionPressStyle())
                                 .foregroundStyle(CompanionPalette.jadeInk)
                             }
                            .font(.system(size: 14))
@@ -204,7 +233,7 @@ struct DailyReportTabView: View {
                             Button("还有 \(pending.count - 8) 件在待办里") {
                                 panelState.pendingSettingsTab = "tasks"
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CompanionPressStyle())
                             .foregroundStyle(CompanionPalette.jadeInk)
                             .font(.system(size: 13, weight: .medium))
                         }
@@ -242,9 +271,13 @@ struct DailyReportTabView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionIconButtonStyle())
                 .accessibilityLabel("查看前一天日报")
+                .help(previousDayHoldReason ?? "")
+                .accessibilityHint(previousDayHoldReason ?? "")
                 .disabled(monitor.dailyReportIsLoading)
 
                 Text("日报 · \(dateText(monitor.dailyReportViewedDate))")
@@ -255,49 +288,54 @@ struct DailyReportTabView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 10))
                         .foregroundColor(canGoNext ? .secondary : .secondary.opacity(0.45))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionIconButtonStyle())
                 .accessibilityLabel("查看后一天日报")
+                .help(nextDayHoldReason ?? "")
+                .accessibilityHint(nextDayHoldReason ?? "")
                 .disabled(!canGoNext || monitor.dailyReportIsLoading)
             }
             .padding(.leading, 4)
 
             Spacer()
 
-            if monitor.dailyReportIsLoading, monitor.dailyReport != nil {
-                HStack(spacing: 4) {
-                    ProgressView()
-                        .scaleEffect(0.45)
-                        .frame(width: 12, height: 12)
-                    Text("刷新中")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.trailing, 8)
-            }
-
             Button(action: exportReport) {
                 Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 10))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionIconButtonStyle())
             .disabled(monitor.dailyReportIsLoading || monitor.dailyReport == nil)
             .accessibilityLabel("导出今日小结")
-            .help("导出 Markdown")
+            .help(exportHoldReason ?? "导出 Markdown")
+            .accessibilityHint(exportHoldReason ?? "")
 
             Button(action: {
                 guard !monitor.dailyReportIsLoading else { return }
                 Task { await monitor.loadDailyReport(force: true) }
             }) {
-                Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                Group {
+                    if monitor.dailyReportIsLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionIconButtonStyle())
             .disabled(monitor.dailyReportIsLoading)
-            .accessibilityLabel("刷新今日小结")
-            .help("刷新今日小结")
+            .accessibilityLabel(monitor.dailyReportIsLoading ? "正在整理…" : "刷新今日小结")
+            .help(monitor.dailyReportIsLoading ? "正在整理…" : "刷新今日小结")
+            .accessibilityHint(monitor.dailyReportIsLoading ? "正在整理…" : "")
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
@@ -306,6 +344,48 @@ struct DailyReportTabView: View {
 
     private var canGoNext: Bool {
         !Calendar.current.isDateInToday(monitor.dailyReportViewedDate)
+    }
+
+    private var nextDayHoldReason: String? {
+        if monitor.dailyReportIsLoading { return "正在整理…" }
+        if !canGoNext { return scope == .weekly ? "已经是本周" : "已经是今天" }
+        return nil
+    }
+
+   private var previousDayHoldReason: String? {
+       monitor.dailyReportIsLoading ? "正在整理…" : nil
+   }
+
+    private func weeklyEmptyCopy(connected: Bool, watching: Bool) -> String {
+        if !connected { return "这一周还没有整理出事项。连上微信后会出现在这里。" }
+        if !watching { return "这一周还没有整理出事项。先选要关注的对话。" }
+        return "这一周还没有整理出事项。今天的待办出现后会汇总到这里。"
+    }
+
+    @ViewBuilder
+    private func weeklyEmptyMove(connected: Bool, watching: Bool) -> some View {
+        if !connected {
+            Button("检查连接") { panelState.pendingSettingsTab = "system" }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("检查微信连接")
+        } else if !watching {
+            Button("关注谁") { panelState.pendingSettingsTab = "contacts" }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("去选要关注的对话")
+        } else {
+            Button("看今天") { panelState.pendingSettingsTab = "today" }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("去今天看待办")
+        }
+    }
+
+   private var exportHoldReason: String? {
+        if monitor.dailyReportIsLoading { return "正在整理…" }
+        if scope == .daily && monitor.dailyReport == nil { return "还没有今日小结" }
+        return nil
     }
 
     private func previousDay() {
@@ -343,7 +423,7 @@ struct DailyReportTabView: View {
         guard let url = monitor.exportDailyReport() else {
             exportedReportURL = nil
             exportFailed = true
-            exportMessage = "小结没有写到文件，请检查桌面写入权限后重试。"
+            exportMessage = CompanionInteractionCopy.dailyExportFailed
             return
         }
         exportedReportURL = url

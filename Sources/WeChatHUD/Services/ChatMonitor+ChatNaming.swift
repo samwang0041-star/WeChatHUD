@@ -31,30 +31,29 @@ extension ChatMonitor {
         // account switch, before the first contact refresh. Such an echo is not
         // "raw" by shape for a legacy weixinid, so the old check let it through
         // and the UI printed an account id over a name already in hud.sqlite3.
-        if resolved.isEmpty || resolved == chatUsername
-            || ContactIdentityIndex.isRawChatIdentifier(resolved) {
-            if let contactName = store.getContact(username: chatUsername)?.displayName,
-               !contactName.isEmpty,
-               !ContactIdentityIndex.isRawChatIdentifier(contactName) {
-                return contactName
+       if resolved.isEmpty || resolved == chatUsername
+           || ContactIdentityIndex.isRawChatIdentifier(resolved) {
+            switch store.storedDisplayName(chatUsername) {
+            case .value(let storedName):
+                return storedName
+            case .unreadable:
+                // A failed read is not 「this chat has no name」. Printing the
+                // username or 未命名 would overwrite a name that is still in sqlite.
+                return ContactIdentityIndex.unreadableNamePlaceholder
+            case .absent:
+                // Nothing readable anywhere. Returning the raw username puts an
+                // account id on screen (the daily report showed "preview-colleague"
+                // next to fully named rows). The placeholder keeps the row
+                // honest about not knowing the name yet; callers that show it
+                // alongside real names do not have to special-case it.
+                if ContactIdentityIndex.isRawChatIdentifier(chatUsername), !MessageHelpers.isGroupChat(chatUsername) {
+                    return ContactIdentityIndex.unnamedContactPlaceholder
+                }
+                return MessageHelpers.isGroupChat(chatUsername)
+                    ? ContactIdentityIndex.unnamedGroupPlaceholder
+                    : chatUsername
             }
-            if let whitelistName = store.getWhitelistEntry(username: chatUsername)?.displayName,
-               !whitelistName.isEmpty,
-               !ContactIdentityIndex.isRawChatIdentifier(whitelistName) {
-                return whitelistName
-            }
-            // Nothing readable anywhere. Returning the raw username puts an
-            // account id on screen (the daily report showed "preview-colleague"
-            // next to fully named rows). The placeholder keeps the row
-            // honest about not knowing the name yet; callers that show it
-            // alongside real names do not have to special-case it.
-            if ContactIdentityIndex.isRawChatIdentifier(chatUsername), !MessageHelpers.isGroupChat(chatUsername) {
-                return ContactIdentityIndex.unnamedContactPlaceholder
-            }
-            return MessageHelpers.isGroupChat(chatUsername)
-                ? ContactIdentityIndex.unnamedGroupPlaceholder
-                : chatUsername
-        }
+       }
         return resolved
     }
 
@@ -71,11 +70,14 @@ extension ChatMonitor {
         // label. The alias specifically must not reach WeChat search —
         // it can match a same-named stranger. Other stored names came
         // from WeChat itself and remain valid fallbacks.
-        let alias = store.chatAlias(for: chatUsername)
-        let stored = [
-            store.getContact(username: chatUsername)?.displayName,
-            store.getWhitelistEntry(username: chatUsername)?.displayName
-        ].compactMap { $0 }.filter { $0 != alias }
+       let alias = store.chatAlias(for: chatUsername)
+        let stored: [String]
+        switch store.storedDisplayName(chatUsername) {
+        case .value(let name):
+            stored = name == alias ? [] : [name]
+        case .absent, .unreadable:
+            stored = []
+        }
         return WeChatOpenSearch.names(
             liveRemark: reader.weChatRemark(for: chatUsername),
             liveNick: reader.weChatNickName(for: chatUsername),
@@ -346,8 +348,8 @@ extension ChatMonitor {
                 sourceText: commitment.sourceText,
                 summary: commitment.content
             ) else { continue }
-            try? store.updateCommitmentStatus(msgUID: commitment.msgUID, status: .cancelled)
-            cancelled += 1
+            let changes = (try? store.updateCommitmentStatus(msgUID: commitment.msgUID, status: .cancelled)) ?? 0
+            if changes > 0 { cancelled += 1 }
         }
         var reclassified = 0
         for item in store.loadDiscussionItems(status: .pending) {

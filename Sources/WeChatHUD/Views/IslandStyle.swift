@@ -179,6 +179,31 @@ struct IslandRowButtonStyle: ButtonStyle {
     }
 }
 
+/// Inbox message row: the parent owns delayed hover, this owns press.
+///
+/// IslandRowButtonStyle's own onHover would light the first row the moment
+/// the inbox opens under the pointer — the delayed hovered flag exists to
+/// prevent that. Press still has to share that same fill; a style wash painted
+/// behind the row background is invisible.
+struct IslandInboxRowButtonStyle: ButtonStyle {
+    var highlighted: Bool
+    /// Resting fill when the row is not hovered. Inbox rows leave this clear
+    /// so the delayed hover wash is the only colour; suggestion cards pass
+    /// their own jade/quiet fill so press can replace it on the same layer.
+    var resting: Color = .clear
+    var cornerRadius: CGFloat = 0
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(configuration.isPressed ? IslandInk.hoverPressed
+                          : (highlighted ? IslandInk.hover : resting))
+            )
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
 /// Fixed-slot glyph button (bars, headers, row actions): a hover halo plus
 /// the shared 0.96 press dip. The slot's own `.frame` defines the halo size,
 /// so the same style works for a 22pt bar glyph and a 10pt row chevron.

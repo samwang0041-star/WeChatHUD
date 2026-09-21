@@ -306,10 +306,10 @@ struct DailyReportBuilder {
         let dateKey = reportDate.dailyReportDateKey
         if historical {
             let recordedCount = highlights.count
-            let recordedText = recordedCount == 0 ? "当天可追溯来源中暂无记录。" : "当天可追溯来源记录 \(recordedCount) 条。"
+            let recordedText = recordedCount == 0 ? "当天可追溯来源中还没有记录。" : "当天可追溯来源记录 \(recordedCount) 条。"
             let first = highlights.first?.summary
             let narrative = first.map { "\(dateKey) 的历史记录：\(recordedText) 重点：\($0)" } ?? "\(dateKey) 的历史记录：\(recordedText)"
-            let review = first.map { "复核记录：\($0)" } ?? "复核记录：暂无明确事项。"
+            let review = first.map { "复核记录：\($0)" } ?? "复核记录：还没有明确事项。"
             return (
                 narrative,
                 "历史记录仅反映当日来源，不代表当前待办状态。",
@@ -328,17 +328,17 @@ struct DailyReportBuilder {
         if !hasSignals {
             guard stats.lastSyncAt != nil else {
                 return (
-                    "尚无成功同步记录，暂不能判断今天是否有需要处理的微信事项。",
-                    "连接微信并完成一次成功同步，再查看今天的待回复、请求和承诺。",
-                    "\(dateKey) 工作小结\n今日微信数据尚未验证，暂无足够来源生成工作小结。\n需要支持：请先连接微信并完成一次成功同步。",
-                    "未验证：尚无成功同步记录，未对今日事项下结论。"
+                    "还没有成功读到今天的微信，暂时不能判断有没有要处理的事。",
+                    "先连上微信，读到今天的聊天后再看待回复、请求和承诺。",
+                    "\(dateKey) 工作小结\n还没有成功读到今天的微信，来源不够，没有生成工作小结。\n需要支持：请先连上微信并完成一次读取。",
+                    "还没有成功读到今天的微信，未对今日事项下结论。"
                 )
             }
             return (
-                "今天已成功同步的数据中，暂未发现需要处理的微信事项。",
+                "今天已读到的聊天里，还没有需要处理的微信事项。",
                 "明天先做一次微信巡检，确认是否有新的待回复、请求或承诺。",
-                "\(dateKey) 工作小结\n今日微信侧暂无待处理事项（基于已成功同步的数据）。明日计划：继续巡检重点对话，及时处理新增请求和承诺。\n需要支持：暂无。",
-                "本地统计：基于已成功同步的本地数据，暂无待处理事项。"
+                "\(dateKey) 工作小结\n今日微信侧还没有待处理事项（基于已读到的聊天）。明日计划：继续巡检重点对话，及时处理新增请求和承诺。\n需要支持：没有。",
+                "本地统计：基于已读到的聊天，还没有待处理事项。"
             )
         }
 
@@ -387,14 +387,14 @@ struct DailyReportBuilder {
         } else if let firstAction {
             reviewLine = "待核对：\(firstAction)"
         } else {
-            reviewLine = "待核对：暂无明确事项。"
+            reviewLine = "待核对：还没有明确事项。"
         }
         let wechatDraft = """
         \(dateKey) 工作小结
         \(recordLine)
         建议核对：\(tomorrowFocus)
         \(reviewLine)
-        需要支持：暂无（如需协作请人工补充）。
+        需要支持：没有（如需协作请人工补充）。
         """
 
         return (

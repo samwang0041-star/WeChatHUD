@@ -46,6 +46,7 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.draftReplaceContinue, "替换并继续")
         XCTAssertEqual(CompanionProductCopy.sendSuccess(name: "林舟"), "已发送给林舟；已在微信中核对到这条消息")
         XCTAssertTrue(CompanionProductCopy.sendUncertain.contains("待核对"))
+        XCTAssertFalse(CompanionProductCopy.sendUncertain.contains("数据库"))
         XCTAssertTrue(CompanionProductCopy.autoSendConfirmMessage.contains("待确认回复"))
         let calendar = Calendar(identifier: .gregorian)
         var components = DateComponents(year: 2026, month: 9, day: 9, hour: 11, minute: 0)
@@ -180,6 +181,135 @@ final class CompanionProductCopyTests: XCTestCase {
         XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t1), " 3 待办")
         // Escalated: count + how long the VIP has been waiting.
         XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 3, longestWait: .t4), " 3 待办 · 等 4 小时+")
-        XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .t3), " 等 2 小时")
+       XCTAssertEqual(CompanionProductCopy.menuBarBadge(pendingCount: 0, longestWait: .t3), " 等 2 小时")
+   }
+
+    func testAnalysisFailureCopyNamesTheResultNotThePipeline() {
+        XCTAssertTrue(CompanionInteractionCopy.analysisUnavailable.contains("再试"))
+        XCTAssertFalse(CompanionInteractionCopy.analysisUnavailable.contains("解析"))
+        XCTAssertFalse(CompanionInteractionCopy.analysisUnavailable.contains("HTTP"))
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure(nil),
+            CompanionInteractionCopy.analysisUnavailable
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure("读取消息失败: disk I/O error"),
+            CompanionInteractionCopy.analysisReadFailed
+        )
+        XCTAssertFalse(CompanionInteractionCopy.displayableAnalysisFailure("读取消息失败: disk I/O error").contains("disk"))
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure("AI 返回空内容或解析失败"),
+            CompanionInteractionCopy.analysisUnavailable
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure("加载群聊分析 Prompt 失败: missing"),
+            CompanionInteractionCopy.analysisUnavailable
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure("找不到这条 @ 消息，未使用其他消息替代"),
+            CompanionInteractionCopy.analysisMissingMention
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableAnalysisFailure(CompanionInteractionCopy.analysisReadFailed),
+            CompanionInteractionCopy.analysisReadFailed
+        )
+       XCTAssertTrue(CompanionInteractionCopy.replySuggestionsFailed.contains("没写出来"))
+       XCTAssertFalse(CompanionInteractionCopy.replySuggestionsFailed.contains("失败"))
+   }
+
+    func testAccountSwitchCopyDoesNotNameTheFolder() {
+        XCTAssertTrue(CompanionInteractionCopy.accountSwitched.contains("换了微信账号"))
+        XCTAssertFalse(CompanionInteractionCopy.accountSwitched.contains("数据目录"))
+        XCTAssertTrue(CompanionInteractionCopy.accountSwitchedEmpty.contains("连接设置"))
+        XCTAssertFalse(CompanionInteractionCopy.contactsIndexFailed.contains("索引"))
+        XCTAssertFalse(CompanionInteractionCopy.contactsIndexFailed.contains("数据目录"))
+        XCTAssertFalse(CompanionInteractionCopy.discussionSourceReadFailed.contains("访问材料"))
+       XCTAssertTrue(CompanionInteractionCopy.discussionSourceReadFailed.contains("账号资料"))
+   }
+
+    func testRetrospectiveFailureCopyNamesTheResultAndTheNextMove() {
+        XCTAssertTrue(CompanionInteractionCopy.retrospectiveUnavailable.contains("再试"))
+        XCTAssertFalse(CompanionInteractionCopy.retrospectiveUnavailable.contains("cancelled"))
+        XCTAssertTrue(CompanionInteractionCopy.retrospectiveTodoCompleteFailed.contains("待办"))
+        XCTAssertTrue(CompanionInteractionCopy.retrospectiveTodoCompleteFailed.contains("重试"))
+        XCTAssertTrue(CompanionInteractionCopy.retrospectiveTodoCompleteFailed.contains("保留"))
+        XCTAssertFalse(CompanionInteractionCopy.retrospectiveTodoCompleteFailed.contains("失败"))
+        XCTAssertTrue(CompanionInteractionCopy.inboxRestoreFailed.contains("恢复"))
+        XCTAssertTrue(CompanionInteractionCopy.untrackFailed.contains("取消关注"))
+        XCTAssertTrue(CompanionInteractionCopy.followLevelFailed.contains("关注档位"))
+        XCTAssertTrue(CompanionInteractionCopy.followLevelFailed.contains("重试"))
+        XCTAssertEqual(
+            CompanionInteractionCopy.followLevelChanged(levelTitle: "关注", name: "新同事"),
+            "已改为关注：新同事"
+        )
+        XCTAssertFalse(
+            CompanionInteractionCopy.followLevelChanged(levelTitle: "关注", name: "新同事")
+                .contains("已添加关注")
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.contactSettingsSaved(name: "新同事"),
+            "已保存关注设置：新同事"
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.chatRenamed("供应链周会"),
+            "已改名为：供应链周会"
+        )
+        XCTAssertEqual(CompanionInteractionCopy.chatNameRestored, "已恢复微信原名")
+        XCTAssertEqual(
+            CompanionInteractionCopy.contactRemoved(name: "新同事"),
+            "已删除关注：新同事"
+        )
+        XCTAssertFalse(CompanionInteractionCopy.contactSettingsSaved(name: "新同事").contains("已添加关注"))
+        XCTAssertEqual(
+            CompanionInteractionCopy.watchedMemberAdded(name: "主管"),
+            "已添加重点成员：主管"
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.quietGroupSilenced(name: "行业交流大群"),
+            "已设为不弹出：行业交流大群"
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.mutedPersonAdded(name: "推广号"),
+            "已设为不提醒：推广号"
+        )
+        XCTAssertTrue(CompanionInteractionCopy.followListUnreadableAdmission.contains("再试一次"))
+        XCTAssertTrue(CompanionInteractionCopy.followListUnreadableAdmission.contains("先不要改"))
+        XCTAssertTrue(CompanionInteractionCopy.untrackFailed.contains("重试"))
+        XCTAssertTrue(CompanionInteractionCopy.inboxRestoreFailed.contains("重试"))
+        XCTAssertTrue(CompanionInteractionCopy.inboxRestoreFailed.contains("保留"))
+        XCTAssertFalse(CompanionInteractionCopy.inboxRestoreFailed.contains("失败"))
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableRetrospectiveFailure("cancelled: after screen"),
+            CompanionInteractionCopy.retrospectiveCancelled
+        )
+        XCTAssertEqual(
+            CompanionInteractionCopy.displayableRetrospectiveFailure("Could not create run row"),
+            CompanionInteractionCopy.retrospectiveCouldNotStart
+        )
+        XCTAssertFalse(CompanionInteractionCopy.displayableRetrospectiveFailure("Could not create run row").contains("row"))
+        let partial = CompanionInteractionCopy.retrospectivePartial(["林舟", "产品群"])
+        XCTAssertTrue(partial.contains("林舟"))
+        XCTAssertTrue(partial.contains("再试"))
+       XCTAssertFalse(partial.contains("分析失败"))
+   }
+
+    func testExportFailureCopyDoesNotNamePermissions() {
+        XCTAssertFalse(CompanionInteractionCopy.exportToDesktopFailed.contains("写入权限"))
+        XCTAssertFalse(CompanionInteractionCopy.dailyExportFailed.contains("写入权限"))
+        XCTAssertTrue(CompanionInteractionCopy.exportToDesktopFailed.contains("桌面"))
+        XCTAssertTrue(CompanionInteractionCopy.dailyExportFailed.contains("再导出"))
+        XCTAssertFalse(CompanionInteractionCopy.legacyBindFailed.contains("目录"))
+       XCTAssertTrue(CompanionInteractionCopy.legacyBindFailed.contains("账号资料"))
+   }
+
+    func testUpdateFailureCopyNamesThePublisherNotTheChecksum() {
+        XCTAssertFalse(AppUpdateError.unsignedArchive.userMessage.contains("代码签名"))
+        XCTAssertFalse(AppUpdateError.checksumMismatch.userMessage.contains("校验"))
+        XCTAssertTrue(AppUpdateError.unsignedArchive.userMessage.contains("发布页"))
+        XCTAssertTrue(AppUpdateError.checksumMismatch.userMessage.contains("发布页"))
+        XCTAssertTrue(AppUpdateError.currentVersionUnknown.userMessage.contains("发布页"))
+        XCTAssertTrue(AppUpdateError.httpStatus(500).userMessage.contains("发布页"))
+        XCTAssertFalse(AppUpdateError.httpStatus(500).userMessage.contains("HTTP"))
+        XCTAssertFalse(AppUpdateError.httpStatus(500).userMessage.contains("500"))
     }
 }

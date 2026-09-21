@@ -95,7 +95,7 @@ enum InsightRadar {
         var findings: [InsightRadarFinding] = []
 
         for (idx, item) in briefing.actionRequired.enumerated() {
-            let chatUsername = username(forDisplayName: item.source, names: chatNames)
+            let chatUsername = overviewChatUsername(item.chatUsername ?? "", displayName: item.source, names: chatNames)
             guard chatUsername != nil || isConcreteRadarSource(item.source) else { continue }
             findings.append(InsightRadarFinding(
                 id: "briefing-action-\(idx)-\(item.source)",
@@ -218,7 +218,7 @@ enum InsightRadar {
         var findings: [InsightRadarFinding] = []
 
         for (idx, item) in overview.neglectedHighValue.prefix(3).enumerated() {
-            let chatUsername = username(forDisplayName: item.name, names: chatNames)
+            let chatUsername = overviewChatUsername(item.chatUsername, displayName: item.name, names: chatNames)
             findings.append(InsightRadarFinding(
                 id: "overview-neglected-\(idx)-\(item.name)",
                 severity: .medium,
@@ -234,7 +234,7 @@ enum InsightRadar {
         }
 
         for (idx, item) in overview.oneWayChats.prefix(2).enumerated() {
-            let chatUsername = username(forDisplayName: item.name, names: chatNames)
+            let chatUsername = overviewChatUsername(item.chatUsername, displayName: item.name, names: chatNames)
             findings.append(InsightRadarFinding(
                 id: "overview-oneway-\(idx)-\(item.name)",
                 severity: .medium,
@@ -252,14 +252,27 @@ enum InsightRadar {
         return findings
     }
 
-    private static func displayName(for username: String, names: [String: String]) -> String {
-        names[username] ?? username
-    }
+   private static func displayName(for username: String, names: [String: String]) -> String {
+        if let name = names[username]?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            // Keep a real name and the deliberate placeholders. A map that
+            // stored the username itself is the old echo and is not a title.
+            if !ContactIdentityIndex.isRawChatIdentifier(name) {
+                return name
+            }
+        }
+        return ContactIdentityIndex.visibleName(username: username, stored: .absent)
+   }
 
     private static func username(forDisplayName name: String, names: [String: String]) -> String? {
         if names.keys.contains(name) { return name }
         return names.first { $0.value == name }?.key
             ?? names.first { $0.value.localizedCaseInsensitiveContains(name) }?.key
+    }
+
+    private static func overviewChatUsername(_ stored: String, displayName: String, names: [String: String]) -> String? {
+        let token = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty { return token }
+        return username(forDisplayName: displayName, names: names)
     }
 
     private static func isConcreteRadarSource(_ source: String) -> Bool {

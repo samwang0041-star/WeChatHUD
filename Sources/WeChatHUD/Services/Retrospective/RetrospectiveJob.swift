@@ -87,7 +87,7 @@ final class RetrospectiveJob: ObservableObject {
                 msgCount: 0, failedChats: ["__cancelled__"]
             )
         }
-        state = .failed("cancelled: \(reason)")
+        state = .failed(CompanionInteractionCopy.retrospectiveCancelled)
         return true
     }
 
@@ -105,7 +105,7 @@ final class RetrospectiveJob: ObservableObject {
             rangeEnd: dateRange.end,
             chatCount: chatsToAnalyze.count
         ) else {
-            state = .failed("Could not create run row")
+            state = .failed(CompanionInteractionCopy.retrospectiveCouldNotStart)
             return
         }
 

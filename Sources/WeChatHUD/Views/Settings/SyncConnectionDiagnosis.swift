@@ -89,16 +89,16 @@ enum SyncConnectionDiagnosis: Equatable {
 
     var message: String {
         switch self {
-        case .noCandidate: return "尚未找到微信账号资料。请先在这台 Mac 登录微信；也可以手动选择该账号的资料目录。"
-        case .needsAccountSelection(let count): return "发现 \(count) 个账号目录，请明确选择要读取的目录。目录存在不代表该账号当前已登录。"
-        case .directoryMissing: return "所选目录不存在，请重新选择。不要使用其他账号目录替代当前账号。"
-        case .directoryUnreadable: return "所选目录不可读。微信把资料放在它自己的沙盒容器里，需要在「系统设置 → 隐私与安全性 → 完全磁盘访问权限」里勾选 WeChatHUD，然后重开本应用再试。"
-        case .noDatabaseFiles: return "目录内未找到该账号的会话资料，请选择微信账号自己的资料根目录。"
-        case .looseKeyPermissions:
-            return "密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。请在「终端」执行 chmod 600 收紧后再继续；文件内容不需要重取。"
-        case .unrecognizedKeyFormat(let recognized, let rejected):
+       case .noCandidate: return "尚未找到微信账号资料。请先在这台 Mac 登录微信；也可以手动选择该账号的资料目录。"
+        case .needsAccountSelection(let count): return "发现 \(count) 份账号资料，请明确选择要读取的那一份。资料在不代表该账号当前已登录。"
+        case .directoryMissing: return "所选账号资料不存在，请重新选择。不要用其他账号的资料替代当前账号。"
+        case .directoryUnreadable: return "所选账号资料不可读。请允许 WeChatHUD 读取整块磁盘，然后重开本应用。"
+        case .noDatabaseFiles: return "这里没有该账号的会话资料，请选择这个微信账号自己的资料。"
+       case .looseKeyPermissions:
+            return "密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。请在「连接与数据」里收紧权限；文件内容不需要重取。"
+       case .unrecognizedKeyFormat(let recognized, let rejected):
             return "密钥文件能打开，但 \(rejected) 条记录里没有本应用认识的格式（已识别 \(recognized) 条）。这不代表密钥不对，只代表文件格式不被支持；请先确认拿到的是本机微信的密钥文件。"
-        case .ready: return "目录可读取；账号与密钥是否匹配，仍需以成功同步为准。"
+        case .ready: return "账号资料可以读取；是否就是当前登录的账号，仍要等一次成功读取。"
         }
     }
 

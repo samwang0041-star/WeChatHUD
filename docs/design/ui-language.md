@@ -10,9 +10,15 @@
 4. 每个可操作控件都有 accessibilityLabel；浮层类内容（卡片/展开区）必须留在宿主窗口 AX 树内（参照简报卡从 popover 改原位展开的先例）。
 5. 动画：非线性、有物理感、方向不对称。
    - 形态（compact → peek → extended / notification）走弹簧：悬停先 peek（同高加宽，不打开收件箱），短停留或点击再展开。展开 response 0.42 / damping 0.82（略欠阻尼，从刘海"弹"出来）；窗口收起仍是临界阻尼 0.26 / 1.0 以免尾段抖像素。SwiftUI 侧 closeMorph 用 0.30 / 0.88。
-   - 就地显隐（disclosure、toast、行内展开）用强 ease-out cubic-bezier(0.23, 1, 0.32, 1)：用户已经做出动作，曲线要在起始段立刻响应，只把落点软化。整页切换 0.22s，行内 0.20s，hover 洗层 0.10s easeOut。
+   - 就地显隐（disclosure、toast、行内展开）用强 ease-out cubic-bezier(0.23, 1, 0.32, 1)：用户已经做出动作，曲线要在起始段立刻响应，只把落点软化。设置页切换 0.16s（一天几十次，短于就地 0.18s），工作台行内 0.20s；只有会撑开浮岛窗口的展开跟岛的 openMorph 弹簧走，避免行和窗口两套时钟。hover 洗层 0.10s easeOut。
+   - 入场与离场都走 ease-out，离场更快（`CompanionMotion.enter` 0.25s / `exit` 0.16s）。ease-in 禁止用于 UI：它把用户正在看的第一帧拖慢，即使时长更短也像输入延迟。
+   - 持续状态呼吸只走 `CompanionMotion.pulse()`（easeInOut + autoreverses）。一次性 ease-out 再从头播放会在每圈起点跳一下。
+   - 岛下独立 toast 窗口：首次出现 250ms 强 ease-out + 从岛向下 scale 0.95；替换不动画；离场 160ms。Reduce Motion 与岛被藏起时瞬切。
+   - 工作台可点卡片、筛选胶囊、空态 CTA 走 `CompanionPressStyle`（0.96 按压）。全宽选择行（侧栏、待办、关注谁、准入范围、添加联系人列表、使用指南 FAQ、洞察侧栏/折叠头）走 `CompanionRowPressStyle`（只降透明度、不缩放）。全宽条上缩放会读成橡皮。
+   - 状态、错误、回执行走 `companionStatusReveal`（scale 0.98 + opacity，与 islandDetailReveal 同一物理），禁止第三套 scale。键盘操作、搜索输入、系统 DisclosureGroup 不动画。
    - 面板形态由合成器遮罩驱动（固定的 island stage + CALayer mask），窗口在动画期间不 resize（首次扩张一次性付掉 stage 成本；若新的 island 比当前 cover 更大，一次实跑会先扩大 stage 再动画，属于预期的一次性窗口 resize）；display link 只在弹簧未收敛时运行。
-   - 按压必须有可见反馈：scale 0.96（可用区间 0.92–0.97），配 100–140ms 曲线。
+   - 按压必须有可见反馈。卡片/胶囊：scale 0.96（可用区间 0.92–0.97），配 100–140ms 曲线。全宽选择行：同一时长的透明度洗层，不要 scale。
+   - 岛上纯图标热区 22×22。`IslandIconButtonStyle` 不自带尺寸，调用点必须给 frame；父级 `.animation` 不能代替折叠内容上的 `companionStatusReveal`。
    - 尊重 reduceMotion：所有动画与 hover 触感一并关闭；尊重 reduceTransparency。
    - 悬停进入 peek 补一次触控板轻反馈（`.levelChange`）。边框：离开 compact 后 0.5pt 白发丝线；VIP 紧急用琥珀/红色光晕（只变色相、不改变不透明度）；AI 整理中 30Hz 扫光。
 
@@ -79,6 +85,7 @@
 - 位移 6pt（不是 20pt），淡入 300ms，步进 45ms，整组预算约 240ms。
 - 延迟**封顶在第 6 个**，长列表的最后一行不会等一个永远不会来的下一行。
 - reduceMotion 下位移与延迟同时消失，内容是"就在那里"，而不是"延迟后出现"。
+- 「今天」不再错峰：侧栏切页已经是 160ms 淡入，每天打开的工作台再叠一层会变慢。错峰只留给使用指南。
 
 ### 交互文案分层
 

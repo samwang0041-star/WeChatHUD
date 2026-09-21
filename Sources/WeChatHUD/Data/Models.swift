@@ -1226,17 +1226,17 @@ enum CacheStrategy: String, Codable, CaseIterable {
 
     var label: String {
         switch self {
-        case .persistent: return "持久磁盘"
-        case .temporary:  return "临时磁盘"
-        case .memory:     return "会话临时"
+        case .persistent: return "本机保留"
+        case .temporary:  return "关机清空"
+        case .memory:     return "退出清空"
         }
     }
 
     var hint: String {
         switch self {
-        case .persistent: return "~/.wechat-hud/cache — 启动最快，明文落盘"
-        case .temporary:  return "/tmp — 重启清空，每次开机首次解密"
-        case .memory:     return "会话临时文件 — 正常退出时清理，每次启动重新解密"
+        case .persistent: return "启动更快，缓存留在这台 Mac"
+        case .temporary:  return "关机后清空，下次开机第一次读取会慢一些"
+        case .memory:     return "退出助手后清空，下次打开会再读一遍"
         }
     }
 }

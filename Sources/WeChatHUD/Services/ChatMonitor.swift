@@ -75,8 +75,6 @@ final class ChatMonitor: ObservableObject {
     @Published var recalledMessages: [RecalledMessage] = []
     /// VIP aggregate insights keyed by vip username.
     @Published var vipInsights: [String: VIPAggregator.AggregateResult] = [:]
-    /// AI-suggested whitelist additions keyed by chat username.
-    @Published var whitelistSuggestions: [String: AIWhitelistCategorizer.Suggestion] = [:]
     /// Cached daily report, regenerated every 30 minutes.
     @Published var dailyReport: DailyReport? = nil
     @Published var dailyReportGeneratedAt: Date?
@@ -693,7 +691,10 @@ final class ChatMonitor: ObservableObject {
         groupContextStates[key] = GroupContextBriefingLoadState(
             briefing: existing?.briefing,
             isLoading: true,
-            errorMessage: nil,
+            // Keep the error row (and its 重试 button) while a stale briefing
+            // is still on screen, so the control can change to 正在重试… instead
+            // of vanishing until the next result.
+            errorMessage: existing?.briefing == nil ? nil : existing?.errorMessage,
             updatedAt: existing?.updatedAt
         )
 
@@ -763,10 +764,15 @@ final class ChatMonitor: ObservableObject {
                 messages: annotated,
                 chatType: chatType,
                 role: .contextAnalyzer
-            )
-            // Look up actual sender role from contacts; fall back to .colleague if unknown.
-            let senderRole: ContactRole = storeRef.getContact(username: notification.senderUsername)?.role ?? .colleague
-            if let deepResult = await analyzer.analyze(
+           )
+            // getContact nil is both absent and unreadable. Inventing colleague
+            // would brief a boss @ as a peer. Skip the deep pass until the row
+            // can be read; the first-pass briefing is already on screen.
+            guard let senderRole = InboxContextBuilder.resolvedSenderRole(
+                store: storeRef,
+                chatUsername: notification.senderUsername
+            ) else { return }
+           if let deepResult = await analyzer.analyze(
                 ask: syntheticAsk,
                 senderRole: senderRole,
                 conversationContext: contextWindow,
@@ -791,56 +797,20 @@ final class ChatMonitor: ObservableObject {
 
     // MARK: - User actions on unread items
 
-    /// Mark a chat as "I've seen it, stop bugging me". Moves matching
-    /// items from `unreadItems` into `suppressedItems` so the user can
-    /// still find them via the 已处理 tab. Strictly newer messages in
-    /// the same chat will re-appear on the next scan.
-    func silenceChat(_ chatUsername: String) {
-        // Silence watermark = max timestamp of currently-visible items
-        // for this chat. Strictly newer messages slip past.
-        let currentMax = unreadItems
-            .filter { $0.chatUsername == chatUsername }
-            .map { Int($0.timestamp.timeIntervalSince1970) }
-            .max() ?? Int(Date().timeIntervalSince1970)
-        try? store.silenceChat(chatUsername: chatUsername, silencedAt: currentMax)
-        dismissedInbox[chatUsername] = Int64(currentMax)
-        snoozedInbox.removeValue(forKey: chatUsername)
-        silencedInbox.remove(chatUsername)
-        moveToSuppressed(chatUsername: chatUsername)
-        rebuildInbox()
-    }
-
-    /// Snooze an entire chat until an absolute unix timestamp. Items
-    /// move to `suppressedItems`; when the snooze expires the next scan
-    /// will repopulate them into `unreadItems`.
-    func snoozeChat(_ chatUsername: String, until: Int) {
-        try? store.snoozeChat(chatUsername: chatUsername, until: until)
-        snoozedInbox[chatUsername] = Date(timeIntervalSince1970: Double(until))
-        dismissedInbox.removeValue(forKey: chatUsername)
-        silencedInbox.remove(chatUsername)
-        moveToSuppressed(chatUsername: chatUsername)
-        rebuildInbox()
-    }
-
-    /// Convenience: snooze for N minutes from now.
-    func snoozeChat(_ chatUsername: String, minutes: Int) {
-        let until = Int(Date().timeIntervalSince1970) + minutes * 60
-        snoozeChat(chatUsername, until: until)
-    }
-
+    @discardableResult
     func ignoreSender(
         chatUsername: String,
         chatName: String,
         senderUsername: String,
         senderName: String
-    ) {
+    ) -> Bool {
         do {
             try store.ignoreSender(chatUsername: chatUsername, chatName: chatName,
                                    senderUsername: senderUsername, senderName: senderName)
             inboxActionError = nil
         } catch {
             inboxActionError = "屏蔽规则未保存，消息仍保持原状。请重试。"
-            return
+            return false
         }
 
         let identifier = HUDStore.senderIdentifier(
@@ -898,20 +868,22 @@ final class ChatMonitor: ObservableObject {
         Task { @MainActor in
             await self.scan()
         }
+        return true
     }
 
+    @discardableResult
     func unignoreSender(
         chatUsername: String,
         senderUsername: String,
         senderName: String
-    ) {
+    ) -> Bool {
         do {
             try store.unignoreSender(chatUsername: chatUsername,
                                      senderUsername: senderUsername, senderName: senderName)
             inboxActionError = nil
         } catch {
             inboxActionError = "屏蔽规则未能恢复，原规则仍保留。请重试。"
-            return
+            return false
         }
         suppressedItems.removeAll {
             $0.isIgnored
@@ -922,6 +894,7 @@ final class ChatMonitor: ObservableObject {
         Task { @MainActor in
             await self.scan()
         }
+        return true
     }
 
     func isSenderIgnored(
@@ -936,90 +909,14 @@ final class ChatMonitor: ObservableObject {
         )
     }
 
-    /// Restore a suppressed chat's items back into `unreadItems`. Used
-    /// by the 恢复显示 context action on rows inside the 已处理 tab.
-    func clearChatAction(_ chatUsername: String) {
-        try? store.clearChatAction(chatUsername: chatUsername)
-        dismissedInbox.removeValue(forKey: chatUsername)
-        snoozedInbox.removeValue(forKey: chatUsername)
-        silencedInbox.remove(chatUsername)
-        let restored = suppressedItems.filter {
-            $0.chatUsername == chatUsername && !$0.isIgnored
-        }
-        if !restored.isEmpty {
-            suppressedItems.removeAll {
-                $0.chatUsername == chatUsername && !$0.isIgnored
-            }
-            unreadItems.append(contentsOf: restored)
-            unreadItems.sort { a, b in
-            func rank(_ s: UnreadStatus) -> Int {
-                switch s {
-                case .overdue:  return 0
-                case .pending:  return 1
-                case .answered: return 2
-                }
-            }
-            let ra = rank(a.status), rb = rank(b.status)
-            if ra != rb { return ra < rb }
-            return a.timestamp > b.timestamp
-            }
-            recomputeStatsFromItems()
-        }
-        rebuildInbox()
-        Task { @MainActor in
-            await self.scan()
-        }
-    }
-
-    /// Shared helper: move every unreadItem for a chat into suppressed.
-    private func moveToSuppressed(chatUsername: String) {
-        let moved = unreadItems.filter { $0.chatUsername == chatUsername }
-        unreadItems.removeAll { $0.chatUsername == chatUsername }
-        if !moved.isEmpty {
-            suppressedItems.insert(contentsOf: moved, at: 0)
-        }
-        replyDebtItems.removeAll { $0.chatUsername == chatUsername }
-        recomputeStatsFromItems()
-    }
-
-    func acceptWhitelistSuggestion(chatUsername: String, suggestion: AIWhitelistCategorizer.Suggestion) {
-        let category: WhitelistCategory = suggestion.category == "work" ? .work : suggestion.category == "life" ? .life : .other
-        let attentionLevel: WhitelistAttentionLevel = suggestion.isGroup ? .watch : .watch
-        let displayName = reader.displayName(for: chatUsername)
-        try? store.addToWhitelist(
-            username: chatUsername,
-            displayName: displayName.isEmpty ? chatUsername : displayName,
-            isGroup: suggestion.isGroup,
-            category: category,
-            attentionLevel: attentionLevel
-        )
-        whitelistSuggestions.removeValue(forKey: chatUsername)
-    }
-
-    func dismissWhitelistSuggestion(chatUsername: String) {
-        whitelistSuggestions.removeValue(forKey: chatUsername)
-    }
-
-    /// Add an unread item's chat into the tracked source list. Private
-    /// chats default to VIP; groups default to plain whitelist/watch.
-    func addUnreadToWhitelist(_ item: UnreadItem) {
-        let isGroup = MessageHelpers.isGroupChat(item.chatUsername)
-        try? store.addToWhitelist(
-            username: item.chatUsername,
-            displayName: item.chatName,
-            isGroup: isGroup,
-            category: isGroup ? .work : .life,
-            attentionLevel: isGroup ? .watch : .vip
-        )
-    }
-
+    @discardableResult
     func updateWhitelistAttention(
         username: String,
         displayName: String,
         isGroup: Bool,
         fallbackCategory: WhitelistCategory,
         attentionLevel: WhitelistAttentionLevel
-    ) {
+    ) -> Bool {
         // The old shape read the existing row with `getWhitelistEntry` (nil for
         // 「读不到」 too) and then wrote every column back, so marking someone VIP
         // during a transient read failure reset their 工作/生活 分类 and display name.
@@ -1033,20 +930,25 @@ final class ChatMonitor: ObservableObject {
                         username: username, displayName: displayName, isGroup: isGroup,
                         category: fallbackCategory, attentionLevel: attentionLevel)
                 case .unreadable:
-                    print("[WCHUD] 白名单行读不到，本次不改档位（宁可少改，不用默认值覆盖）")
+                    inboxActionError = CompanionInteractionCopy.followLevelUnreadable
+                    return false
                 case .value:
                     break
                 }
             }
+            inboxActionError = nil
         } catch {
-            print("[WCHUD] 白名单档位更新失败: \(error)")
+            inboxActionError = CompanionInteractionCopy.followLevelFailed
+            return false
         }
         Task { @MainActor in
             await self.scan()
         }
+        return true
     }
 
-    func setInboxItemVIP(_ item: InboxItem, isVIP: Bool) {
+    @discardableResult
+    func setInboxItemVIP(_ item: InboxItem, isVIP: Bool) -> Bool {
         updateWhitelistAttention(
             username: item.chatUsername,
             displayName: item.chatName,
@@ -1056,14 +958,18 @@ final class ChatMonitor: ObservableObject {
         )
     }
 
-    func untrackInboxItem(_ item: InboxItem) {
+    @discardableResult
+    func untrackInboxItem(_ item: InboxItem) -> Bool {
         // The store applies the whole scope change in one transaction; on
         // failure nothing moved, so the in-memory lists must not move either —
         // otherwise the row disappears while the chat is still followed, and
         // the next scan brings it back as if nothing had happened.
-        guard (try? store.removeFromWhitelist(username: item.chatUsername)) != nil else {
-            print("[WCHUD] untrack failed for \(item.chatUsername), keeping it followed")
-            return
+        do {
+            try store.removeFromWhitelist(username: item.chatUsername)
+            inboxActionError = nil
+        } catch {
+            inboxActionError = CompanionInteractionCopy.untrackFailed
+            return false
         }
         dismissedInbox.removeValue(forKey: item.chatUsername)
         snoozedInbox.removeValue(forKey: item.chatUsername)
@@ -1077,20 +983,23 @@ final class ChatMonitor: ObservableObject {
         Task { @MainActor in
             await self.scan()
         }
+        return true
     }
 
-    func ignoreInboxItemSender(_ item: InboxItem) {
-        guard item.isGroup, !item.senderName.isEmpty else { return }
-        ignoreSender(
+    @discardableResult
+    func ignoreInboxItemSender(_ item: InboxItem) -> Bool {
+        guard item.isGroup, !item.senderName.isEmpty else { return false }
+        guard ignoreSender(
             chatUsername: item.chatUsername,
             chatName: item.chatName,
             senderUsername: "",
             senderName: item.senderName
-        )
+        ) else { return false }
         recentNotifications.removeAll {
             $0.chatUsername == item.chatUsername && $0.senderName == item.senderName
         }
         rebuildInbox()
+        return true
     }
 
     private func trimGroupContextStateIfNeeded(maxEntries: Int = 32) {
@@ -1561,17 +1470,13 @@ final class ChatMonitor: ObservableObject {
         store.loadDiscussionItems(relevantSince: DiscussionLiveWindow.cutoff(days: DiscussionLiveWindow.catalogDays))
     }
 
-    /// Update a discussion item's status (done / dismissed / archived).
-    /// Completing a row drops it from the live pending list without a full reload.
-    func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) {
-        try? store.updateDiscussionItemStatus(id: id, status: status)
-        publishDiscussionItem(id: id)
-    }
-
     /// Native workspace write path: only publish after durable storage succeeds.
     func setDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
         let existing = discussionItem(id: id)
-        try store.updateDiscussionItemStatus(id: id, status: status)
+        let changes = try store.updateDiscussionItemStatus(id: id, status: status)
+        guard changes > 0 else {
+            throw HUDStoreError.sqlError("discussion status write did not land")
+        }
         if let item = existing,
            let feedback = DiscussionCorrection.feedback(for: item, status: status) {
             try store.writeAIFeedback(feedback)
@@ -1584,7 +1489,10 @@ final class ChatMonitor: ObservableObject {
         guard !ids.isEmpty else { return }
         for id in ids {
             let existing = discussionItem(id: id)
-            try store.updateDiscussionItemStatus(id: id, status: status)
+            let changes = try store.updateDiscussionItemStatus(id: id, status: status)
+            guard changes > 0 else {
+                throw HUDStoreError.sqlError("discussion status write did not land")
+            }
             if let item = existing,
                let feedback = DiscussionCorrection.feedback(for: item, status: status) {
                 try? store.writeAIFeedback(feedback)
@@ -1596,8 +1504,12 @@ final class ChatMonitor: ObservableObject {
     /// Corrects an AI responsibility label and records that correction for
     /// later prompt/evaluation work.
     func setDiscussionItemOwner(id: Int64, owner: DiscussionItemOwner) throws {
-        guard let item = discussionItem(id: id) else { return }
-        guard try store.updateDiscussionItemOwner(id: id, owner: owner) else { return }
+        guard let item = discussionItem(id: id) else {
+            throw HUDStoreError.sqlError("discussion item not found")
+        }
+        guard try store.updateDiscussionItemOwner(id: id, owner: owner) else {
+            throw HUDStoreError.sqlError("discussion item not updated")
+        }
         if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
             try store.writeAIFeedback(feedback)
         }
@@ -1610,8 +1522,12 @@ final class ChatMonitor: ObservableObject {
         owner: DiscussionItemOwner,
         dueAt: Date?
     ) throws {
-        guard let item = discussionItem(id: id) else { return }
-        guard try store.updateDiscussionItemCorrection(id: id, content: content, owner: owner, dueAt: dueAt) else { return }
+        guard let item = discussionItem(id: id) else {
+            throw HUDStoreError.sqlError("discussion item not found")
+        }
+        guard try store.updateDiscussionItemCorrection(id: id, content: content, owner: owner, dueAt: dueAt) else {
+            throw HUDStoreError.sqlError("discussion item not updated")
+        }
         if let feedback = DiscussionCorrection.feedback(for: item, correctedOwner: owner) {
             try store.writeAIFeedback(feedback)
         }
@@ -1813,11 +1729,23 @@ final class ChatMonitor: ObservableObject {
             let vipUsernames = Set(outcome.vipTraceMessages.map(\.vipUsername))
             let aggregator = vipAggregator
             Task {
-                for vipUsername in vipUsernames {
-                    let contact = storeRef.getContact(username: vipUsername)
-                    let role = contact?.role ?? .acquaintance
-                    let vipName = contact?.displayName ?? vipUsername
-                    if let result = await aggregator.aggregate(
+               for vipUsername in vipUsernames {
+                    let role: ContactRole
+                    let vipName: String
+                    switch InboxContextBuilder.resolvedContact(
+                        store: storeRef,
+                        chatUsername: vipUsername
+                    ) {
+                    case .unreadable:
+                        continue
+                    case .absent:
+                        role = .acquaintance
+                        vipName = vipUsername
+                    case .value(let contact):
+                        role = contact.role
+                        vipName = contact.displayName.isEmpty ? vipUsername : contact.displayName
+                    }
+                   if let result = await aggregator.aggregate(
                         vipUsername: vipUsername,
                         vipName: vipName,
                         vipRole: role,
@@ -1853,19 +1781,32 @@ final class ChatMonitor: ObservableObject {
                 let autopilotSent = await autopilotService?.autopilotSentMsgUIDs() ?? []
                 for item in outcome.selfOutgoingMessages
                 where !autopilotSent.contains(item.msg.id) {
-                    // A chat whose watermark is held mid-backfill re-surfaces
-                    // the same self messages on every scan; the durable mark
-                    // keeps the AI analysis strictly once-per-message.
+                   // A chat whose watermark is held mid-backfill re-surfaces
+                   // the same self messages on every scan; the durable mark
+                   // keeps the AI analysis strictly once-per-message.
+
+                    // Role before the durable mark: inventing acquaintance then
+                    // marking the message done would hide a boss commitment after
+                    // a contacts read blip.
+                    let role: ContactRole
+                    switch InboxContextBuilder.resolvedContact(
+                        store: storeRef,
+                        chatUsername: item.chatUsername
+                    ) {
+                    case .value(let contact):
+                        role = contact.role
+                    case .absent:
+                        role = .acquaintance
+                    case .unreadable:
+                        continue
+                    }
                     guard storeRef.markCommitmentAnalyzedIfNew(msgUID: item.msg.id) else { continue }
-                    let contact = storeRef.getContact(username: item.chatUsername)
-                    let role = contact?.role ?? .acquaintance
 
                     // Build minimal context via WeChatReaderActor (not raw reader).
                     let contextMsgs = (try? await readerActor.getMessages(chatUsername: item.chatUsername, limit: 10)) ?? []
-                    let contactLookup: ContextWindowBuilder.ContactLookup = { username in
-                        guard let c = storeRef.getContact(username: username) else { return nil }
-                        return (c.attentionLevel, c.role)
-                    }
+                   let contactLookup: ContextWindowBuilder.ContactLookup = { username in
+                        storeRef.contextContactAnnotation(username)
+                   }
                     let window = ContextWindowBuilder.build(
                         target: item.msg,
                         role: .commitmentTracker,
@@ -2081,8 +2022,20 @@ final class ChatMonitor: ObservableObject {
         insightCoordinator.refreshInBackground(force: force)
     }
 
-    func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
-        await insightCoordinator.analyzeOneChat(chatUsername: chatUsername, date: date)
+   func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
+       await insightCoordinator.analyzeOneChat(chatUsername: chatUsername, date: date)
+   }
+
+   func analyzeOneChatOnDateChange(chatUsername: String, date: Date) async {
+       await insightCoordinator.analyzeOneChatOnDateChange(chatUsername: chatUsername, date: date)
+   }
+
+   func analyzeOneChatIfFollowed(chatUsername: String, date: Date) async {
+       await insightCoordinator.analyzeOneChatIfFollowed(chatUsername: chatUsername, date: date)
+   }
+
+    func resumeInsightChatIfNeeded(chatUsername: String, date: Date) async {
+        await insightCoordinator.resumeInsightChatIfNeeded(chatUsername: chatUsername, date: date)
     }
 
     /// Return active contacts not yet whitelisted — candidates for the
@@ -2504,7 +2457,10 @@ final class ChatMonitor: ObservableObject {
     /// Export a Markdown report to the Desktop.
     /// Update a commitment's status and refresh the published list.
     func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
-        try store.updateCommitmentStatus(msgUID: msgUID, status: status)
+        let changes = try store.updateCommitmentStatus(msgUID: msgUID, status: status)
+        guard changes > 0 else {
+            throw HUDStoreError.sqlError("commitment status write did not land")
+        }
         switch status {
         case .fulfilled:
             _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: msgUID, status: .done)
@@ -2523,7 +2479,10 @@ final class ChatMonitor: ObservableObject {
     func batchUpdateCommitmentsStatus(commitments: [Commitment], status: CommitmentStatus) throws {
         guard !commitments.isEmpty else { return }
         for commitment in commitments {
-            try store.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
+            let changes = try store.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
+            guard changes > 0 else {
+                throw HUDStoreError.sqlError("commitment status write did not land")
+            }
             switch status {
             case .fulfilled:
                 _ = try? store.updatePendingDiscussionItems(matchingAnchorMsgUID: commitment.msgUID, status: .done)
@@ -3364,16 +3323,7 @@ final class ChatMonitor: ObservableObject {
         summaryCache = summaryCache.filter { activeKeys.contains($0.key) }
     }
 
-    // MARK: - Autopilot
-
-    /// Toggle autopilot mode on/off.
-    func toggleAutopilot() {
-        if autopilotActive {
-            stopAutopilot()
-        } else {
-            startAutopilot()
-        }
-    }
+   // MARK: - Autopilot
 
     func startAutopilot() {
         Task { _ = await startAutopilotAndWait() }
@@ -3462,22 +3412,33 @@ final class ChatMonitor: ObservableObject {
     }
 
     func stopAutopilot() {
-        let service = autopilotService
-        Task {
-            do {
-                try await service?.stop()
-            } catch {
-                print("[WCHUD] Autopilot: failed to stop cleanly: \(error)")
-            }
+        Task { _ = await stopAutopilotAndWait() }
+    }
+
+    /// Stops the session and only then flips the running UI. A failed stop
+    /// must not toast 「已停止」 while the service is still live.
+    @discardableResult
+    func stopAutopilotAndWait() async -> Bool {
+        guard let service = autopilotService else {
+            applyAutopilotStoppedUI()
+            return true
         }
+        do {
+            try await service.stop()
+            applyAutopilotStoppedUI()
+            print("[WCHUD] Autopilot: OFF")
+            return true
+        } catch {
+            print("[WCHUD] Autopilot: failed to stop cleanly: \(error)")
+            return false
+        }
+    }
+
+    private func applyAutopilotStoppedUI() {
         autopilotActive = false
         autopilotPendingSendQueue = []
         refreshWorkspaceChrome()
-        // Drop ledger entries after marking inactive — anything accumulated
-        // while autopilot was off-by-a-hair shouldn't leak into the next
-        // session.
         resetSessionLedger()
-        print("[WCHUD] Autopilot: OFF")
     }
 
     /// Append one verified outgoing message to the session ledger for

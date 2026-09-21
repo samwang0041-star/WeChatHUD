@@ -7,7 +7,7 @@ struct InsightKPIGrid: View {
         let rowA = [
             KPI(label: "消息总量", value: "\(overview.totalMessages)", hint: densityHint(overview.recentDensityRatio), status: densityStatus(overview.recentDensityRatio)),
             KPI(label: "非工时占比", value: "\(Int(overview.afterHoursRatio * 100))%", hint: overview.afterHoursRatio > 0.4 ? "偏多" : "健康", status: overview.afterHoursRatio > 0.4 ? .red : overview.afterHoursRatio > 0.2 ? .orange : .green),
-            KPI(label: "平均响应", value: formatResponseTime(overview.avgResponseSeconds), hint: responseHint(overview.avgResponseSeconds), status: responseStatus(overview.avgResponseSeconds)),
+           KPI(label: "平均响应", value: RelativeTimeFormatter.durationLabel(overview.avgResponseSeconds), hint: responseHint(overview.avgResponseSeconds), status: responseStatus(overview.avgResponseSeconds)),
         ]
         let rowB = [
             KPI(label: "回复率", value: "\(Int(overview.responseRate * 100))%", hint: overview.responseRate >= 0.8 ? "稳定" : overview.responseRate >= 0.6 ? "一般" : "偏低", status: overview.responseRate >= 0.8 ? .green : overview.responseRate >= 0.6 ? .orange : .red),
@@ -122,12 +122,5 @@ struct InsightKPIGrid: View {
         if seconds < 1800 { return .green }
         if seconds < 7200 { return .orange }
         return .red
-    }
-
-    private func formatResponseTime(_ seconds: Double) -> String {
-        if seconds <= 0 { return "--" }
-        if seconds < 60 { return "\(Int(seconds))秒" }
-        if seconds < 3600 { return "\(Int(seconds / 60))分钟" }
-        return "\(String(format: "%.1f", seconds / 3600))小时"
     }
 }

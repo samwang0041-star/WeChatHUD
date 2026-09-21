@@ -73,10 +73,10 @@ final class CompactErrorAffordanceTests: XCTestCase {
         XCTAssertTrue(problem.help.contains("设置"), "tooltip 必须说出会打开设置，实际 \(problem.help)")
         XCTAssertEqual(problem.spoken, "微信还连不上。移入查看。", "spoken 文案保持原样")
 
-        let quiet = CompactLeftWingCopy.make(phase: .quiet(sleepy: false), spoken: "暂无待处理。移入查看。")
-        XCTAssertEqual(quiet.route, .openInbox)
-        XCTAssertEqual(quiet.accessibilityLabel, "打开聊天收件箱")
-        XCTAssertTrue(quiet.help.hasPrefix("暂无待处理。"), "正常态 tooltip 仍以状态开头，实际 \(quiet.help)")
+        let quiet = CompactLeftWingCopy.make(phase: .quiet(sleepy: false), spoken: "现在没有要处理的。")
+       XCTAssertEqual(quiet.route, .openInbox)
+       XCTAssertEqual(quiet.accessibilityLabel, "打开聊天收件箱")
+        XCTAssertTrue(quiet.help.hasPrefix("现在没有要处理的"), "正常态 tooltip 仍以状态开头，实际 \(quiet.help)")
         XCTAssertTrue(quiet.help.contains("收件箱"))
     }
 

@@ -228,7 +228,7 @@ enum DailyReportPresentationPolicy {
 
         if viewModel.isSourceUnavailable {
             lines.append("## ⚠️ 今日来源未验证")
-            lines.append("尚无成功同步记录，当前日报没有足够的今日微信来源，暂不能判断是否有待处理事项。请连接微信并完成一次成功同步后重试。")
+            lines.append("还没有成功读到今天的微信，当前日报没有足够来源，不能判断有没有待处理事项。请先连上微信并完成一次读取后再试。")
             lines.append("")
         }
 

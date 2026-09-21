@@ -275,7 +275,7 @@ final class AutopilotInFlightWithdrawalTests: XCTestCase {
                 conversationMuted: false,
 keystrokesMayHaveLanded: false,
                                 reason: "这条回复在按下发送前已经停住，微信没有收到。", retryableReason: false),
-            .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。"))
+            .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在待确认列表里。"))
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
@@ -316,7 +316,7 @@ keystrokesMayHaveLanded: false,
                 conversationMuted: true,
 keystrokesMayHaveLanded: false,
                                 reason: "发送前已撤回，微信没有收到。", retryableReason: false),
-            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
+            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在待确认列表里。"))
         // Positive control: the same reason with an unmuted conversation is
         // still a real failure, so the branch cannot pass by never stamping.
         XCTAssertEqual(
@@ -619,6 +619,20 @@ keystrokesMayHaveLanded: false,
         XCTAssertTrue(changed.contains("没有按下发送"), changed)
     }
 
+    func testLauncherFailuresNameTheResultAndTheNextMove() {
+        let closed = WeChatLauncher.SendFailureReason.weChatNotRunning.userMessage
+        XCTAssertTrue(closed.contains("打开微信"), closed)
+        XCTAssertFalse(closed.contains("未运行"), closed)
+        let background = WeChatLauncher.SendFailureReason.lostForeground.userMessage
+        XCTAssertTrue(background.contains("放到前面"), background)
+        XCTAssertTrue(background.contains("已取消发送"), background)
+        let input = WeChatLauncher.SendFailureReason.inputNotFound.userMessage
+        XCTAssertTrue(input.contains("输入框"), input)
+        XCTAssertTrue(input.contains("点进要发的对话") || input.contains("放到前面"), input)
+        let mismatch = WeChatLauncher.SendFailureReason.chatMismatch.userMessage
+        XCTAssertTrue(mismatch.contains("打开对应对话"), mismatch)
+    }
+
     /// `handleNewMessages` captures the session id before its first await and
     /// `processBatch` stamps the log row from that parameter while the queue
     /// twin is written from the *live* property — so a 停止 landing during the
@@ -919,13 +933,13 @@ keystrokesMayHaveLanded: false,
     /// 「暂停」 and 「静音」 both answer 「这条还要不要自动发」, and both are blind to
     /// the one fact that decides it: whether a keystroke already went in.
     /// Send key lands → WeChat's WCDB flush is slow → three 500 ms polls fail
-    /// (`"发送后未在微信数据库中确认"`) → the user pauses or mutes inside that
+    /// (`CompanionProductCopy.sendUncertain`) → the user pauses or mutes inside that
     /// 1.5 s. Re-queueing there keeps the draft automatically send-eligible with
     /// its original `scheduledSendTime`, so unmuting (or resuming) sends the peer
     /// the same text a second time. `manualOnlyReason` was the only thing
     /// preventing that, and neither withdrawal fact may overrule it.
     func testWithdrawalBranchesCannotOverruleALandedKeystroke() {
-        let unverified = "发送后未在微信数据库中确认"
+        let unverified = CompanionProductCopy.sendUncertain
         XCTAssertEqual(
             AutopilotService.sendFailureDisposition(
                 paused: false, sessionOpen: true, rowStillQueued: true,
@@ -947,7 +961,7 @@ keystrokesMayHaveLanded: false,
                 paused: false, sessionOpen: true, rowStillQueued: true,
                 conversationMuted: true, keystrokesMayHaveLanded: false,
                 reason: "发送前已撤回，微信没有收到。", retryableReason: false),
-            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。"))
+            .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在待确认列表里。"))
     }
 
     /// The landed-keystroke fact and the failure sentence have to travel with
@@ -977,7 +991,7 @@ keystrokesMayHaveLanded: false,
         // drift next to one of the launcher refusals that typed nothing.
         let landed = source.range(of: "keystrokesLanded = true")!.lowerBound
         XCTAssertTrue(source[source.index(landed, offsetBy: -400)...landed]
-            .contains("发送后未在微信数据库中确认"),
+            .contains("CompanionProductCopy.sendUncertain"),
                       "置位点要贴着那条确认失败，别漂到别的分支去")
     }
 
@@ -1021,7 +1035,7 @@ keystrokesMayHaveLanded: false,
             .deletingLastPathComponent()
             .appendingPathComponent("Sources/WeChatHUD/Views/ApprovalWorkspaceView.swift")
         let view = try String(contentsOf: url, encoding: .utf8)
-        let between = view.components(separatedBy: "func confirmSend() async {").last ?? ""
+        let between = view.components(separatedBy: "func confirmSend() async -> Bool {").last ?? ""
             .components(separatedBy: "approveAutopilotItem").first ?? ""
         XCTAssertTrue(between.contains("silencedConversations"),
                       "确认发送前要先知道这条对话被静音了")

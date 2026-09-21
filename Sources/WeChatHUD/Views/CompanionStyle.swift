@@ -194,6 +194,14 @@ extension View {
         disabled(open).accessibilityHidden(open)
     }
 
+    /// Disabled because work is in flight. Pass the same sentence the
+    /// in-progress primary already uses, so Cancel is not a mute grey control.
+    func companionBusyHold(_ active: Bool, _ reason: String) -> some View {
+        disabled(active)
+            .help(active ? reason : "")
+            .accessibilityHint(active ? reason : "")
+    }
+
     /// Background stays in the tree but is not in the Tab / VoiceOver loop while the dialog is up.
     func companionDialogBackdrop<Dialog: View>(
         _ presented: Bool,
@@ -203,6 +211,7 @@ extension View {
             self.companionDimmedByDialog(presented)
             if presented { dialog() }
         }
+        .animation(CompanionMotion.dialog(), value: presented)
     }
 }
 
@@ -239,6 +248,35 @@ struct CompanionPressStyle: ButtonStyle {
     }
 }
 
+/// Full-width selection rows. Scale reads as rubber on a strip that already
+/// has a hover wash; opacity is the press.
+struct CompanionRowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
+/// 22pt toolbar glyphs on the workspace. Island icons use IslandInk; these
+/// use primary wash so a light canvas still shows a halo.
+struct CompanionIconButtonStyle: ButtonStyle {
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(configuration.isPressed ? Color.primary.opacity(0.10)
+                          : (hovered ? Color.primary.opacity(0.055) : Color.clear))
+            )
+            .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1)
+            .onHover { hovered = $0 }
+            .animation(CompanionMotion.hover(), value: hovered)
+            .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
 struct CompanionFilterPill: View {
     let title: String
     let selected: Bool
@@ -248,6 +286,8 @@ struct CompanionFilterPill: View {
     let action: () -> Void
 
     var body: some View {
+        // Tens/day filters: press is the feedback; do not wrap the action in
+        // pageChange (160ms). The selected wash uses the 100ms hover band.
         Button(action: action) {
             Text(title)
                 .companionFont(size: WorkspaceType.rowTitle, weight: selected ? .semibold : .regular)
@@ -279,6 +319,7 @@ struct CompanionFilterPill: View {
                 )
         }
         .buttonStyle(CompanionPressStyle())
+        .companionAnimation(CompanionMotion.hover(), value: selected)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -349,8 +390,12 @@ struct CompanionDialog<Content: View>: View {
                         .workspaceTitle()
                         .foregroundStyle(dark ? Color.white : .primary)
                     Spacer()
-                    Button(action: onClose) { Image(systemName: "xmark") }
-                        .buttonStyle(.plain)
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                        .buttonStyle(CompanionIconButtonStyle())
                         .foregroundStyle(dark ? Color.white.opacity(0.7) : .secondary)
                         .keyboardShortcut(.cancelAction)
                         .focused($dialogFocused)
@@ -378,6 +423,7 @@ struct CompanionDialog<Content: View>: View {
         .accessibilityLabel(title)
         .accessibilityHint("按 Esc 关闭，不会执行当前操作")
         .onExitCommand(perform: onClose)
+        .transition(.opacity.combined(with: .scale(scale: 0.95)))
         .onAppear {
             panelState.modalDialogOpen = true
             dialogFocused = true

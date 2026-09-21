@@ -94,7 +94,7 @@ final class ChatAnalyzerDecodingTests: XCTestCase {
         )
 
         XCTAssertNil(error)
-        XCTAssertEqual(result?.one_liner, "暂无可读内容")
+        XCTAssertEqual(result?.one_liner, CompanionInteractionCopy.analysisNoMessages)
         XCTAssertTrue(URLRequestRecorder.capturedRequests.isEmpty)
     }
 }

@@ -34,20 +34,26 @@ struct ApprovalWorkspaceView: View {
     var showsSessionToggle: Bool = true
 
     enum Filter: String, CaseIterable, Identifiable {
-        case pending = "待确认"
-        case sent = "已发送"
-        case failed = "失败"
-        case all = "全部"
+       case pending = "待确认"
+       case sent = "已发送"
+        case failed = "没发出去"
+       case all = "全部"
         var id: String { rawValue }
     }
 
     @State private var filter: Filter = .pending
     @State private var selectedID: Int64?
+    @State private var selectedPendingID: UUID?
     @State private var editedReply: String = ""
     @State private var receipt: Receipt?
     @State private var showSendConfirm = false
     @State private var isSending = false
     @State private var isCancelling = false
+    @State private var isSavingDraft = false
+
+    @State private var sendConfirmError: String?
+    @State private var isStartingAutopilot = false
+    @State private var isPausingAutopilot = false
 
     /// A receipt states its own verdict instead of having one inferred from its
     /// wording. The icon used to be chosen by looking for 「失败」 in the
@@ -55,12 +61,15 @@ struct ApprovalWorkspaceView: View {
     /// conversation, an unreadable 托管设置, an unsaved draft and a reply whose
     /// receipt never came back all printed a green checkmark over a message
     /// that never reached anyone.
-    private struct Receipt {
+    private struct Receipt: Equatable {
         let text: String
         let isFailure: Bool
+        var offersUnsilence: Bool = false
 
         static func done(_ text: String) -> Receipt { Receipt(text: text, isFailure: false) }
-        static func problem(_ text: String) -> Receipt { Receipt(text: text, isFailure: true) }
+        static func problem(_ text: String, offersUnsilence: Bool = false) -> Receipt {
+            Receipt(text: text, isFailure: true, offersUnsilence: offersUnsilence)
+        }
     }
 
     private var entries: [AutopilotLogEntry] {
@@ -73,7 +82,68 @@ struct ApprovalWorkspaceView: View {
     }
 
     private var selected: AutopilotLogEntry? {
-        entries.first(where: { $0.id == selectedID }) ?? entries.first
+        if selectedPending != nil { return nil }
+        if let selectedID, let match = entries.first(where: { $0.id == selectedID }) {
+            return match
+        }
+        return selectedPendingID == nil ? entries.first : nil
+    }
+
+    private var selectedPending: PendingSend? {
+        if let selectedPendingID,
+           let match = humanNeededSends.first(where: { $0.id == selectedPendingID }) {
+            return match
+        }
+        if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
+            return humanNeededSends.first
+        }
+        return nil
+    }
+
+    private var actionBusy: Bool { isSending || isCancelling || isSavingDraft }
+
+    private var pauseHoldReason: String {
+        monitor.autopilotManuallyPaused ? "正在恢复整理" : "正在暂停整理"
+    }
+
+    private var pauseButtonTitle: String {
+        if isPausingAutopilot {
+            return monitor.autopilotManuallyPaused ? "正在恢复…" : "正在暂停…"
+        }
+        return monitor.autopilotManuallyPaused ? "恢复" : "暂停"
+    }
+
+    private func startAutopilotSession() {
+        guard !isStartingAutopilot else { return }
+        isStartingAutopilot = true
+        Task { @MainActor in
+            let receipt = AutopilotStartReceipt.resolve(
+                started: await monitor.startAutopilotAndWait()
+            )
+            isStartingAutopilot = false
+            panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
+        }
+    }
+
+    private func toggleAutopilotPause() {
+        guard !isPausingAutopilot else { return }
+        let resume = monitor.autopilotManuallyPaused
+        isPausingAutopilot = true
+        Task { @MainActor in
+            defer { isPausingAutopilot = false }
+            if resume {
+                await monitor.autopilotService?.manualResume()
+            } else {
+                await monitor.autopilotService?.manualPause()
+            }
+        }
+    }
+
+    private var actionHoldReason: String? {
+        if isSending { return "正在发送" }
+        if isSavingDraft { return "正在保存草稿" }
+        if isCancelling { return "正在取消本条" }
+        return nil
     }
 
     private var pendingCount: Int {
@@ -133,14 +203,31 @@ struct ApprovalWorkspaceView: View {
                 }
             }
             if let receipt {
-                Label(receipt.text,
-                      systemImage: receipt.isFailure ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(receipt.isFailure ? .orange : CompanionPalette.jadeInk)
-                    .padding(.top, 10)
+                HStack(alignment: .top, spacing: 10) {
+                    Label(receipt.text,
+                          systemImage: receipt.isFailure ? "exclamationmark.triangle" : "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(receipt.isFailure ? .orange : CompanionPalette.jadeInk)
+                    if receipt.offersUnsilence, let chatUsername = selected?.chatUsername {
+                        Button("取消静音") {
+                            if monitor.unsilenceConversation(username: chatUsername) {
+                                self.receipt = .done("已取消静音，可以再确认发送")
+                            }
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("取消静音并留下这条待确认回复")
+                    }
+                }
+                .padding(.top, 10)
+                .transition(.companionStatusReveal)
             }
         }
-        .onAppear { selectedID = selected?.id; syncEditor() }
+        .onAppear {
+            if selectedPending == nil { selectedID = selected?.id }
+            syncEditor()
+        }
+        .companionAnimation(CompanionMotion.ease(), value: receipt)
         .onChange(of: selected?.id) { _, _ in
             // A receipt is about the action taken on one row. It used to survive
             // selecting a different row, so 「已发送给「A」」 sat under B's detail
@@ -149,28 +236,47 @@ struct ApprovalWorkspaceView: View {
             receipt = nil
             syncEditor()
         }
+        .onChange(of: selectedPending?.id) { _, _ in
+            receipt = nil
+        }
         .onChange(of: entries.count) { _, _ in reconcileSelection() }
+        .onChange(of: humanNeededSends.count) { _, _ in reconcileSelection() }
         .onChange(of: filter) { _, _ in reconcileSelection() }
         .companionDialogBackdrop(showSendConfirm) {
             if showSendConfirm {
-                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showSendConfirm = false }) {
+                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { if !isSending { showSendConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: selected?.chatName ?? "", text: editedReply))
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let sendConfirmError {
+                            Text(sendConfirmError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.sendConfirmBack) { showSendConfirm = false }
-                            Button(CompanionProductCopy.sendConfirmAction) {
-                                showSendConfirm = false
-                                Task { await confirmSend() }
+                                .companionBusyHold(isSending, "正在发送")
+                            Button {
+                                Task {
+                                    let sent = await confirmSend()
+                                    if sent { showSendConfirm = false }
+                                }
+                            } label: {
+                                Text(isSending ? "正在发送…" : CompanionProductCopy.sendConfirmAction)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
                             .disabled(isSending)
+                            .help(isSending ? "正在发送" : "")
+                            .accessibilityHint(isSending ? "正在发送" : "")
                         }
                     }
+                    .companionAnimation(CompanionMotion.ease(), value: sendConfirmError)
                 }
             }
         }
@@ -190,25 +296,31 @@ struct ApprovalWorkspaceView: View {
                 Spacer()
                 HStack(spacing: 8) {
                     Image(systemName: monitor.autopilotActive ? "arrow.triangle.2.circlepath" : "pause.circle")
-                    Text(monitor.autopilotActive ? "正在整理" : "尚未开始整理")
+                    Text(monitor.autopilotActive ? "正在整理…" : "尚未开始整理")
                     Text("·")
                     Text(autoSendToolbarText)
                     if monitor.autopilotActive {
-                        Button(monitor.autopilotManuallyPaused ? "恢复" : "暂停") {
-                            Task {
-                                if monitor.autopilotManuallyPaused {
-                                    await monitor.autopilotService?.manualResume()
-                                } else {
-                                    await monitor.autopilotService?.manualPause()
-                                }
-                            }
+                        Button {
+                            toggleAutopilotPause()
+                        } label: {
+                            Text(pauseButtonTitle)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .disabled(isPausingAutopilot)
+                        .help(isPausingAutopilot ? pauseHoldReason : "")
+                        .accessibilityHint(isPausingAutopilot ? pauseHoldReason : "")
                     } else if showsSessionToggle {
-                        Button("开始整理") { monitor.toggleAutopilot() }
+                        Button {
+                            startAutopilotSession()
+                        } label: {
+                            Text(isStartingAutopilot ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
+                        }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(isStartingAutopilot)
+                            .help(isStartingAutopilot ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
+                            .accessibilityHint(isStartingAutopilot ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
                     }
                 }
                 .font(.system(size: 12))
@@ -230,6 +342,30 @@ struct ApprovalWorkspaceView: View {
                 : "点开始整理后，助理会写成草稿。发不发都由你决定。")
         )
         .frame(maxWidth: .infinity, minHeight: 280)
+        .overlay(alignment: .bottom) {
+            if filter != .pending {
+                Button("看待确认") {
+                    withMotion(CompanionMotion.pageChange()) { filter = .pending }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .padding(.bottom, 24)
+                .accessibilityLabel("看待确认的回复")
+            } else if !monitor.autopilotActive {
+                Button {
+                    startAutopilotSession()
+                } label: {
+                    Text(isStartingAutopilot ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
+                }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .disabled(isStartingAutopilot)
+                    .help(isStartingAutopilot ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
+                    .accessibilityLabel(isStartingAutopilot ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
+                    .accessibilityHint(isStartingAutopilot ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
+            }
+        }
     }
 
     private var listPane: some View {
@@ -248,6 +384,11 @@ struct ApprovalWorkspaceView: View {
                     ForEach(humanNeededSends) { item in
                         ApprovalPendingSendRow(
                             item: item,
+                            isSelected: selectedPending?.id == item.id,
+                            onSelect: {
+                                selectedPendingID = item.id
+                                selectedID = nil
+                            },
                             onSendNow: { await sendPendingNow(item) },
                             onCancel: { await cancelPending(item) }
                         )
@@ -259,6 +400,7 @@ struct ApprovalWorkspaceView: View {
                 ForEach(entries) { entry in
                     Button {
                         selectedID = entry.id
+                        selectedPendingID = nil
                     } label: {
                         HStack(alignment: .top, spacing: 10) {
                             CompanionAvatar(name: entry.senderName, size: 32)
@@ -280,7 +422,7 @@ struct ApprovalWorkspaceView: View {
                         .padding(10)
                         .background(selected?.id == entry.id ? CompanionPalette.selectedFill : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionRowPressStyle())
                 }
             }
             .padding(.trailing, 10)
@@ -303,16 +445,18 @@ struct ApprovalWorkspaceView: View {
 
     private func actionTitle(_ action: AutopilotAction) -> String {
         switch action {
-        case .sent, .vipNotified: return "已发送"
-        case .failed: return "发送失败"
-        case .pending: return "待确认回复"
+       case .sent, .vipNotified: return "已发送"
+        case .failed: return "没发出去"
+       case .pending: return "待确认回复"
         default: return "已记录"
         }
     }
 
     @ViewBuilder
     private var detailPane: some View {
-        if let selected {
+        if let pending = selectedPending {
+            pendingDetail(pending)
+        } else if let selected {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -325,7 +469,7 @@ struct ApprovalWorkspaceView: View {
                     Button("查看聊天记录") {
                         panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
                 }
 
@@ -368,13 +512,20 @@ struct ApprovalWorkspaceView: View {
 
                if selected.action == .pending {
                    HStack(spacing: 8) {
-                       Button("确认发送") { showSendConfirm = true }
-                           .tint(SettingsView.Tab.autopilotDashboard.accentColor)
-                           .buttonStyle(.borderedProminent)
-                           .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
-                       Button("保存修改") {
+                      Button { sendConfirmError = nil; showSendConfirm = true } label: {
+                          Text(isSending ? "正在发送…" : "确认发送")
+                      }
+                          .tint(SettingsView.Tab.autopilotDashboard.accentColor)
+                          .buttonStyle(.borderedProminent)
+                           .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || actionBusy)
+                            .help(actionHoldReason ?? (editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "先写回复" : ""))
+                            .accessibilityHint(actionHoldReason ?? (editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "先写回复" : ""))
+                        Button {
                             let target = selected
+                            guard !actionBusy else { return }
+                            isSavingDraft = true
                             Task { @MainActor in
+                                defer { isSavingDraft = false }
                                 let written: Receipt
                                 do {
                                     try await monitor.saveAutopilotDraft(logId: target.id, reply: editedReply)
@@ -384,16 +535,20 @@ struct ApprovalWorkspaceView: View {
                                 }
                                 postReceipt(written, forRow: target.id)
                             }
+                        } label: {
+                            Text(isSavingDraft ? "正在保存…" : "保存修改")
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isCancelling)
-                        Button("取消本条") {
+                        .disabled(actionBusy)
+                        .help(actionHoldReason ?? "")
+                        .accessibilityHint(actionHoldReason ?? "")
+                       Button(isCancelling ? "正在取消…" : "取消本条") {
                             let target = selected
                             // 确认发送 has this latch; this one didn't, so a double
                             // tap started two cancels for the same row and the
                             // second read back 「was not pending」 — a row the first
                             // tap already took out of the queue.
-                            guard !isCancelling else { return }
+                            guard !actionBusy else { return }
                             isCancelling = true
                             Task { @MainActor in
                                 defer { isCancelling = false }
@@ -405,30 +560,98 @@ struct ApprovalWorkspaceView: View {
                                 if case .held(let reason) = outcome {
                                     postReceipt(.problem(reason), forRow: target.id)
                                 } else {
-                                    postReceipt(.done("已取消本条，对应的待发草稿已一并移除。"),
-                                                forRow: target.id)
-                                }
-                            }
+                                   postReceipt(.done("已取消本条，对应的待发草稿已一并移除。"),
+                                               forRow: target.id)
+                               }
+                           }
+                       }
+                      .buttonStyle(.bordered)
+                      .disabled(actionBusy)
+                       .help(actionHoldReason ?? "")
+                       .accessibilityHint(actionHoldReason ?? "")
+                   }
+                } else if selected.action == .failed {
+                    Text("这条没有发出。先到微信里看过，再决定要不要重发。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                       Button("在微信中打开") {
+                           monitor.openWeChatChat(selected.chatUsername)
+                       }
+                        .tint(SettingsView.Tab.autopilotDashboard.accentColor)
+                        .buttonStyle(.borderedProminent)
+                       Button("复制回复") {
+                            let ok = CompanionClipboard.write(editedReply)
+                            postReceipt(
+                                ok ? .done(CompanionInteractionCopy.replyCopied) : .problem(CompanionInteractionCopy.copyFailed),
+                                forRow: selected.id
+                            )
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isCancelling)
-                    }
+                        .disabled(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                       .help(editedReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "先写回复" : "")
+                   }
+                } else if selected.action == .sent || selected.action == .vipNotified {
+                    Text("要核对请到微信里看这条对话。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                   Button("在微信中打开") {
+                       monitor.openWeChatChat(selected.chatUsername)
+                   }
+                    .tint(SettingsView.Tab.autopilotDashboard.accentColor)
+                    .buttonStyle(.borderedProminent)
                 }
             }
             .padding(.leading, 16)
             .padding(.vertical, 12)
-        } else if !humanNeededSends.isEmpty {
-            ContentUnavailableView(
-                autoSendOn ? "这些回复需要你确认后再发" : (autoSendState == nil ? "暂时读不到自动发送设置，先别假定这些已经发出" : "自动发送已关，这些都要你点一下才会发出去"),
-                systemImage: "paperplane",
-                description: Text("立即发送或取消都可以在左侧完成。草稿仍在待确认列表里。")
-            )
         }
     }
 
     private func reconcileSelection() {
+        if let selectedPendingID, humanNeededSends.contains(where: { $0.id == selectedPendingID }) { return }
         if let selectedID, entries.contains(where: { $0.id == selectedID }) { return }
-        selectedID = entries.first?.id
+        selectedPendingID = humanNeededSends.first?.id
+        selectedID = selectedPendingID == nil ? entries.first?.id : nil
+    }
+
+    private func pendingDetail(_ item: PendingSend) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.chatName).workspaceTitle()
+                    Text("收件人 \(item.senderName) · \(MessageHelpers.isGroupChat(item.chatUsername) ? "群聊" : "私聊")")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(item.manualOnlyReason == nil
+                     ? "\(item.remainingSeconds) 秒后将尝试发送"
+                     : "等你确认后才会发出")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            if let reason = item.manualOnlyReason {
+                Text(reason)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(item.replyText)
+                .font(.system(size: 14))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            ApprovalPendingSendRow(
+                item: item,
+                showsActionsOnly: true,
+                onSendNow: { await sendPendingNow(item) },
+                onCancel: { await cancelPending(item) }
+            )
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 16)
+        .padding(.vertical, 12)
     }
 
     private func syncEditor() {
@@ -444,8 +667,9 @@ struct ApprovalWorkspaceView: View {
         receipt = newReceipt
     }
 
-    private func confirmSend() async {
-        guard let selected, !isSending else { return }
+    @discardableResult
+    private func confirmSend() async -> Bool {
+        guard let selected, !isSending else { return false }
         isSending = true
         defer { isSending = false }
         let actionedRowID = selected.id
@@ -455,9 +679,11 @@ struct ApprovalWorkspaceView: View {
         // that had never been typed. The mute list is the one place that fact is
         // read, so this cannot drift from what 取消静音 offers.
         if monitor.silencedConversations.contains(where: { $0.username == selected.chatUsername }) {
-            postReceipt(.problem("这个对话已静音，这条没有发出。请先在「已静音的对话」里取消静音，再确认发送。"),
+            postReceipt(.problem("这个对话已静音，这条没有发出。取消静音后可以再确认发送。",
+                                 offersUnsilence: true),
                         forRow: actionedRowID)
-            return
+            sendConfirmError = "这个对话已静音，这条没有发出。取消静音后可以再确认发送。"
+            return false
         }
         let attempt = await monitor.approveAutopilotItem(
             logId: selected.id,
@@ -474,10 +700,16 @@ struct ApprovalWorkspaceView: View {
         if attempt.verified {
             postReceipt(.done(CompanionProductCopy.sendSuccess(name: selected.chatName)),
                         forRow: actionedRowID)
+            sendConfirmError = nil
+            return true
         } else if attempt.keystrokesLanded {
             postReceipt(.problem(CompanionProductCopy.sendUncertain), forRow: actionedRowID)
+            sendConfirmError = CompanionProductCopy.sendUncertain
+            return false
         } else {
             postReceipt(.problem(attempt.failureMessage ?? "这条没有发出。"), forRow: actionedRowID)
+            sendConfirmError = attempt.failureMessage ?? "这条没有发出。"
+            return false
         }
     }
 
@@ -494,7 +726,7 @@ struct ApprovalWorkspaceView: View {
         case .blocked(let reason):
             return reason
         case .notFound:
-            return "队列项已不存在"
+            return "这条已经不在待确认列表里了"
         }
     }
 
@@ -515,6 +747,9 @@ struct ApprovalWorkspaceView: View {
 
 private struct ApprovalPendingSendRow: View {
     let item: PendingSend
+    var isSelected: Bool = false
+    var showsActionsOnly: Bool = false
+    var onSelect: (() -> Void)? = nil
     let onSendNow: () async -> String?
     let onCancel: () async -> Void
     @State private var busy = false
@@ -527,79 +762,114 @@ private struct ApprovalPendingSendRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                CompanionAvatar(name: item.senderName, size: 32)
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(item.chatName).font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Text("\(item.remainingSeconds)s")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
+            if !showsActionsOnly {
+                Button(action: { onSelect?() }) {
+                    HStack(alignment: .top, spacing: 10) {
+                        CompanionAvatar(name: item.senderName, size: 32)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(item.chatName).font(.system(size: 13, weight: .semibold))
+                                Spacer()
+                                Text("\(item.remainingSeconds) 秒")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(item.replyText)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            if let reason = item.manualOnlyReason {
+                                Text(reason)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(2)
+                            }
+                        }
                     }
-                    Text(item.replyText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    if let reason = item.manualOnlyReason {
-                        Text(reason)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.orange)
-                            .lineLimit(2)
-                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(CompanionRowPressStyle())
+                .accessibilityLabel("查看 \(item.chatName) 的待确认回复")
             }
             HStack(spacing: 8) {
                 Spacer()
-                Button("取消") {
+                Button {
                     Task {
                         busy = true
                         await onCancel()
                         busy = false
                     }
+                } label: {
+                    Text(busy ? "正在取消…" : "取消")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(busy)
-                Button("立即发送") { showConfirm = true }
+                .help(busy ? "正在取消即将发送的回复" : "")
+                .accessibilityHint(busy ? "正在取消即将发送的回复" : "")
+                Button { error = nil; showConfirm = true } label: {
+                    Text(busy ? "正在发送…" : "立即发送")
+                }
                 .tint(CompanionPalette.jade)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(busy)
+                .help(busy ? "正在发送" : "")
+                .accessibilityHint(busy ? "正在发送" : "")
             }
             if let error {
                 Text(error)
                     .font(.system(size: 11))
                     .foregroundStyle(.orange)
+                    .transition(.companionStatusReveal)
             }
         }
-        .padding(10)
-        .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(showsActionsOnly ? 0 : 10)
+        .background(
+            showsActionsOnly
+                ? Color.clear
+                : (isSelected ? CompanionPalette.selectedFill : CompanionPalette.secondarySurface),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .companionAnimation(CompanionMotion.ease(), value: error)
         .companionDialogBackdrop(showConfirm) {
             if showConfirm {
-                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { showConfirm = false }) {
+                CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { if !busy { showConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: item.chatName, text: item.replyText))
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let error {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.sendConfirmBack) { showConfirm = false }
-                            Button(CompanionProductCopy.sendConfirmAction) {
-                                showConfirm = false
+                                .companionBusyHold(busy, "正在发送")
+                            Button {
                                 Task {
                                     busy = true
                                     error = await onSendNow()
                                     busy = false
+                                    if error == nil { showConfirm = false }
                                 }
+                            } label: {
+                                Text(busy ? "正在发送…" : CompanionProductCopy.sendConfirmAction)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
                             .disabled(busy)
+                            .help(busy ? "正在发送" : "")
+                            .accessibilityHint(busy ? "正在发送" : "")
                         }
                     }
+                    .companionAnimation(CompanionMotion.ease(), value: error)
                 }
             }
         }

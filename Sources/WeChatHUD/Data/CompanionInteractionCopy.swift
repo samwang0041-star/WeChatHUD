@@ -54,7 +54,7 @@ enum CompanionInteractionCopy {
     static let missedRepliesHint = "按你选的时间，找出私聊和群 @ 里还没回的"
     static let readingMissedReplies = "正在按时间翻私聊和群 @，看哪些还没回"
     static let missedRepliesEmpty = "这段时间里，关注的私聊和点名你的群消息都回过了。"
-    static let missedRepliesFailed = "刚才没读完聊天。点时间再试一次，或先检查微信连接。"
+    static let missedRepliesFailed = "刚才没读完聊天。可以再试一次，或先检查微信连接。"
     static let missedRepliesNeedConnection = "先连上微信，才能按时间找出还没回的消息。"
 
     /// What the walk did *not* cover. The empty page is a claim about "nothing
@@ -101,6 +101,57 @@ enum CompanionInteractionCopy {
 
     // MARK: - Failure next steps
 
+    /// Clipboard writes have no on-screen artifact of their own. The control
+    /// that was pressed has to say that the pasteboard changed — or that it
+    /// did not, with a next step.
+    static let copied = "已复制"
+    static let copyFailed = "复制失败，请重试。"
+    static let dailyReportCompleteFailed = "没能标记完成，原事项仍保留。请重试。"
+    static let dailyReportDismissFailed = "没能忽略这条风险，原条目仍保留。请重试。"
+    static let retrospectiveTodoCompleteFailed = "没能标记完成，原待办仍保留。请重试。"
+    static let inboxRestoreFailed = "没能恢复这条消息，原处理结果仍保留。请重试。"
+    static let untrackFailed = "取消关注没有保存，这条对话还在关注名单里。请重试。"
+   static let followLevelUnreadable = "暂时读不到关注名单，这次没有改档位。请稍后再试一次。"
+   static let followListUnreadableAnalysis = "暂时读不到关注名单，这次没有分析。请稍后再试一次。"
+    static let notOnFollowList = "不在关注列表中"
+   static let followLevelFailed = "关注档位没有保存，原来的设置仍保留。请重试。"
+    /// Context menus vanish on click, and a tab jump destroys the inspector
+    /// picker — both need a receipt that is not 「已添加关注」.
+   static func followLevelChanged(levelTitle: String, name: String) -> String {
+       "已改为\(levelTitle)：\(name)"
+   }
+    static func contactSettingsSaved(name: String) -> String {
+        "已保存关注设置：\(name)"
+    }
+    static func chatRenamed(_ name: String) -> String {
+        "已改名为：\(name)"
+    }
+    static let chatNameRestored = "已恢复微信原名"
+   static func contactRemoved(name: String) -> String {
+       "已删除关注：\(name)"
+   }
+   static let followListUnreadableAdmission = "暂时读不到关注名单，这一页的范围先不要改。请再试一次。"
+    static let followListUnreadableEdit = "暂时读不到关注名单，这次没有改关注。请稍后再试一次。"
+    static func watchedMemberAdded(name: String) -> String {
+        "已添加重点成员：\(name)"
+    }
+    static func watchedMemberRemoved(name: String) -> String {
+        "已移除重点成员：\(name)"
+    }
+    static func quietGroupSilenced(name: String) -> String {
+        "已设为不弹出：\(name)"
+    }
+    static func quietGroupRestored(name: String) -> String {
+        "已恢复弹出：\(name)"
+    }
+    static func mutedPersonAdded(name: String) -> String {
+        "已设为不提醒：\(name)"
+    }
+    static func mutedPersonRestored(name: String) -> String {
+        "已恢复提醒：\(name)"
+    }
+    static let replyCopied = "回复已复制，发送前请核对收件人。"
+
     /// Failures always pair the fact with the move. The caller supplies the
     /// reason; this supplies the sentence shape so no surface invents its own.
     static func failedButRecoverable(_ what: String, next: String) -> String {
@@ -108,10 +159,45 @@ enum CompanionInteractionCopy {
     }
     static let retryOrOpenWeChat = "可以重试；也可以先到微信里核对"
     static let needAccessibility = "到「使用偏好」里打开辅助功能权限，发送才能用"
-    static let needAIService = "到「AI 服务」里填好服务和密钥，再测试一次"
-    static let needWeChatRunning = "打开这台 Mac 上的微信，再回到这里点「查看新消息」"
+    static let needAIService = "到「AI 服务」里填好服务和访问凭据，再测试一次"
+   static let needWeChatRunning = "打开这台 Mac 上的微信，再回到这里点「查看新消息」"
+    static let wechatUnreadable = "暂时读不到新消息，微信可能没开着或没登录。"
+    static let wechatUnreadableEmpty = "暂时读不到新消息。请确认微信已经打开并登录。"
+    static let accountSwitched = "换了微信账号，之前的记录已经读不到了"
+    static let accountSwitchedEmpty = "换了微信账号，之前的记录已经读不到了。请到连接设置选定当前这个账号。"
+    static let accountSwitchedShort = "换了微信账号"
+    static let contactsIndexFailed = "没能读到联系人名单。请确认微信已连接后再试。"
+    static let contactsSessionsFailed = "没能读到最近会话。已显示已有的联系人，可再试一次。"
+  static let discussionSourceReadFailed = "没能读到这条事项的原文。请到连接设置核对账号资料，然后重试。"
+    static let exportToDesktopFailed = "没能保存到桌面。请确认桌面可以放入文件，再导出一次。"
+    static let dailyExportFailed = "小结没能保存到桌面。请确认桌面可以放入文件，再导出一次。"
+    static let legacyBindFailed = "旧版资料没能接上。请先备份，再确认当前账号资料后重试。"
+    static let retrospectiveUnavailable = "这次回顾没能完成。请再试一次。"
+    static let retrospectiveCancelled = "这次回顾已停住。可以再生成一次。"
+    static let retrospectiveCouldNotStart = "这次回顾没能开始。请重试。"
 
-    // MARK: - Empty states
+    static func retrospectivePartial(_ names: [String]) -> String {
+        let shown = names.prefix(3).joined(separator: "、")
+        if shown.isEmpty { return "有些对话没能整理出来。可以再试一次。" }
+        return "有些对话没能整理出来：\(shown)。可以再试一次。"
+    }
+
+    static func displayableRetrospectiveFailure(_ raw: String?) -> String {
+        let text = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return retrospectiveUnavailable }
+        if text.localizedCaseInsensitiveContains("cancelled") {
+            return retrospectiveCancelled
+        }
+        if text.localizedCaseInsensitiveContains("could not create") {
+            return retrospectiveCouldNotStart
+        }
+        if text.contains("再试") || text.contains("再生成") || text.contains("请重试") {
+            return text
+        }
+        return retrospectiveUnavailable
+    }
+
+   // MARK: - Empty states
 
     /// An empty list is only ever a message *and* a next step. These are the
     /// message halves; the views pair them with a button.
@@ -121,10 +207,45 @@ enum CompanionInteractionCopy {
     static let noTasksDetectedNext = "聊到明确的事，会自动归到这里"
     static let noDrafts = "还没有写好的回复"
     static let noDraftsNext = "从一条消息点「理解上下文与回复」开始写"
-    static let noPendingReplies = "没有等确认的回复"
-    static let noPendingRepliesNext = "AI 写好的回复会先停在这里等你点头"
+   static let noPendingReplies = "没有等确认的回复"
+   static let noPendingRepliesNext = "AI 写好的回复会先停在这里等你点头"
 
-    // MARK: - Momentum
+    // MARK: - Island analysis
+
+    static let analysisUnavailable = "这次没能整理出重点。请检查 AI 连接后再试。"
+    static let analysisMissingMention = "找不到这条 @ 消息，没有用别的聊天代替。可再试一次，或到微信核对。"
+    static let analysisNoMessages = "这段对话暂时没有可读的消息。"
+    static let analysisReadFailed = "没能读到这段聊天。请确认微信已连接后再试。"
+    static let replySuggestionsFailed = "回复建议没写出来"
+
+    /// Last-mile filter for the island headline. Analyzer leftovers
+    /// ("Prompt", "解析失败", localizedDescription) never paint.
+    static func displayableAnalysisFailure(_ raw: String?) -> String {
+        let text = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return analysisUnavailable }
+        if text.contains("找不到这条") || (text.contains("@") && text.contains("找不到")) {
+            return analysisMissingMention
+        }
+        if text.contains("没有找到消息") || text.contains("没有可读的消息") {
+            return analysisNoMessages
+        }
+        if text.contains("读取消息") || text.contains("读不到这段聊天") {
+            return analysisReadFailed
+        }
+        if text.contains("解析")
+            || text.localizedCaseInsensitiveContains("prompt")
+            || text.contains("HTTP")
+            || text.contains("超时")
+            || text.contains("localizedDescription") {
+            return analysisUnavailable
+        }
+        if text.contains("再试") || text.contains("核对") {
+            return text
+        }
+        return analysisUnavailable
+    }
+
+   // MARK: - Momentum
 
     /// The count work is *finished*, which is the number that actually feels
     /// good. A list that only ever shows what is left reads as a treadmill.

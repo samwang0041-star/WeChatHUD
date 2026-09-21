@@ -42,7 +42,77 @@ enum InboxContextBuilder {
         }
     }
 
-    /// Build InboxContext for a single conversation (sync reader path — tests / compat).
+    static func resolvedAttentionLevel(
+        store: HUDStore,
+        chatUsername: String,
+        whitelistEntry: WhitelistEntry? = nil,
+        contactEntry: ContactEntry? = nil
+    ) -> AttentionLevel {
+        if let wl = whitelistEntry {
+            return wl.attentionLevel == .vip ? .vip : .whitelist
+        }
+        switch store.whitelistEntryRead(chatUsername) {
+        case .value(let wl):
+            return wl.attentionLevel == .vip ? .vip : .whitelist
+        case .absent:
+            return .stranger
+        case .unreadable:
+            if let contactEntry {
+                return contactEntry.attentionLevel
+            }
+            switch store.contactRead(chatUsername) {
+            case .value(let contact):
+                return contact.attentionLevel
+           case .absent, .unreadable:
+               return .whitelist
+           }
+       }
+   }
+
+    /// `getContact` and a passed nil entry answer both "no such person" and
+    /// "this read failed". Inbox summaries used to collapse both into
+    /// acquaintance, so a boss whose contacts row blipped became a low-stakes
+    /// peer in the AI prompt.
+    static func resolvedContact(
+        store: HUDStore,
+        chatUsername: String,
+        contactEntry: ContactEntry? = nil
+    ) -> HUDStore.ContactRead {
+        if let contactEntry { return .value(contactEntry) }
+        return store.contactRead(chatUsername)
+    }
+
+    /// Role for prompts and downstream AI. Missing means unreadable — callers
+    /// must not invent acquaintance or colleague.
+    static func resolvedSenderRole(
+        store: HUDStore,
+        chatUsername: String,
+        contactEntry: ContactEntry? = nil
+    ) -> ContactRole? {
+        switch resolvedContact(store: store, chatUsername: chatUsername, contactEntry: contactEntry) {
+        case .value(let contact):
+            return contact.role
+        case .absent:
+            return .acquaintance
+        case .unreadable:
+            return nil
+        }
+    }
+
+    static func resolvedContactWindowMinutes(
+        store: HUDStore,
+        chatUsername: String,
+        contactEntry: ContactEntry? = nil
+    ) -> Int {
+        switch resolvedContact(store: store, chatUsername: chatUsername, contactEntry: contactEntry) {
+        case .value(let contact):
+            return contact.replyWindowMinutes
+        case .absent, .unreadable:
+            return 0
+        }
+    }
+
+   /// Build InboxContext for a single conversation (sync reader path — tests / compat).
     static func build(
         chatUsername: String,
         triggerMessage: MessageInfo,
@@ -231,14 +301,31 @@ enum InboxContextBuilder {
             }.count
         }
 
-        // Sender profile
-        let role = contactEntry?.role ?? .acquaintance
-        let attentionLevel: AttentionLevel
-        if let wl = whitelistEntry {
-            attentionLevel = wl.attentionLevel == .vip ? .vip : .whitelist
-        } else {
-            attentionLevel = .stranger
+       // Sender profile
+        let contactProfile = resolvedContact(
+            store: store,
+            chatUsername: chatUsername,
+            contactEntry: contactEntry
+        )
+        let role: ContactRole?
+        let contactWindowMinutes: Int
+        switch contactProfile {
+        case .value(let contact):
+            role = contact.role
+            contactWindowMinutes = contact.replyWindowMinutes
+        case .absent:
+            role = .acquaintance
+            contactWindowMinutes = 0
+        case .unreadable:
+            role = nil
+            contactWindowMinutes = 0
         }
+       let attentionLevel = resolvedAttentionLevel(
+           store: store,
+           chatUsername: chatUsername,
+           whitelistEntry: whitelistEntry,
+           contactEntry: contactEntry
+       )
         let isGroup = MessageHelpers.isGroupChat(chatUsername)
         let mentionedMe = MessageHelpers.isAtMe(
             text,
@@ -253,13 +340,13 @@ enum InboxContextBuilder {
         // back to the tier rather than act as a zero-second threshold, which
         // is what made an acquaintance's row carry a permanent 超时 badge.
         let debtConfig = store.getSettingJSON("replyDebt", as: ReplyDebtConfig.self) ?? ReplyDebtConfig()
-        let replyWindow = ReplyDebtConfig.overdueWindow(
-            contactWindowMinutes: contactEntry?.replyWindowMinutes ?? 0,
-            isGroup: isGroup,
-            isAtMention: mentionedMe,
-            isVIP: attentionLevel == .vip,
-            config: debtConfig
-        )
+       let replyWindow = ReplyDebtConfig.overdueWindow(
+            contactWindowMinutes: contactWindowMinutes,
+           isGroup: isGroup,
+           isAtMention: mentionedMe,
+           isVIP: attentionLevel == .vip,
+           config: debtConfig
+       )
         let ageMinutes = Int(Date().timeIntervalSince(
             Date(timeIntervalSince1970: Double(triggerMessage.createTime))
         ) / 60)

@@ -118,8 +118,9 @@ struct ReviewTodoManagerTests {
         let runID = store.insertReviewRun(rangeStart: Date(), rangeEnd: Date(), chatCount: 1)!
 
         let id1 = store.insertReviewTodo(makeTodo(runID: runID, content: "complete me"))!
-        await mgr.markCompleted(todoID: id1)
+        #expect(await mgr.markCompleted(todoID: id1))
         #expect(store.todos(for: runID, statuses: [.completed]).count == 1)
+        #expect(await mgr.markCompleted(todoID: 999_999) == false)
 
         let id2 = store.insertReviewTodo(makeTodo(runID: runID, content: "snooze me"))!
         await mgr.snooze(todoID: id2, until: Date(timeIntervalSinceNow: 86400))

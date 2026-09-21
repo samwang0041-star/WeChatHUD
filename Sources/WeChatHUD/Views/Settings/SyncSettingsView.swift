@@ -20,11 +20,18 @@ struct SyncSettingsView: View {
     @State private var keyFileReadable = false
     @State private var keyFileExists = false
     @State private var keyPathMessage = ""
+    @State private var isTighteningKeyPermissions = false
+    @State private var keyPermissionFixError: String?
+    @State private var keyPermissionGeneration = 0
+    @State private var fullDiskSettingsError: String?
+   @State private var accessibilitySettingsError: String?
+    @State private var finderRevealError: String?
 
     // MARK: - Data management state
     @State private var selectedSection: DataSection = .commitments
     @State private var dataSearch = ""
-    @State private var exportMessage: String?
+   @State private var exportMessage: String?
+    @State private var exportFailed = false
     @State private var recalledMessages: [RecalledMessage] = []
     @State private var commitments: [Commitment] = []
     @State private var pendingAsks: [PendingAsk] = []
@@ -40,6 +47,10 @@ struct SyncSettingsView: View {
     @State private var legacyStatus: DeviceSettingsStore.LegacyStoreStatus?
     @State private var showLegacyBindConfirm = false
     @State private var showAdvancedConnection = false
+    @State private var isBindingLegacy = false
+    @State private var isCancellingCommitment = false
+    @State private var showInstallConfirm = false
+    @ObservedObject private var updates = AppUpdateController.shared
     @State private var selectedSettingsSection: SettingsPane
     private let lockedPane: SettingsPane?
 
@@ -91,6 +102,7 @@ struct SyncSettingsView: View {
                     Spacer()
                     if syncSaveFailed { Button("重试保存设置", action: save) }
                 }
+                .transition(.companionStatusReveal)
             }
             settingsPane(.connection) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -119,35 +131,127 @@ struct SyncSettingsView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     displaySection
                     MacExperienceSettingsView()
-                    AppUpdateSettingsView()
+                    AppUpdateSettingsView(showInstallConfirm: $showInstallConfirm)
                 }
             }
             settingsPane(.data) {
                 dataSection
             }
         }
-        .alert("确认这是当前账号的旧版资料？", isPresented: $showLegacyBindConfirm) {
-            Button("绑定到当前账号") { bindLegacyRecords() }
-            Button("取消", role: .cancel) { }
-        } message: {
-            Text("只有在当前新账号库没有业务资料时才应绑定。绑定不会复制或删除数据；重启助手后，将读取旧版记录。请先备份旧数据库和同目录 WAL/SHM 文件。")
-        }
-        // 记录回溯's 取消 is irreversible from the list, so it asks first.
-        // The wording says what changes and what does not, in the same voice
-        // as the rest of the app's confirmations.
-        .alert(CompanionProductCopy.cancelCommitmentTitle, isPresented: Binding(
-            get: { pendingCommitmentCancel != nil },
-            set: { if !$0 { pendingCommitmentCancel = nil } }
-        )) {
-            Button("取消承诺", role: .destructive) {
-                if let item = pendingCommitmentCancel {
-                    mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
+        .companionDialogBackdrop(showLegacyBindConfirm || pendingCommitmentCancel != nil || showInstallConfirm) {
+            if showLegacyBindConfirm {
+                CompanionDialog(title: "确认这是当前账号的旧版资料？", onClose: { if !isBindingLegacy { showLegacyBindConfirm = false } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("只有在当前新账号还没有待办、草稿和关注名单时才应绑定。绑定不会复制或删除资料；重启助手后，将读取旧版记录。请先备份旧资料，以及同文件夹里一起出现的配套文件。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !saveError.isEmpty {
+                            Text(saveError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("取消") { showLegacyBindConfirm = false }
+                                .companionBusyHold(isBindingLegacy, "正在绑定旧版资料")
+                            Button {
+                                guard !isBindingLegacy else { return }
+                                isBindingLegacy = true
+                                Task { @MainActor in
+                                    let ok = bindLegacyRecords()
+                                    isBindingLegacy = false
+                                    if ok { showLegacyBindConfirm = false }
+                                }
+                            } label: {
+                                Text(isBindingLegacy ? "正在绑定旧资料…" : "绑定到当前账号")
+                            }
+                            .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isBindingLegacy)
+                            .help(isBindingLegacy ? "正在绑定旧版资料" : "")
+                            .accessibilityHint(isBindingLegacy ? "正在绑定旧版资料" : "")
+                        }
+                    }
                 }
-                pendingCommitmentCancel = nil
+            } else if let item = pendingCommitmentCancel {
+                // 记录回溯's 取消 is irreversible from the list, so it asks first.
+                CompanionDialog(title: CompanionProductCopy.cancelCommitmentTitle, onClose: { if !isCancellingCommitment { pendingCommitmentCancel = nil } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(CompanionProductCopy.cancelCommitmentMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !saveError.isEmpty {
+                            Text(saveError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("保留") { pendingCommitmentCancel = nil }
+                                .companionBusyHold(isCancellingCommitment, "正在取消这条承诺")
+                            Button(role: .destructive) {
+                                guard !isCancellingCommitment else { return }
+                                isCancellingCommitment = true
+                                Task { @MainActor in
+                                    let ok = mutateData { try store.updateCommitmentStatus(msgUID: item.msgUID, status: .cancelled) }
+                                    isCancellingCommitment = false
+                                    if ok { pendingCommitmentCancel = nil }
+                                }
+                            } label: {
+                                Text(isCancellingCommitment ? "正在取消承诺…" : "取消承诺")
+                            }
+                            .disabled(isCancellingCommitment)
+                            .help(isCancellingCommitment ? "正在取消这条承诺" : "")
+                            .accessibilityHint(isCancellingCommitment ? "正在取消这条承诺" : "")
+                        }
+                    }
+                }
             }
-            Button("保留", role: .cancel) { pendingCommitmentCancel = nil }
-        } message: {
-            Text(CompanionProductCopy.cancelCommitmentMessage)
+            else if showInstallConfirm {
+                CompanionDialog(title: "安装新版本？", onClose: { if !isInstallingUpdate { showInstallConfirm = false } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(AppUpdateInstallCopy.confirmMessage(version: updates.offer?.version.description ?? "新版本"))
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if case .failed(let message) = updates.phase {
+                            Text(message)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        } else if isInstallingUpdate {
+                            Text(updates.statusText)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("取消") { showInstallConfirm = false }
+                                .companionBusyHold(isInstallingUpdate, "正在下载或安装新版本")
+                            Button {
+                                guard !isInstallingUpdate else { return }
+                                Task { await updates.installAvailable() }
+                            } label: {
+                                Text(AppUpdateInstallCopy.actionTitle(phase: updates.phase))
+                            }
+                            .tint(CompanionPalette.jade)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isInstallingUpdate)
+                            .help(isInstallingUpdate ? "正在下载或安装新版本" : "")
+                            .accessibilityHint(isInstallingUpdate ? "正在下载或安装新版本" : "")
+                        }
+                    }
+                }
+            }
         }
         .onAppear {
             guard !didLoad else { return }
@@ -177,23 +281,23 @@ struct SyncSettingsView: View {
     private var syncSection: some View {
         SettingsSection("同步") {
             // Poll interval
-            SettingsRow("轮询间隔", subtitle: "补充检查频率，重启助手后生效", icon: "clock.arrow.2.circlepath", iconColor: .blue) {
-                Picker("轮询间隔", selection: $interval) {
+            SettingsRow("检查新消息", subtitle: "微信没主动推过来时，隔多久再看一次。改完重启助手后生效。", icon: "clock.arrow.2.circlepath", iconColor: .blue) {
+                Picker("检查新消息", selection: $interval) {
                     ForEach(intervals, id: \.self) { i in
-                        Text(i < 60 ? "\(i)秒" : "\(i/60)分钟").tag(i)
+                        Text(i < 60 ? "\(i) 秒" : "\(i/60) 分钟").tag(i)
                     }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 80)
+                .frame(width: 92)
                 .onChange(of: interval) { save() }
             }
 
             SettingsRowDivider()
 
             // Cache strategy
-            SettingsRow("解密缓存", subtitle: cacheStrategy.hint + " · 重启助手后生效", icon: "externaldrive", iconColor: .orange) {
-                Picker("解密缓存", selection: $cacheStrategy) {
+            SettingsRow("聊天读取缓存", subtitle: cacheStrategy.hint + " · 重启助手后生效", icon: "externaldrive", iconColor: .orange) {
+                Picker("聊天读取缓存", selection: $cacheStrategy) {
                     ForEach(CacheStrategy.allCases, id: \.self) { s in
                         Text(s.label).tag(s)
                     }
@@ -271,26 +375,34 @@ struct SyncSettingsView: View {
                 title: "跳转与发送",
                 detail: "在微信中打开对话并发送。",
                 status: sendReady ? "已就绪" : "待授权",
-                ready: sendReady,
-                actionTitle: sendReady ? nil : "打开系统设置"
-            ) {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                    NSWorkspace.shared.open(url)
-                }
+              ready: sendReady,
+               actionTitle: sendReady ? nil : "打开系统设置",
+                actionHoldReason: PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : nil
+          ) {
+               openAccessibilitySettings()
+          }
+            if let accessibilitySettingsError {
+                Text(accessibilitySettingsError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .transition(.companionStatusReveal)
             }
-            HStack(alignment: .top, spacing: 8) {
+           HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "info.circle")
                     .foregroundStyle(CompanionPalette.jadeInk)
                 Text(Self.connectionFooter(readingReady: readingReady, sendReady: sendReady))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
-            .padding(14)
-        }
-        .companionSurface(padding: 0)
-    }
+           .padding(14)
+       }
+       .companionSurface(padding: 0)
+        .companionAnimation(CompanionMotion.ease(), value: accessibilitySettingsError)
+   }
 
-    /// A security warning for the primary connection pane.
+   /// A security warning for the primary connection pane.
     ///
     /// Why this is on the *primary* surface and not with the rest of the key
     /// configuration: the two key problems behave differently. An unrecognised
@@ -302,39 +414,59 @@ struct SyncSettingsView: View {
     /// Rendered only when there is something to act on, so the default surface
     /// stays as simple as it was.
     @ViewBuilder
-    private var keyPermissionNotice: some View {
-        if monitor.reader.keyFilePermissionsAreLoose {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("密钥文件权限过宽")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("同一台 Mac 上的其他账号也能读到这个文件。在终端执行 chmod 600 收紧即可，不需要重新获取密钥。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
+   private var keyPermissionNotice: some View {
+       if monitor.reader.keyFilePermissionsAreLoose {
+           HStack(alignment: .top, spacing: 10) {
+               Image(systemName: "exclamationmark.triangle.fill")
+                   .font(.system(size: 12))
+                   .foregroundStyle(.orange)
+               VStack(alignment: .leading, spacing: 4) {
+                   Text("密钥文件权限过宽")
+                       .font(.system(size: 13, weight: .semibold))
+                    Text("同一台 Mac 上的其他账号也能读到这个文件。收紧后只有你能读，不必重新准备。")
+                       .font(.system(size: 12))
+                       .foregroundStyle(.secondary)
+                       .fixedSize(horizontal: false, vertical: true)
+                    if let keyPermissionFixError {
+                        Text(keyPermissionFixError)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.companionStatusReveal)
+                    }
+                    Button {
+                        tightenKeyPermissions()
+                    } label: {
+                        Text(isTighteningKeyPermissions ? "正在收紧权限…" : "收紧权限")
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .disabled(isTighteningKeyPermissions || PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改文件权限" : (isTighteningKeyPermissions ? "正在把读取凭证收成仅你可读" : ""))
+                    .accessibilityLabel(isTighteningKeyPermissions ? "正在收紧权限" : "收紧权限")
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改文件权限" : (isTighteningKeyPermissions ? "正在把读取凭证收成仅你可读" : ""))
+               }
+               Spacer(minLength: 0)
+           }
             .padding(16)
             .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.orange.opacity(0.22), lineWidth: 1)
-            )
-        }
-    }
+           .overlay(
+               RoundedRectangle(cornerRadius: 10, style: .continuous)
+                   .strokeBorder(Color.orange.opacity(0.22), lineWidth: 1)
+           )
+            .companionAnimation(CompanionMotion.ease(), value: keyPermissionFixError)
+       }
+   }
     private func capabilityRow(
         icon: String,
         title: String,
         detail: String,
         status: String,
-        ready: Bool,
-        actionTitle: String? = nil,
-        action: (() -> Void)? = nil
-    ) -> some View {
+       ready: Bool,
+       actionTitle: String? = nil,
+        actionHoldReason: String? = nil,
+       action: (() -> Void)? = nil
+   ) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .medium))
@@ -361,27 +493,46 @@ struct SyncSettingsView: View {
                                 .font(.system(size: 10, weight: .semibold))
                         }
                     }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(CompanionPalette.jadeInk)
-                        .font(.system(size: 12, weight: .medium))
-                }
-            }
-        }
-        .padding(16)
+                       .buttonStyle(CompanionPressStyle())
+                       .foregroundStyle(CompanionPalette.jadeInk)
+                       .font(.system(size: 12, weight: .medium))
+                        .disabled(actionHoldReason != nil)
+                        .help(actionHoldReason ?? "")
+                        .accessibilityHint(actionHoldReason ?? "")
+               }
+           }
+       }
+       .padding(16)
     }
 
     private func legacyRecordsSection(device: DeviceSettingsStore) -> some View {
         SettingsSection("旧版资料") {
             SettingsRow("旧版记录已保留，尚未绑定账号", subtitle: "旧版本没有保存明确的账号归属，当前账号因此使用独立资料库。", icon: "archivebox", iconColor: .orange) {
-                Button("在 Finder 中查看") {
-                    NSWorkspace.shared.activateFileViewerSelecting([device.legacyStoreURL])
-                }
+                   Button("在 Finder 中查看") {
+                        revealInFinder(device.legacyStoreURL)
+                   }
                 if canOfferLegacyBind {
                     Button("绑定到当前账号") { showLegacyBindConfirm = true }
                 }
             }
-            Text("原资料没有删除，也没有合并到当前账号。只有你已核实目录归属、且当前新账号还没有关注/待办/草稿等资料时，才可显式绑定。绑定不会自动认领，也不会移动或覆盖文件；重启助手后生效。")
-                .font(.system(size: 12)).foregroundColor(.secondary).padding(14)
+           Text("原资料没有删除，也没有合并到当前账号。只有你已核实目录归属、且当前新账号还没有关注/待办/草稿等资料时，才可显式绑定。绑定不会自动认领，也不会移动或覆盖文件；重启助手后生效。")
+               .font(.system(size: 12)).foregroundColor(.secondary).padding(14)
+            if let finderRevealError {
+                Text(finderRevealError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                    .transition(.companionStatusReveal)
+            }
+       }
+        .companionAnimation(CompanionMotion.ease(), value: finderRevealError)
+   }
+
+    private var isInstallingUpdate: Bool {
+        switch updates.phase {
+        case .downloading, .installing: return true
+        default: return false
         }
     }
 
@@ -391,7 +542,12 @@ struct SyncSettingsView: View {
     }
 
     private var newAccountStoreHasBusinessData: Bool {
-        !store.getWhitelist().isEmpty
+        {
+            switch store.whitelistAllRead() {
+            case .unreadable: return true
+            case .value(let entries): return !entries.isEmpty
+            }
+        }()
             || !store.loadDrafts().isEmpty
             || !store.loadDiscussionItems().isEmpty
             || !store.loadCommitments().isEmpty
@@ -400,8 +556,9 @@ struct SyncSettingsView: View {
             || store.getSetting("autopilot")?.isEmpty == false
     }
 
-    private func bindLegacyRecords() {
-        guard let device = store.deviceSettings else { return }
+    @discardableResult
+    private func bindLegacyRecords() -> Bool {
+        guard let device = store.deviceSettings else { return false }
         do {
             guard try store.updatingSettingJSON(
                     "sync", as: SyncConfig.self, fallback: { SyncConfig() },
@@ -415,8 +572,10 @@ struct SyncSettingsView: View {
             legacyStatus = device.legacyStoreStatus
             saveError = ""
             needsRestart = true
+            return true
         } catch {
-            saveError = "旧版资料绑定失败。请先备份数据，再确认当前目录后重试。"
+            saveError = CompanionInteractionCopy.legacyBindFailed
+            return false
         }
     }
 
@@ -434,18 +593,41 @@ struct SyncSettingsView: View {
     }
 
     private var databaseSection: some View {
-        SettingsSection("微信账号与数据目录") {
-            SettingsRow("本次运行读取", subtitle: monitor.reader.dbDir.isEmpty ? "尚未连接目录" : shortenPath(monitor.reader.dbDir), icon: "person.crop.circle", iconColor: .blue) {
+        SettingsSection("微信账号资料") {
+            SettingsRow("本次运行读取", subtitle: monitor.reader.dbDir.isEmpty ? "尚未选定账号资料" : shortenPath(monitor.reader.dbDir), icon: "person.crop.circle", iconColor: .blue) {
                 Button("重新检测", action: refreshConnectionDiagnosis)
             }
-            SettingsRowDivider()
-            Text(directoryDiagnosis.message)
-                .font(.system(size: 12))
-                .foregroundColor(directoryDiagnosis.needsAttention ? .orange : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+           SettingsRowDivider()
 
-            if !databaseCandidates.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(directoryDiagnosis.message)
+                    .font(.system(size: 12))
+                    .foregroundColor(directoryDiagnosis.needsAttention ? .orange : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if case .directoryUnreadable = directoryDiagnosis {
+                    if let fullDiskSettingsError {
+                        Text(fullDiskSettingsError)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.red)
+                            .transition(.companionStatusReveal)
+                    }
+                    Button {
+                        openFullDiskAccessSettings()
+                    } label: {
+                        Text("打开完全磁盘访问权限")
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .disabled(PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                    .accessibilityLabel("打开系统设置中的完全磁盘访问权限")
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                }
+            }
+            .padding(14)
+            .companionAnimation(CompanionMotion.ease(), value: fullDiskSettingsError)
+
+           if !databaseCandidates.isEmpty {
                 ForEach(databaseCandidates, id: \.self) { path in
                     SettingsRowDivider()
                     SettingsRow(accountDirectoryName(path), subtitle: shortenPath(path), icon: "folder", iconColor: .secondary) {
@@ -459,11 +641,11 @@ struct SyncSettingsView: View {
                 }
             }
             SettingsRowDivider()
-            SettingsRow("下次启动读取", subtitle: "填 auto 仅在一个候选目录时自动连接；选择后重启助手生效。") {
+            SettingsRow("下次启动读取", subtitle: "只找到一个账号时可以自动连接；选好具体目录后重启助手生效。") {
                 VStack(alignment: .trailing, spacing: 6) {
                     CompanionClipboardField(
                         text: $dbPath,
-                        placeholder: "auto 或微信账号资料目录",
+                        placeholder: "账号资料目录，或 auto（仅一个候选）",
                         kind: .plain,
                         accessibilityLabel: "下次启动读取路径"
                     )
@@ -473,15 +655,17 @@ struct SyncSettingsView: View {
                 }
             }
             SettingsRowDivider()
-            SettingsRow("解密密钥文件", subtitle: keyFileMessage, icon: "key", iconColor: keyFileNeedsAttention ? .orange : .secondary) {
+            SettingsRow("密钥文件", subtitle: keyFileMessage, icon: "key", iconColor: keyFileNeedsAttention ? .orange : .secondary) {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("下次启动：" + (keysFilePath.isEmpty ? "默认路径" : shortenPath(keysFilePath)))
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                     HStack(spacing: 8) {
-                        Button("选择 JSON…", action: chooseKeyFile)
+                        Button("选择密钥文件…", action: chooseKeyFile)
                             .disabled(PreviewRuntime.isEnabled)
+                            .help(PreviewRuntime.isEnabled ? "演示界面不会选择密钥文件" : "")
+                            .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会选择密钥文件" : "")
                         if !keysFilePath.isEmpty {
                             Button("恢复默认") {
                                 keysFilePath = ""
@@ -489,6 +673,7 @@ struct SyncSettingsView: View {
                                 save()
                                 refreshConnectionDiagnosis()
                             }
+                            .buttonStyle(CompanionPressStyle())
                         }
                     }
                 }
@@ -498,26 +683,28 @@ struct SyncSettingsView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.red)
                     .padding(.horizontal, 14)
+                    .transition(.companionStatusReveal)
             }
-            Text("解密缓存按数据库目录隔离。选择目录不会合并账号，也不会证明密钥属于该账号。请使用与你所选微信账号匹配的密钥。")
+            Text("聊天读取缓存按账号资料目录分开。选择目录不会合并账号，也不会证明这份密钥文件属于该账号。请使用与当前微信账号匹配的密钥文件。")
                 .font(.system(size: 12)).foregroundColor(.secondary).padding(14)
         }
+        .companionAnimation(CompanionMotion.ease(), value: keyPathMessage)
     }
 
     /// True when the key file row should carry a warning.
     ///
-    /// Loose permissions are read live rather than cached: a user who runs
-    /// `chmod 600` to fix the warning must see it clear without a restart.
-    private var keyFileNeedsAttention: Bool {
+   /// Loose permissions are read live rather than cached: a user who runs
+    /// 「收紧权限」 to fix the warning must see it clear without a restart.
+   private var keyFileNeedsAttention: Bool {
         !keyFileReadable || monitor.reader.keyFilePermissionsAreLoose
     }
 
     private var keyFileMessage: String {
         let prefix = "本次运行"
-        if !keyFileExists { return "\(prefix)：未找到当前连接的密钥文件。请先使用配套的 wechat-cli 为所选账号配置密钥，默认位置为 ~/.wechat-cli/all_keys.json。" }
+        if !keyFileExists { return "\(prefix)：未找到当前连接的密钥文件。请先为这个微信账号准备本机读取凭据，然后再连。" }
         if !keyFileReadable { return "\(prefix)：当前连接的密钥文件不可读，请检查本机文件权限。" }
-        if monitor.reader.keyFilePermissionsAreLoose { return "\(prefix)：密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。在终端执行 chmod 600 收紧即可，不需要重新获取密钥。" }
-        return "\(prefix)。密钥保留在本机；文件可读不代表内容有效或匹配当前账号，以成功同步为准。"
+        if monitor.reader.keyFilePermissionsAreLoose { return "\(prefix)：密钥文件权限过宽，同一台 Mac 上的其他账号也能读到。请用本页上方的「收紧权限」。" }
+        return "\(prefix)。密钥文件留在本机；文件能打开不代表内容有效或匹配当前账号，以成功读取为准。"
     }
 
     private func accountDirectoryName(_ path: String) -> String {
@@ -538,11 +725,57 @@ struct SyncSettingsView: View {
             // permissions tightened. Reporting it as missing would send the
             // user looking for a key they already have.
             keyFileExists = true
-            keyFileReadable = true
+           keyFileReadable = true
+       }
+   }
+
+    private func tightenKeyPermissions() {
+        guard !isTighteningKeyPermissions, !PreviewRuntime.isEnabled else { return }
+        isTighteningKeyPermissions = true
+        keyPermissionFixError = nil
+        Task { @MainActor in
+            defer { isTighteningKeyPermissions = false }
+            let path = monitor.reader.configuredKeysPath
+            let wrote = SecureFileManager.ensureFilePermissions(at: path)
+            keyPermissionGeneration += 1
+            refreshConnectionDiagnosis()
+            if wrote, !monitor.reader.keyFilePermissionsAreLoose {
+                keyPermissionFixError = nil
+            } else {
+               keyPermissionFixError = "权限没有收紧。请确认这个文件属于当前账号，然后再试一次。"
+           }
+       }
+   }
+
+    private func openFullDiskAccessSettings() {
+        guard !PreviewRuntime.isEnabled else { return }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+              NSWorkspace.shared.open(url) else {
+            fullDiskSettingsError = "系统设置未能打开，请从苹果菜单打开系统设置，再允许完全磁盘访问权限。"
+            return
+        }
+       fullDiskSettingsError = nil
+   }
+
+    private func openAccessibilitySettings() {
+        guard !PreviewRuntime.isEnabled else { return }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
+              NSWorkspace.shared.open(url) else {
+            accessibilitySettingsError = "系统设置未能打开，请从苹果菜单打开系统设置，再允许微信操作权限。"
+            return
+        }
+       accessibilitySettingsError = nil
+   }
+
+    private func revealInFinder(_ url: URL) {
+        if CompanionFinder.reveal(url) {
+            finderRevealError = nil
+        } else {
+            finderRevealError = "没能打开访达，请到文件所在位置查看。"
         }
     }
 
-    private func chooseDatabaseDirectory() {
+  private func chooseDatabaseDirectory() {
         let picker = NSOpenPanel()
         picker.title = "选择所需微信账号的资料目录"
         picker.canChooseFiles = false
@@ -558,14 +791,14 @@ struct SyncSettingsView: View {
     private func chooseKeyFile() {
         guard !PreviewRuntime.isEnabled else { return }
         let picker = NSOpenPanel()
-        picker.title = "选择已有的 JSON 密钥文件"
+        picker.title = "选择密钥文件"
         picker.canChooseFiles = true
         picker.canChooseDirectories = false
         picker.allowsMultipleSelection = false
         picker.allowedContentTypes = [.json]
         guard picker.runModal() == .OK, let url = picker.url else { return }
         guard WeChatReader.validateKeyFile(at: url.path) else {
-            keyPathMessage = "无法使用此文件。请选择可读取且内容为 JSON 对象的密钥文件。"
+            keyPathMessage = "无法使用此文件。请选择一份本机可读的密钥文件。"
             return
         }
         keysFilePath = url.path
@@ -598,18 +831,22 @@ struct SyncSettingsView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.primary)
                     Spacer(minLength: 8)
-                    if let url = exportedURL {
-                        Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                            .controlSize(.small)
-                    }
-                    Button {
-                        if let url = monitor.exportReport() {
-                            exportedURL = url
-                            exportMessage = "已导出 \(url.lastPathComponent)"
-                        } else {
-                            exportMessage = "导出失败，请检查桌面写入权限"
-                        }
-                    } label: {
+                   if let url = exportedURL {
+                        Button("查看文件") { revealInFinder(url) }
+                           .controlSize(.small)
+                           .buttonStyle(CompanionPressStyle())
+                   }
+                   Button {
+                      if let url = monitor.exportReport() {
+                          exportedURL = url
+                            exportFailed = false
+                          exportMessage = "已导出 \(url.lastPathComponent)"
+                      } else {
+                           exportedURL = nil
+                           exportFailed = true
+                           exportMessage = CompanionInteractionCopy.exportToDesktopFailed
+                      }
+                   } label: {
                         Label("导出到桌面", systemImage: "square.and.arrow.down")
                     }
                     .tint(CompanionPalette.jade)
@@ -626,26 +863,43 @@ struct SyncSettingsView: View {
                     .padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
                 if let msg = exportMessage {
                     HStack(spacing: 8) {
-                        Image(systemName: msg.hasPrefix("导出失败") ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                            .foregroundStyle(msg.hasPrefix("导出失败") ? Color.red : CompanionPalette.jadeInk)
+                        Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle.fill")
+                            .foregroundStyle(exportFailed ? Color.red : CompanionPalette.jadeInk)
                         Text(msg)
                             .font(.system(size: 12))
-                            .foregroundColor(msg.hasPrefix("导出失败") ? .red : .secondary)
-                        if let url = exportedURL, !msg.hasPrefix("导出失败") {
-                            Button("查看文件") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(CompanionPalette.jadeInk)
-                        }
+                            .foregroundColor(exportFailed ? .red : .secondary)
+                       if let url = exportedURL, !exportFailed {
+                            Button("查看文件") { revealInFinder(url) }
+                               .buttonStyle(CompanionPressStyle())
+                               .foregroundStyle(CompanionPalette.jadeInk)
+                       } else if exportFailed {
+                            Button("打开桌面") {
+                                if !CompanionFinder.openDesktop() {
+                                    finderRevealError = "没能打开桌面。请到访达里查看桌面。"
+                                }
+                            }
+                            .buttonStyle(CompanionPressStyle())
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                       }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
-                    .transition(.opacity)
+                   .padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
+                   .transition(.companionStatusReveal)
+               }
+                if let finderRevealError {
+                    Text(finderRevealError)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.red)
+                        .padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
+                        .transition(.companionStatusReveal)
                 }
-            }
-        }
-    }
+           }
+           .companionAnimation(CompanionMotion.ease(), value: exportMessage)
+            .companionAnimation(CompanionMotion.ease(), value: finderRevealError)
+       }
+   }
 
-    private var retrospectionSection: some View {
+   private var retrospectionSection: some View {
         SettingsSection {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
@@ -717,14 +971,14 @@ struct SyncSettingsView: View {
                                     .font(.system(size: 12))
                                     .foregroundColor(.secondary)
                                 Spacer()
-                                Text("\(msg.recallDelaySeconds)秒后撤回")
+                                Text("\(msg.recallDelaySeconds) 秒后撤回")
                                     .font(.system(size: 11))
                                     .foregroundColor(.orange)
                             }
                             Text("「\(msg.originalText)」")
                                 .font(.system(size: 13))
                                 .foregroundColor(.secondary)
-                                .lineLimit(1)
+                                .fixedSize(horizontal: false, vertical: true)
                             if let reason = msg.aiReason {
                                 HStack(spacing: 4) {
                                     pill(reason, color: msg.aiIntelligenceValue == "high" ? .red : .gray)
@@ -823,7 +1077,10 @@ struct SyncSettingsView: View {
                                 Text(ask.senderName).font(.system(size: 13, weight: .medium))
                                 Text(ask.chatName).font(.system(size: 12)).foregroundColor(.secondary)
                             }
-                            Text(ask.summary).font(.system(size: 13)).foregroundColor(.secondary).lineLimit(1)
+                            Text(ask.summary)
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                             HStack(spacing: 4) {
                                 pill(ask.askType.label, color: .blue)
                                 Text(String(format: "%.0f%%", ask.confidence * 100))
@@ -957,14 +1214,21 @@ struct SyncSettingsView: View {
         }
     }
 
-    private func mutateData(_ operation: () throws -> Void) {
+    @discardableResult
+    private func mutateData(_ operation: () throws -> Int) -> Bool {
         do {
-            try operation()
+            let changes = try operation()
+            guard changes > 0 else {
+                saveError = "操作未保存，请重试。原记录仍保留。"
+                return false
+            }
             saveError = ""
             reloadData()
             monitor.refreshNow()
+            return true
         } catch {
             saveError = "操作未保存，请重试。原记录仍保留。"
+            return false
         }
     }
 

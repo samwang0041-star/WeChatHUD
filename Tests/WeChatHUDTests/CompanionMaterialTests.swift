@@ -260,11 +260,14 @@ final class CompanionMaterialTests: XCTestCase {
             CompanionInteractionCopy.retryOrOpenWeChat,
             CompanionInteractionCopy.needAccessibility,
             CompanionInteractionCopy.needAIService,
-            CompanionInteractionCopy.needWeChatRunning
+            CompanionInteractionCopy.needWeChatRunning,
+            CompanionInteractionCopy.copyFailed
         ] {
             XCTAssertFalse(next.isEmpty)
             XCTAssertGreaterThan(next.count, 6, "a next step has to be actionable: \(next)")
         }
+        XCTAssertTrue(CompanionInteractionCopy.copyFailed.contains("请重试"))
+        XCTAssertTrue(CompanionInteractionCopy.replyCopied.contains("核对"))
     }
 
     /// Empty states are a message and a move. The views pair these with a

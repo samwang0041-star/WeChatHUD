@@ -279,7 +279,7 @@ actor DiscussionTracker {
         let prompt = template
             .replacingOccurrences(of: "{chat_name}", with: chatName)
             .replacingOccurrences(of: "{messages}", with: lines)
-            .replacingOccurrences(of: "{known_items}", with: knownList.isEmpty ? "（暂无）" : knownList)
+            .replacingOccurrences(of: "{known_items}", with: knownList.isEmpty ? "（没有）" : knownList)
             .replacingOccurrences(of: "{recent_corrections}", with: correctionHint)
 
         let started = Date()

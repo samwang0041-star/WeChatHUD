@@ -103,7 +103,7 @@ struct InsightSidebarView: View {
                 .accessibilityLabel("搜索聊天或联系人")
             if !searchText.isEmpty {
                 Button("清除搜索") { searchText = "" }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(CompanionPalette.jadeInk)
             }
@@ -159,9 +159,45 @@ struct InsightSidebarView: View {
                         otherSessionRow(session)
                     }
                 }
+                if whitelist.isEmpty && (others.isEmpty || filter == .updated) {
+                    sidebarFilterEmptyMove
+                }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    @ViewBuilder
+    private var sidebarFilterEmptyMove: some View {
+        VStack(spacing: 8) {
+            if !searchText.isEmpty {
+                Button("清除搜索") { searchText = "" }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("清除搜索")
+           } else if filter != .all {
+               Button("看全部") {
+                   withMotion(CompanionMotion.pageChange()) { filter = .all }
+               }
+               .buttonStyle(CompanionPressStyle())
+              .foregroundStyle(CompanionPalette.jadeInk)
+              .accessibilityLabel("看全部对话")
+           } else if insightStore.isFollowListUnreadable(store: store) {
+                Text("暂时读不到关注名单")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+            } else if case .value(let entries) = store.whitelistAllRead(), entries.isEmpty {
+                Button("关注谁") {
+                    NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("去选要关注的对话")
+            }
+        }
+        .padding(.top, 16)
+        .frame(maxWidth: .infinity)
     }
 
     /// Entry point for the overview page. It used to have no route at all:
@@ -195,7 +231,7 @@ struct InsightSidebarView: View {
             .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
             .cornerRadius(6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
         .padding(.horizontal, 4)
         .padding(.top, 4)
     }
@@ -218,18 +254,19 @@ struct InsightSidebarView: View {
         .padding(.bottom, 4)
     }
 
-    private func whitelistRow(_ entry: WhitelistEntry) -> some View {
-        let isSelected = selectedChat == entry.id
-        let insight = insightCoordinator.result(for: entry.id, date: selectedDate)
-        let hasInsight = insight != nil
-        let isAnalyzing = insightCoordinator.chatInsightLoading.contains(entry.id)
-        let stats = dayStats(
-            username: entry.id,
-            displayName: entry.displayName,
-            isGroup: entry.isGroup,
-            category: entry.category,
-            fallback: insightStore.allStats[entry.id]
-        )
+   private func whitelistRow(_ entry: WhitelistEntry) -> some View {
+       let isSelected = selectedChat == entry.id
+       let insight = insightCoordinator.result(for: entry.id, date: selectedDate)
+       let hasInsight = insight != nil
+       let isAnalyzing = insightCoordinator.chatInsightLoading.contains(entry.id)
+        let title = visibleTitle(username: entry.id, fallback: entry.displayName)
+       let stats = dayStats(
+           username: entry.id,
+            displayName: title,
+           isGroup: entry.isGroup,
+           category: entry.category,
+           fallback: insightStore.allStats[entry.id]
+       )
 
         return Button(action: {
             selectedChat = entry.id
@@ -237,16 +274,22 @@ struct InsightSidebarView: View {
         }) {
             HStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(categoryColor(entry.category).opacity(0.15))
-                        .frame(width: 28, height: 28)
-                    Text(String(entry.displayName.prefix(1)))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(categoryColor(entry.category))
-                }
+                   RoundedRectangle(cornerRadius: 6, style: .continuous)
+                       .fill(categoryColor(entry.category).opacity(0.15))
+                       .frame(width: 28, height: 28)
+                    if let monogram = ContactIdentityIndex.avatarMonogram(from: title) {
+                        Text(monogram)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(categoryColor(entry.category))
+                    } else {
+                        Image(systemName: entry.isGroup ? "person.3" : "person")
+                            .font(.system(size: 10))
+                            .foregroundColor(categoryColor(entry.category))
+                    }
+               }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.displayName)
+               VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
                         .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                         .foregroundColor(.primary)
                         .lineLimit(1)
@@ -257,7 +300,7 @@ struct InsightSidebarView: View {
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     } else if let s = stats {
-                        Text("\(s.messageCount)条消息 · \(s.participantCount)人")
+                        Text("\(s.messageCount) 条消息 · \(s.participantCount) 人")
                             .font(.system(size: 10))
                             .foregroundColor(.secondary.opacity(0.6))
                     } else {
@@ -299,23 +342,25 @@ struct InsightSidebarView: View {
             .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
             .cornerRadius(6)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
         .padding(.horizontal, 4)
     }
 
-    private func otherSessionRow(_ session: InsightSessionEntry) -> some View {
-        let isSelected = selectedChat == session.id
-        let count = dayMessageCount(
-            username: session.id,
-            displayName: session.displayName,
-            isGroup: session.isGroup,
-            category: .other,
-            fallback: session.messageCount
-        )
+   private func otherSessionRow(_ session: InsightSessionEntry) -> some View {
+       let isSelected = selectedChat == session.id
+        let title = visibleTitle(username: session.id, fallback: session.displayName)
+       let count = dayMessageCount(
+           username: session.id,
+            displayName: title,
+           isGroup: session.isGroup,
+           category: .other,
+           fallback: session.messageCount
+       )
 
-        return Button(action: {
-            selectedChat = session.id
-        }) {
+       return Button(action: {
+           selectedChat = session.id
+            onAnalyzeChat(session.id)
+       }) {
             HStack(spacing: 8) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -326,12 +371,12 @@ struct InsightSidebarView: View {
                         .foregroundColor(.gray)
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.displayName)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    Text("\(count)条消息")
+               VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                       .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                       .foregroundColor(.primary)
+                       .lineLimit(1)
+                   Text("\(count) 条消息")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
@@ -351,11 +396,18 @@ struct InsightSidebarView: View {
             .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
             .cornerRadius(6)
         }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 4)
+       .buttonStyle(CompanionRowPressStyle())
+       .padding(.horizontal, 4)
+   }
+
+    private func visibleTitle(username: String, fallback: String) -> String {
+        ContactIdentityIndex.visibleName(
+            username: username,
+            stored: store.storedDisplayName(username),
+            readerName: fallback)
     }
 
-    private func matchesFilter(_ entry: WhitelistEntry) -> Bool {
+   private func matchesFilter(_ entry: WhitelistEntry) -> Bool {
         matchesFilter(
             isGroup: entry.isGroup,
             id: entry.id,

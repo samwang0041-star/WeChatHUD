@@ -21,11 +21,18 @@ struct InboxContext {
     let timeSinceMyLastReply: TimeInterval?
 
     // 3. Sender profile
-    let senderRole: ContactRole
+    /// Missing means the contacts row could not be read. A missing row is
+    /// acquaintance — that is a real answer, not a failed read.
+    let senderRole: ContactRole?
     let senderAttentionLevel: AttentionLevel
     let senderReplyWindow: Int
     let isOverdue: Bool
     let overdueMinutes: Int
+
+    /// Token for AI prompts. An unreadable boss must not become acquaintance.
+    var senderRolePromptToken: String {
+        senderRole?.rawValue ?? "unknown"
+    }
 
     // 4. Interaction history
     let weeklyInteractionCount: Int

@@ -150,20 +150,20 @@ actor AutoReplyGenerator {
         // Quoted + oneLine'd: a profiled example containing newlines or
         // instruction-looking text must not masquerade as prompt structure.
         let fewShotText = input.fewShotExamples.isEmpty
-            ? "（暂无历史记录）"
+            ? "（没有可参考的历史）"
             : input.fewShotExamples.enumerated().map {
                 "  \($0.offset + 1). 「\(AIService.oneLine($0.element))」"
             }.joined(separator: "\n")
 
-        let phrasesText = input.frequentPhrases.isEmpty
-            ? "（暂无）"
+       let phrasesText = input.frequentPhrases.isEmpty
+            ? "（没有）"
             : input.frequentPhrases.joined(separator: "、")
 
-        let pairsText = input.messagePairs.isEmpty
-            ? "（暂无）"
+       let pairsText = input.messagePairs.isEmpty
+            ? "（没有）"
             : input.messagePairs.enumerated().map { "  \($0.offset + 1). 对方：\(AIService.oneLine($0.element.question)) → 用户：\(AIService.oneLine($0.element.answer))" }.joined(separator: "\n")
 
-        let memoryText = input.conversationMemory ?? "（暂无记忆）"
+        let memoryText = input.conversationMemory ?? "（没有对话记忆）"
         let ledgerText = Self.formatLedger(input.sessionLedger)
 
         // Append media context to message body if present
@@ -178,13 +178,13 @@ actor AutoReplyGenerator {
             .replacingOccurrences(of: "{contact_role}", with: input.contactRole.label)
             .replacingOccurrences(of: "{attention_level}", with: input.attentionLevel.label)
             .replacingOccurrences(of: "{context_window}", with: input.contextWindow)
-            .replacingOccurrences(of: "{contact_style_hint}", with: input.contactStyleHint.isEmpty ? "（暂无特征数据）" : input.contactStyleHint)
+            .replacingOccurrences(of: "{contact_style_hint}", with: input.contactStyleHint.isEmpty ? "（没有风格特征）" : input.contactStyleHint)
             .replacingOccurrences(of: "{conversation_memory}", with: memoryText)
             .replacingOccurrences(of: "{session_ledger}", with: ledgerText)
             .replacingOccurrences(of: "{style_description}", with: input.styleDescription)
-            .replacingOccurrences(of: "{punctuation_style}", with: input.punctuationStyle.isEmpty ? "（暂无数据）" : input.punctuationStyle)
-            .replacingOccurrences(of: "{sentence_style}", with: input.sentenceStyle.isEmpty ? "（暂无数据）" : input.sentenceStyle)
-            .replacingOccurrences(of: "{typing_rhythm}", with: input.typingRhythm.isEmpty ? "（暂无数据）" : input.typingRhythm)
+            .replacingOccurrences(of: "{punctuation_style}", with: input.punctuationStyle.isEmpty ? "（没有）" : input.punctuationStyle)
+            .replacingOccurrences(of: "{sentence_style}", with: input.sentenceStyle.isEmpty ? "（没有）" : input.sentenceStyle)
+            .replacingOccurrences(of: "{typing_rhythm}", with: input.typingRhythm.isEmpty ? "（没有）" : input.typingRhythm)
             .replacingOccurrences(of: "{length_p25}", with: String(input.lengthP25))
             .replacingOccurrences(of: "{length_p50}", with: String(input.lengthP50))
             .replacingOccurrences(of: "{length_p75}", with: String(input.lengthP75))

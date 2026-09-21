@@ -31,7 +31,11 @@ final class InsightCoordinator: ObservableObject {
     /// Insight progress: "正在分析 3/12…"
     @Published var insightProgress: String = ""
     /// Insight progress fraction 0-1
-    @Published var insightProgressFraction: Double = 0
+   @Published var insightProgressFraction: Double = 0
+
+    /// Bulk briefing failed because the follow list could not be read.
+    /// Distinct from an empty whitelist: that one means nobody is followed.
+    @Published var briefingError: String?
 
     // MARK: - Dependencies
 
@@ -98,13 +102,28 @@ final class InsightCoordinator: ObservableObject {
 
     /// Analyze a single chat on-demand for a specific date.
     /// If a result for a different date exists, it is replaced.
-    func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
-        let request = UUID()
-        requestVersions[chatUsername] = request
+   func analyzeOneChat(chatUsername: String, date: Date = Date()) async {
+       let request = UUID()
+       requestVersions[chatUsername] = request
+
+       let entry: WhitelistEntry
+       switch store.whitelistEntryRead(chatUsername) {
+       case .value(let found):
+           entry = found
+       case .unreadable:
+           chatInsightErrors[chatUsername] = CompanionInteractionCopy.followListUnreadableAnalysis
+           return
+       case .absent:
+           chatInsightErrors[chatUsername] = CompanionInteractionCopy.notOnFollowList
+           return
+       }
+
+        // Only the real analysis job is a busy state. A follow-list miss
+        // used to insert loading first, which painted the header as a
+        // filled 「正在分析…」 for a frame before snapping back to 「再试一次」.
         chatInsightLoading.insert(chatUsername)
         chatInsightErrors[chatUsername] = nil
         insightProgress = "正在分析单聊…"
-
         defer {
             if requestVersions[chatUsername] == request {
                 chatInsightLoading.remove(chatUsername)
@@ -112,12 +131,7 @@ final class InsightCoordinator: ObservableObject {
             }
         }
 
-        guard let entry = store.getWhitelist().first(where: { $0.id == chatUsername }) else {
-            chatInsightErrors[chatUsername] = "不在关注列表中"
-            return
-        }
-
-        let selfUsername = await readerActor.myUsername()
+       let selfUsername = await readerActor.myUsername()
         let selfDisplayName = await readerActor.displayName(for: selfUsername)
 
         guard let result = await chatInsightService.analyzeEntry(
@@ -131,10 +145,42 @@ final class InsightCoordinator: ObservableObject {
 
         guard requestVersions[chatUsername] == request, !Task.isCancelled else { return }
         resultDays[chatUsername] = Calendar.current.startOfDay(for: date)
-        chatInsights[chatUsername] = result
+       chatInsights[chatUsername] = result
+   }
+
+    /// Date picker changes must not wipe a previous day's result just to
+    /// reprint the same follow-list error. Re-read the list; only start a
+    /// real analysis when the chat is still followed.
+   func analyzeOneChatOnDateChange(chatUsername: String, date: Date) async {
+       await analyzeOneChatIfFollowed(chatUsername: chatUsername, date: date)
+   }
+
+    /// Sidebar taps share the date-change gate. An unreadable follow list
+    /// is not 「this chat has no analysis」 — stamp the error and leave any
+    /// existing result in place.
+    func analyzeOneChatIfFollowed(chatUsername: String, date: Date) async {
+        switch store.whitelistEntryRead(chatUsername) {
+        case .unreadable:
+            chatInsightErrors[chatUsername] = CompanionInteractionCopy.followListUnreadableAnalysis
+            return
+        case .absent:
+            chatInsightErrors[chatUsername] = CompanionInteractionCopy.notOnFollowList
+            return
+        case .value:
+            break
+        }
+       await analyzeOneChat(chatUsername: chatUsername, date: date)
+   }
+
+    /// Coming back from 关注谁: if this chat is now followed and still has no
+    /// result, start analysis. A leftover 「不在关注列表中」 must not sit there
+    /// after the user did what the button asked.
+    func resumeInsightChatIfNeeded(chatUsername: String, date: Date) async {
+        if result(for: chatUsername, date: date) != nil { return }
+        await analyzeOneChatIfFollowed(chatUsername: chatUsername, date: date)
     }
 
-    func seedPreviewResult(chatUsername: String, date: Date = Date(), result: ChatInsightResult) {
+ func seedPreviewResult(chatUsername: String, date: Date = Date(), result: ChatInsightResult) {
         resultDays[chatUsername] = Calendar.current.startOfDay(for: date)
         chatInsights[chatUsername] = result
     }
@@ -159,11 +205,21 @@ final class InsightCoordinator: ObservableObject {
             return
         }
 
-        insightLoading = true
-        insightProgress = "正在准备…"
-        insightProgressFraction = 0
+       insightLoading = true
+       insightProgress = "正在准备…"
+       insightProgressFraction = 0
 
-        let whitelist = store.getWhitelist()
+        let whitelist: [WhitelistEntry]
+        switch store.whitelistAllRead() {
+        case .unreadable:
+            insightLoading = false
+            insightProgress = ""
+            briefingError = CompanionInteractionCopy.followListUnreadableAnalysis
+            return
+        case .value(let entries):
+            briefingError = nil
+            whitelist = entries
+        }
         let selfUsername = await readerActor.myUsername()
         let selfDisplayName = await readerActor.displayName(for: selfUsername)
         let dateStr = ISO8601DateFormatter().string(from: Date())
@@ -194,7 +250,7 @@ final class InsightCoordinator: ObservableObject {
             // Cooperative cancellation
             guard !Task.isCancelled else { break }
 
-            insightProgress = "正在分析 \(i + 1)/\(total) \(entry.displayName)…"
+            insightProgress = "正在分析 \(i + 1)/\(total) \(visibleName(entry))…"
             insightProgressFraction = Double(i) / Double(max(total, 1))
 
             if let result = await chatInsightService.analyzeEntry(
@@ -204,8 +260,8 @@ final class InsightCoordinator: ObservableObject {
                 results[entry.id] = result
             }
 
-            if let stats = await dayLoader.statsForDay(
-                chatUsername: entry.id, chatName: entry.displayName,
+           if let stats = await dayLoader.statsForDay(
+                chatUsername: entry.id, chatName: visibleName(entry),
                 isGroup: entry.isGroup, category: entry.category,
                 date: todayStart, readerActor: readerActor
             ), stats.messageCount > 0 {
@@ -238,14 +294,15 @@ final class InsightCoordinator: ObservableObject {
         )
 
         let insightPairs = results.compactMap { (key, value) -> (chatName: String, result: ChatInsightResult)? in
-            guard let e = whitelist.first(where: { $0.id == key }) else { return nil }
-            return (chatName: e.displayName, result: value)
+           guard let e = whitelist.first(where: { $0.id == key }) else { return nil }
+            return (chatName: visibleName(e), result: value)
         }
 
         let briefing = await chatInsightService.generateGlobalBriefing(
             selfName: selfDisplayName, date: dateStr,
             chatInsights: insightPairs, globalStats: globalStats
         )
+        let chatNames = Dictionary(uniqueKeysWithValues: whitelist.map { ($0.id, visibleName($0)) })
 
         for (chatUsername, result) in results {
             // A later user-selected day takes precedence over this bulk run.
@@ -256,10 +313,17 @@ final class InsightCoordinator: ObservableObject {
             resultDays[chatUsername] = todayStart
             chatInsights[chatUsername] = result
         }
-        globalBriefing = briefing
+        globalBriefing = briefing?.bindingChatUsernames(names: chatNames)
         briefingGeneratedAt = briefing == nil ? nil : now()
         insightLoading = false
-        insightProgress = ""
-        insightProgressFraction = 1.0
+       insightProgress = ""
+       insightProgressFraction = 1.0
+   }
+
+    private func visibleName(_ entry: WhitelistEntry) -> String {
+        ContactIdentityIndex.visibleName(
+            username: entry.id,
+            stored: store.storedDisplayName(entry.id),
+            readerName: entry.displayName)
     }
 }

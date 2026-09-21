@@ -16,8 +16,16 @@ final class AISettingsValidationTests: XCTestCase {
     func testRejectsNonHTTPAndCredentialURLs() {
         for address in ["file:///tmp/model", "localhost:8000", "https://key:secret@example.com"] {
             let slot = AIProviderSlot(baseURL: address, model: "model")
-            XCTAssertNotNil(AISettingsValidation.connectionError(slot, requireModel: true))
+            let message = AISettingsValidation.connectionError(slot, requireModel: true)
+            XCTAssertNotNil(message)
+            XCTAssertFalse(message?.contains("密钥") == true, message ?? "")
+            XCTAssertFalse(message?.contains("API Key") == true, message ?? "")
         }
+        let embedded = AISettingsValidation.connectionError(
+            AIProviderSlot(baseURL: "https://key:secret@example.com", model: "model"),
+            requireModel: true
+        )
+        XCTAssertEqual(embedded, "请填写有效的 http:// 或 https:// 接口地址，不要把访问凭据写进地址。")
     }
 
     func testBuiltInCloudRequiresKeyAndCodexUsesLogin() {
@@ -48,12 +56,21 @@ final class AISettingsValidationTests: XCTestCase {
         let modelNotFound = AISettingsValidation.requestFailureGuidance(
             #"HTTP 404: {"error":{"message":"model not found"}}"#
         )
-        XCTAssertTrue(modelNotFound.contains("404"))
+        XCTAssertTrue(modelNotFound.contains("模型"))
+        XCTAssertFalse(modelNotFound.contains("HTTP"), "status codes stay in audit logs, not on the settings card")
         XCTAssertFalse(modelNotFound.contains("API Key"), "a wrong model name is not a credential problem")
+        XCTAssertFalse(modelNotFound.contains("访问凭据"), "a missing model is not a credential problem")
 
-        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 429: slow down").contains("429"))
-        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 401: unauthorized").contains("API Key"))
-        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 500: oops").contains("500"))
+        let quota = AISettingsValidation.requestFailureGuidance("HTTP 429: slow down")
+        XCTAssertTrue(quota.contains("额度") || quota.contains("过多"), quota)
+        XCTAssertFalse(quota.contains("HTTP"))
+        XCTAssertTrue(AISettingsValidation.requestFailureGuidance("HTTP 401: unauthorized").contains("访问凭据"))
+        XCTAssertFalse(AISettingsValidation.requestFailureGuidance("HTTP 401: unauthorized").contains("API Key"))
+        XCTAssertFalse(AISettingsValidation.requestFailureGuidance("HTTP 401: unauthorized").contains("HTTP"))
+        let server = AISettingsValidation.requestFailureGuidance("HTTP 500: oops")
+        XCTAssertTrue(server.contains("稍后重试"), server)
+        XCTAssertFalse(server.contains("HTTP"))
+        XCTAssertFalse(server.contains("500"))
         XCTAssertFalse(
             AISettingsValidation.requestFailureGuidance(#"HTTP 400: {"error":"bad params"}"#).contains("bad params"),
             "server bodies must not be echoed — they can carry credentials or message text"
@@ -65,5 +82,15 @@ final class AISettingsValidationTests: XCTestCase {
         XCTAssertTrue(
             AISettingsValidation.requestFailureGuidance("something unexpected").contains("服务返回错误")
         )
+
+        XCTAssertEqual(AISettingsValidation.displayable(modelNotFound), modelNotFound)
+        XCTAssertNotEqual(
+            AISettingsValidation.displayable(modelNotFound),
+            "请选择一个模型。",
+            "a 404 after the model field is filled is not 'please pick a model'"
+        )
+        let rawShown = AISettingsValidation.displayable(#"HTTP 404: {"error":{"message":"model not found"}}"#)
+        XCTAssertEqual(rawShown, modelNotFound)
+        XCTAssertFalse(rawShown.contains("HTTP"))
     }
 }

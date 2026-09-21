@@ -216,16 +216,13 @@ enum RelationshipRadarService {
     static func trendLabel(_ raw: String) -> String { chineseTrend(raw) }
     static func attitudeLabel(_ raw: String) -> String { chineseAttitude(raw) }
 
-    static func displayName(for username: String, store: HUDStore) -> String {
-        if let alias = store.chatAlias(for: username), !alias.isEmpty { return alias }
-        if let entry = store.getWhitelistEntry(username: username), !entry.displayName.isEmpty {
-            return entry.displayName
-        }
-        if let contact = store.getContact(username: username), !contact.displayName.isEmpty {
-            return contact.displayName
-        }
-        return username
-    }
+   static func displayName(for username: String, store: HUDStore) -> String {
+        ContactIdentityIndex.visibleName(
+            username: username,
+            stored: store.storedDisplayName(username),
+            alias: store.chatAlias(for: username)
+        )
+   }
 
     private static func buildSummary(
         attitudeTrend: String,

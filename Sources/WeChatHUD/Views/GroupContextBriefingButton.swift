@@ -17,6 +17,7 @@ struct GroupContextBriefingCard: View {
 
     let notification: HUDNotification
     @State private var showSnooze = false
+    @State private var isSnoozing = false
 
     var body: some View {
         let state = monitor.groupContextState(for: notification)
@@ -27,6 +28,7 @@ struct GroupContextBriefingCard: View {
             if let briefing = state.briefing {
                 if let errorMessage = state.errorMessage {
                     errorBody(errorMessage)
+                        .transition(.companionStatusReveal)
                 }
                 briefingBody(briefing)
                 originalSection
@@ -42,6 +44,7 @@ struct GroupContextBriefingCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(IslandInk.bar)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .companionAnimation(CompanionMotion.ease(), value: state.errorMessage)
     }
 
     private var header: some View {
@@ -115,7 +118,8 @@ struct GroupContextBriefingCard: View {
     }
 
     private func errorBody(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let retrying = monitor.groupContextState(for: notification).isLoading
+        return HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 11))
                 .foregroundColor(.orange)
@@ -126,13 +130,17 @@ struct GroupContextBriefingCard: View {
             Spacer(minLength: 6)
             // Retry keeps the message's own line, so a failed load does not
             // grow the card (or the panel ceiling) the way a new row would.
-            Button(BriefingRetryAction.label) {
+            Button {
                 BriefingRetryAction.perform(monitor, notification: notification)
+            } label: {
+                Text(retrying ? "正在重试…" : BriefingRetryAction.label)
             }
             .buttonStyle(IslandRowButtonStyle())
             .islandButton()
             .foregroundStyle(CompanionPalette.islandMint)
-            .accessibilityHint("重新向 AI 要一次这段群聊上下文")
+            .disabled(retrying)
+            .help(retrying ? "正在重新整理这段群聊" : "")
+            .accessibilityHint(retrying ? "正在重新整理这段群聊" : "重新向 AI 要一次这段群聊上下文")
         }
         .padding(.vertical, 4)
     }
@@ -144,28 +152,22 @@ struct GroupContextBriefingCard: View {
                 monitor.openWeChatChat(notification.chatUsername)
             } label: {
                 Label("去微信回复", systemImage: "bubble.left.and.bubble.right.fill")
-                    .islandButton()
-                    .foregroundStyle(IslandInk.primary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(CompanionPalette.jade, in: Capsule())
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(IslandPillButtonStyle(emphasized: true))
 
             Button {
                 // onChange below is the single place that syncs panelState —
                 // calling setSnoozeMenuExpanded here too would double-fire it.
-                showSnooze.toggle()
+                withMotion(CompanionMotion.islandRowExpand()) { showSnooze.toggle() }
             } label: {
-                Label("稍后提醒", systemImage: "clock")
-                    .islandButton()
-                    .foregroundStyle(IslandInk.primary)
+                Label(isSnoozing ? "正在保存稍后提醒" : "稍后提醒", systemImage: "clock")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(showSnooze ? CompanionPalette.jade : IslandInk.chip, in: Capsule())
             }
-            .buttonStyle(CompanionPressStyle())
-            .accessibilityHint("打开稍后提醒时间")
+            .buttonStyle(IslandPillButtonStyle(emphasized: showSnooze))
+            .disabled(isSnoozing)
+            .help(isSnoozing ? "正在保存稍后提醒" : "")
+            .accessibilityHint(isSnoozing ? "正在保存稍后提醒" : "打开稍后提醒时间")
             .onChange(of: showSnooze) { _, isOpen in
                 panelState.setSnoozeMenuExpanded(isOpen)
             }
@@ -177,20 +179,27 @@ struct GroupContextBriefingCard: View {
                 // A failed write keeps the card and its menu exactly where they
                 // are: the card is the receipt surface (the reason arrives as a
                 // toast) and the open menu is the retry entry.
-                guard IslandSnoozeOutcome.apply(
-                    item,
-                    until: date,
-                    monitor: monitor,
-                    panelState: panelState
-                ) else { return }
-                showSnooze = false
-                panelState.setSnoozeMenuExpanded(false)
-                panelState.setBriefingExpanded(false)
-                panelState.islandSurface = .inbox
-                panelState.goExtended()
+                guard !isSnoozing else { return }
+                isSnoozing = true
+                Task { @MainActor in
+                    defer { isSnoozing = false }
+                    guard IslandSnoozeOutcome.apply(
+                        item,
+                        until: date,
+                        monitor: monitor,
+                        panelState: panelState
+                    ) else { return }
+                    showSnooze = false
+                    panelState.setSnoozeMenuExpanded(false)
+                    panelState.setBriefingExpanded(false)
+                    panelState.islandSurface = .inbox
+                    panelState.goExtended()
+                }
             }
+            .transition(.islandDetailReveal)
         }
         }
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: showSnooze)
     }
 
     private func card(_ title: String, text: String, systemImage: String) -> some View {

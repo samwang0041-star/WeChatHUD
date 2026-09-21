@@ -17,6 +17,9 @@ struct DiscussionWorkspaceView: View {
     @State private var showBatchClearConfirm = false
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
+    @State private var isBatchClearing = false
+    @State private var isCorrecting = false
+    @State private var isUndoing = false
     @State private var expandArchived = false
     /// How much of the extracted material counts as work here. Read from the
     /// monitor so the sidebar badge, 今天 and the daily report all agree.
@@ -84,7 +87,7 @@ struct DiscussionWorkspaceView: View {
                     } label: {
                         Text(receiptLabel(hidden: hidden.count, mine: hiddenMine))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .accessibilityHint("切到「全记」，这些内容会回到列表里")
@@ -179,10 +182,14 @@ struct DiscussionWorkspaceView: View {
             }
             if let receipt {
                 receiptBar(receipt)
+                    .transition(.companionStatusReveal)
             }
         }
         .workspacePage(WorkspacePage.wideWidth)
         .background(CompanionPalette.canvas)
+        .companionAnimation(CompanionMotion.pageChange(), value: showHistory)
+        .companionAnimation(CompanionMotion.ease(), value: error)
+        .companionAnimation(CompanionMotion.ease(), value: receipt)
         .onAppear {
             applyPendingScope()
             reconcileSelection(in: items)
@@ -198,44 +205,65 @@ struct DiscussionWorkspaceView: View {
         .onChange(of: scope) { _, _ in reconcileSelection(in: self.items) }
         .onChange(of: query) { _, _ in reconcileSelection(in: self.items) }
         .onReceive(panelState.$pendingDiscussionScope) { value in
-            if let value { scope = value; showHistory = false; panelState.pendingDiscussionScope = nil }
+            if let value {
+                withMotion(CompanionMotion.pageChange()) {
+                    scope = value
+                    showHistory = false
+                    panelState.pendingDiscussionScope = nil
+                }
+            }
         }
         .onReceive(panelState.$pendingDiscussionChatUsername) { _ in
             applyPendingScope()
         }
         .companionDialogBackdrop(correcting != nil || showBatchClearConfirm) {
             if let item = correcting {
-                CompanionDialog(title: "更正这件事", onClose: { correcting = nil }) {
-                    DiscussionCorrectionForm(item: item) { content, owner, dueAt in
-                        do {
-                            try monitor.setDiscussionItemCorrection(id: item.id, content: content, owner: owner, dueAt: dueAt)
-                            if showHistory { refreshHistory() }
-                            error = nil
-                            receipt = "修改已保存"
-                            correcting = nil
-                        } catch {
-                            self.error = "更正没有保存，原文待办还在。请重试。"
-                        }
-                    } onCancel: {
+                CompanionDialog(title: "更正这件事", onClose: { if !isCorrecting { correcting = nil } }) {
+                    DiscussionCorrectionForm(item: item, isSaving: $isCorrecting) { content, owner, dueAt in
+                        try monitor.setDiscussionItemCorrection(id: item.id, content: content, owner: owner, dueAt: dueAt)
+                        if showHistory { refreshHistory() }
+                        error = nil
+                        receipt = "修改已保存"
                         correcting = nil
+                    } onCancel: {
+                        if !isCorrecting { correcting = nil }
                     }
                 }
             } else if showBatchClearConfirm {
-                CompanionDialog(title: "一键清空当前待办？", onClose: { showBatchClearConfirm = false }) {
+                CompanionDialog(title: "一键清空当前待办？", onClose: { if !isBatchClearing { showBatchClearConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("将当前列表中的 \(items.count) 件待办全部标记为完成。可在「看已处理的」中随时查看或恢复。")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let error {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button("取消") { showBatchClearConfirm = false }
-                            Button("全部完成") {
-                                showBatchClearConfirm = false
-                                batchClear(items: items)
+                                .companionBusyHold(isBatchClearing, "正在把当前待办标为完成")
+                            Button {
+                                guard !isBatchClearing else { return }
+                                let targets = items
+                                isBatchClearing = true
+                                Task { @MainActor in
+                                    let ok = batchClear(items: targets)
+                                    isBatchClearing = false
+                                    if ok { showBatchClearConfirm = false }
+                                }
+                            } label: {
+                                Text(isBatchClearing ? "正在清空待办…" : "全部完成")
                             }
                             .tint(SettingsView.Tab.tasks.accentColor)
                             .buttonStyle(.borderedProminent)
+                            .disabled(isBatchClearing)
+                            .help(isBatchClearing ? "正在把当前待办标为完成" : "")
+                            .accessibilityHint(isBatchClearing ? "正在把当前待办标为完成" : "")
                         }
                     }
                 }
@@ -283,7 +311,7 @@ struct DiscussionWorkspaceView: View {
                     .accessibilityLabel("搜索待办或对话")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionPressStyle())
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(CompanionPalette.jadeInk)
                 }
@@ -306,12 +334,19 @@ struct DiscussionWorkspaceView: View {
                 .foregroundStyle(.secondary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
             }
         }
-        .padding(.bottom, 12)
+       .padding(.bottom, 12)
+   }
+
+    private var emptyLiveDescription: String {
+        if monitor.stats.lastSyncAt == nil { return "连上微信后，还没做完的事会出现在这里。" }
+        if !monitor.store.hasWhitelistEntries() { return "先选要关注的对话，还没做完的事会出现在这里。" }
+        return "关注的对话里还没有待办。新消息到来后会出现在这里。"
     }
 
-    private var emptyState: some View {
+   private var emptyState: some View {
         // An empty list has three different meanings and they must not look
         // alike: nothing to do, nothing matched the search, or the current
         // level is holding material back. The third case is the dangerous one
@@ -326,10 +361,10 @@ struct DiscussionWorkspaceView: View {
             description: Text(query.isEmpty
                 ? (showHistory
                     ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。很久没处理、自动收起的在「较早收起」里。"
-                    : (heldBackByLevel
-                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全记」能看到它们。"
-                        : "连上微信并选好对话后，还没做完的事会出现在这里。"))
-                : "当前搜索：\(query)")
+                   : (heldBackByLevel
+                       ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全记」能看到它们。"
+                        : emptyLiveDescription))
+               : "当前搜索：\(query)")
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
@@ -337,8 +372,76 @@ struct DiscussionWorkspaceView: View {
                 Button("清除搜索") { query = "" }
                     .buttonStyle(.bordered)
                     .padding(.bottom, 24)
+            } else if heldBackByLevel {
+                Button("切到「全记」") {
+                    withMotion(CompanionMotion.pageChange()) {
+                        monitor.setDiscussionStrictness(.everything)
+                    }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .padding(.bottom, 24)
+                .accessibilityLabel("切到全记，查看收起的 \(hiddenHere.count) 条")
+            } else if let other = otherScopeWithItems {
+                Button(other.rawValue) {
+                    withMotion(CompanionMotion.pageChange()) { scope = other }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .padding(.bottom, 24)
+                .accessibilityLabel("去\(other.rawValue)")
+            } else if query.isEmpty && showHistory {
+                Button("看未处理的") {
+                    withMotion(CompanionMotion.pageChange()) { showHistory = false }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .padding(.bottom, 24)
+                .accessibilityLabel("看未处理的待办")
+            } else if query.isEmpty && !showHistory && monitor.stats.lastSyncAt == nil {
+                Button("检查连接") { panelState.pendingSettingsTab = "system" }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .accessibilityLabel("检查微信连接")
+            } else if query.isEmpty && !showHistory && !monitor.store.hasWhitelistEntries() {
+                Button("关注谁") { panelState.pendingSettingsTab = "contacts" }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                   .accessibilityLabel("去选要关注的对话")
+           }
+            else if query.isEmpty && !showHistory {
+                Button("看今天") { panelState.pendingSettingsTab = "today" }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .accessibilityLabel("去今天看待回和待办")
+            }
+       }
+   }
+
+    private var otherScopeWithItems: DiscussionScope? {
+        guard query.isEmpty, !showHistory else { return nil }
+        let candidates: [DiscussionScope]
+        switch scope {
+        case .notes, .all:
+            candidates = [.mine, .theirs, .shared]
+        default:
+            candidates = [DiscussionScope.mine, .theirs, .shared].filter { $0 != scope }
+        }
+        for candidate in candidates {
+            if !itemsCache.items(sourceItems, scope: candidate, query: "", history: false).isEmpty {
+                return candidate
             }
         }
+        return nil
     }
 
     private func listPane(items: [DiscussionItem], selectedID: Int64?) -> some View {
@@ -351,13 +454,13 @@ struct DiscussionWorkspaceView: View {
                             .foregroundStyle(.secondary)
                         if group.title == DiscussionPresentation.archivedGroupTitle, !expandArchived {
                             Button {
-                                expandArchived = true
+                                withMotion(CompanionMotion.rowExpand()) { expandArchived = true }
                             } label: {
                                 Text("\(group.items.count) 件很久没处理，点开查看")
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(CompanionPalette.jadeInk)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CompanionPressStyle())
                             .accessibilityLabel("展开较早收起的 \(group.items.count) 件待办")
                         } else {
                             ForEach(group.items) { item in
@@ -374,8 +477,8 @@ struct DiscussionWorkspaceView: View {
                                 .equatable()
                             }
                             if group.title == DiscussionPresentation.archivedGroupTitle {
-                                Button("收起") { expandArchived = false }
-                                    .buttonStyle(.plain)
+                                Button("收起") { withMotion(CompanionMotion.rowExpand()) { expandArchived = false } }
+                                    .buttonStyle(CompanionPressStyle())
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(.secondary)
                             }
@@ -391,15 +494,19 @@ struct DiscussionWorkspaceView: View {
     private func detailPane(selected: DiscussionItem?) -> some View {
         Group {
             if showingSource, let item = selected {
-                DiscussionSourceView(item: item, embedded: true, onClose: { showingSource = false }) {
+                DiscussionSourceView(item: item, embedded: true, onClose: { withMotion(CompanionMotion.pageChange()) { showingSource = false } }) {
                     correcting = item
                 }
+                .transition(.companionStatusReveal)
             } else if let item = selected {
                 taskDetail(item)
+                    .transition(.companionStatusReveal)
             } else {
                 ContentUnavailableView("选择一条待办", systemImage: "checklist", description: Text("看清谁来做、截止时间和原文。"))
+                    .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.pageChange(), value: showingSource)
     }
 
     private func taskDetail(_ item: DiscussionItem) -> some View {
@@ -428,11 +535,11 @@ struct DiscussionWorkspaceView: View {
                             Label("更正归属", systemImage: "person.crop.circle.badge.questionmark")
                         }
                         .accessibilityIdentifier("workspace.correctOwnership")
-                        Button { showingSource = true } label: {
+                        Button { withMotion(CompanionMotion.pageChange()) { showingSource = true } } label: {
                             Label("查看原文", systemImage: "doc.text")
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(SettingsView.Tab.tasks.accentColor)
                     .font(.system(size: 13, weight: .medium))
                     Spacer(minLength: 12)
@@ -487,26 +594,37 @@ struct DiscussionWorkspaceView: View {
             Text(text).font(.system(size: 13, weight: .medium))
             Spacer()
             if let undo {
-                Button("撤销") { update(id: undo.id, to: undo.status, previous: nil, title: nil) }
-                    .buttonStyle(.plain)
+                Button {
+                    commitUndo { update(id: undo.id, to: undo.status, previous: nil, title: nil) }
+                } label: {
+                    Text(isUndoing ? "正在撤销…" : "撤销")
+                }
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .semibold))
+                    .disabled(isUndoing)
+                    .help(isUndoing ? "正在撤销刚才的操作" : "")
+                    .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             } else if let previous = batchUndo {
-                Button("撤销") {
-                    for item in previous {
-                        try? monitor.setDiscussionItemStatus(id: item.id, status: item.status)
-                    }
-                    batchUndo = nil
-                    receipt = nil
+                Button {
+                    commitUndo { undoBatch(previous) }
+                } label: {
+                    Text(isUndoing ? "正在撤销…" : "撤销")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .font(.system(size: 13, weight: .semibold))
+                .disabled(isUndoing)
+                .help(isUndoing ? "正在撤销刚才的操作" : "")
+                .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             }
             Button { receipt = nil } label: {
                 Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionIconButtonStyle())
             .accessibilityLabel("关闭回执")
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -525,7 +643,11 @@ struct DiscussionWorkspaceView: View {
 
     private func applyPendingScope() {
         if let value = panelState.pendingDiscussionScope {
-            scope = value; showHistory = false; panelState.pendingDiscussionScope = nil
+            withMotion(CompanionMotion.pageChange()) {
+                scope = value
+                showHistory = false
+                panelState.pendingDiscussionScope = nil
+            }
         }
         if let chat = panelState.pendingDiscussionChatUsername {
             query = monitor.displayName(for: chat)
@@ -559,8 +681,9 @@ struct DiscussionWorkspaceView: View {
         }
     }
 
-    private func batchClear(items: [DiscussionItem]) {
-        guard !items.isEmpty else { return }
+    @discardableResult
+    private func batchClear(items: [DiscussionItem]) -> Bool {
+        guard !items.isEmpty else { return false }
         let previous = items.map { ($0.id, $0.status) }
         batchUndo = previous
         undo = nil
@@ -569,8 +692,33 @@ struct DiscussionWorkspaceView: View {
             if showHistory { refreshHistory() }
             receipt = "已清空 \(items.count) 件待办"
             error = nil
+            return true
         } catch {
             self.error = "清空失败，请重试。"
+            return false
+        }
+    }
+
+    private func commitUndo(_ work: @escaping () -> Void) {
+        guard !isUndoing else { return }
+        isUndoing = true
+        Task { @MainActor in
+            defer { isUndoing = false }
+            work()
+        }
+    }
+
+    private func undoBatch(_ previous: [(id: Int64, status: DiscussionItemStatus)]) {
+        do {
+            for item in previous {
+                try monitor.setDiscussionItemStatus(id: item.id, status: item.status)
+            }
+            if showHistory { refreshHistory() }
+            batchUndo = nil
+            receipt = nil
+            error = nil
+        } catch {
+            self.error = "撤销没有成功，请重试。"
         }
     }
 }
@@ -627,14 +775,15 @@ private struct DiscussionRow: View, Equatable {
                     .strokeBorder(isSelected ? SettingsView.Tab.tasks.accentColor.opacity(0.35) : CompanionPalette.border, lineWidth: CompanionAccessibility.cardEdgeWidth)
            )
        }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(CompanionRowPressStyle())
         .accessibilityLabel(item.content)
     }
 }
 
 struct DiscussionCorrectionForm: View {
     let item: DiscussionItem
-    let onSave: (String, DiscussionItemOwner, Date?) -> Void
+    @Binding var isSaving: Bool
+    let onSave: (String, DiscussionItemOwner, Date?) throws -> Void
     let onCancel: () -> Void
     @State private var content: String
     @State private var owner: DiscussionItemOwner
@@ -642,8 +791,11 @@ struct DiscussionCorrectionForm: View {
     @State private var hasDue: Bool
     @FocusState private var contentFocused: Bool
 
-    init(item: DiscussionItem, onSave: @escaping (String, DiscussionItemOwner, Date?) -> Void, onCancel: @escaping () -> Void) {
+    @State private var saveError: String?
+
+    init(item: DiscussionItem, isSaving: Binding<Bool>, onSave: @escaping (String, DiscussionItemOwner, Date?) throws -> Void, onCancel: @escaping () -> Void) {
         self.item = item
+        self._isSaving = isSaving
         self.onSave = onSave
         self.onCancel = onCancel
         _content = State(initialValue: item.content)
@@ -688,21 +840,50 @@ struct DiscussionCorrectionForm: View {
             Label("只修改助手里的待办，不会修改聊天原文。", systemImage: "info.circle")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            if let saveError {
+                Text(saveError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.companionStatusReveal)
+            }
             HStack {
                 Spacer()
                 Button("取消") { onCancel() }
                     .keyboardShortcut(.cancelAction)
-                Button("保存更正") {
-                    onSave(content.trimmingCharacters(in: .whitespacesAndNewlines), owner, hasDue ? dueAt : nil)
+                    .companionBusyHold(isSaving, "正在保存更正")
+                Button(action: commitSave) {
+                    Text(isSaving ? "正在保存…" : "保存更正")
                 }
                 .tint(CompanionPalette.jade)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(trimmedContent.isEmpty || isSaving)
+                .help(isSaving ? "正在保存更正" : (trimmedContent.isEmpty ? "先写下待办内容" : ""))
+                .accessibilityHint(isSaving ? "正在保存更正" : (trimmedContent.isEmpty ? "先写下待办内容" : ""))
             }
         }
         .companionAnimation(CompanionMotion.dialog(), value: hasDue)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
         .onAppear { contentFocused = true }
+    }
+
+    private var trimmedContent: String {
+        content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func commitSave() {
+        guard !isSaving, !trimmedContent.isEmpty else { return }
+        isSaving = true
+        saveError = nil
+        Task { @MainActor in
+            defer { isSaving = false }
+            do {
+                try onSave(trimmedContent, owner, hasDue ? dueAt : nil)
+            } catch {
+                saveError = "更正没有保存，原文待办还在。请重试。"
+            }
+        }
     }
 }
 

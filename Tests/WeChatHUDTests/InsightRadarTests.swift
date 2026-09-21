@@ -43,7 +43,7 @@ final class InsightRadarTests: XCTestCase {
         let withEvidence = InsightRadar.buildFindings(
             chatInsights: [:],
             chatNames: ["vip@chatroom": "重要客户"],
-            overview: makeOverview(neglectedHighValue: [(name: "重要客户", role: "客户")]),
+            overview: makeOverview(neglectedHighValue: [(chatUsername: "", name: "重要客户", role: "客户")]),
             limit: 6
         )
         XCTAssertEqual(withEvidence.map(\.kind), [.relationship])
@@ -101,6 +101,32 @@ final class InsightRadarTests: XCTestCase {
         XCTAssertEqual(findings.first?.severity, .high)
         XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
         XCTAssertEqual(findings.first?.actionLabel, "打开对话")
+    }
+
+    func testBoundBriefingUsernameOpensChatWithoutANameMap() {
+        let briefing = GlobalBriefing(
+            date: "2026-05-04",
+            actionRequired: [
+                ActionRequiredItem(source: "项目群", what: "确认周报口径", urgency: "高", chatUsername: "project@chatroom")
+            ],
+            headline: "有事项等待确认",
+            stats: BriefingStats(
+                totalMessages: 10, myMessages: 1, activeGroups: 1,
+                totalGroups: 1, activePrivateChats: 0, workRatio: 1
+            ),
+            crossTopics: [],
+            darkSignals: DarkSignals(headline: nil),
+            overallMood: "紧张",
+            blindSpots: [],
+            topSuggestion: "先回项目群"
+        )
+        let findings = InsightRadar.buildFindings(
+            chatInsights: [:],
+            chatNames: [:],
+            briefing: briefing
+        )
+        XCTAssertEqual(findings.first?.chatUsername, "project@chatroom")
+        XCTAssertEqual(findings.first?.route, .openChat("project@chatroom"))
     }
 
     func testBriefingActionFallsBackToInlineExplanationWhenChatCannotBeMapped() {
@@ -180,11 +206,35 @@ final class InsightRadarTests: XCTestCase {
             ])],
             chatNames: ["room@chatroom": "项目群"]
         )
-        XCTAssertEqual(group.first { $0.kind == .waiting }?.evidence, "李四",
-                       "群里说得出是谁在等，这才是依据")
+       XCTAssertEqual(group.first { $0.kind == .waiting }?.evidence, "李四",
+                      "群里说得出是谁在等，这才是依据")
+   }
+
+    func testMissingNameMapDoesNotPrintWxidAsTheRowTitle() {
+        let findings = InsightRadar.buildFindings(
+            chatInsights: ["wxid_boss": makeInsight(waitingForMe: [
+                WaitingItem(source: "张三", what: "等排期答复")
+            ])],
+            chatNames: [:]
+        )
+        let source = findings.first { $0.kind == .waiting }?.source
+        XCTAssertEqual(source, ContactIdentityIndex.unnamedContactPlaceholder)
+        XCTAssertFalse(source?.contains("wxid_") ?? true)
     }
 
-    func testPlaceholderOnlyFindingsAreFiltered() {
+    func testUnreadablePlaceholderInNameMapIsKeptAsTheTitle() {
+        let findings = InsightRadar.buildFindings(
+            chatInsights: ["wxid_boss": makeInsight(waitingForMe: [
+                WaitingItem(source: "张三", what: "等排期答复")
+            ])],
+            chatNames: ["wxid_boss": ContactIdentityIndex.unreadableNamePlaceholder]
+        )
+        XCTAssertEqual(
+            findings.first { $0.kind == .waiting }?.source,
+            ContactIdentityIndex.unreadableNamePlaceholder)
+    }
+
+   func testPlaceholderOnlyFindingsAreFiltered() {
         let result = makeInsight(
             waitingForMe: [
                 WaitingItem(source: "张三", what: "[消息]")
@@ -244,7 +294,7 @@ final class InsightRadarTests: XCTestCase {
             chatInsights: [:],
             chatNames: [:],
             briefing: briefing,
-            overview: makeOverview(neglectedHighValue: [(name: "重要客户", role: "客户")]),
+            overview: makeOverview(neglectedHighValue: [(chatUsername: "", name: "重要客户", role: "客户")]),
             limit: 6
         )
 
@@ -256,7 +306,7 @@ final class InsightRadarTests: XCTestCase {
         let findings = InsightRadar.buildFindings(
             chatInsights: [:],
             chatNames: ["ponge_wxid": "ponge"],
-            overview: makeOverview(neglectedHighValue: [(name: "ponge", role: "家人")]),
+            overview: makeOverview(neglectedHighValue: [(chatUsername: "ponge_wxid", name: "ponge", role: "家人")]),
             limit: 6
         )
 
@@ -274,7 +324,7 @@ final class InsightRadarTests: XCTestCase {
             chatInsights: [:],
             chatNames: [:],
             briefing: briefing,
-            overview: makeOverview(neglectedHighValue: [(name: "重要客户", role: "客户")]),
+            overview: makeOverview(neglectedHighValue: [(chatUsername: "", name: "重要客户", role: "客户")]),
             limit: 6
         )
 
@@ -345,7 +395,7 @@ final class InsightRadarTests: XCTestCase {
 
     private func makeOverview(
         overdueChats: Int = 0,
-        neglectedHighValue: [(name: String, role: String)] = [],
+        neglectedHighValue: [(chatUsername: String, name: String, role: String)] = [],
         pendingAsks: Int = 0,
         urgentAsks: Int = 0
     ) -> ChatInsightEngine.GlobalOverview {

@@ -6,7 +6,7 @@ import SwiftUI
 ///   `MissingChatPane` — a named dead end with a way back to the inbox, not
 ///   the blank `Color.clear` pane this used to be.
 /// - `.autopilot`: the in-island 「待确认回复」 workspace, opened from the
-///   extended header's autopilot popover (「浮窗内查看」).
+///   extended header's autopilot panel (「待确认回复」).
 /// - `nil`: the standalone Settings window (the gear fallback).
 struct DetailPanelView: View {
     @EnvironmentObject var panelState: PanelState
@@ -63,8 +63,10 @@ struct DetailPanelView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 14))
                     .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("关闭")
             .padding(10)
         }
@@ -127,7 +129,7 @@ struct DetailNoticeBar: View {
                 .foregroundColor(.primary)
                 .lineLimit(1)
             if item.isOverdue {
-                Text("超时\(item.overdueMinutes)分")
+                Text("超时 \(item.overdueMinutes) 分钟")
                     .islandMicro()
                     .foregroundColor(.red)
             }
@@ -139,7 +141,7 @@ struct DetailNoticeBar: View {
                 panelState.revealInboxItem(item.id)
             }
             .islandMicro()
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .foregroundColor(CompanionPalette.islandMint)
             .accessibilityLabel("查看这条消息")
             Button {
@@ -148,10 +150,10 @@ struct DetailNoticeBar: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(.secondary)
-                    .frame(width: 22, height: 18)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("关闭这条提醒")
             .help("关掉这条提醒；消息仍在收件箱里")
         }
@@ -214,7 +216,7 @@ struct MissingChatPane: View {
             Button(MissingChatPaneCopy.action) {
                 DetailPanelRouting.returnToInbox(panelState)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandRowButtonStyle())
             .foregroundColor(CompanionPalette.islandMint)
             .accessibilityLabel(MissingChatPaneCopy.action)
         }
@@ -225,12 +227,13 @@ struct MissingChatPane: View {
 
 /// Host for the autopilot full-view inside the detail panel. Renders
 /// a header consistent with ConversationDetailView (back chevron +
-/// title) above ApprovalWorkspaceView, so 「浮窗内查看」 in the extended
-/// header's autopilot popover reviews 待确认回复 inside the island
+/// title) above ApprovalWorkspaceView, so 「待确认回复」 in the extended
+/// header's autopilot panel reviews 待确认回复 inside the island
 /// instead of opening the separate Settings window.
 struct AutopilotDetailPane: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
+    @State private var isToggling = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -262,8 +265,10 @@ struct AutopilotDetailPane: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.secondary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("返回")
 
             Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
@@ -282,22 +287,26 @@ struct AutopilotDetailPane: View {
 
             Spacer()
 
-            Button(action: { monitor.toggleAutopilot() }) {
+            Button(action: toggleAutopilotSession) {
                 HStack(spacing: 4) {
                     Image(systemName: monitor.autopilotActive ? "stop.circle.fill" : "play.circle.fill")
                         .font(.system(size: 11, weight: .semibold))
-                    Text(monitor.autopilotActive ? "停止" : "开始整理")
+                    Text(toggleTitle)
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .foregroundColor(monitor.autopilotActive ? .red : .green)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
-                .background((monitor.autopilotActive ? Color.red : Color.green).opacity(0.15))
-                .cornerRadius(4)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(monitor.autopilotActive ? "停止整理回复" : "开始整理回复")
-            .accessibilityHint(monitor.autopilotActive ? "停止当前自动整理" : "开始整理该回的消息；发不发仍由自动回复设置决定")
+            .buttonStyle(IslandInboxRowButtonStyle(
+                highlighted: false,
+                resting: (monitor.autopilotActive ? Color.red : Color.green).opacity(0.15),
+                cornerRadius: 4
+            ))
+            .disabled(isToggling)
+            .help(isToggling ? toggleHoldReason : "")
+            .accessibilityLabel(toggleTitle)
+            .accessibilityHint(isToggling ? toggleHoldReason : (monitor.autopilotActive ? "停止当前自动整理" : AutopilotStartCopy.startHint))
         }
     }
 
@@ -305,5 +314,31 @@ struct AutopilotDetailPane: View {
         if monitor.autopilotManuallyPaused { return "· 已手动暂停" }
         if monitor.autopilotPaused { return "· 微信前台 已暂停" }
         return "· 运行中"
+    }
+
+    private var toggleTitle: String {
+        if isToggling {
+            return monitor.autopilotActive ? AutopilotStopCopy.stopping : AutopilotStartCopy.starting
+        }
+        return monitor.autopilotActive ? AutopilotStopCopy.stop : AutopilotStartCopy.start
+    }
+
+    private var toggleHoldReason: String {
+        monitor.autopilotActive ? AutopilotStopCopy.stoppingHint : AutopilotStartCopy.startingHint
+    }
+
+    private func toggleAutopilotSession() {
+        guard !isToggling else { return }
+        isToggling = true
+        Task { @MainActor in
+            defer { isToggling = false }
+            if monitor.autopilotActive {
+                let receipt = AutopilotStopReceipt.resolve(stopped: await monitor.stopAutopilotAndWait())
+                panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
+            } else {
+                let receipt = AutopilotStartReceipt.resolve(started: await monitor.startAutopilotAndWait())
+                panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
+            }
+        }
     }
 }

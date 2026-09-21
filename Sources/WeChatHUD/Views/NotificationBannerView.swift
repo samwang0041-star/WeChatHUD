@@ -120,6 +120,7 @@ struct NotificationBannerView: View {
     let notification: HUDNotification
     @State private var showSnooze = false
     @State private var hovering = false
+    @State private var isSnoozing = false
 
     private var content: NotificationBannerContent {
         NotificationBannerContent(notification: notification)
@@ -191,6 +192,7 @@ struct NotificationBannerView: View {
                 .accessibilityLabel(content.message)
             if showSnooze {
                 IslandSnoozeMenu { date in snooze(date) }
+                    .transition(.islandDetailReveal)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -203,6 +205,7 @@ struct NotificationBannerView: View {
         .background(alignment: .center) { hoverWash }
         .background { tapSurface }
         .companionAnimation(CompanionMotion.hover(), value: hovering)
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: showSnooze)
         .accessibilityElement(children: .contain)
     }
 
@@ -348,7 +351,9 @@ struct NotificationBannerView: View {
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(CompanionPressStyle())
+        // Island glyph language: hover halo + 0.96 dip. CompanionPressStyle
+        // would skip the halo and treat a 22pt island control like a workspace card.
+        .buttonStyle(IslandIconButtonStyle())
         .accessibilityLabel("关闭通知")
         .help("关闭通知，保留待办状态")
     }
@@ -357,20 +362,28 @@ struct NotificationBannerView: View {
         // onChange below is the single place that syncs panelState —
         // calling setSnoozeMenuExpanded here too would double-fire it.
         Button {
-            showSnooze.toggle()
+            withMotion(CompanionMotion.islandRowExpand()) { showSnooze.toggle() }
         } label: {
-            Image(systemName: "clock")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(showSnooze
-                    ? CompanionPalette.islandMint
-                    : (hovering ? IslandInk.secondary : IslandInk.tertiary))
-                .frame(width: 24, height: 22)
-                .contentShape(Rectangle())
+            Group {
+                if isSnoozing {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(showSnooze
+                            ? CompanionPalette.islandMint
+                            : (hovering ? IslandInk.secondary : IslandInk.tertiary))
+                }
+            }
+            .frame(width: 24, height: 22)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(CompanionPressStyle())
-        .help("稍后提醒")
-        .accessibilityLabel("稍后提醒")
-        .accessibilityHint("打开稍后提醒时间")
+        .buttonStyle(IslandIconButtonStyle())
+        .disabled(isSnoozing)
+        .help(isSnoozing ? "正在保存稍后提醒" : "稍后提醒")
+        .accessibilityLabel(isSnoozing ? "正在保存稍后提醒" : "稍后提醒")
+        .accessibilityHint(isSnoozing ? "正在保存稍后提醒" : "打开稍后提醒时间")
         .onChange(of: showSnooze) { _, isOpen in
             panelState.setSnoozeMenuExpanded(isOpen)
         }
@@ -395,6 +408,10 @@ struct NotificationBannerView: View {
     }
 
     private func snooze(_ date: Date) {
+        guard !isSnoozing else { return }
+        isSnoozing = true
+        Task { @MainActor in
+            defer { isSnoozing = false }
         let handedOff = Self.applySnooze(
             date,
             notification: notification,
@@ -411,6 +428,7 @@ struct NotificationBannerView: View {
         }
         showSnooze = false
         panelState.setSnoozeMenuExpanded(false)
+        }
     }
 
     /// The banner's 稍后提醒 handler, split out of the view body so the routing

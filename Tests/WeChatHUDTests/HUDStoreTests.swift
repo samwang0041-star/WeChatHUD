@@ -594,7 +594,7 @@ final class HUDStoreTests: XCTestCase {
             createdAt: Date(), updatedAt: Date(),
             senderLevel: nil, senderRole: nil, urgency: nil
         ))
-        try store.updatePendingAskStatus(msgUID: "msg-st", status: .done)
+        XCTAssertEqual(try store.updatePendingAskStatus(msgUID: "msg-st", status: .done), 1)
         let loaded = store.loadPendingAsks(status: .done)
         XCTAssertEqual(loaded.count, 1)
         XCTAssertEqual(loaded[0].msgUID, "msg-st")
@@ -609,9 +609,15 @@ final class HUDStoreTests: XCTestCase {
             createdAt: Date(), updatedAt: Date(),
             senderLevel: nil, senderRole: nil, urgency: nil
         ))
-        try store.dismissPendingAsk(msgUID: "msg-dis")
+        XCTAssertEqual(try store.dismissPendingAsk(msgUID: "msg-dis"), 1)
         let loaded = store.loadPendingAsks(status: .dismissed)
         XCTAssertEqual(loaded.count, 1)
+    }
+
+    func testPendingAskStatusWriteWithoutARowReportsZeroChanges() throws {
+        XCTAssertEqual(try store.updatePendingAskStatus(msgUID: "missing-ask", status: .done), 0)
+        XCTAssertEqual(try store.dismissPendingAsk(msgUID: "missing-ask"), 0)
+        XCTAssertTrue(store.loadPendingAsks().isEmpty)
     }
 
     func testPendingAskUpsertUpdatesExisting() throws {
@@ -707,9 +713,14 @@ final class HUDStoreTests: XCTestCase {
             confidence: 0.9,
             promptVersion: "commitment_v1"
         )
-        try store.updateCommitmentStatus(msgUID: "commit-cancelled", status: .cancelled)
+        XCTAssertEqual(try store.updateCommitmentStatus(msgUID: "commit-cancelled", status: .cancelled), 1)
         try store.autoAdvanceCommitmentStatus(msgUID: "commit-cancelled", to: .fulfilled)
         XCTAssertEqual(store.loadCommitments().first { $0.msgUID == "commit-cancelled" }?.status, .cancelled)
+    }
+
+    func testCommitmentStatusWriteWithoutARowReportsZeroChanges() throws {
+        XCTAssertEqual(try store.updateCommitmentStatus(msgUID: "missing-commit", status: .fulfilled), 0)
+        XCTAssertTrue(store.loadCommitments().isEmpty)
     }
 
     // MARK: - AI Audit
@@ -1504,13 +1515,53 @@ final class HUDStoreTests: XCTestCase {
         } else {
             XCTFail("关注过就该原样读回来")
         }
-        try store.exec("DROP TABLE whitelist")
-        if case .unreadable = store.whitelistAllRead() {} else {
-            XCTFail("表读不到时不许答『谁都没关注』")
+       try store.exec("DROP TABLE whitelist")
+       if case .unreadable = store.whitelistAllRead() {} else {
+           XCTFail("表读不到时不许答『谁都没关注』")
+       }
+   }
+
+    func testContactsAllReadSeparatesEmptyFromUnreadable() throws {
+        if case .value(let empty) = store.contactsAllRead() {
+            XCTAssertTrue(empty.isEmpty, "没有联系人时是空列表")
+        } else {
+            XCTFail("空表不是读失败")
         }
+        try store.upsertContact(username: "wxid_boss", displayName: "老板",
+                                attentionLevel: .vip, role: .boss, replyWindowMinutes: 15)
+        if case .value(let entries) = store.contactsAllRead() {
+            XCTAssertEqual(entries.map(\.id), ["wxid_boss"])
+            XCTAssertEqual(entries.first?.role, .boss)
+        } else {
+            XCTFail("写过的联系人就该原样读回来")
+        }
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+       if case .unreadable = store.contactsAllRead() {} else {
+           XCTFail("表读不到时不许答『一个联系人都没有』")
+       }
+   }
+
+    func testStoredDisplayNameSeparatesAbsentFromUnreadable() throws {
+        if case .absent = store.storedDisplayName("wxid_boss") {} else {
+            XCTFail("没有存过名字就是 absent")
+        }
+        try store.upsertContact(username: "wxid_boss", displayName: "老板",
+                                attentionLevel: .vip, role: .boss, replyWindowMinutes: 15)
+        if case .value(let name) = store.storedDisplayName("wxid_boss") {
+            XCTAssertEqual(name, "老板")
+        } else {
+            XCTFail("写过的名字就该原样读回来")
+        }
+        XCTAssertEqual(store.contextContactAnnotation("wxid_boss")?.1, .boss)
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+        if case .unreadable = store.storedDisplayName("wxid_boss") {} else {
+            XCTFail("表读不到时不许答『没有这个人』")
+        }
+        XCTAssertNil(store.contextContactAnnotation("wxid_boss"),
+                     "读失败不能标成熟人")
     }
 
-    /// 水位读失败被当成「从没扫过」时，两条扫描链都会把水位直接基线到「最新一条」——
+   /// 水位读失败被当成「从没扫过」时，两条扫描链都会把水位直接基线到「最新一条」——
     /// 上次水位到最新之间的那段消息从此再也扫不到（无未回、无待办、不进托管），
     /// 而且没有任何地方说为什么。
     func testCursorReadSeparatesNeverScannedFromUnreadable() throws {
@@ -1792,4 +1843,3 @@ final class HUDStoreTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
-

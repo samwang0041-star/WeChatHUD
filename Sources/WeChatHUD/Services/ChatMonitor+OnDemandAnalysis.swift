@@ -66,19 +66,19 @@ extension ChatMonitor {
             guard let centered = await GroupContextSourceLoader.load(
                 notification: notification,
                 readerActor: readerActor
-            ) else {
-                return (nil, "找不到这条 @ 消息，未使用其他消息替代")
-            }
-            messages = GroupContextSourceLoader.newestFirst(centered)
-            sourceAnchored = true
-        } else {
-            do {
-                messages = try await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)
-            } catch {
-                return (nil, "读取消息失败: \(error.localizedDescription)")
-            }
-            sourceAnchored = false
-        }
+           ) else {
+                return (nil, CompanionInteractionCopy.analysisMissingMention)
+           }
+           messages = GroupContextSourceLoader.newestFirst(centered)
+           sourceAnchored = true
+       } else {
+           do {
+               messages = try await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)
+           } catch {
+                return (nil, CompanionInteractionCopy.analysisReadFailed)
+           }
+           sourceAnchored = false
+       }
         // Validate the exact source before accepting a cached analysis. A
         // stale cache must not hide that the triggering message disappeared.
         if let cached: ChatAnalyzer.GroupAnalysis = loadActionAnalysisCache(
@@ -88,16 +88,16 @@ extension ChatMonitor {
         ) {
             return (cached, nil)
         }
-        if messages.isEmpty { return (nil, "没有找到消息记录") }
+        if messages.isEmpty { return (nil, CompanionInteractionCopy.analysisNoMessages) }
         let filtered = Self.filterGroupAnalysisMessages(messages, sourceAnchored: sourceAnchored)
         if filtered.isEmpty {
-            let fallback = ChatAnalyzer.GroupAnalysis(
-                topics: "暂无可读内容",
+           let fallback = ChatAnalyzer.GroupAnalysis(
+                topics: CompanionInteractionCopy.analysisNoMessages,
                 decisions: nil,
                 my_action_items: nil,
                 key_speakers: nil,
                 status: "concluded",
-                one_liner: "暂无可读内容"
+                one_liner: CompanionInteractionCopy.analysisNoMessages
             )
             writeActionAnalysisCache(fallback, item: item, analysisType: analysisType)
             cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
@@ -126,7 +126,7 @@ extension ChatMonitor {
                 cacheAndUpdateInboxSummary(summary, for: item)
             }
         }
-        return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
+        return (result, result == nil ? CompanionInteractionCopy.displayableAnalysisFailure(error) : nil)
     }
 
     func analyzePrivateChat(item: InboxItem) async -> (ChatAnalyzer.PrivateAnalysis?, String?) {
@@ -144,23 +144,23 @@ extension ChatMonitor {
         do {
             messages = try await readerActor.getMessages(chatUsername: item.chatUsername, limit: 50)
         } catch {
-            return (nil, "读取消息失败: \(error.localizedDescription)")
+            return (nil, CompanionInteractionCopy.analysisReadFailed)
         }
-        if messages.isEmpty { return (nil, "没有找到消息记录") }
+        if messages.isEmpty { return (nil, CompanionInteractionCopy.analysisNoMessages) }
         let cutoff = Date().addingTimeInterval(-48 * 3600)
         let filtered = messages.filter {
             Date(timeIntervalSince1970: Double($0.createTime)) >= cutoff
                 && MessageHelpers.isReadableAIContent($0.text, allowMediaPlaceholder: false)
         }
         if filtered.isEmpty {
-            let fallback = ChatAnalyzer.PrivateAnalysis(
-                intent: "暂无可读内容",
+           let fallback = ChatAnalyzer.PrivateAnalysis(
+                intent: CompanionInteractionCopy.analysisNoMessages,
                 urgency: "normal",
                 urgency_reason: "",
                 mood: "neutral",
                 mood_evidence: "",
                 context: nil,
-                one_liner: "暂无可读内容"
+                one_liner: CompanionInteractionCopy.analysisNoMessages
             )
             writeActionAnalysisCache(fallback, item: item, analysisType: analysisType)
             cacheAndUpdateInboxSummary(fallback.one_liner, for: item)
@@ -184,7 +184,7 @@ extension ChatMonitor {
                 cacheAndUpdateInboxSummary(summary, for: item)
             }
         }
-        return (result, result == nil ? (error ?? "AI 分析返回为空，可能超时或解析失败") : nil)
+        return (result, result == nil ? CompanionInteractionCopy.displayableAnalysisFailure(error) : nil)
     }
 
     private func inboxRowSummary(from analysis: ChatAnalyzer.GroupAnalysis) -> String? {
@@ -273,10 +273,9 @@ extension ChatMonitor {
 
         let contextWindow: String? = {
             guard let target else { return nil }
-            let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
-                guard let contact = store.getContact(username: username) else { return nil }
-                return (contact.attentionLevel, contact.role)
-            }
+           let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
+                store.contextContactAnnotation(username)
+           }
             let chronological = messagesNewest.sorted { $0.createTime < $1.createTime }
             let chatType: ChatType = item.isGroup ? .group : .privateChat
             let window = ContextWindowBuilder.build(
@@ -350,16 +349,15 @@ extension ChatMonitor {
         }
 
         let contextWindow: String? = {
-            guard let target else { return nil }
-            let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
-                guard let contact = store.getContact(username: username) else { return nil }
-                return (contact.attentionLevel, contact.role)
-            }
-            let chronological = messagesNewest.sorted { $0.createTime < $1.createTime }
-            let chatType: ChatType = item.isGroup ? .group : .privateChat
-            let window = ContextWindowBuilder.build(
-                target: target,
-                role: .replyGenerator,
+           guard let target else { return nil }
+           let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
+                store.contextContactAnnotation(username)
+           }
+           let chronological = messagesNewest.sorted { $0.createTime < $1.createTime }
+           let chatType: ChatType = item.isGroup ? .group : .privateChat
+           let window = ContextWindowBuilder.build(
+               target: target,
+               role: .replyGenerator,
                 allMessages: chronological,
                 chatType: chatType,
                 contactLookup: contactLookup
@@ -508,16 +506,26 @@ extension ChatMonitor {
     /// has not been inferred yet, derive a conservative relationship
     /// signal from the contact/whitelist metadata so actionable rows
     /// still get useful replies.
-    private func fallbackRelationshipSignal(for item: InboxItem) -> FallbackRelationshipSignal {
-        if let contact = store.getContact(username: item.chatUsername) {
+   private func fallbackRelationshipSignal(for item: InboxItem) -> FallbackRelationshipSignal {
+
+        switch store.contactRead(item.chatUsername) {
+        case .value(let contact):
             return FallbackRelationshipSignal(
                 relationship: "\(contact.role.label) (\(contact.attentionLevel.label)，未建关系画像)",
                 hierarchy: fallbackHierarchy(for: contact.role),
                 tone: fallbackTone(for: contact.role)
             )
+        case .unreadable:
+            return FallbackRelationshipSignal(
+                relationship: "关系读不到，不按熟人套语气",
+                hierarchy: "peer",
+                tone: "formal"
+            )
+        case .absent:
+            break
         }
 
-        if let whitelist = store.getWhitelistEntry(username: item.chatUsername) {
+       if let whitelist = store.getWhitelistEntry(username: item.chatUsername) {
             let kind = whitelist.isGroup ? "白名单群聊" : "白名单联系人"
             return FallbackRelationshipSignal(
                 relationship: "\(kind) (\(whitelist.attentionLevel.label)，未建关系画像)",

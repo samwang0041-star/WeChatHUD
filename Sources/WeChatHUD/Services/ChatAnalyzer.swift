@@ -264,25 +264,25 @@ actor ChatAnalyzer {
     // MARK: - Message formatting
 
     private static func noReadableGroupAnalysis() -> GroupAnalysis {
-        GroupAnalysis(
-            topics: "暂无可读内容",
+       GroupAnalysis(
+            topics: CompanionInteractionCopy.analysisNoMessages,
             decisions: nil,
             my_action_items: nil,
             key_speakers: nil,
             status: "concluded",
-            one_liner: "暂无可读内容"
+            one_liner: CompanionInteractionCopy.analysisNoMessages
         )
     }
 
     private static func noReadablePrivateAnalysis() -> PrivateAnalysis {
-        PrivateAnalysis(
-            intent: "暂无可读内容",
+       PrivateAnalysis(
+            intent: CompanionInteractionCopy.analysisNoMessages,
             urgency: "normal",
             urgency_reason: "",
             mood: "neutral",
             mood_evidence: "",
             context: nil,
-            one_liner: "暂无可读内容"
+            one_liner: CompanionInteractionCopy.analysisNoMessages
         )
     }
 

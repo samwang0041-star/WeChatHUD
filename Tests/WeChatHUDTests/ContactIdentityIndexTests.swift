@@ -31,7 +31,43 @@ final class ContactIdentityIndexTests: XCTestCase {
             .init(username: "lilei_06a2", nickName: "李雷", remark: "")
         ])
 
-        XCTAssertEqual(index.canonicalUsername(for: "lilei"), "lilei_06a2")
-        XCTAssertEqual(index.displayName(for: "lilei"), "李雷")
+       XCTAssertEqual(index.canonicalUsername(for: "lilei"), "lilei_06a2")
+       XCTAssertEqual(index.displayName(for: "lilei"), "李雷")
+   }
+
+    func testVisibleNameDoesNotPrintWxidWhenStoreIsUnreadable() {
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+                username: "wxid_boss", stored: .value("老板")),
+            "老板")
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+                username: "wxid_boss", stored: .unreadable),
+            ContactIdentityIndex.unreadableNamePlaceholder)
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+                username: "wxid_boss", stored: .absent),
+            ContactIdentityIndex.unnamedContactPlaceholder)
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+                username: "wxid_boss", stored: .absent, readerName: "wxid_boss"),
+            ContactIdentityIndex.unnamedContactPlaceholder,
+            "reader echoing the username is not a name")
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+                username: "zhangsan2024", stored: .absent),
+            "zhangsan2024")
+        XCTAssertEqual(
+            ContactIdentityIndex.visibleName(
+               username: "wxid_boss", stored: .absent, alias: "张总"),
+           "张总")
+   }
+
+    func testAvatarMonogramDoesNotUseWxidOrPlaceholderLetters() {
+        XCTAssertEqual(ContactIdentityIndex.avatarMonogram(from: "老板"), "老")
+        XCTAssertNil(ContactIdentityIndex.avatarMonogram(from: "wxid_boss"))
+        XCTAssertNil(ContactIdentityIndex.avatarMonogram(from: ContactIdentityIndex.unreadableNamePlaceholder))
+        XCTAssertNil(ContactIdentityIndex.avatarMonogram(from: ContactIdentityIndex.unnamedContactPlaceholder))
+        XCTAssertNil(ContactIdentityIndex.avatarMonogram(from: ContactIdentityIndex.unnamedGroupPlaceholder))
     }
 }

@@ -61,5 +61,8 @@ final class IslandContentChoreographyTests: XCTestCase {
         // The rule is still a rule: with no animation the content simply is or
         // isn't, and mid-flight it isn't.
         XCTAssertFalse(visible(presented: .notification, current: .compact, revealed: true))
+        XCTAssertFalse(IslandContentChoreography.stagesBodyReveal(reduceMotion: true),
+                       "减少动态时不能先藏一帧再放出来，那是一次闪白")
+        XCTAssertTrue(IslandContentChoreography.stagesBodyReveal(reduceMotion: false))
     }
 }

@@ -10,11 +10,14 @@ struct ReplyDraftsView: View {
     @FocusState private var editorFocused: Bool
     @State private var drafts: [Draft] = []
     @State private var selectedID: Int64?
-    @State private var feedback: String?
+   @State private var feedback: String?
+    @State private var feedbackFailed = false
     @State private var query = ""
     @State private var pendingContinueDraft: Draft?
     @State private var pendingDeleteDraft: Draft?
     @State private var savedAt: Date?
+    @State private var isContinuingDraft = false
+    @State private var isDeletingDraft = false
 
     struct Draft: Identifiable, Equatable {
         let id: Int64
@@ -45,15 +48,22 @@ struct ReplyDraftsView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchBar
-            if let feedback {
-                Label(feedback, systemImage: feedback.contains("失败") || feedback.contains("无法") ? "exclamationmark.triangle" : "checkmark.circle")
+           if let feedback {
+                Label(feedback, systemImage: feedbackFailed ? "exclamationmark.triangle" : "checkmark.circle")
                     .font(.system(size: 13))
-                    .foregroundStyle(feedback.contains("失败") || feedback.contains("无法") ? .orange : CompanionPalette.jadeInk)
+                    .foregroundStyle(feedbackFailed ? .orange : CompanionPalette.jadeInk)
                     .padding(.vertical, 8)
-            }
+                    .transition(.companionStatusReveal)
+           }
             if drafts.isEmpty {
-                ContentUnavailableView("还没有回复草稿", systemImage: "square.and.pencil", description: Text("对话里正在写的回复、以及点过「存为草稿」的内容，都会出现在这里。草稿不会自动发送。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 12) {
+                    ContentUnavailableView("还没有回复草稿", systemImage: "square.and.pencil", description: Text("对话里正在写的回复、以及点过「存为草稿」的内容，都会出现在这里。草稿不会自动发送。"))
+                    Button("打开今天") { panelState.pendingSettingsTab = "today" }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("打开今天，从一条消息开始写回复")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredDrafts.isEmpty {
                 VStack(spacing: 10) {
                     Text("没有匹配的草稿").font(.system(size: 15, weight: .semibold))
@@ -87,6 +97,7 @@ struct ReplyDraftsView: View {
         }
         .workspacePage(WorkspacePage.wideWidth)
         .onAppear { load() }
+        .companionAnimation(CompanionMotion.ease(), value: feedback)
         .onChange(of: workspaceBadges.counts.drafts) { _, _ in load() }
         .onChange(of: drafts) { _, _ in reconcileSelection() }
         .onChange(of: query) { _, _ in reconcileSelection() }
@@ -95,7 +106,7 @@ struct ReplyDraftsView: View {
         }
         .companionDialogBackdrop(pendingContinueDraft != nil || pendingDeleteDraft != nil) {
             if let draft = pendingContinueDraft {
-                CompanionDialog(title: CompanionProductCopy.draftConflictTitle, onClose: { pendingContinueDraft = nil }) {
+                CompanionDialog(title: CompanionProductCopy.draftConflictTitle, onClose: { if !isContinuingDraft { pendingContinueDraft = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.draftConflictMessage)
                             .font(.system(size: 13))
@@ -104,17 +115,28 @@ struct ReplyDraftsView: View {
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.draftKeepCurrent) { pendingContinueDraft = nil }
-                            Button(CompanionProductCopy.draftReplaceContinue) {
-                                pendingContinueDraft = nil
-                                continueReply(with: draft)
+                                .companionBusyHold(isContinuingDraft, "正在把草稿带入回复框")
+                            Button {
+                                guard !isContinuingDraft else { return }
+                                isContinuingDraft = true
+                                Task { @MainActor in
+                                    let ok = continueReply(with: draft)
+                                    isContinuingDraft = false
+                                    if ok { pendingContinueDraft = nil }
+                                }
+                            } label: {
+                                Text(isContinuingDraft ? "正在替换草稿…" : CompanionProductCopy.draftReplaceContinue)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
+                            .disabled(isContinuingDraft)
+                            .help(isContinuingDraft ? "正在把草稿带入回复框" : "")
+                            .accessibilityHint(isContinuingDraft ? "正在把草稿带入回复框" : "")
                         }
                     }
                 }
             } else if let draft = pendingDeleteDraft {
-                CompanionDialog(title: CompanionProductCopy.deleteDraftTitle(name: draft.chatName), onClose: { pendingDeleteDraft = nil }) {
+                CompanionDialog(title: CompanionProductCopy.deleteDraftTitle(name: draft.chatName), onClose: { if !isDeletingDraft { pendingDeleteDraft = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.deleteDraftMessage)
                             .font(.system(size: 13))
@@ -123,10 +145,21 @@ struct ReplyDraftsView: View {
                         HStack {
                             Spacer()
                             Button("保留") { pendingDeleteDraft = nil }
-                            Button("删除", role: .destructive) {
-                                pendingDeleteDraft = nil
-                                deleteDraft(draft)
+                                .companionBusyHold(isDeletingDraft, "正在删除草稿")
+                            Button(role: .destructive) {
+                                guard !isDeletingDraft else { return }
+                                isDeletingDraft = true
+                                Task { @MainActor in
+                                    let ok = deleteDraft(draft)
+                                    isDeletingDraft = false
+                                    if ok { pendingDeleteDraft = nil }
+                                }
+                            } label: {
+                                Text(isDeletingDraft ? "正在删除草稿…" : "删除")
                             }
+                            .disabled(isDeletingDraft)
+                            .help(isDeletingDraft ? "正在删除草稿" : "")
+                            .accessibilityHint(isDeletingDraft ? "正在删除草稿" : "")
                         }
                     }
                 }
@@ -142,7 +175,7 @@ struct ReplyDraftsView: View {
                 .accessibilityLabel("搜索草稿的联系人或内容")
             if !query.isEmpty {
                 Button("清除搜索") { query = "" }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(CompanionPalette.jadeInk)
             }
@@ -187,7 +220,7 @@ struct ReplyDraftsView: View {
                            }
                        }
                    }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionRowPressStyle())
                 }
             }
             .padding(.trailing, 10)
@@ -258,19 +291,23 @@ struct ReplyDraftsView: View {
                         Label("修改已保存 · \(savedAt.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill")
                             .font(.system(size: 12))
                             .foregroundStyle(CompanionPalette.jadeInk)
+                            .transition(.companionStatusReveal)
                     }
-                    Button("复制") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(selected.text, forType: .string)
-                        feedback = "回复已复制，发送前请核对收件人。"
-                    }
+                   Button("复制") {
+                        let ok = CompanionClipboard.write(selected.text)
+                        postFeedback(ok ? CompanionInteractionCopy.replyCopied : CompanionInteractionCopy.copyFailed, failed: !ok)
+                   }
+                    .buttonStyle(CompanionPressStyle())
                    Button("查看对话") {
                        panelState.showChatDetail(chatUsername: selected.chatUsername, chatName: selected.chatName)
                    }
+                    .buttonStyle(CompanionPressStyle())
                    Button("继续回复") { requestContinueReply(selected) }
                        .tint(SettingsView.Tab.drafts.accentColor)
                        .buttonStyle(.borderedProminent)
                        .disabled(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                       .help(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "先写回复内容" : "")
+                       .accessibilityHint(selected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "先写回复内容" : "")
                     // Destructive, last, and styled as such. It used to sit
                     // second from the left in a row of identically bordered
                     // buttons — the same visual weight as copying text, for the
@@ -279,6 +316,7 @@ struct ReplyDraftsView: View {
                         .foregroundStyle(.red)
                }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .companionAnimation(CompanionMotion.ease(), value: savedAt)
                 Text("继续回复会打开对话，发送前再次确认。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -329,7 +367,7 @@ struct ReplyDraftsView: View {
                 monitor.unsavedReplyDraftEdits.removeValue(forKey: draft.id)
             }
             savedAt = Date()
-            feedback = nil
+            postFeedback(nil)
             reloadWorkspaceDraftsIfMembershipChanged(keeping: draft.id)
         } catch {
             if draft.isComposerOnly {
@@ -337,7 +375,7 @@ struct ReplyDraftsView: View {
             } else {
                 monitor.unsavedReplyDraftEdits[draft.id] = text
             }
-            feedback = "自动保存失败，文字仍保留在当前应用中，请重试。"
+            postFeedback("自动保存失败，文字仍保留在当前应用中，请重试。", failed: true)
         }
     }
 
@@ -353,7 +391,8 @@ struct ReplyDraftsView: View {
         }
     }
 
-    private func continueReply(with draft: Draft) {
+    @discardableResult
+    private func continueReply(with draft: Draft) -> Bool {
         do {
             try store.setSetting("composer_draft:\(draft.chatUsername)", value: draft.text)
             monitor.composerDraftEdits[draft.chatUsername] = draft.text
@@ -362,16 +401,19 @@ struct ReplyDraftsView: View {
                 text: draft.text,
                 savedDraftID: draft.continuationSavedDraftID
             )
-            feedback = "草稿已带入回复框，请核对后发送。"
+            postFeedback("草稿已带入回复框，请核对后发送。")
             panelState.showChatDetail(chatUsername: draft.chatUsername, chatName: draft.chatName)
             monitor.refreshWorkspaceChrome()
             load()
+            return true
         } catch {
-            feedback = "无法带入回复框，原有内容已保留，请重试。"
+            postFeedback("无法带入回复框，原有内容已保留，请重试。", failed: true)
+            return false
         }
     }
 
-    private func deleteDraft(_ draft: Draft) {
+    @discardableResult
+    private func deleteDraft(_ draft: Draft) -> Bool {
         do {
             if draft.isComposerOnly {
                 try store.clearComposerDraft(chatUsername: draft.chatUsername)
@@ -382,9 +424,11 @@ struct ReplyDraftsView: View {
             }
             monitor.refreshWorkspaceChrome()
             load()
-            feedback = "草稿已删除。"
+            postFeedback("草稿已删除。")
+            return true
         } catch {
-            feedback = "草稿删除失败，原草稿仍保留，请重试。"
+            postFeedback("草稿删除失败，原草稿仍保留，请重试。", failed: true)
+            return false
         }
     }
 
@@ -408,7 +452,7 @@ struct ReplyDraftsView: View {
     private func load() {
         let rows = store.loadWorkspaceDrafts()
         if rows.isEmpty && !monitor.unsavedReplyDraftEdits.isEmpty {
-            feedback = "本地草稿暂不可读，已保留当前未保存的文字。请稍后重试。"
+            postFeedback("本地草稿暂不可读，已保留当前未保存的文字。请稍后重试。", failed: true)
             return
         }
         drafts = rows.map { row in
@@ -424,6 +468,11 @@ struct ReplyDraftsView: View {
                 isComposerOnly: row.isComposerOnly
             )
         }
-        if selectedID == nil { selectedID = drafts.first?.id }
+       if selectedID == nil { selectedID = drafts.first?.id }
+   }
+
+    private func postFeedback(_ text: String?, failed: Bool = false) {
+        feedback = text
+        feedbackFailed = failed
     }
 }

@@ -53,6 +53,7 @@ final class AdmissionSettingsRenderTests: XCTestCase {
         let view = AdmissionSettingsView(snapshot: snapshot)
             .content
             .environmentObject(store)
+            .environmentObject(PanelState())
             .frame(width: 640, alignment: .topLeading)
             .padding(16)
             .background(Color.white)
@@ -156,6 +157,7 @@ final class AdmissionSettingsRenderTests: XCTestCase {
         let view = AdmissionSettingsView(snapshot: snapshot)
             .content
             .environmentObject(store)
+            .environmentObject(PanelState())
             .frame(width: 640, alignment: .topLeading)
             .padding(16)
             .background(Color.white)
@@ -200,6 +202,7 @@ final class AdmissionSettingsRenderTests: XCTestCase {
         let view = AdmissionSettingsView(snapshot: snapshot)
             .content
             .environmentObject(store)
+            .environmentObject(PanelState())
             .frame(width: 640, alignment: .topLeading)
             .padding(16)
             .background(Color.white)

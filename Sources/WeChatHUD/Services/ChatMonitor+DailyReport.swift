@@ -123,7 +123,8 @@ extension ChatMonitor {
         dailyReportGeneratedAt = base.generatedAt
     }
 
-    func markDailyReportActionDone(_ action: DailyReportAction) {
+    @discardableResult
+    func markDailyReportActionDone(_ action: DailyReportAction) -> Bool {
         let dateKey = dailyReportViewedDate.dailyReportDateKey
         let state = DailyReportCommandState(
             dateKey: dateKey,
@@ -131,41 +132,50 @@ extension ChatMonitor {
             state: .completed,
             completedAt: Date()
         )
-        try? store.upsertDailyReportCommandState(state)
-
-        switch action.type {
-        case .todo:
-            if let todoID = Int(action.relatedID) {
-                store.updateTodoStatus(todoID: todoID, status: .completed, completedAt: Date())
+        do {
+            switch action.type {
+            case .todo:
+                guard let todoID = Int(action.relatedID),
+                      store.updateTodoStatus(todoID: todoID, status: .completed, completedAt: Date()) > 0 else {
+                    return false
+                }
+            case .ask:
+                guard try store.updatePendingAskStatus(msgUID: action.relatedID, status: .done) > 0 else {
+                    return false
+                }
+            case .commitment:
+                guard try store.updateCommitmentStatus(msgUID: action.relatedID, status: .fulfilled) > 0 else {
+                    return false
+                }
+            case .replyDebt:
+                guard dismissReplyDebtFromLiveInbox(action) else { return false }
             }
-        case .ask:
-            try? store.updatePendingAskStatus(msgUID: action.relatedID, status: .done)
-        case .commitment:
-            try? store.updateCommitmentStatus(msgUID: action.relatedID, status: .fulfilled)
-        case .replyDebt:
-            dismissReplyDebtFromLiveInbox(action)
+            try store.upsertDailyReportCommandState(state)
+        } catch {
+            return false
         }
 
         reloadAIData()
         Task {
             await loadDailyReport(for: dailyReportViewedDate, force: true)
         }
+        return true
     }
 
     /// 「今日小结」标记完成 for reply debt must use the same watermark as
     /// inbox 「标记完成」. Command-state alone is not enough: reply debt is
     /// recomputed from unread WeChat messages and would otherwise return
     /// to 今天 / 收件箱.
-    private func dismissReplyDebtFromLiveInbox(_ action: DailyReportAction) {
+    @discardableResult
+    private func dismissReplyDebtFromLiveInbox(_ action: DailyReportAction) -> Bool {
         if let item = inboxItems.first(where: {
             $0.chatUsername == action.relatedID || $0.chatUsername == action.sourceChatUsername
         }) {
-            _ = dismissInboxItem(item)
-            return
+            return dismissInboxItem(item)
         }
 
         let chatUsername = DailyReportCompletion.replyDebtChatUsername(for: action)
-        guard !chatUsername.isEmpty else { return }
+        guard !chatUsername.isEmpty else { return false }
 
         if let debt = replyDebtItems.first(where: {
             $0.chatUsername == chatUsername || $0.chatUsername == action.sourceChatUsername
@@ -174,12 +184,11 @@ extension ChatMonitor {
             notifications: [],
             dismissed: [:]
         ).active.first {
-            _ = dismissInboxItem(item)
-            return
+            return dismissInboxItem(item)
         }
 
         let ts = DailyReportCompletion.replyDebtDismissTimestamp(debtTimestamp: nil, now: Date())
-        _ = dismissInboxItem(
+        return dismissInboxItem(
             DailyReportCompletion.syntheticInboxItem(
                 chatUsername: chatUsername,
                 timestamp: Date(timeIntervalSince1970: TimeInterval(ts))
@@ -187,7 +196,8 @@ extension ChatMonitor {
         )
     }
 
-    func dismissDailyReportRisk(_ risk: DailyReportRisk) {
+    @discardableResult
+    func dismissDailyReportRisk(_ risk: DailyReportRisk) -> Bool {
         let dateKey = dailyReportViewedDate.dailyReportDateKey
         let state = DailyReportCommandState(
             dateKey: dateKey,
@@ -195,11 +205,16 @@ extension ChatMonitor {
             state: .dismissed,
             dismissedAt: Date()
         )
-        try? store.upsertDailyReportCommandState(state)
+        do {
+            try store.upsertDailyReportCommandState(state)
+        } catch {
+            return false
+        }
 
         Task {
             await loadDailyReport(for: dailyReportViewedDate, force: true)
         }
+        return true
     }
 
     func exportDailyReport() -> URL? {

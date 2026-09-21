@@ -38,9 +38,77 @@ struct ChatInsightDetailView: View {
     @EnvironmentObject var store: HUDStore
     @State private var surface: ReviewSurface = .overview
 
-    private enum ReviewSurface: String, CaseIterable {
-        case overview = "概览"
-        case timeline = "对话时间线"
+   private enum ReviewSurface: String, CaseIterable {
+       case overview = "概览"
+       case timeline = "对话时间线"
+   }
+
+    private var isAnalyzing: Bool {
+        insightCoordinator.chatInsightLoading.contains(chatUsername)
+    }
+
+    private var analysisError: String? {
+        insightCoordinator.chatInsightErrors[chatUsername]
+    }
+
+    private var analyzeActionTitle: String {
+        if isAnalyzing { return "正在分析…" }
+        switch analysisError {
+        case CompanionInteractionCopy.followListUnreadableAnalysis:
+            return "再试一次"
+        case CompanionInteractionCopy.notOnFollowList:
+            return "去关注谁"
+        default:
+           return result == nil ? "分析" : "重新分析"
+       }
+   }
+
+    private var analyzeActionSymbol: String {
+        if isAnalyzing { return "sparkles" }
+        switch analysisError {
+        case CompanionInteractionCopy.followListUnreadableAnalysis:
+            return "arrow.clockwise"
+        case CompanionInteractionCopy.notOnFollowList:
+            return "person.badge.plus"
+        default:
+            return "sparkles"
+        }
+    }
+
+   private var analyzeActionHint: String {
+        if isAnalyzing { return "正在分析这段聊天" }
+        switch analysisError {
+        case CompanionInteractionCopy.followListUnreadableAnalysis:
+            return "先重读关注名单，再分析这段聊天"
+        case CompanionInteractionCopy.notOnFollowList:
+            return "先把这个对话加进关注名单"
+        default:
+           return result == nil ? "分析这段聊天" : "按这个日期重新分析"
+       }
+   }
+
+    /// Filled jade is for starting analysis. Retrying a failed follow-list
+    /// read, or sending the user to 关注谁, is a recovery — same weight as
+    /// the other jade-ink actions on this page, not a second primary.
+    private var analyzeActionIsPrimary: Bool {
+        if isAnalyzing { return true }
+        switch analysisError {
+        case CompanionInteractionCopy.followListUnreadableAnalysis,
+             CompanionInteractionCopy.notOnFollowList:
+            return false
+        default:
+            return true
+        }
+    }
+
+   private func runAnalyzeAction() {
+       if analysisError == CompanionInteractionCopy.notOnFollowList {
+            panelState.insightSelectedChatUsername = chatUsername
+            panelState.pendingSettingsTab = "contacts"
+           NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+           return
+       }
+        Task { await monitor.analyzeOneChat(chatUsername: chatUsername, date: selectedDate) }
     }
 
     var body: some View {
@@ -57,18 +125,44 @@ struct ChatInsightDetailView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
     }
 
-    // MARK: - Header
+   // MARK: - Header
 
-    private var headerBar: some View {
+    @ViewBuilder
+    private var headerAnalyzeButton: some View {
+        let button = Button(action: runAnalyzeAction) {
+            Label(analyzeActionTitle, systemImage: analyzeActionSymbol)
+        }
+        .controlSize(.small)
+        .disabled(isAnalyzing)
+        .help(analyzeActionHint)
+        .accessibilityHint(analyzeActionHint)
+        if analyzeActionIsPrimary {
+            button
+                .tint(SettingsView.Tab.insight.accentColor)
+                .buttonStyle(.borderedProminent)
+        } else {
+            button
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+        }
+    }
+
+   private var headerBar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
                 ZStack {
-                    Circle()
-                        .fill(CompanionPalette.jade.opacity(0.14))
-                        .frame(width: 44, height: 44)
-                    Text(String(chatName.prefix(1)))
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(CompanionPalette.jadeInk)
+                   Circle()
+                       .fill(CompanionPalette.jade.opacity(0.14))
+                       .frame(width: 44, height: 44)
+                    if let monogram = ContactIdentityIndex.avatarMonogram(from: chatName) {
+                        Text(monogram)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                    } else {
+                        Image(systemName: isGroup ? "person.3" : "person")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(CompanionPalette.jadeInk)
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -88,25 +182,14 @@ struct ChatInsightDetailView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("回顾日期")
 
-                Button {
-                    Task { await monitor.analyzeOneChat(chatUsername: chatUsername, date: selectedDate) }
-                } label: {
-                    if insightCoordinator.chatInsightLoading.contains(chatUsername) {
-                        ProgressView().controlSize(.small)
-                   } else {
-                       Label(result == nil ? "分析" : "重新分析", systemImage: "sparkles")
-                   }
-               }
-               .tint(SettingsView.Tab.insight.accentColor)
-               .buttonStyle(.borderedProminent)
-               .controlSize(.small)
-               .disabled(insightCoordinator.chatInsightLoading.contains(chatUsername))
+                headerAnalyzeButton
            }
 
            HStack(spacing: 16) {
                ForEach(ReviewSurface.allCases, id: \.self) { tab in
                    Button(tab.rawValue) { surface = tab }
-                       .buttonStyle(.plain)
+                       .buttonStyle(CompanionPressStyle())
+                       .companionAnimation(CompanionMotion.hover(), value: surface)
                        .font(.system(size: 13, weight: surface == tab ? .semibold : .regular))
                         .foregroundStyle(surface == tab ? SettingsView.Tab.insight.accentColor : .secondary)
                        .padding(.bottom, 6)
@@ -125,7 +208,7 @@ struct ChatInsightDetailView: View {
                     Button("查看原文") {
                         panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
                 }
             }
@@ -182,14 +265,21 @@ struct ChatInsightDetailView: View {
                 Text("正在整理 \(dateLabel)…")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
-            } else if let error = insightCoordinator.chatInsightErrors[chatUsername] {
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: WorkspaceType.title))
-                    .foregroundColor(.orange.opacity(0.7))
-                Text(error)
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-            } else {
+           } else if let error = insightCoordinator.chatInsightErrors[chatUsername] {
+               Image(systemName: "exclamationmark.circle")
+                   .font(.system(size: WorkspaceType.title))
+                   .foregroundColor(.orange.opacity(0.7))
+                   .transition(.companionStatusReveal)
+               Text(error)
+                   .font(.system(size: 13))
+                   .foregroundColor(.secondary)
+                   .transition(.companionStatusReveal)
+                Button(analyzeActionTitle) { runAnalyzeAction() }
+                    .buttonStyle(CompanionPressStyle())
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .help(analyzeActionHint)
+                    .accessibilityHint(analyzeActionHint)
+           } else {
                 Image(systemName: "sparkles")
                     .font(.system(size: WorkspaceType.title))
                     .foregroundColor(.orange.opacity(0.4))
@@ -199,6 +289,7 @@ struct ChatInsightDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .companionAnimation(CompanionMotion.ease(), value: insightCoordinator.chatInsightErrors[chatUsername])
     }
 
     // MARK: - Analysis content
@@ -250,17 +341,28 @@ struct ChatInsightDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .companionSurface(padding: 20)
         } else {
-            HStack(spacing: 8) {
-                if insightCoordinator.chatInsightLoading.contains(chatUsername) {
-                    ProgressView().controlSize(.small)
-                    Text("正在整理这段聊天…")
-                } else {
-                    Image(systemName: "sparkles")
-                    Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "还没有 AI 解读，先看来源和待办。")
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    if insightCoordinator.chatInsightLoading.contains(chatUsername) {
+                        ProgressView().controlSize(.small)
+                        Text("正在整理这段聊天…")
+                    } else {
+                        Image(systemName: "sparkles")
+                        Text(insightCoordinator.chatInsightErrors[chatUsername] ?? "还没有 AI 解读，先看来源和待办。")
+                    }
                 }
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+               if !insightCoordinator.chatInsightLoading.contains(chatUsername) {
+                    Button(analyzeActionTitle) {
+                        runAnalyzeAction()
+                    }
+                   .buttonStyle(CompanionPressStyle())
+                   .foregroundStyle(CompanionPalette.jadeInk)
+                    .help(analyzeActionHint)
+                    .accessibilityHint(analyzeActionHint)
+               }
             }
-            .font(.system(size: 13))
-            .foregroundStyle(.secondary)
         }
 
         // The day's read belongs under the headline it expands on. It used to
@@ -285,7 +387,7 @@ struct ChatInsightDetailView: View {
                 Button("查看原文") {
                     panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(CompanionPressStyle())
                 .foregroundStyle(SettingsView.Tab.insight.accentColor)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -294,7 +396,7 @@ struct ChatInsightDetailView: View {
             Button("查看原文") {
                 panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
             .foregroundStyle(SettingsView.Tab.insight.accentColor)
         }
 
@@ -349,7 +451,7 @@ struct ChatInsightDetailView: View {
                         panelState.pendingSettingsTab = "tasks"
                         panelState.showDetail()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .medium))
                 }
@@ -403,9 +505,31 @@ struct ChatInsightDetailView: View {
                     }
                 }
             } else {
-                Text("还没有时间线。先点「分析」，或直接查看原文。")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("还没有时间线。")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                   HStack(spacing: 12) {
+                       Button {
+                            runAnalyzeAction()
+                       } label: {
+                           Label(
+                                analyzeActionTitle,
+                                systemImage: analyzeActionSymbol
+                           )
+                       }
+                       .buttonStyle(CompanionPressStyle())
+                       .foregroundStyle(CompanionPalette.jadeInk)
+                        .disabled(isAnalyzing)
+                        .help(analyzeActionHint)
+                        .accessibilityHint(analyzeActionHint)
+                        Button("查看原文") {
+                            panelState.showChatDetail(chatUsername: chatUsername, chatName: chatName)
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                    }
+                }
             }
         }
     }
@@ -480,13 +604,6 @@ struct ChatInsightDetailView: View {
             Text("\(count)")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
         }
-    }
-
-    private func formatResponseTime(_ seconds: Double) -> String {
-        if seconds <= 0 { return "--" }
-        if seconds < 60 { return "\(Int(seconds))秒" }
-        if seconds < 3600 { return "\(Int(seconds / 60))分钟" }
-        return "\(String(format: "%.1f", seconds / 3600))小时"
     }
 
     private func statsParticipantRow(name: String, count: Int, maxCount: Int) -> some View {

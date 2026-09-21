@@ -66,7 +66,7 @@ actor ContextAnalyzer {
             .replacingOccurrences(of: "{ask_type}", with: ask.askType.rawValue)
             .replacingOccurrences(of: "{urgency}", with: ask.urgency?.rawValue ?? "routine")
             .replacingOccurrences(of: "{conversation_thread}", with: conversationContext.serialize())
-            .replacingOccurrences(of: "{sender_profile}", with: senderProfile.isEmpty ? "（暂无数据）" : senderProfile)
+            .replacingOccurrences(of: "{sender_profile}", with: senderProfile.isEmpty ? "（没有）" : senderProfile)
             .replacingOccurrences(of: "{user_commitments}", with: userCommitments.isEmpty ? "（无未完成承诺）" : userCommitments)
 
         let result = await pipeline.execute(

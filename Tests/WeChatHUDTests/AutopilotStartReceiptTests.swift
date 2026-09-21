@@ -46,8 +46,26 @@ final class AutopilotStartReceiptTests: XCTestCase {
         XCTAssertNotEqual(AutopilotStartCopy.starting, AutopilotStartCopy.start)
     }
 
+    func testStopFailureDoesNotUseTheStoppedToast() {
+        let receipt = AutopilotStopReceipt.resolve(stopped: false)
+        XCTAssertEqual(receipt.toast, AutopilotStopCopy.failed)
+        XCTAssertFalse(receipt.dismissesPopover)
+        XCTAssertNotEqual(receipt.toast, AutopilotStopCopy.stopped)
+    }
+
+    func testStopSuccessUsesStoppedToast() {
+        let receipt = AutopilotStopReceipt.resolve(stopped: true)
+        XCTAssertEqual(receipt.toast, AutopilotStopCopy.stopped)
+        XCTAssertTrue(receipt.dismissesPopover)
+    }
+
+    func testTheStopButtonNamesTheInFlightState() {
+        XCTAssertEqual(AutopilotStopCopy.stop, "停止")
+        XCTAssertNotEqual(AutopilotStopCopy.stopping, AutopilotStopCopy.stop)
+    }
+
     /// `.autopilot` is declared as a `DetailKind` with no other caller in the
-    /// app: the popover's 「浮窗内查看」 is the entry that makes the in-island
+    /// app: the panel's 「待确认回复」 is the entry that makes the in-island
     /// 待确认回复 pane reachable.
     func testThePopoverEntryRoutesTheDetailPanelToTheAutopilotPane() {
         let panelState = PanelState()

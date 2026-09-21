@@ -165,4 +165,14 @@ final class InboxActionPersistenceTests: XCTestCase {
         XCTAssertEqual(store.loadChatActions()[item.chatUsername]?.snoozedUntil, 0)
         XCTAssertGreaterThan(store.loadChatActions()[item.chatUsername]?.silencedAt ?? 0, 0)
     }
+
+    @MainActor
+    func testClosedStoreVIPChangePublishesInboxActionError() throws {
+        let (store, monitor, item, root) = try fixture()
+        defer { cleanup(store, root) }
+        store.close()
+        monitor.setInboxItemVIP(item, isVIP: true)
+        XCTAssertNotNil(monitor.inboxActionError)
+        XCTAssertFalse(monitor.inboxActionError?.contains("sql") ?? true)
+    }
 }

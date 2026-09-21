@@ -115,10 +115,31 @@ final class ScanEngineRecallAttributionTests: XCTestCase {
             ]
         )
         XCTAssertEqual(liveCommitmentUIDs(), [msgB])
-        XCTAssertEqual(store.loadRecalledMessages().first?.originalText, "今晚把合同发你")
+       XCTAssertEqual(store.loadRecalledMessages().first?.originalText, "今晚把合同发你")
+   }
+
+    func testUnreadableContactsDoNotPersistAGuessedRole() throws {
+        ScanEngine.recordRecall(
+            recallRow(text: "群主 撤回了 \"张伟\" 的一条消息"),
+            chatUsername: chat,
+            candidates: [
+                message(msgA, localId: 11, sender: "wxid_zhang_a", name: "张伟",
+                        text: "今晚把合同发你", offset: 10),
+            ],
+            contactMap: [:],
+            contactsUnreadable: true,
+            store: store,
+            myUsername: "wxid_me",
+            myDisplayName: "我自己",
+            mySelfNames: ["我自己"]
+        )
+        XCTAssertTrue(store.loadRecalledMessages().isEmpty,
+                      "读不到联系人时不能把撤回落成泛泛之交")
+        XCTAssertEqual(liveCommitmentUIDs(), [msgA, msgB],
+                       "读不到也不能先把承诺墓碑掉")
     }
 
-    func testOwnRecallIsNotGatedOnDisplayName() throws {
+   func testOwnRecallIsNotGatedOnDisplayName() throws {
         // "你撤回了一条消息" resolves through the sender-id gate, not a name,
         // so the ambiguity rule must not disable the most common case.
         record(

@@ -77,10 +77,22 @@ enum ScanEngine {
             let vipSet = Set(whitelist.filter { $0.attentionLevel == .vip }.map { $0.id })
             // One snapshot of every admission input, so the per-message decision
             // stays a pure function with no query on the hot path.
-            let admissionRules = AdmissionRules.load(store: store)
-            let allContacts = store.loadContacts()
-            // Duplicate usernames must not trap the process; see contactLookup.
-            let contactMap = Self.contactLookup(allContacts)
+           let admissionRules = AdmissionRules.load(store: store)
+            let contactsUnreadable: Bool
+            let contactMap: [String: ContactEntry]
+            switch store.contactsAllRead() {
+            case .unreadable:
+                // An empty map is not "nobody has a role". Inventing
+                // acquaintance here would enqueue autopilot and persist
+                // recalls under the wrong person, then advance the watermark.
+                contactsUnreadable = true
+                contactMap = [:]
+                print("[WCHUD] contacts 读不到，本轮不写角色敏感队列、水位不动")
+            case .value(let allContacts):
+                contactsUnreadable = false
+                // Duplicate usernames must not trap the process; see contactLookup.
+                contactMap = Self.contactLookup(allContacts)
+            }
 
             // Refresh message DBs before reading — picks up outbound messages
             // the user just sent in WeChat, so reply debt correctly detects replies.
@@ -572,6 +584,7 @@ enum ScanEngine {
                         Self.recordRecall(
                             msg, chatUsername: entry.id,
                             candidates: messages, contactMap: contactMap,
+                            contactsUnreadable: contactsUnreadable,
                             store: store,
                             myUsername: myUname, myDisplayName: myDisplayName,
                             mySelfNames: selfNames
@@ -710,39 +723,46 @@ enum ScanEngine {
                         }
                     }
 
-                    // Collect for autopilot: private chats + group @mentions.
-                    if decision.isAdmitted, kind == .privateChat || kind == .groupAt {
-                        let contact = store.getContact(username: msg.senderUsername)
-                        let level: AttentionLevel
-                        if entry.attentionLevel == .vip {
-                            level = .vip
-                        } else {
-                            level = contact?.attentionLevel ?? .whitelist
+                  // Collect for autopilot: private chats + group @mentions.
+                  if decision.isAdmitted, kind == .privateChat || kind == .groupAt {
+                       // Snapshot only. A per-message getContact nil is both
+                       // absent and unreadable; collapsing that into acquaintance
+                       // would auto-draft a boss as a 泛泛之交, then the cursor
+                       // would move on. Unreadable contacts skip enqueue here;
+                       // the whitelist cursor stays put for retry.
+                        if !contactsUnreadable {
+                            let contact = contactMap[msg.senderUsername]
+                            let level: AttentionLevel
+                            if entry.attentionLevel == .vip {
+                                level = .vip
+                            } else {
+                                level = contact?.attentionLevel ?? .whitelist
+                            }
+                            let inbound = AutopilotService.InboundMessage(
+                                msgUID: msg.id,
+                                chatUsername: msg.chatUsername,
+                                chatName: msg.chatName,
+                                senderUsername: msg.senderUsername,
+                                senderName: msg.senderName,
+                                text: msg.text,
+                                isGroup: MessageHelpers.isMultiPartyChat(msg.chatUsername),
+                                isAtMention: isAt,
+                                attentionLevel: level,
+                                contactRole: contact?.role ?? .acquaintance,
+                                timestamp: msg.createTime,
+                                messageType: msg.baseType,
+                                appType: msg.appType
+                            )
+                            if autopilotActive && !isSilenced
+                                && Self.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: isFirstWhitelistScan) {
+                                // Persist this queue row together with the
+                                // whitelist cursor below. A failed insert must
+                                // leave the cursor behind so the next scan retries.
+                                autopilotMessagesToQueue.append(inbound)
+                                autopilotInbound.append(inbound)
+                            }
                         }
-                        let inbound = AutopilotService.InboundMessage(
-                            msgUID: msg.id,
-                            chatUsername: msg.chatUsername,
-                            chatName: msg.chatName,
-                            senderUsername: msg.senderUsername,
-                            senderName: msg.senderName,
-                            text: msg.text,
-                            isGroup: MessageHelpers.isMultiPartyChat(msg.chatUsername),
-                            isAtMention: isAt,
-                            attentionLevel: level,
-                            contactRole: contact?.role ?? .acquaintance,
-                            timestamp: msg.createTime,
-                            messageType: msg.baseType,
-                            appType: msg.appType
-                        )
-                        if autopilotActive && !isSilenced
-                            && Self.shouldEnqueueAutopilotInbound(isFirstWhitelistScan: isFirstWhitelistScan) {
-                            // Persist this queue row together with the
-                            // whitelist cursor below. A failed insert must
-                            // leave the cursor behind so the next scan retries.
-                            autopilotMessagesToQueue.append(inbound)
-                            autopilotInbound.append(inbound)
-                        }
-                    }
+                   }
 
                     // Collect VIP traces for VIPAggregator
                     if decision.isAdmitted, entry.attentionLevel == .vip {
@@ -821,7 +841,7 @@ enum ScanEngine {
                             // A failed rule read un-admits (or admits) chats for a
                             // reason that is not the user's; advancing past those
                             // messages costs them a second chance for good.
-                            if backlogComplete, !admissionRules.scopeUnreadable {
+                            if backlogComplete, !admissionRules.scopeUnreadable, !contactsUnreadable {
                                 try store.setWhitelistCursor(
                                     username: entry.id,
                                     lastCreateTime: currentCursor.0,
@@ -886,8 +906,11 @@ enum ScanEngine {
             }
             let vipCount = mergedRecent.filter(\.isVIP).count
 
-            // ---- Autopilot: scan non-whitelist private chats ----
-            // Private chats that are VIP/关注 but missing from whitelist still
+           // ---- Autopilot: scan non-whitelist private chats ----
+            if contactsUnreadable {
+                print("[WCHUD] autopilot: contacts 读不到，非白名单通道本轮跳过、水位不动")
+            } else {
+           // Private chats that are VIP/关注 but missing from whitelist still
             // reach autopilot. 仅保留资料 and strangers do not.
             //
             // This pass reuses the `sessions` snapshot read at the top of the
@@ -1041,13 +1064,15 @@ enum ScanEngine {
                                 )
                             }
                         }
-                    } catch {
-                        print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
-                    }
-                }
+                   } catch {
+                       print("[WCHUD] autopilot queue persistence failed; scan watermark unchanged for retry")
+                   }
+               }
+           }
+
             }
 
-            // Ephemeral-cache hygiene belongs to this side of the scan: it
+           // Ephemeral-cache hygiene belongs to this side of the scan: it
             // takes the reader's DB lock and removes files, and the main-actor
             // apply used to pay for it once per scan — while a background
             // decrypt could be holding that same lock.
@@ -1140,16 +1165,17 @@ enum ScanEngine {
     /// row (its rendered text is the replacemsg payload "「X」撤回了一条消息");
     /// the original message is looked up in the freshly-fetched window by
     /// sender name within a 10-minute horizon.
-    static func recordRecall(
-        _ recall: MessageInfo,
-        chatUsername: String,
-        candidates: [MessageInfo],
-        contactMap: [String: ContactEntry],
-        store: HUDStore,
-        myUsername: String,
-        myDisplayName: String,
-        mySelfNames: Set<String>
-    ) {
+   static func recordRecall(
+       _ recall: MessageInfo,
+       chatUsername: String,
+       candidates: [MessageInfo],
+       contactMap: [String: ContactEntry],
+        contactsUnreadable: Bool = false,
+       store: HUDStore,
+       myUsername: String,
+       myDisplayName: String,
+       mySelfNames: Set<String>
+   ) {
         let (recaller, recalledOwner) = recallerName(from: recall.text)
         guard !recaller.isEmpty else { return }
         // "你撤回了一条消息" — my own recall.
@@ -1198,9 +1224,16 @@ enum ScanEngine {
                                             mySelfNames: mySelfNames)
                 : ($0.senderName == owner || $0.senderUsername == owner)
         })
-        let senderUsername = original?.senderUsername ?? owner
-        let contact = contactMap[senderUsername]
-        // The original's derived artifacts die with it — a withdrawn
+       let senderUsername = original?.senderUsername ?? owner
+       let contact = contactMap[senderUsername]
+        if contactsUnreadable {
+            // INSERT OR IGNORE would persist stranger/acquaintance and then
+            // refuse the real row on retry. Skip the write; the whitelist
+            // cursor stays put while contacts are unreadable.
+            print("[WCHUD] recall: contacts 读不到，本轮不落角色")
+            return
+        }
+       // The original's derived artifacts die with it — a withdrawn
         // commitment must not keep nagging, a recalled ask must not anchor.
         if let originalID = original?.id {
             do {

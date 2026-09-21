@@ -342,7 +342,7 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertTrue(report.wechatDraft?.contains("本地记录：") == true)
         XCTAssertFalse(report.wechatDraft?.contains("今日完成：") == true)
         XCTAssertFalse(report.wechatDraft?.contains("完成微信消息巡检") == true)
-        XCTAssertTrue(report.wechatDraft?.contains("需要支持：暂无") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("需要支持：没有") == true)
     }
 
     func testBuildSurfacesLiveDiscussionTodosAndDedupesTheSameAsk() throws {
@@ -413,8 +413,8 @@ final class DailyReportBuilderTests: XCTestCase {
         XCTAssertEqual(report.status, .localOnly)
         XCTAssertTrue(report.actions.isEmpty)
         XCTAssertTrue(report.highlights.isEmpty)
-        XCTAssertTrue(report.narrative?.contains("已成功同步") == true)
-        XCTAssertTrue(report.wechatDraft?.contains("暂无待处理事项") == true)
+        XCTAssertTrue(report.narrative?.contains("已读到的聊天") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("还没有待处理事项") == true)
     }
 
     func testBuildMarksNoSyncEmptyDayAsUnverifiedWithoutClaimingQuietDay() {
@@ -428,10 +428,10 @@ final class DailyReportBuilderTests: XCTestCase {
 
         XCTAssertEqual(report.status, .localOnly)
         XCTAssertTrue(report.actions.isEmpty)
-        XCTAssertTrue(report.narrative?.contains("尚无成功同步记录") == true)
-        XCTAssertTrue(report.wechatDraft?.contains("尚未验证") == true)
+        XCTAssertTrue(report.narrative?.contains("还没有成功读到今天的微信") == true)
+        XCTAssertTrue(report.wechatDraft?.contains("来源不够") == true)
         XCTAssertFalse(report.wechatDraft?.contains("保持关注列表清空") == true)
-        XCTAssertTrue(report.statusMessage?.contains("未验证") == true)
+        XCTAssertTrue(report.statusMessage?.contains("还没有成功读到今天的微信") == true)
     }
 
     func testHistoricalReportUsesSelectedDateAndDoesNotProjectCurrentSnapshot() throws {

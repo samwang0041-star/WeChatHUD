@@ -39,6 +39,7 @@ struct OnboardingReadiness {
     var aiConfigurationValid: Bool
     var aiConnectionTested: Bool = false
     var trackedConversationCount: Int
+    var followListUnreadable: Bool = false
 
     /// Actions are grouped by the user-visible dependency they resolve. In
     /// particular, the three pieces of sync evidence form one connection task.
@@ -52,7 +53,7 @@ struct OnboardingReadiness {
         } else if !aiConnectionTested {
             actions.append(.testAI)
         }
-        if trackedConversationCount == 0 {
+        if !followListUnreadable && trackedConversationCount == 0 {
             actions.append(.chooseContacts)
         }
         return actions
@@ -115,7 +116,16 @@ struct OnboardingReadiness {
             hasSuccessfulSync: sourceMatches && monitor.stats.lastSyncAt != nil,
             aiConfigurationValid: AISettingsValidation.connectionError(configuration.provider, requireModel: true) == nil,
             aiConnectionTested: AIConnectionEvidenceStore.isSuccessful(configuration, store: store),
-            trackedConversationCount: store.getWhitelist().count
+            trackedConversationCount: {
+                switch store.whitelistAllRead() {
+                case .value(let entries): return entries.count
+                case .unreadable: return 0
+                }
+            }(),
+            followListUnreadable: {
+                if case .unreadable = store.whitelistAllRead() { return true }
+                return false
+            }()
         )
     }
 }

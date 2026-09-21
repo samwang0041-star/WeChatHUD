@@ -111,6 +111,92 @@ final class RelativeTimeVocabularyTests: XCTestCase {
         XCTAssertGreaterThan(unified, 5, "the guard is only meaningful while 已到期 is the live word")
     }
 
+    func testDurationBadgesUseSpacedWordsNotCompactUnits() throws {
+        let detail = try ViewSource.load("Sources/WeChatHUD/Views/DetailPanelView.swift")
+        XCTAssertTrue(detail.text.contains("overdueMinutes) 分钟"))
+        XCTAssertFalse(detail.text.contains("overdueMinutes)分"))
+
+        let contacts = try ViewSource.load("Sources/WeChatHUD/Views/Settings/ContactsSettingsView.swift")
+        XCTAssertTrue(contacts.text.contains("replyWindowMinutes) 分钟"))
+        XCTAssertFalse(contacts.text.contains("replyWindowMinutes)分"))
+
+        let sync = try ViewSource.load("Sources/WeChatHUD/Views/Settings/SyncSettingsView.swift")
+        XCTAssertTrue(sync.text.contains("recallDelaySeconds) 秒后撤回"))
+        XCTAssertFalse(sync.text.contains("recallDelaySeconds)秒后撤回"))
+    }
+
+    func testDurationLabelUsesSpacedWords() {
+        XCTAssertEqual(RelativeTimeFormatter.durationLabel(0), "--")
+        XCTAssertEqual(RelativeTimeFormatter.durationLabel(12), "12 秒")
+        XCTAssertEqual(RelativeTimeFormatter.durationLabel(120), "2 分钟")
+        XCTAssertEqual(RelativeTimeFormatter.durationLabel(7200), "2.0 小时")
+    }
+
+    func testElapsedLabelKeepsHoursAndMinutesInChinese() {
+        XCTAssertEqual(RelativeTimeFormatter.elapsedLabel(12), "12 秒")
+        XCTAssertEqual(RelativeTimeFormatter.elapsedLabel(120), "2 分钟")
+        XCTAssertEqual(RelativeTimeFormatter.elapsedLabel(3600), "1 小时")
+        XCTAssertEqual(RelativeTimeFormatter.elapsedLabel(4500), "1 小时 15 分钟")
+    }
+
+    func testInsightAndSyncPickersDoNotKeepCompactDurationUnits() throws {
+        let files = [
+            "Sources/WeChatHUD/Views/Analytics/InsightKPIGrid.swift",
+            "Sources/WeChatHUD/Views/Analytics/InsightOverviewDashboard.swift",
+            "Sources/WeChatHUD/Views/Analytics/ChatInsightDetailView.swift",
+            "Sources/WeChatHUD/Views/Settings/SyncSettingsView.swift",
+        ]
+        for relative in files {
+            let source = try ViewSource.load(relative)
+            XCTAssertFalse(source.text.contains(")秒\""), relative)
+            XCTAssertFalse(source.text.contains(")分钟\""), relative)
+            XCTAssertFalse(source.text.contains("formatResponseTime"), relative)
+            XCTAssertFalse(source.text.contains("formatHoursShort"), relative)
+        }
+        let kpi = try ViewSource.load("Sources/WeChatHUD/Views/Analytics/InsightKPIGrid.swift")
+        XCTAssertTrue(kpi.text.contains("RelativeTimeFormatter.durationLabel"))
+        let sync = try ViewSource.load("Sources/WeChatHUD/Views/Settings/SyncSettingsView.swift")
+        XCTAssertTrue(sync.text.contains(") 秒"))
+        XCTAssertTrue(sync.text.contains(") 分钟"))
+    }
+
+    func testAutopilotSessionDurationIsNotEnglishUnits() throws {
+        let settings = try ViewSource.load("Sources/WeChatHUD/Views/Settings/AutopilotSettingsView.swift")
+        XCTAssertTrue(settings.text.contains("RelativeTimeFormatter.elapsedLabel"))
+        XCTAssertFalse(settings.text.contains("/60)m"))
+        let island = try ViewSource.load("Sources/WeChatHUD/Views/AutopilotIndicator.swift")
+        XCTAssertTrue(island.text.contains("RelativeTimeFormatter.elapsedLabel"))
+    }
+
+    func testInsightCountsKeepASpaceBeforeTheUnit() throws {
+        let overview = try ViewSource.load("Sources/WeChatHUD/Views/Analytics/InsightOverviewDashboard.swift")
+        XCTAssertTrue(overview.text.contains("participantCount) 人参与"))
+        XCTAssertFalse(overview.text.contains("participantCount)人参与"))
+        XCTAssertTrue(overview.text.contains("messageCount) 条"))
+        XCTAssertFalse(overview.text.contains("messageCount)条\""))
+
+        let sidebar = try ViewSource.load("Sources/WeChatHUD/Views/Analytics/InsightSidebarView.swift")
+        XCTAssertTrue(sidebar.text.contains("messageCount) 条消息"))
+        XCTAssertTrue(sidebar.text.contains("participantCount) 人"))
+        XCTAssertFalse(sidebar.text.contains("messageCount)条消息"))
+
+        let radar = try ViewSource.load("Sources/WeChatHUD/Views/Analytics/RelationshipRadarView.swift")
+        XCTAssertTrue(radar.text.contains("silenceDays) 天"))
+        XCTAssertFalse(radar.text.contains("silenceDays)天"))
+    }
+
+    func testScanAndBuddyDurationsUseChineseUnits() throws {
+        let scan = try ViewSource.load("Sources/WeChatHUD/Views/WhitelistScanView.swift")
+        XCTAssertTrue(scan.text.contains("条 / 45 天"))
+        XCTAssertFalse(scan.text.contains("条/45天"))
+
+        let buddy = try ViewSource.load("Sources/WeChatHUD/Views/PixelBuddyView.swift")
+        XCTAssertTrue(buddy.text.contains("elapsedLabel"))
+        XCTAssertTrue(buddy.text.contains("%.1f 秒"))
+        XCTAssertFalse(buddy.text.contains("%.1fs"))
+        XCTAssertFalse(buddy.text.contains("m\\("))
+    }
+
     // MARK: - Island contrast budget
 
     func testIslandNeverUsesTheWeakestInkForContent() throws {
@@ -132,7 +218,7 @@ final class RelativeTimeVocabularyTests: XCTestCase {
         // only — a sentence the user has to read to know what happened may not
         // live there.
         for literal in [
-            "Text(\"同步中\")", "Text(syncLabel(syncAt))", "Text(\"都处理好了\")",
+            "Text(\"正在同步\")", "Text(syncLabel(syncAt))", "Text(\"没有待处理\")",
             "Text(\"已处理 (\\(monitor.handledItems.count))\")",
             "Text(\"有急事要处理\")", "Text(\"等你回复\")", "Text(\"群里@了你\")",
             "Text(\"普通更新\")", "Text(\"待处理 (",

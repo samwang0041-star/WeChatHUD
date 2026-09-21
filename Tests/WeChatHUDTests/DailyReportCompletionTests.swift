@@ -114,6 +114,74 @@ final class DailyReportCompletionTests: XCTestCase {
         XCTAssertEqual(monitor.handledItems.map(\.chatUsername), [debt.chatUsername])
     }
 
+    @MainActor
+    func testMarkTodoDoneWithoutARelatedRowDoesNotHideTheAction() async throws {
+        let (store, monitor, root) = try harness()
+        defer { cleanup(store, root) }
+
+        let action = DailyReportAction(
+            content: "跟进报价",
+            type: .todo,
+            urgency: .high,
+            sourceChatName: "同事",
+            sourceChatUsername: "wxid_debt",
+            relatedID: "not-a-todo-id"
+        )
+        XCTAssertFalse(monitor.markDailyReportActionDone(action))
+        XCTAssertTrue(
+            store.loadDailyReportCommandStates(dateKey: Date().dailyReportDateKey).isEmpty,
+            "hiding the report row without completing the related object is a fake 标记完成"
+        )
+    }
+
+    @MainActor
+    func testMarkAskDoneWithoutARelatedRowDoesNotHideTheAction() async throws {
+        let (store, monitor, root) = try harness()
+        defer { cleanup(store, root) }
+
+        let action = DailyReportAction(
+            content: "确认报价",
+            type: .ask,
+            urgency: .high,
+            sourceChatName: "同事",
+            sourceChatUsername: "wxid_debt",
+            relatedID: "missing-ask"
+        )
+        XCTAssertFalse(monitor.markDailyReportActionDone(action))
+        XCTAssertTrue(store.loadDailyReportCommandStates(dateKey: Date().dailyReportDateKey).isEmpty)
+    }
+
+    @MainActor
+    func testMarkCommitmentDoneWithoutARelatedRowDoesNotHideTheAction() async throws {
+        let (store, monitor, root) = try harness()
+        defer { cleanup(store, root) }
+
+        let action = DailyReportAction(
+            content: "周五交稿",
+            type: .commitment,
+            urgency: .high,
+            sourceChatName: "同事",
+            sourceChatUsername: "wxid_debt",
+            relatedID: "missing-commit"
+        )
+        XCTAssertFalse(monitor.markDailyReportActionDone(action))
+        XCTAssertTrue(store.loadDailyReportCommandStates(dateKey: Date().dailyReportDateKey).isEmpty)
+    }
+
+    @MainActor
+    func testDismissRiskDoesNotHideWhenTheWriteFails() async throws {
+        let (store, monitor, root) = try harness()
+        defer { cleanup(store, root) }
+
+        let risk = DailyReportRisk(
+            type: .failedAnalysis,
+            description: "有对话没分析完",
+            severity: .medium
+        )
+        store.close()
+        XCTAssertFalse(monitor.dismissDailyReportRisk(risk))
+    }
+
     // MARK: - Fixtures
 
     private func makeAction(

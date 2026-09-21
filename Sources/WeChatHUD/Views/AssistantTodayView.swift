@@ -26,6 +26,22 @@ struct AssistantTodayView: View {
     @State private var snoozeReceipt: String?
     @State private var revealedOriginalIDs: Set<String> = []
     @State private var readiness: OnboardingReadiness?
+    @State private var busyInboxID: String?
+    @State private var busyInboxKind: InboxBusyKind?
+
+    private enum InboxBusyKind {
+        case dismiss, snooze, restore
+
+        var help: String {
+            switch self {
+            case .dismiss: return "正在标为已处理"
+            case .snooze: return "正在保存稍后提醒"
+            case .restore: return "正在撤销刚才的操作"
+            }
+        }
+    }
+
+    private var inboxBusy: Bool { busyInboxID != nil }
 
     private var visible: [InboxItem] {
         let items = showUpdates ? monitor.inboxItems : TodayFeed.needsReply(monitor.inboxItems)
@@ -60,19 +76,14 @@ struct AssistantTodayView: View {
                             HStack(spacing: 8) { todayJumpPills }
                         }
                     }
-                    .companionStagger(index: 0)
                     if geometry.size.width >= 900 {
                         HStack(alignment: .top, spacing: 24) {
                             messageFeed.frame(maxWidth: .infinity)
-                                .companionStagger(index: 1)
                             companionRail.frame(width: 280)
-                                .companionStagger(index: 2)
                         }
                     } else {
                         messageFeed
-                            .companionStagger(index: 1)
                         companionRail
-                            .companionStagger(index: 2)
                     }
                 }
                 .workspacePage(WorkspacePage.wideWidth)
@@ -96,6 +107,7 @@ struct AssistantTodayView: View {
         .onChange(of: showMissed) { _, showing in
             panelState.todayShowsMissedReplies = showing
         }
+        .companionAnimation(CompanionMotion.pageChange(), value: showMissed)
         .onDisappear {
             panelState.todayShowsMissedReplies = false
         }
@@ -132,17 +144,17 @@ struct AssistantTodayView: View {
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
                 }
-                Button { showUpdates.toggle() } label: {
-                    HStack(spacing: 4) {
-                        Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
-                        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                if !showMissed {
+                    Button { showUpdates.toggle() } label: {
+                        HStack(spacing: 4) {
+                            Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(CompanionPalette.jadeInk)
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .buttonStyle(CompanionPressStyle())
                 }
-                .buttonStyle(.plain)
-                .disabled(showMissed)
-                .opacity(showMissed ? 0 : 1)
             }
             HStack(spacing: 9) {
                 Button { searchFocused = true } label: {
@@ -171,7 +183,7 @@ struct AssistantTodayView: View {
                             .frame(width: Self.inlineIconTarget, height: Self.inlineIconTarget)
                             .contentShape(Rectangle())
                     }
-                        .buttonStyle(.plain).accessibilityLabel("清除搜索")
+                        .buttonStyle(CompanionIconButtonStyle()).accessibilityLabel("清除搜索")
                         .help("清除搜索")
                 } else {
                     Text("⌘ F").font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
@@ -200,8 +212,9 @@ struct AssistantTodayView: View {
                     window: $missedWindow,
                     customStart: $missedCustomStart,
                     customEnd: $missedCustomEnd,
-                    query: query
+                    query: $query
                 )
+                .transition(.companionStatusReveal)
             } else if visible.isEmpty {
                 if let readiness {
                     let empty = FirstLaunchGuide.todayEmpty(
@@ -213,8 +226,12 @@ struct AssistantTodayView: View {
                         hasOpenTasks: TodayFeed.hasOpenWork(mine: mineTasks, waiting: waitingTasks, upcoming: upcoming),
                         hasOtherInboxItems: !showUpdates && TodayFeed.hasNonReplyUpdates(monitor.inboxItems)
                     )
+                    VStack(spacing: 12) {
                     ContentUnavailableView(empty.title, systemImage: query.isEmpty ? "tray" : "magnifyingglass", description: Text(empty.detail))
+                        todayEmptyAction(readiness: readiness)
+                    }
                         .frame(maxWidth: .infinity).padding(.vertical, 28).companionSurface()
+                        .transition(.companionStatusReveal)
                 }
             } else {
                 LazyVStack(spacing: 12) {
@@ -222,15 +239,38 @@ struct AssistantTodayView: View {
                         messageCard(item, expanded: expandedID == item.id || (expandedID == nil && item.id == visible.first?.id))
                     }
                 }
+                .transition(.companionStatusReveal)
             }
             if let dismissed {
                 HStack {
                     Label("已处理 · \(dismissed.chatName)", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(CompanionPalette.accent)
                     Spacer()
-                    Button("撤销") { if monitor.restoreInboxItem(dismissed) { self.dismissed = nil } }
+                    Button {
+                        commitInboxAction(id: dismissed.id, kind: .restore) {
+                            if monitor.restoreInboxItem(dismissed) { self.dismissed = nil }
+                        }
+                    } label: {
+                        Text(busyInboxKind == .restore ? "正在撤销…" : "撤销")
+                    }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .disabled(inboxBusy)
+                        .help(inboxBusy ? (busyInboxKind?.help ?? "") : "")
+                        .accessibilityHint(inboxBusy ? (busyInboxKind?.help ?? "") : "")
                 }.font(.callout).companionSurface(padding: 14)
-                    .transition(.opacity)
+                    .transition(.companionStatusReveal)
+            }
+            if let error = monitor.inboxActionError {
+                HStack {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("知道了") { monitor.inboxActionError = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                }.font(.callout).companionSurface(padding: 14)
+                    .transition(.companionStatusReveal)
             }
             if let snoozeReceipt {
                 HStack {
@@ -238,9 +278,15 @@ struct AssistantTodayView: View {
                         .foregroundStyle(CompanionPalette.jadeInk)
                     Spacer()
                     Button("知道了") { self.snoozeReceipt = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
                 }.font(.callout).companionSurface(padding: 14)
+                    .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: dismissed?.id)
+        .companionAnimation(CompanionMotion.ease(), value: snoozeReceipt)
+        .companionAnimation(CompanionMotion.ease(), value: monitor.inboxActionError)
     }
 
     private func collapsedSummary(_ summary: String) -> String {
@@ -274,8 +320,23 @@ struct AssistantTodayView: View {
     }
 
     private func snooze(_ item: InboxItem, until: Date) {
-        guard monitor.snoozeInboxItem(item, until: until) else { return }
-        snoozeReceipt = CompanionProductCopy.snoozeReceipt(until: until)
+        commitInboxAction(id: item.id, kind: .snooze) {
+            guard monitor.snoozeInboxItem(item, until: until) else { return }
+            snoozeReceipt = CompanionProductCopy.snoozeReceipt(until: until)
+        }
+    }
+
+    private func commitInboxAction(id: String, kind: InboxBusyKind, _ work: @escaping () -> Void) {
+        guard busyInboxID == nil else { return }
+        busyInboxID = id
+        busyInboxKind = kind
+        Task { @MainActor in
+            defer {
+                busyInboxID = nil
+                busyInboxKind = nil
+            }
+            work()
+        }
     }
 
     private var companionRail: some View {
@@ -306,14 +367,14 @@ struct AssistantTodayView: View {
                                     Text(commitment.deadlineLabel).font(.system(size: 11)).foregroundStyle(.secondary)
                                 }
                             }.frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(CompanionPressStyle())
+                        }.buttonStyle(CompanionRowPressStyle())
                         if commitment.id != upcoming.prefix(3).last?.id { Divider() }
                     }
                 }
                 Button { navigate(.commitments) } label: {
                     HStack { Text("查看我答应的事"); Spacer(); Image(systemName: "chevron.right") }
                         .font(.system(size: 12, weight: .medium))
-                }.buttonStyle(.borderless)
+                }.buttonStyle(CompanionRowPressStyle())
             }.companionSurface()
             connectionCard
             VStack(spacing: 0) {
@@ -337,7 +398,55 @@ struct AssistantTodayView: View {
                 Spacer()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
             }.padding(16).contentShape(Rectangle())
-        }.buttonStyle(CompanionPressStyle())
+        }.buttonStyle(CompanionRowPressStyle())
+    }
+
+    @ViewBuilder
+    private func todayEmptyAction(readiness: OnboardingReadiness) -> some View {
+        if !query.isEmpty {
+            Button("清除搜索") { query = "" }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("清除搜索")
+        } else if !readiness.hasSuccessfulSync {
+            Button("检查连接") { navigate(.system) }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("检查微信连接")
+        } else if readiness.followListUnreadable {
+            Button("再试一次") { refreshReadiness() }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+        } else if readiness.trackedConversationCount == 0 {
+            Button("关注谁") { navigate(.contacts) }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("去选要关注的对话")
+        } else if !showUpdates && TodayFeed.hasNonReplyUpdates(monitor.inboxItems) {
+            Button("全部") { withMotion(CompanionMotion.pageChange()) { showUpdates = true } }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("查看全部更新")
+        } else if TodayFeed.hasOpenWork(mine: mineTasks, waiting: waitingTasks, upcoming: upcoming) {
+            Button("我要做") { navigate(.tasks) }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("打开待办")
+        } else if !readiness.aiConfigurationValid || !readiness.aiConnectionTested {
+            Button("设置 AI") { navigate(.aiButler) }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("去设置 AI")
+        } else {
+            Button { monitor.refreshNow() } label: {
+                Label(isSyncing ? "正在同步…" : "查看新消息", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(CompanionPressStyle())
+            .foregroundStyle(CompanionPalette.jadeInk)
+            .disabled(isSyncing)
+            .help(isSyncing ? "正在读取新消息" : "")
+            .accessibilityHint(isSyncing ? "正在读取新消息" : "")
+            .accessibilityLabel("查看新消息")
+        }
     }
 
     private var connectionCard: some View {
@@ -356,28 +465,40 @@ struct AssistantTodayView: View {
             }
             HStack {
                 Button("检查连接") { navigate(.system) }
-                Button { monitor.refreshNow() } label: { Label("查看新消息", systemImage: "arrow.clockwise") }
+                    .buttonStyle(CompanionPressStyle())
+                Button { monitor.refreshNow() } label: { Label(isSyncing ? "正在同步…" : "查看新消息", systemImage: "arrow.clockwise") }
+                    .buttonStyle(CompanionPressStyle())
                     .disabled(isSyncing)
+                    .help(isSyncing ? "正在读取新消息" : "")
+                    .accessibilityHint(isSyncing ? "正在读取新消息" : "")
                 Spacer()
             }.controlSize(.small)
             if monitor.classificationPendingCount > 0 {
                 HStack {
                     Label(monitor.classificationProcessing ? "正在分析 \(monitor.classificationPendingCount) 条消息" : "\(monitor.classificationPendingCount) 条消息等待分析", systemImage: "sparkles")
                     Spacer()
-                    Button("重试分析") {
+                    Button(monitor.classificationProcessing ? "正在分析…" : "重试分析") {
                         do { try store.retryClassificationMessages(); monitor.drainClassificationQueue() }
                         catch { panelState.showToast("暂时无法重试，请检查本地数据连接") }
-                    }.disabled(monitor.classificationProcessing)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .disabled(monitor.classificationProcessing)
+                    .help(monitor.classificationProcessing ? "正在分析消息" : "")
+                    .accessibilityHint(monitor.classificationProcessing ? "正在分析消息" : "")
                 }.font(.callout).foregroundStyle(.secondary)
             }
             if monitor.discussionPendingCount > 0 {
                 HStack {
                     Label(monitor.discussionProcessing ? "正在从 \(monitor.discussionPendingCount) 条消息整理待办" : "\(monitor.discussionPendingCount) 条消息等待整理待办", systemImage: "checklist")
                     Spacer()
-                    Button("重试整理") {
+                    Button(monitor.discussionProcessing ? "正在整理…" : "重试整理") {
                         do { try monitor.retryDiscussionExtraction() }
                         catch { panelState.showToast("暂时无法重试整理，请检查本地数据连接") }
-                    }.disabled(monitor.discussionProcessing)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .disabled(monitor.discussionProcessing)
+                    .help(monitor.discussionProcessing ? "正在整理待办" : "")
+                    .accessibilityHint(monitor.discussionProcessing ? "正在整理待办" : "")
                 }.font(.callout).foregroundStyle(.secondary)
             }
             Divider()
@@ -385,8 +506,8 @@ struct AssistantTodayView: View {
                 Label("关注 \(store.whitelistCount()) 个对话", systemImage: "person.2")
                     .foregroundStyle(.secondary)
                 HStack(spacing: 14) {
-                    Button("关注谁") { navigate(.contacts) }.buttonStyle(.link)
-                    Button("设置 AI") { navigate(.aiButler) }.buttonStyle(.link)
+                    Button("关注谁") { navigate(.contacts) }.buttonStyle(CompanionPressStyle())
+                    Button("设置 AI") { navigate(.aiButler) }.buttonStyle(CompanionPressStyle())
                 }
             }
             .font(.callout)
@@ -401,9 +522,9 @@ struct AssistantTodayView: View {
         case .syncing: return "正在同步最新消息"
         case .idle: return "等待首次同步"
         case .stale: return "消息可能不是最新的"
-        case .waitingForWeChat: return "等待微信启动"
-        case .accountSwitched: return "当前数据目录已失效，请重新连接"
-        case .error: return "微信连接需要处理"
+       case .waitingForWeChat: return "等待微信启动"
+        case .accountSwitched: return CompanionInteractionCopy.accountSwitched
+       case .error: return "微信连接需要处理"
         }
     }
     private var syncColor: Color {
@@ -488,7 +609,7 @@ struct AssistantTodayView: View {
                     if !expanded { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary) }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionPressStyle())
 
             Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : collapsedSummary(item.aiSummary!)) : item.preview)
                 .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
@@ -510,13 +631,15 @@ struct AssistantTodayView: View {
                         Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jadeInk)
                         Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
                         Button(revealedOriginalIDs.contains(item.id) ? "收起原文" : "查看消息原文") {
-                            if revealedOriginalIDs.contains(item.id) {
-                                revealedOriginalIDs.remove(item.id)
-                            } else {
-                                revealedOriginalIDs.insert(item.id)
+                            withMotion(CompanionMotion.ease()) {
+                                if revealedOriginalIDs.contains(item.id) {
+                                    revealedOriginalIDs.remove(item.id)
+                                } else {
+                                    revealedOriginalIDs.insert(item.id)
+                                }
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionPressStyle())
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(CompanionPalette.jadeInk)
                         Spacer(minLength: 8)
@@ -526,6 +649,7 @@ struct AssistantTodayView: View {
                     if revealedOriginalIDs.contains(item.id) {
                         Text(item.preview).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
+                            .transition(.companionStatusReveal)
                     }
                 }
                HStack {
@@ -540,18 +664,35 @@ struct AssistantTodayView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                    .help("稍后提醒")
                     .accessibilityLabel("稍后提醒")
+                    .disabled(inboxBusy)
+                    .help(inboxBusy ? (busyInboxKind?.help ?? "稍后提醒") : "稍后提醒")
+                    .accessibilityHint(inboxBusy ? (busyInboxKind?.help ?? "") : "")
                     Spacer()
                     // 「标为已处理」, the same words the inbox row's action uses.
                     // On its own 「已处理」 reads as a status label, and this is a
                     // button that changes the status.
-                    Button("标为已处理") { if monitor.dismissInboxItem(item) { dismissed = item } }.buttonStyle(.bordered)
+                    Button {
+                        commitInboxAction(id: item.id, kind: .dismiss) {
+                            if monitor.dismissInboxItem(item) { dismissed = item }
+                        }
+                    } label: {
+                        Text(busyInboxID == item.id && busyInboxKind == .dismiss ? "正在处理…" : "标为已处理")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(inboxBusy)
+                    .help(inboxBusy ? (busyInboxKind?.help ?? "") : "")
+                    .accessibilityHint(inboxBusy ? (busyInboxKind?.help ?? "") : "")
                 }
                 .controlSize(.regular)
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: revealedOriginalIDs.contains(item.id))
+        .companionAnimation(CompanionMotion.rowExpand(), value: expanded)
         .companionSurface()
     }
 }

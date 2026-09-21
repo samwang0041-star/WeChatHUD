@@ -59,6 +59,13 @@ enum IslandContentChoreography {
         if !visible { return CompanionMotion.islandContentFadeOut() }
         return family == .body ? CompanionMotion.islandContentReveal() : nil
     }
+
+    /// Whether opening a body surface should go dark for one turn so the
+    /// delayed reveal can play. Reduce Motion has no delay and no fade, so
+    /// staging a 0 then a 1 would flash an empty island.
+    static func stagesBodyReveal(reduceMotion: Bool) -> Bool {
+        !reduceMotion
+    }
 }
 
 struct HUDRootView: View {
@@ -157,6 +164,12 @@ struct HUDRootView: View {
         .animation(nil, value: panelState.presentedState)
         .onChange(of: islandContentFamily) { _, family in
             guard family == .body else {
+                bodyContentRevealed = true
+                return
+            }
+            guard IslandContentChoreography.stagesBodyReveal(
+                reduceMotion: CompanionMotion.reduceMotion
+            ) else {
                 bodyContentRevealed = true
                 return
             }
@@ -282,7 +295,7 @@ private struct HUDMonitorSurface: View {
             if let notif = monitor.latestNotification {
                 StableNotificationBanner(notification: notif)
                     .id(notif.messageID)
-                    .transition(.scale(scale: 0.95, anchor: .top).combined(with: .opacity))
+                    .transition(.islandDetailReveal)
                     .onPreferenceChange(SizePreferenceKey.self) { size in
                         panelState.reportNotificationSize(size)
                     }
@@ -328,9 +341,37 @@ struct IslandToastContent: View {
     @EnvironmentObject var panelState: PanelState
     @EnvironmentObject var monitor: ChatMonitor
     let message: String
+    /// False when the window is already up (a replacement) or Reduce Motion
+    /// asked for a snap — the scale would otherwise replay from 0.95.
+    var playsEnter: Bool = true
+    @State private var landed: Bool
+
+    init(message: String, playsEnter: Bool = true) {
+        self.message = message
+        self.playsEnter = playsEnter
+        _landed = State(initialValue: !playsEnter || CompanionMotion.reduceMotion)
+    }
 
     var body: some View {
         toastView(message)
+            // Grows down from the island it hangs under, never from nothing.
+            .scaleEffect(toastSettled ? 1 : 0.95, anchor: .top)
+            .companionAnimation(
+                panelState.toastCollapsing ? CompanionMotion.exit() : CompanionMotion.enter(),
+                value: toastSettled
+            )
+            .onAppear {
+                guard !landed else { return }
+                landed = true
+            }
+    }
+
+    /// Enter lands at 1; exit shrinks back toward the island. Reduce Motion
+    /// stays settled so the window-alpha snap is the only change.
+    private var toastSettled: Bool {
+        if CompanionMotion.reduceMotion { return true }
+        if panelState.toastCollapsing { return false }
+        return landed
     }
 
     private func toastView(_ message: String) -> some View {
@@ -352,12 +393,18 @@ struct IslandToastContent: View {
             if snoozeUndo != nil {
                 Button("撤销") {
                     if let item = panelState.islandSnoozeUndo?.item {
-                        _ = monitor.restoreInboxItem(item)
+                        guard monitor.restoreInboxItem(item) else {
+                            panelState.showToast(
+                                monitor.inboxActionError ?? CompanionInteractionCopy.inboxRestoreFailed,
+                                duration: 5
+                            )
+                            return
+                        }
                     }
                     panelState.islandSnoozeUndo = nil
                     panelState.toastMessage = nil
                 }
-                .buttonStyle(CompanionPressStyle())
+                .buttonStyle(IslandRowButtonStyle())
                 .islandSection()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("撤销")
@@ -366,8 +413,10 @@ struct IslandToastContent: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(IslandInk.tertiary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(CompanionPressStyle())
+            .buttonStyle(IslandIconButtonStyle())
             .accessibilityLabel("关闭提示")
         }
         .accessibilityElement(children: .contain)

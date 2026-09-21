@@ -40,11 +40,13 @@ struct NotificationSettingsView: View {
                         Spacer()
                         Button("重试保存", action: save)
                     }.font(.callout)
+                    .transition(.companionStatusReveal)
                 } else {
                     Text(saved ? "设置已保存" : "更改会自动保存，即时生效")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(12)
+            .companionAnimation(CompanionMotion.ease(), value: error)
         }
         .onAppear {
             config = store.getSettingJSON("notification", as: NotificationConfig.self) ?? NotificationConfig()

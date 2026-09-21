@@ -20,11 +20,14 @@ struct MacExperienceSettingsView: View {
                 Toggle("登录时启动", isOn: Binding(get: { loginStatus == .enabled || loginStatus == .requiresApproval }, set: updateLogin))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .disabled(changingLogin || PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : (changingLogin ? "正在更改登录项" : ""))
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : (changingLogin ? "正在更改登录项" : ""))
             }
             if loginStatus == .requiresApproval {
                 Button("在系统设置中确认登录项") { SMAppService.openSystemSettingsLoginItems() }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 56).padding(.vertical, 10)
+                    .buttonStyle(CompanionPressStyle())
             }
             SettingsRowDivider()
             SettingsRow("微信操作权限", subtitle: "用于跳转到微信和发送回复；不影响读取聊天。",
@@ -36,7 +39,11 @@ struct MacExperienceSettingsView: View {
                         .foregroundStyle(accessibilityGranted ? CompanionPalette.jadeInk : .orange)
                     Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
                         openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-                    }.disabled(PreviewRuntime.isEnabled)
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .disabled(PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
                 }
             }
             if !accessibilityGranted {
@@ -58,6 +65,8 @@ struct MacExperienceSettingsView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 10)
@@ -74,6 +83,7 @@ struct MacExperienceSettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.bottom, 10)
+                .transition(.companionStatusReveal)
             }
             SettingsRowDivider()
             // 「接收待办提醒与重要更新。」 described a promise the app cannot
@@ -90,9 +100,15 @@ struct MacExperienceSettingsView: View {
                     if notificationStatus == .notDetermined {
                         Button("允许系统通知", action: requestNotifications)
                             .disabled(requestingNotifications || PreviewRuntime.isEnabled)
+                            .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : (requestingNotifications ? "正在请求通知权限" : ""))
+                            .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : (requestingNotifications ? "正在请求通知权限" : ""))
+                            .buttonStyle(CompanionPressStyle())
                     } else {
                         Button("管理通知") { openSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension") }
                             .disabled(PreviewRuntime.isEnabled)
+                    .help(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                    .accessibilityHint(PreviewRuntime.isEnabled ? "演示界面不会改系统权限" : "")
+                            .buttonStyle(CompanionPressStyle())
                     }
                 }
             }
@@ -126,9 +142,12 @@ struct MacExperienceSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.bottom, 12)
+                    .transition(.companionStatusReveal)
             }
         }
         .onAppear(perform: refresh)
+        .companionAnimation(CompanionMotion.ease(), value: errorMessage)
+        .companionAnimation(CompanionMotion.ease(), value: permissionCheckMessage)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
     }
 

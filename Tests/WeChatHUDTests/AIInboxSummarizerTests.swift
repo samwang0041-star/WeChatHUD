@@ -55,13 +55,27 @@ final class AIInboxSummarizerTests: XCTestCase {
         let summarizer = AIInboxSummarizer(store: store, aiService: makeAIService())
         let summary = await summarizer.summarize(makeContext(text: "内容无法显示"))
 
-        XCTAssertEqual(summary, "暂无可读内容")
+        XCTAssertEqual(summary, CompanionInteractionCopy.analysisNoMessages)
         XCTAssertTrue(URLRequestRecorder.capturedRequests.isEmpty)
         let audit = try XCTUnwrap(store.loadRecentAIAudit(role: .summarizer).first)
-        XCTAssertEqual(audit.outputText, AIAuditPrivacy.persistableText("暂无可读内容"))
+       XCTAssertEqual(audit.outputText, AIAuditPrivacy.persistableText(CompanionInteractionCopy.analysisNoMessages))
+   }
+
+    func testUnreadableSenderRoleDoesNotBecomeAcquaintanceInPrompt() async throws {
+        URLRequestRecorder.stubbedResponse = URLRequestRecorder.makeChatCompletionsResponse(
+            content: "等你发方案",
+            model: "actual-provider-model"
+        )
+        let summarizer = AIInboxSummarizer(store: store, aiService: makeAIService())
+        _ = await summarizer.summarize(makeContext(senderRole: nil))
+        let req = try XCTUnwrap(URLRequestRecorder.capturedRequests.first)
+        let body = requestBody(req)
+        let text = String(data: body, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("unknown"), text)
+        XCTAssertFalse(text.contains("acquaintance"), "unreadable role must not be written as 熟人")
     }
 
-    private func makeAIService() -> AIService {
+   private func makeAIService() -> AIService {
         var cfg = AIConfig()
         cfg.provider = AIProviderSlot(
             providerID: "custom",
@@ -73,8 +87,8 @@ final class AIInboxSummarizerTests: XCTestCase {
         return AIService(config: cfg)
     }
 
-    private func makeContext(text: String = "方案明天能发我吗？") -> InboxContext {
-        let now = Int(Date().timeIntervalSince1970)
+    private func makeContext(text: String = "方案明天能发我吗？", senderRole: ContactRole? = .colleague) -> InboxContext {
+       let now = Int(Date().timeIntervalSince1970)
         let trigger = MessageInfo(
             id: "msg-inbox",
             chatUsername: "chat1",
@@ -93,9 +107,9 @@ final class AIInboxSummarizerTests: XCTestCase {
             taggedTranscript: "张三: \(text)",
             myLastReply: nil,
             myLastReplyText: nil,
-            timeSinceMyLastReply: nil,
-            senderRole: .colleague,
-            senderAttentionLevel: .whitelist,
+           timeSinceMyLastReply: nil,
+            senderRole: senderRole,
+           senderAttentionLevel: .whitelist,
             senderReplyWindow: 120,
             isOverdue: false,
             overdueMinutes: 0,
@@ -116,8 +130,26 @@ final class AIInboxSummarizerTests: XCTestCase {
             mediaContextMessages: [],
             linkTitle: nil,
             linkDescription: nil,
-            linkURL: nil,
-            linkBodyText: nil
-        )
+           linkURL: nil,
+           linkBodyText: nil
+       )
+   }
+
+    private func requestBody(_ req: URLRequest) -> Data {
+        if let data = req.httpBody { return data }
+        if let stream = req.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buf = Data()
+            let chunk = 4096
+            var tmp = [UInt8](repeating: 0, count: chunk)
+            while stream.hasBytesAvailable {
+                let n = stream.read(&tmp, maxLength: chunk)
+                if n <= 0 { break }
+                buf.append(tmp, count: n)
+            }
+            return buf
+        }
+        return Data()
     }
 }

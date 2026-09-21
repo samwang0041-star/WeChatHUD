@@ -70,4 +70,17 @@ final class WhitelistAttentionFlipTests: XCTestCase {
         XCTAssertEqual(row.category, .life)
         XCTAssertEqual(row.attentionLevel, .vip)
     }
+    @MainActor
+    func testFailedAttentionWriteDoesNotPretendSuccess() throws {
+        let monitor = try prepare()
+        defer { cleanup() }
+        try store.exec("ALTER TABLE whitelist RENAME TO whitelist_hidden")
+        XCTAssertFalse(
+            monitor.updateWhitelistAttention(username: "peer", displayName: "同事",
+                                             isGroup: false, fallbackCategory: .work,
+                                             attentionLevel: .vip)
+        )
+        XCTAssertEqual(monitor.inboxActionError, CompanionInteractionCopy.followLevelFailed)
+    }
+
 }

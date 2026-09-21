@@ -579,7 +579,7 @@ actor AutopilotService {
         }
         if Self.withheldByPause(paused: paused, sessionOpen: sessionOpen,
                                 rowStillQueued: rowStillQueued) {
-            return .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在队列里。")
+            return .requeueUnchanged(reason: "自动驾驶暂停，这条没有发出，仍留在待确认列表里。")
         }
         // A muted conversation is not a place where a send can legitimately
         // fail: the gate refused it before any keystroke, and the row it
@@ -588,7 +588,7 @@ actor AutopilotService {
         // from a permission the user can revoke — unmuting would never give
         // the draft back. Same shape as the pause branch above (§179).
         if conversationMuted {
-            return .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在队列里。")
+            return .requeueUnchanged(reason: "这个对话已静音，这条没有发出，仍留在待确认列表里。")
         }
         if retryableReason { return .requeueUnchanged(reason: reason) }
         return .humanRequired(reason: Self.joinSendFailure(reason, "已转为人工确认"))
@@ -1053,7 +1053,7 @@ actor AutopilotService {
                 ? "这条已经不在待确认列表里了，没有敲键。请刷新后重新选择。"
                 : alreadyInFlight
                   ? "这条正在发送中，没有重复敲键。"
-                  : "读不到这条的队列孪生，为了不发第二遍，这条没有敲键。请重试一次。"
+                  : "读不到这条的发送状态，为了不发第二遍，这条没有敲键。请重试一次。"
             print("[WCHUD] Autopilot: approval blocked — \(refusal)")
             return .refused(refusal)
         }
@@ -1263,7 +1263,7 @@ actor AutopilotService {
         }
         return flipFailed
             ? .held(reason: heldTwin == nil
-                ? "取消没能落库，而且这条没有可持有的队列行：它并没有被记成已撤回。请再按一次「取消本条」，并核对微信里是否已经发出。"
+                ? "取消没能记下，而且这条没有可撤回的待发记录。请再按一次「取消本条」，并核对微信里是否已经发出。"
                 : "取消没能落库：这条已经按住，不会自动发出，但请先在微信里核对它是否已经送达。")
             : .withdrawn
     }
@@ -1426,10 +1426,9 @@ actor AutopilotService {
 
         let contextText: String
         if let target = targetMsg {
-            let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
-                guard let contact = store.getContact(username: username) else { return nil }
-                return (contact.attentionLevel, contact.role)
-            }
+           let contactLookup: ContextWindowBuilder.ContactLookup = { [store] username in
+                store.contextContactAnnotation(username)
+           }
             let chatType: ChatType = representative.isGroup ? .group : .privateChat
             let window = ContextWindowBuilder.build(
                 target: target, role: .autopilot, allMessages: allMessages,
@@ -1696,9 +1695,7 @@ actor AutopilotService {
             return makeLogEntry(
                 sessionId: sessionId, msg: representative, action: .skipped,
                 reply: nil, confidence: decision.confidence, risk: risk,
-                reasoning: decision.actionUnrecognized
-                    ? "AI 返回了无法识别的动作「\(decision.action ?? "nil")」，不进入发送队列: \(decision.reasoning)"
-                    : "AI未明确发送意图 (action=\(decision.action ?? "nil"))，不进入发送队列: \(decision.reasoning)"
+                reasoning: "AI 没给出明确的发送决定，这条没有放进待确认列表。"
             )
         }
 
@@ -1884,7 +1881,7 @@ actor AutopilotService {
                     )
                     if verified { ok = true; outgoingMsgUID = uid; break }
                     if attempt == 2 {
-                        failureMessage = "发送后未在微信数据库中确认"
+                        failureMessage = CompanionProductCopy.sendUncertain
                         // The keys went in; only the receipt is missing. This is
                         // the one failure the withdrawal branches must never
                         // treat as 「什么都没发」.
@@ -1910,7 +1907,7 @@ actor AutopilotService {
                 }
                 verified = ok
             } else {
-                failureMessage = uiResult.failureMessage ?? "微信 UI 发送失败"
+                failureMessage = uiResult.failureMessage ?? "没能在微信里发出去"
                 print("[WCHUD] Autopilot: UI send failed — \(failureMessage ?? "unknown")")
                 verified = false
             }
@@ -2128,7 +2125,7 @@ actor AutopilotService {
         }
         if logLanded && deleteLanded { return .withdrawn }
         return .held(reason: logLanded
-            ? "审计行改了，但队列行没能删掉：这条仍留在队列里，请再按一次取消。"
+            ? "取消只记了一半：这条仍留在待确认列表里，请再按一次取消。"
             : "取消没能落库：这条仍然待发。请再按一次取消；在它消失之前，别当成已经撤回。")
     }
 
@@ -2166,7 +2163,7 @@ actor AutopilotService {
         // Fix 3: don't remove from queue if paused — keep it safe
         guard !isPaused else {
             print("[WCHUD] Autopilot: sendNow blocked — user is active, message stays in queue")
-            return .blocked("用户正在活动，已保留在队列")
+            return .blocked("你正在用微信，这条先留着没发。")
         }
         guard let idx = pendingSendQueue.firstIndex(where: { $0.id == id }) else { return .notFound }
         let item = pendingSendQueue[idx]
@@ -2203,7 +2200,7 @@ actor AutopilotService {
         }
         guard !isPaused else {
             print("[WCHUD] Autopilot: editAndSend blocked — user is active")
-            return .blocked("用户正在活动，已保留在队列")
+            return .blocked("你正在用微信，这条先留着没发。")
         }
         guard let existing = pendingSendQueue.first(where: { $0.id == id }) else { return .notFound }
         // Same two durable refusals as 立即发送: 「编辑并发送」 is a send, and an
@@ -2353,7 +2350,7 @@ actor AutopilotService {
         // the watermark, type nothing.
         if conversationIsMuted(item.chatUsername) {
             pendingSendQueue.append(item)
-            return .blocked("这个对话已静音，这条没有发出，仍留在队列里。")
+            return .blocked("这个对话已静音，这条没有发出，仍留在待确认列表里。")
         }
         guard config.maxSendsPerSession <= 0 || sessionSent < config.maxSendsPerSession else {
             print("[WCHUD] Autopilot: queued send blocked — session cap reached")
@@ -2438,7 +2435,7 @@ actor AutopilotService {
             return .sent
         }
         var retained = item
-        let failureReason = attempt.failureMessage ?? "发送结果无法确认"
+        let failureReason = attempt.failureMessage ?? CompanionProductCopy.sendUncertain
         let disposition = Self.sendFailureDisposition(
             paused: isPaused,
             sessionOpen: sessionId != nil,
@@ -2470,7 +2467,7 @@ actor AutopilotService {
             if forceManualOnly, retained.manualOnlyReason == nil {
                 retained.autoSendAttempts += 1
                 retained.manualOnlyReason = Self.joinSendFailure(
-                    failureReason, "队列状态读不到，只能人工确认"
+                    failureReason, "发送状态读不到，只能人工确认"
                 )
             }
         }
@@ -2672,10 +2669,15 @@ actor AutopilotService {
             // Fix 2: skip contacts already proactively contacted this session
             guard !proactiveContactsSent.contains(entry.id) else { continue }
 
-            // ContactRole filter: only friend/family for now
-            let contact = store.getContact(username: entry.id)
-            let role = contact?.role ?? .acquaintance
-            guard role == .friend || role == .family else { continue }
+           // ContactRole filter: only friend/family for now
+
+            // getContact nil is both absent and unreadable. Inventing
+            // acquaintance here would skip a family row for this cycle
+            // (harmless) but also feed 熟人 into the style hint if we ever
+            // broaden the filter. Unreadable must wait for a real read.
+            guard let role = InboxContextBuilder.resolvedSenderRole(
+                store: store, chatUsername: entry.id
+            ), Self.allowsProactiveOutreach(role: role) else { continue }
 
             guard let memory = store.loadConversationMemory(chatUsername: entry.id) else { continue }
 
@@ -2972,10 +2974,18 @@ actor AutopilotService {
         return nil
     }
 
-    // MARK: - Per-contact style hint
+   // MARK: - Per-contact style hint
 
-    /// Build a natural-language hint about the user's style with this specific contact.
-    private nonisolated static func buildContactStyleHint(
+    /// Only friend/family get unsolicited pings. Unreadable (nil) is not acquaintance.
+    static func allowsProactiveOutreach(role: ContactRole?) -> Bool {
+        switch role {
+        case .friend, .family: return true
+        default: return false
+        }
+    }
+
+   /// Build a natural-language hint about the user's style with this specific contact.
+   private nonisolated static func buildContactStyleHint(
         style: StyleProfiler.StyleProfile,
         contactRole: ContactRole
     ) -> String {
@@ -3159,4 +3169,3 @@ actor AutopilotService {
         )
     }
 }
-

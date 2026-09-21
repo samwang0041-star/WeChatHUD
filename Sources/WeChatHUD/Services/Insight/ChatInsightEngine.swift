@@ -181,12 +181,12 @@ enum ChatStatsEngine {
 
         // D4: Relationship Network
         let topContacts: [(name: String, count: Int, isGroup: Bool)]
-        let oneWayChats: [(name: String, theirCount: Int, myCount: Int)]
-        let neglectedVIPs: [(name: String, lastMsgAge: Int)]
+        let oneWayChats: [(chatUsername: String, name: String, theirCount: Int, myCount: Int)]
+        let neglectedVIPs: [(chatUsername: String, name: String, lastMsgAge: Int)]
         let tierDistribution: [(tier: String, count: Int)]
         let roleDistribution: [(role: String, count: Int)]
-        let mostSymmetric: (name: String, ratio: Double)?
-        let leastSymmetric: (name: String, ratio: Double)?
+        let mostSymmetric: (chatUsername: String, name: String, ratio: Double)?
+        let leastSymmetric: (chatUsername: String, name: String, ratio: Double)?
 
         // D5: Work/Life Balance
         let workMessages: Int
@@ -212,8 +212,8 @@ enum ChatStatsEngine {
 
         // D8: Attention Distribution
         let vipMessageRatio: Double         // VIP messages / total
-        let topTimeBlackHoles: [(name: String, count: Int)]  // chats consuming most time
-        let neglectedHighValue: [(name: String, role: String)]  // important but low interaction
+        let topTimeBlackHoles: [(chatUsername: String, name: String, count: Int)]
+        let neglectedHighValue: [(chatUsername: String, name: String, role: String)]
 
         // D9: Communication Style
         let avgMessagesPerChat: Double
@@ -312,10 +312,10 @@ enum ChatStatsEngine {
         let oneWay = statsArr.filter { s in
             let others = s.messageCount - s.myMessageCount
             return others > 10 && s.myMessageCount < others / 4
-        }.map { (name: $0.chatName, theirCount: $0.messageCount - $0.myMessageCount, myCount: $0.myMessageCount) }
-        let neglectedVIPs = vipUsernames.compactMap { vip -> (name: String, lastMsgAge: Int)? in
+        }.map { (chatUsername: $0.chatUsername, name: $0.chatName, theirCount: $0.messageCount - $0.myMessageCount, myCount: $0.myMessageCount) }
+        let neglectedVIPs = vipUsernames.compactMap { vip -> (chatUsername: String, name: String, lastMsgAge: Int)? in
             guard let s = allStats[vip], s.messageCount == 0 else { return nil }
-            return (name: s.chatName, lastMsgAge: 999999)
+            return (chatUsername: vip, name: s.chatName, lastMsgAge: 999999)
         }
         var tierCounts: [String: Int] = [:]
         var roleCounts: [String: Int] = [:]
@@ -324,8 +324,8 @@ enum ChatStatsEngine {
             $0.messageCount >= 5 && !$0.isGroup && !selfUsernames.contains($0.chatUsername)
             && $0.myMessageCount > 0 && $0.myMessageCount < $0.messageCount
         }
-        let mostSym = symmetricStats.max(by: { $0.symmetryRatio < $1.symmetryRatio }).map { (name: $0.chatName, ratio: $0.symmetryRatio) }
-        let leastSym = symmetricStats.filter { $0.symmetryRatio < 0.9 }.min(by: { $0.symmetryRatio < $1.symmetryRatio }).map { (name: $0.chatName, ratio: $0.symmetryRatio) }
+        let mostSym = symmetricStats.max(by: { $0.symmetryRatio < $1.symmetryRatio }).map { (chatUsername: $0.chatUsername, name: $0.chatName, ratio: $0.symmetryRatio) }
+        let leastSym = symmetricStats.filter { $0.symmetryRatio < 0.9 }.min(by: { $0.symmetryRatio < $1.symmetryRatio }).map { (chatUsername: $0.chatUsername, name: $0.chatName, ratio: $0.symmetryRatio) }
 
         // D5: Work/Life Balance
         let workCount = statsArr.filter { $0.category == .work }.reduce(0) { $0 + $1.messageCount }
@@ -378,11 +378,11 @@ enum ChatStatsEngine {
         let vipMsgs = vipUsernames.reduce(0) { $0 + (allStats[$1]?.messageCount ?? 0) }
         let vipRatio = totalMessages > 0 ? Double(vipMsgs) / Double(totalMessages) : 0
         let timeBlackHoles = statsArr.sorted { $0.messageCount > $1.messageCount }.prefix(5)
-            .map { (name: $0.chatName, count: $0.messageCount) }
+            .map { (chatUsername: $0.chatUsername, name: $0.chatName, count: $0.messageCount) }
         let neglectedHigh = contacts.filter { c in
             (c.attentionLevel == .vip || c.role == .boss || c.role == .keyClient)
             && (allStats[c.username]?.messageCount ?? 0) == 0
-        }.map { (name: $0.displayName, role: $0.role.label) }
+        }.map { (chatUsername: $0.username, name: $0.displayName, role: $0.role.label) }
 
         // D9: Communication Style
         let avgPerChat = activeChats > 0 ? Double(totalMessages) / Double(activeChats) : 0

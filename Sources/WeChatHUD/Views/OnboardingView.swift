@@ -77,7 +77,14 @@ struct OnboardingView: View {
                     default: whitelistGuide
                     }
                     if let saveError {
-                        Text(saveError).font(.callout).foregroundStyle(.red)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(saveError).font(.callout).foregroundStyle(.red)
+                            Button("重试") { retrySaveError() }
+                                .buttonStyle(CompanionPressStyle())
+                                .foregroundStyle(CompanionPalette.jadeInk)
+                                .accessibilityLabel("重试刚才没完成的一步")
+                        }
+                        .transition(.companionStatusReveal)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -86,8 +93,7 @@ struct OnboardingView: View {
             Divider()
             HStack {
                 if step > 0 {
-                    Button(FirstLaunchGuide.backCTA) { step -= 1; refresh() }
-                        .keyboardShortcut(.cancelAction)
+                    Button(FirstLaunchGuide.backCTA) { goBack(animated: true) }
                 } else {
                     // Opening the workspace without writing the onboarded
                     // marker keeps the introduction available next launch.
@@ -101,16 +107,29 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                 }
                 Button(primaryCTA) {
-                    if step == 0 { step = 1; refresh() }
-                    else { finish(openWorkspace: true) }
+                    goForward(animated: true)
                 }
                 // The wizard has exactly one next step on screen, so it gets
                 // the lit treatment. A .borderedProminent button is correct
                 // inside a form; as the single decision on a full page it
                 // looked like one more control among several.
                 .buttonStyle(CompanionGlowButtonStyle(tint: CompanionPalette.jade))
-                .keyboardShortcut(.defaultAction)
-                .disabled(step == 0 && !(readiness?.hasSuccessfulSync ?? false) && !PreviewRuntime.isEnabled)
+                .disabled(continueBlocked)
+                .help(continueBlocked ? (footerHint ?? "连上微信后才能继续") : "")
+                .accessibilityHint(continueBlocked ? (footerHint ?? "连上微信后才能继续") : "")
+            }
+            .background {
+                Button("继续") { goForward(animated: false) }
+                    .keyboardShortcut(.defaultAction)
+                    .hidden()
+                    .accessibilityHidden(true)
+                    .disabled(continueBlocked)
+                if step > 0 {
+                    Button("返回") { goBack(animated: false) }
+                        .keyboardShortcut(.cancelAction)
+                        .hidden()
+                        .accessibilityHidden(true)
+                }
             }
             .controlSize(.regular)
             .padding(20)
@@ -120,7 +139,8 @@ struct OnboardingView: View {
         // temperature is the entire job.
         .background(CompanionBackdrop(tint: CompanionPalette.jade, intensity: 1.5))
         .tint(CompanionPalette.accent)
-        .companionAnimation(CompanionMotion.ease(0.15), value: step)
+        .companionAnimation(CompanionMotion.pageChange(), value: step)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(for: .hudOnboardingAdvance)) { _ in
             guard step == 0 else { return }
@@ -136,11 +156,15 @@ struct OnboardingView: View {
         FirstLaunchGuide.primaryCTA(forStep: step)
     }
 
+    private var continueBlocked: Bool {
+        step == 0 && !(readiness?.hasSuccessfulSync ?? false) && !PreviewRuntime.isEnabled
+    }
+
     private var footerHint: String? {
-        if step == 0 && !(readiness?.hasSuccessfulSync ?? false) && !PreviewRuntime.isEnabled {
+        if continueBlocked {
             return "连上微信后才能继续"
         }
-        if step == 1 && (readiness?.trackedConversationCount ?? 0) == 0 {
+        if step == 1 && !(readiness?.followListUnreadable ?? false) && (readiness?.trackedConversationCount ?? 0) == 0 {
             return FirstLaunchGuide.contactsSkipHint
         }
         return nil
@@ -254,6 +278,20 @@ struct OnboardingView: View {
 
 
 
+    private func goForward(animated: Bool) {
+        withMotion(animated ? CompanionMotion.pageChange() : nil) {
+            if step == 0 { step = 1; refresh() }
+            else { finish(openWorkspace: true) }
+        }
+    }
+
+    private func goBack(animated: Bool) {
+        withMotion(animated ? CompanionMotion.pageChange() : nil) {
+            step -= 1
+            refresh()
+        }
+    }
+
     private func refresh() {
         let scanned = PreviewRuntime.isEnabled ? [] : WeChatReader.databaseCandidates()
         candidates = scanned
@@ -282,6 +320,16 @@ struct OnboardingView: View {
         state.pendingSettingsTab = tab
         state.showDetail()
         return true
+    }
+
+    private func retrySaveError() {
+        let retryFinish = saveError?.contains("介绍进度") == true
+        saveError = nil
+        if retryFinish {
+            finish(openWorkspace: true)
+        } else {
+            _ = openSettings(step == 1 ? "contacts" : "today")
+        }
     }
 
     private func finish(openWorkspace: Bool, markOnboarded: Bool = true) {

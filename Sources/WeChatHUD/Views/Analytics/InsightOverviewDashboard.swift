@@ -4,13 +4,19 @@ struct InsightOverviewDashboard: View {
     @ObservedObject var insightStore: InsightStore
     @ObservedObject var insightCoordinator: InsightCoordinator
     @ObservedObject var store: HUDStore
+    @EnvironmentObject var panelState: PanelState
     let onRefresh: () -> Void
-    let onCopyReport: () -> Void
     let onSelectChat: (String) -> Void
     let onExpandModule: (String) -> Void
     @Binding var selectedDate: Date
     @Binding var expandedRadarFindingID: String?
     @Binding var expandedModules: Set<String>
+    @State private var copyFeedback: CopyFeedback = .idle
+    @State private var copyGeneration = UUID()
+
+    private enum CopyFeedback: Equatable {
+        case idle, copied, failed
+    }
 
     var body: some View {
         ScrollView {
@@ -24,16 +30,79 @@ struct InsightOverviewDashboard: View {
                         // Telling someone to connect WeChat when they have
                         // watched chats and just picked an empty range is a
                         // wrong instruction. The whitelist is the signal.
-                        let hasWatchedChats = !store.getWhitelist().isEmpty
-                        ContentUnavailableView("这里还没有可以回顾的聊天", systemImage: "bubble.left.and.text.bubble.right",
-                            description: Text(hasWatchedChats
-                                ? "换一个时间范围或日期再看看。这里空着，不代表你没有该回或该做的事。"
-                                : "先连上微信，再选要关注的对话。空着不代表你没有该回或该做的事。"))
-                            .padding(.vertical, 48)
+                       let followRead = store.whitelistAllRead()
+                       let followListUnreadable = {
+                           if case .unreadable = followRead { return true }
+                           return false
+                       }()
+                       let hasWatchedChats: Bool = {
+                           if case .value(let entries) = followRead { return !entries.isEmpty }
+                           return false
+                       }()
+                       VStack(spacing: 12) {
+                           ContentUnavailableView("这里还没有可以回顾的聊天", systemImage: "bubble.left.and.text.bubble.right",
+                                description: Text(followListUnreadable
+                                    ? "暂时读不到关注名单，这一页的范围先不要采信。"
+                                    : hasWatchedChats
+                                   ? "换一个时间范围或日期再看看。这里空着，不代表你没有该回或该做的事。"
+                                   : "先连上微信，再选要关注的对话。空着不代表你没有该回或该做的事。"))
+                            if followListUnreadable {
+                                Button("再试一次") { onRefresh() }
+                                    .buttonStyle(CompanionPressStyle())
+                                    .foregroundStyle(CompanionPalette.jadeInk)
+                            } else if !hasWatchedChats {
+                                Button("关注谁") {
+                                    panelState.pendingSettingsTab = SettingsView.Tab.contacts.rawValue
+                                }
+                                .buttonStyle(CompanionPressStyle())
+                                .foregroundStyle(CompanionPalette.jadeInk)
+                                .accessibilityLabel("去选要关注的对话")
+                            }
+                            else {
+                                HStack(spacing: 12) {
+                                    if insightStore.selectedWindow != .today || !Calendar.current.isDateInToday(selectedDate) {
+                                        Button("看今天") {
+                                            withMotion(CompanionMotion.pageChange()) {
+                                                insightStore.selectedWindow = .today
+                                                selectedDate = Date()
+                                            }
+                                        }
+                                        .buttonStyle(CompanionPressStyle())
+                                        .foregroundStyle(CompanionPalette.jadeInk)
+                                        .accessibilityLabel("看今天的聊天回顾")
+                                    } else {
+                                        Button("近 7 天") {
+                                            withMotion(CompanionMotion.pageChange()) {
+                                                insightStore.selectedWindow = .week
+                                            }
+                                        }
+                                        .buttonStyle(CompanionPressStyle())
+                                        .foregroundStyle(CompanionPalette.jadeInk)
+                                        .accessibilityLabel("看近 7 天的聊天回顾")
+                                    }
+                                    if insightStore.selectedScope != .all {
+                                        Button("所有人") {
+                                            withMotion(CompanionMotion.pageChange()) {
+                                                insightStore.selectedScope = .all
+                                            }
+                                        }
+                                        .buttonStyle(CompanionPressStyle())
+                                        .foregroundStyle(CompanionPalette.jadeInk)
+                                        .accessibilityLabel("看所有人的聊天回顾")
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 48)
                     } else {
-                    InsightRadarSection(
-                        chatInsights: insightCoordinator.chatInsights,
-                        chatNames: insightChatNameMap(),
+                   InsightRadarSection(
+                       chatInsights: insightCoordinator.chatInsights,
+                        chatNames: insightStore.chatNameMap(whitelist: {
+                            switch store.whitelistAllRead() {
+                            case .value(let entries): return entries
+                            case .unreadable: return []
+                            }
+                        }()),
                         overview: overview,
                         briefing: insightCoordinator.globalBriefing,
                         expandedFindingID: $expandedRadarFindingID,
@@ -71,6 +140,17 @@ struct InsightOverviewDashboard: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
     }
 
+    private var insightRefreshHoldReason: String? {
+        if insightCoordinator.insightLoading { return "正在分析…" }
+        if (insightStore.overview?.totalMessages ?? 0) == 0 { return "还没有消息可以分析" }
+        return nil
+    }
+
+    private var insightCopyHoldReason: String? {
+        if (insightStore.overview?.totalMessages ?? 0) == 0 { return "还没有消息可以复制" }
+        return nil
+    }
+
     private var overviewHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -104,15 +184,26 @@ struct InsightOverviewDashboard: View {
                     Button(action: onRefresh) {
                         Image(systemName: insightCoordinator.insightLoading ? "stop.circle" : "arrow.clockwise")
                             .font(.system(size: 11))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                    .disabled(insightCoordinator.insightLoading || (insightStore.overview?.totalMessages ?? 0) == 0)
-                    .help("重新生成今日 AI 态势")
-                    Button(action: onCopyReport) {
-                        Image(systemName: "doc.on.doc")
+                    .buttonStyle(CompanionIconButtonStyle())
+                    .disabled(insightRefreshHoldReason != nil)
+                    .help(insightRefreshHoldReason ?? "重新生成今日 AI 态势")
+                    .accessibilityHint(insightRefreshHoldReason ?? "")
+                    Button(action: copyOverviewReport) {
+                        overviewCopyIcon
                             .font(.system(size: 11))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
-                    .disabled((insightStore.overview?.totalMessages ?? 0) == 0)
-                    .help("复制为 Markdown 总结")
+                    .buttonStyle(CompanionIconButtonStyle())
+                    .disabled(insightCopyHoldReason != nil)
+                    .help(overviewCopyHelp)
+                    .accessibilityLabel("复制为 Markdown 总结")
+                    .accessibilityHint(overviewCopyHelp)
+                    .accessibilityValue(overviewCopyValue)
+                    .companionAnimation(CompanionMotion.ease(), value: copyFeedback)
                 }
                 Picker("", selection: $insightStore.selectedWindow) {
                     ForEach(InsightTimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -171,19 +262,19 @@ struct InsightOverviewDashboard: View {
                 .filter { isConcreteFocusSource($0.source) }
             if !aiItems.isEmpty {
                 ForEach(Array(aiItems.prefix(3).enumerated()), id: \.offset) { _, item in
-                    decisionCard(title: item.source, subtitle: item.what, meta: item.urgency, color: item.urgency == "高" ? .red : item.urgency == "中" ? .orange : .blue, icon: "arrowshape.turn.up.right.fill", action: { onSelectChat(item.source) })
+                    decisionCard(title: item.source, subtitle: item.what, meta: item.urgency, color: item.urgency == "高" ? .red : item.urgency == "中" ? .orange : .blue, icon: "arrowshape.turn.up.right.fill", action: { onSelectChat(item.chatUsername ?? item.source) })
                 }
             }
 
             if !overview.neglectedHighValue.isEmpty {
                 ForEach(Array(overview.neglectedHighValue.prefix(aiItems.isEmpty ? 3 : 2).enumerated()), id: \.offset) { _, item in
-                    decisionCard(title: item.name, subtitle: "重要联系人近期互动偏少", meta: item.role, color: .orange, icon: "person.crop.circle.badge.exclamationmark", action: { onSelectChat(item.name) })
+                    decisionCard(title: item.name, subtitle: "重要联系人近期互动偏少", meta: item.role, color: .orange, icon: "person.crop.circle.badge.exclamationmark", action: { onSelectChat(item.chatUsername) })
                 }
             }
 
             if aiItems.isEmpty && overview.neglectedHighValue.isEmpty {
                 ForEach(Array(overview.topTimeBlackHoles.prefix(3).enumerated()), id: \.offset) { _, item in
-                    decisionCard(title: item.name, subtitle: "今天占用注意力较多，适合快速确认是否需要跟进", meta: "\(item.count) 条消息", color: .blue, icon: "bubble.left.and.text.bubble.right", action: { onSelectChat(item.name) })
+                    decisionCard(title: item.name, subtitle: "今天占用注意力较多，适合快速确认是否需要跟进", meta: "\(item.count) 条消息", color: .blue, icon: "bubble.left.and.text.bubble.right", action: { onSelectChat(item.chatUsername) })
                 }
             }
         }
@@ -216,26 +307,30 @@ struct InsightOverviewDashboard: View {
                 }
             } else {
                 ForEach(Array(candidates), id: \.chatUsername) { stats in
-                    HStack(spacing: 8) {
-                        Image(systemName: stats.isGroup ? "person.3" : "person")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(stats.chatName)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(1)
-                            Text("\(stats.messageCount) 条消息 · 暂无强行动信号")
-                                .font(.system(size: 10))
+                    Button(action: { onSelectChat(stats.chatUsername) }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: stats.isGroup ? "person.3" : "person")
+                                .font(.system(size: 11))
                                 .foregroundColor(.secondary)
+                                .frame(width: 16)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(stats.chatName)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .lineLimit(1)
+                                Text("\(stats.messageCount) 条消息 · 没有强行动信号")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.secondary.opacity(0.55))
                         }
-                        Spacer()
-                        Button("查看") { onSelectChat(stats.chatUsername) }
-                            .font(.system(size: 10))
-                            .buttonStyle(.plain)
-                            .foregroundColor(.accentColor)
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 3)
+                    .buttonStyle(CompanionRowPressStyle())
+                    .accessibilityLabel("查看 \(stats.chatName)")
                 }
             }
         }
@@ -307,8 +402,8 @@ struct InsightOverviewDashboard: View {
                 if let sym = o.mostSymmetric, let asym = o.leastSymmetric {
                     Divider()
                     HStack(spacing: 10) {
-                        relRow(label: "最均衡", name: sym.name, ratio: sym.ratio, good: true)
-                        relRow(label: "最失衡", name: asym.name, ratio: asym.ratio, good: false)
+                        relRow(label: "最均衡", name: sym.name, ratio: sym.ratio, good: true, chatUsername: sym.chatUsername)
+                        relRow(label: "最失衡", name: asym.name, ratio: asym.ratio, good: false, chatUsername: asym.chatUsername)
                     }
                 }
                 if !o.oneWayChats.isEmpty {
@@ -317,17 +412,22 @@ struct InsightOverviewDashboard: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(.secondary)
                     ForEach(o.oneWayChats.prefix(3), id: \.name) { c in
-                        HStack {
-                            Button(action: { onSelectChat(c.name) }) {
+                        Button(action: { onSelectChat(c.chatUsername) }) {
+                            HStack {
                                 Text(c.name).font(.system(size: 12)).lineLimit(1)
+                                Spacer()
+                                Text("对方 \(c.theirCount) / 你 \(c.myCount)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.secondary.opacity(0.55))
                             }
-                            .buttonStyle(.plain)
-                            Spacer()
-                            Text("对方 \(c.theirCount) / 你 \(c.myCount)")
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            .padding(.vertical, 1)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 1)
+                        .buttonStyle(CompanionRowPressStyle())
+                        .accessibilityLabel("查看 \(c.name)")
                     }
                 }
             }
@@ -399,7 +499,7 @@ struct InsightOverviewDashboard: View {
                         topChatRow(rank: idx + 1, stats: s)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionRowPressStyle())
                 }
             }
         }
@@ -424,7 +524,7 @@ struct InsightOverviewDashboard: View {
         let expanded = PreviewRuntime.expandsAllOverviewModules || expandedModules.contains(id)
         return VStack(alignment: .leading, spacing: 0) {
             Button(action: {
-                withMotion(CompanionMotion.ease(0.18)) {
+                withMotion(CompanionMotion.ease()) {
                     if expanded { expandedModules.remove(id) }
                     else { expandedModules.insert(id) }
                 }
@@ -453,14 +553,16 @@ struct InsightOverviewDashboard: View {
                 .padding(.vertical, 10)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionRowPressStyle())
             if expanded {
                 Divider().background(Color.primary.opacity(0.05))
                 content()
                     .padding(14)
+                    .transition(.companionStatusReveal)
             }
         }
         .companionPanelFace()
+        .companionAnimation(CompanionMotion.ease(), value: expanded)
     }
 
     private func isConcreteFocusSource(_ source: String) -> Bool {
@@ -526,7 +628,7 @@ struct InsightOverviewDashboard: View {
             .cornerRadius(9)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
     }
 
     private func tinyRow(label: String, count: Int) -> some View {
@@ -537,15 +639,20 @@ struct InsightOverviewDashboard: View {
         }
     }
 
-    private func relRow(label: String, name: String, ratio: Double, good: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-            Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            Text("对等度 \(Int(ratio * 100))%")
-                .font(.system(size: 10))
-                .foregroundColor(good ? .green : .orange)
+    private func relRow(label: String, name: String, ratio: Double, good: Bool, chatUsername: String) -> some View {
+        Button(action: { onSelectChat(chatUsername) }) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text("对等度 \(Int(ratio * 100))%")
+                    .font(.system(size: 10))
+                    .foregroundColor(good ? .green : .orange)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(CompanionRowPressStyle())
+        .accessibilityLabel("查看 \(name)")
     }
 
     private func weekdayBars(_ messagesByWeekday: [Int]) -> some View {
@@ -630,27 +737,33 @@ struct InsightOverviewDashboard: View {
                 .foregroundColor(.secondary)
                 .frame(width: 16)
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(categoryColor(stats.category).opacity(0.15))
-                    .frame(width: 24, height: 24)
-                Text(String(stats.chatName.prefix(1)))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(categoryColor(stats.category))
-            }
+           ZStack {
+               RoundedRectangle(cornerRadius: 5, style: .continuous)
+                   .fill(categoryColor(stats.category).opacity(0.15))
+                   .frame(width: 24, height: 24)
+                if let monogram = ContactIdentityIndex.avatarMonogram(from: stats.chatName) {
+                    Text(monogram)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(categoryColor(stats.category))
+                } else {
+                    Image(systemName: stats.isGroup ? "person.3" : "person")
+                        .font(.system(size: 10))
+                        .foregroundColor(categoryColor(stats.category))
+                }
+           }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(stats.chatName)
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
-                Text("\(stats.participantCount)人参与 · 平均回复 \(formatResponseTime(stats.avgResponseTimeSeconds))")
+                Text("\(stats.participantCount) 人参与 · 平均回复 \(RelativeTimeFormatter.durationLabel(stats.avgResponseTimeSeconds))")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
 
             Spacer()
 
-            Text("\(stats.messageCount)条")
+            Text("\(stats.messageCount) 条")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundColor(.blue)
         }
@@ -666,38 +779,59 @@ struct InsightOverviewDashboard: View {
         }
     }
 
-    private func insightChatNameMap() -> [String: String] {
-        var names = Dictionary(uniqueKeysWithValues: insightStore.allStats.map { ($0.key, $0.value.chatName) })
-        for entry in store.getWhitelist() {
-            names[entry.id] = entry.displayName
-        }
-        for session in insightStore.otherActiveSessions {
-            names[session.id] = session.displayName
-        }
-        return names
-    }
-
-    /// Bounded before the `Int(_:)` conversions — `hours` is the model's
-    /// `waiting_hours`, and `Int(1e30)` traps rather than returning garbage.
-    private func formatHoursShort(_ rawHours: Double) -> String {
-        let hours = SafeNumber.clamped(rawHours, to: 0...8_760)
-        if hours < 1 { return "\(Int(hours * 60))m" }
-        if hours < 24 { return "\(Int(hours))h" }
-        return "\(Int(hours / 24))d"
-    }
-
-    private func formatResponseTime(_ seconds: Double) -> String {
-        if seconds <= 0 { return "--" }
-        if seconds < 60 { return "\(Int(seconds))秒" }
-        if seconds < 3600 { return "\(Int(seconds / 60))分钟" }
-        return "\(String(format: "%.1f", seconds / 3600))小时"
-    }
-
     private func categoryColor(_ cat: WhitelistCategory) -> Color {
         switch cat {
         case .work: return .blue
         case .life: return .green
         case .other: return .orange
+        }
+    }
+
+    @ViewBuilder
+    private var overviewCopyIcon: some View {
+        switch copyFeedback {
+        case .copied:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundColor(CompanionPalette.jadeInk)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+        case .idle:
+            Image(systemName: "doc.on.doc")
+        }
+    }
+
+    private var overviewCopyHelp: String {
+        if let hold = insightCopyHoldReason { return hold }
+        switch copyFeedback {
+        case .copied: return CompanionInteractionCopy.copied
+        case .failed: return CompanionInteractionCopy.copyFailed
+        case .idle: return "复制为 Markdown 总结"
+        }
+    }
+
+    private var overviewCopyValue: String {
+        switch copyFeedback {
+        case .copied: return CompanionInteractionCopy.copied
+        case .failed: return CompanionInteractionCopy.copyFailed
+        case .idle: return ""
+        }
+    }
+
+    private func copyOverviewReport() {
+        let markdown = InsightOverviewReport.markdown(
+            overview: insightStore.overview,
+            briefing: insightCoordinator.globalBriefing
+        )
+        let token = UUID()
+        copyGeneration = token
+        if CompanionClipboard.write(markdown) {
+            copyFeedback = .copied
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if copyGeneration == token { copyFeedback = .idle }
+            }
+        } else {
+            copyFeedback = .failed
         }
     }
 

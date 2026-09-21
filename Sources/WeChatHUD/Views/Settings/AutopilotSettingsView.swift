@@ -45,13 +45,18 @@ enum AutopilotSettingsCopy {
     static let excludedEmpty = "还没有添加。这里的人不会被自动回复；要不要真的发出去，仍由上面的开关决定。"
     static let excludedAddButton = "添加排除对象"
     static let advancedTitle = "高级设置"
-    static let historyTitle = "自动回复记录"
-    static let historyEmpty = "暂无记录"
-    static let historyClear = "清除历史"
+   static let historyTitle = "自动回复记录"
+    static func historyEmpty(active: Bool) -> String {
+        active
+            ? "这一轮还没有记下会话。写好的草稿会进待确认。"
+            : "开始整理后，每次会话会出现在这里。"
+    }
+   static let historyClear = "清除历史"
     static let historyClearConfirmTitle = "确定清除所有自动回复记录？"
     static let historyClearConfirm = "清除"
     static let historyClearCancel = "取消"
     static let historyClearFailed = "记录没清掉，请稍后重试（已发出的消息不受影响）"
+    static let historyClearConfirmMessage = "只清掉助手里的自动回复记录，已发出的微信消息不受影响。"
 }
 
 struct AutopilotSettingsView: View {
@@ -75,10 +80,12 @@ struct AutopilotSettingsView: View {
     @State private var didLoad = false
     @State private var showClearConfirm = false
     @State private var sessions: [AutopilotSession] = []
+    @State private var isClearingHistory = false
     @State private var allContacts: [ContactEntry] = []
     @State private var safetyConfig = AutopilotConfig()
     @State private var saved = false
     @State private var pendingEnableAutoSend = false
+    @State private var isEnablingAutoSend = false
 
     let replyLimits = [5, 10, 20, 50]
     let batchOptions = [5, 10, 15, 30]
@@ -94,7 +101,7 @@ struct AutopilotSettingsView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("查看待确认回复") { panelState.pendingSettingsTab = "autopilotDashboard" }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .font(.system(size: 13, weight: .medium))
             }
@@ -207,7 +214,9 @@ struct AutopilotSettingsView: View {
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
                 Button("重新读取设置") { load() }
+                    .transition(.companionStatusReveal)
                 // 旧的错误文案把恢复说成「保存一次就行」，而这条页根本保存不了：
                 // keep: `save()` is gated on `loadError == nil`, so a corrupt
                 // row had no way out — while all five send sites tell the user
@@ -224,17 +233,25 @@ struct AutopilotSettingsView: View {
                     if let rebuildError {
                         Label(rebuildError, systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.red)
+                            .transition(.companionStatusReveal)
                     }
                 }
             } else if let saveError {
                 Label(saveError, systemImage: "exclamationmark.triangle")
                     .font(.callout).foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
                 Button("重试保存设置") { save() }
+                    .transition(.companionStatusReveal)
             } else if saved {
                 Label("设置已保存", systemImage: "checkmark.circle.fill")
                     .font(.callout).foregroundStyle(CompanionPalette.jadeInk)
+                    .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.ease(), value: loadError)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
+        .companionAnimation(CompanionMotion.ease(), value: rebuildError)
+        .companionAnimation(CompanionMotion.ease(), value: saved)
         .onAppear {
             if !didLoad {
                 didLoad = true
@@ -242,30 +259,96 @@ struct AutopilotSettingsView: View {
                 DispatchQueue.main.async { isHydrating = false }
             }
         }
-        .companionDialogBackdrop(pendingEnableAutoSend) {
+        .companionDialogBackdrop(pendingEnableAutoSend || showClearConfirm) {
             if pendingEnableAutoSend {
                 CompanionDialog(title: CompanionProductCopy.autoSendConfirmTitle, onClose: {
-                    pendingEnableAutoSend = false
-                    autoSendEnabled = false
+                    if !isEnablingAutoSend {
+                        pendingEnableAutoSend = false
+                        autoSendEnabled = false
+                    }
                 }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.autoSendConfirmMessage)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let saveError {
+                            Text(saveError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.autoSendKeepManual) {
                                 pendingEnableAutoSend = false
                                 autoSendEnabled = false
                             }
-                            Button(CompanionProductCopy.autoSendAllow) {
-                                pendingEnableAutoSend = false
+                                .companionBusyHold(isEnablingAutoSend, "正在保存自动发送设置")
+                            Button {
+                                guard !isEnablingAutoSend else { return }
+                                isEnablingAutoSend = true
                                 autoSendEnabled = true
-                                save()
+                                Task { @MainActor in
+                                    let ok = save()
+                                    isEnablingAutoSend = false
+                                    if ok {
+                                        pendingEnableAutoSend = false
+                                    } else {
+                                        autoSendEnabled = false
+                                    }
+                                }
+                            } label: {
+                                Text(isEnablingAutoSend ? "正在开启自动发送…" : CompanionProductCopy.autoSendAllow)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
+                            .disabled(isEnablingAutoSend)
+                            .help(isEnablingAutoSend ? "正在保存自动发送设置" : "")
+                            .accessibilityHint(isEnablingAutoSend ? "正在保存自动发送设置" : "")
+                        }
+                    }
+                }
+            }
+            else if showClearConfirm {
+                CompanionDialog(title: AutopilotSettingsCopy.historyClearConfirmTitle, onClose: { if !isClearingHistory { showClearConfirm = false } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(AutopilotSettingsCopy.historyClearConfirmMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let saveError {
+                            Text(saveError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button(AutopilotSettingsCopy.historyClearCancel) { showClearConfirm = false }
+                                .companionBusyHold(isClearingHistory, "正在清除自动回复记录")
+                            Button(role: .destructive) {
+                                guard !isClearingHistory else { return }
+                                isClearingHistory = true
+                                Task { @MainActor in
+                                    do {
+                                        try store.clearAutopilotHistory()
+                                        sessions = store.loadAutopilotSessions(limit: 10)
+                                        saveError = nil
+                                        showClearConfirm = false
+                                    } catch {
+                                        saveError = AutopilotSettingsCopy.historyClearFailed
+                                    }
+                                    isClearingHistory = false
+                                }
+                            } label: {
+                                Text(isClearingHistory ? "正在清除记录…" : AutopilotSettingsCopy.historyClearConfirm)
+                            }
+                            .disabled(isClearingHistory)
+                            .help(isClearingHistory ? "正在清除自动回复记录" : "")
+                            .accessibilityHint(isClearingHistory ? "正在清除自动回复记录" : "")
                         }
                     }
                 }
@@ -294,10 +377,20 @@ struct AutopilotSettingsView: View {
         // string and its count.
         SettingsSection(nil) {
             if excludedContacts.isEmpty {
-                Text(AutopilotSettingsCopy.excludedEmpty)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12).padding(.vertical, 10)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(AutopilotSettingsCopy.excludedEmpty)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    if allContacts.isEmpty {
+                        Button("关注谁") {
+                            NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                        }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("去关注谁，才能添加排除对象")
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
             } else {
                 ForEach(Array(excludedContacts.enumerated()), id: \.element) { idx, username in
                     if idx > 0 { SettingsRowDivider() }
@@ -312,8 +405,11 @@ struct AutopilotSettingsView: View {
                             Image(systemName: "minus.circle.fill")
                                 .font(.system(size: 13))
                                 .foregroundColor(.red.opacity(0.6))
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionIconButtonStyle())
+                        .accessibilityLabel("移除排除对象")
                     }
                     .padding(.horizontal, 12).padding(.vertical, 5)
                 }
@@ -378,9 +474,9 @@ struct AutopilotSettingsView: View {
 
     private var historySection: some View {
         SettingsSection(AutopilotSettingsCopy.historyTitle) {
-            if sessions.isEmpty {
-                Text(AutopilotSettingsCopy.historyEmpty)
-                    .font(.system(size: 11))
+           if sessions.isEmpty {
+                Text(AutopilotSettingsCopy.historyEmpty(active: monitor.autopilotActive))
+                   .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 10)
             } else {
@@ -397,22 +493,6 @@ struct AutopilotSettingsView: View {
                         // destructive action.
                         .font(.system(size: 12))
                         .foregroundColor(.red)
-                        .alert(AutopilotSettingsCopy.historyClearConfirmTitle, isPresented: $showClearConfirm) {
-                            Button(AutopilotSettingsCopy.historyClearCancel, role: .cancel) {}
-                            Button(AutopilotSettingsCopy.historyClearConfirm, role: .destructive) {
-                                do {
-                                    try store.clearAutopilotHistory()
-                                    sessions = store.loadAutopilotSessions(limit: 10)
-                                    saveError = nil
-                                } catch {
-                                    // Clearing history has no dependency on
-                                    // autopilot being stopped; the old copy
-                                    // invented a precondition the user could
-                                    // not act on.
-                                    saveError = AutopilotSettingsCopy.historyClearFailed
-                                }
-                            }
-                        }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
             }
@@ -454,7 +534,7 @@ struct AutopilotSettingsView: View {
     private func sessionDuration(_ session: AutopilotSession) -> String {
         let end = session.endedAt ?? Date()
         let s = Int(end.timeIntervalSince(session.startedAt))
-        return s >= 3600 ? "\(s/3600)h\((s%3600)/60)m" : "\(s/60)m"
+        return RelativeTimeFormatter.elapsedLabel(TimeInterval(s))
     }
 
     private func contactDisplayName(_ username: String) -> String {
@@ -521,7 +601,7 @@ struct AutopilotSettingsView: View {
     private func rebuildFromDefaults() {
         rebuildError = nil
         guard (try? store.updateAutopilotConfig { _ in }) == true else {
-            rebuildError = "默认设置也没写进去：数据库可能正被占用。请稍后再试一次。"
+            rebuildError = "默认设置也没写进去：本机设置可能正被占用。请稍后再试一次。"
             return
         }
         loadError = nil
@@ -529,8 +609,9 @@ struct AutopilotSettingsView: View {
         load()
     }
 
-    private func save() {
-        guard didLoad, !isHydrating, loadError == nil else { return }
+    @discardableResult
+    private func save() -> Bool {
+        guard didLoad, !isHydrating, loadError == nil else { return false }
         // One merge-update for the whole page, so we don't clobber fields the
         // settings UI doesn't surface yet (maxSendsPerSession, sensitiveKeywords,
         // proactive*, etc. all default-construct and would blow away user values
@@ -554,13 +635,15 @@ struct AutopilotSettingsView: View {
             guard wrote else {
                 saveError = "读不回当前的托管设置，这次没有保存 —— 否则会用默认规则盖掉这页没有显示的开关。请稍后再试一次。"
                 saved = false
-                return
+                return false
             }
             saveError = nil
             safetyConfig = written
             saved = true
+            return true
         } catch {
             saveError = "设置没保存成功，现在还是上次的规则。请再试一次。"
+            return false
         }
     }
 

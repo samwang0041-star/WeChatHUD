@@ -141,4 +141,24 @@ final class InsightDensityAndShardTests: XCTestCase {
         XCTAssertTrue(older.merged(with: newer).selfInitiated)
         XCTAssertTrue(newer.merged(with: older).selfInitiated, "fold order must not change the answer")
     }
+
+    /// Overview rows used to keep only a display name, so tapping 「沉默的人」
+    /// assigned that string to `selectedChat` and the detail pane bounced
+    /// back to the overview. The engine has to emit the username.
+    func testOneWayOverviewRowsKeepTheChatUsername() {
+        let quiet = ChatStatsData(
+            chatUsername: "wxid_quiet", chatName: "沉默的人", isGroup: false, category: .other,
+            messageCount: 40, myMessageCount: 2, participantCount: 2,
+            messagesByHour: Array(repeating: 0, count: 24),
+            messagesByWeekday: [], typeCounts: [:],
+            avgResponseTimeSeconds: 0, symmetryRatio: 0.1, trend7d: 0,
+            topSenders: [], silentMembers: [], ignoredMessages: [],
+            selfInitiated: false, earliestTs: 0, latestTs: 0,
+            recentMessageCount: 4
+        )
+        let o = overview(["wxid_quiet": quiet], windowDays: 30)
+        XCTAssertEqual(o.oneWayChats.map(\.chatUsername), ["wxid_quiet"])
+        XCTAssertEqual(o.oneWayChats.map(\.name), ["沉默的人"])
+        XCTAssertEqual(o.topTimeBlackHoles.first?.chatUsername, "wxid_quiet")
+    }
 }

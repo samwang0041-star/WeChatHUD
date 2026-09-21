@@ -82,6 +82,18 @@ final class FirstLaunchGuideTests: XCTestCase {
             "本机准备没有完成。如果刚刚拒绝了系统提示，请允许后再试。"
         )
         XCTAssertFalse(FirstLaunchGuide.userFacingPreparationError("密钥提取失败: timeout").contains("密钥"))
+        XCTAssertEqual(
+            FirstLaunchGuide.userFacingPreparationError("Cannot query SessionTable: database is locked"),
+            "这次准备没有完成，请重试。"
+        )
+        XCTAssertEqual(
+            FirstLaunchGuide.userFacingPreparationError("sqlite3_prepare_v2 failed at /Users/me/session.db"),
+            "这次准备没有完成，请重试。"
+        )
+        XCTAssertEqual(
+            FirstLaunchGuide.userFacingPreparationError("新应用启动失败，当前应用仍在运行，请稍后重试"),
+            "新应用启动失败，当前应用仍在运行，请稍后重试。"
+        )
     }
 
     func testTodayEmptyDoesNotPretendTheInboxIsWorkingBeforeSetup() {

@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// A single row in the unified inbox list.
 /// Shows priority dot, contact info, status labels, and hover actions.
@@ -22,6 +21,23 @@ struct InboxRowView: View {
     /// state with it and cannot be undone from here, so the menu item only
     /// arms the confirmation.
     @State private var confirmUntrack = false
+    @State private var isUntracking = false
+    @State private var untrackError: String?
+    @State private var busyAction: InboxRowBusy?
+
+    private enum InboxRowBusy {
+        case dismiss, snooze, silence
+
+        var help: String {
+            switch self {
+            case .dismiss: return "正在标为已处理"
+            case .snooze: return "正在保存稍后提醒"
+            case .silence: return "正在保存静音"
+            }
+        }
+    }
+
+    private var isRowBusy: Bool { busyAction != nil || isUntracking }
     /// The inbox often opens under the pointer (menu "查看新消息", hover
     /// expand). Treating that as hover puts clock/✕ on the first row and
     /// reads as a stuck notification banner. Wait until a later hover event.
@@ -29,27 +45,39 @@ struct InboxRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 8) {
-                if islandCatalog {
-                    CompanionAvatar(name: item.chatName, size: IslandMetrics.avatar)
-                } else {
-                    priorityDot
-                        .padding(.top, 4)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    firstLine
-                    if islandCatalog {
-                        catalogTitle
+            Button {
+                withMotion(CompanionMotion.islandRowExpand()) {
+                    if panelState.expandedInboxItemID == item.id {
+                        panelState.expandedInboxItemID = nil
                     } else {
-                        secondLine
-                        inlineBriefingLine
+                        panelState.expandedInboxItemID = item.id
                     }
                 }
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    if islandCatalog {
+                        CompanionAvatar(name: item.chatName, size: IslandMetrics.avatar)
+                    } else {
+                        priorityDot
+                            .padding(.top, 4)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        firstLine
+                        if islandCatalog {
+                            catalogTitle
+                        } else {
+                            secondLine
+                            inlineBriefingLine
+                        }
+                    }
+                }
+                .padding(.horizontal, IslandMetrics.rowInset)
+                .padding(.vertical, IslandMetrics.rowPadding)
             }
-            .padding(.horizontal, IslandMetrics.rowInset)
-            .padding(.vertical, IslandMetrics.rowPadding)
-            .background(hovered || showSnoozeMenu ? IslandInk.hover : Color.clear)
+            .buttonStyle(IslandInboxRowButtonStyle(
+                highlighted: hovered || showSnoozeMenu || confirmUntrack
+            ))
             .overlay(alignment: .topTrailing) {
                 // Overlay, not in-flow: hover actions slide in over the
                 // timestamp/chevron they replace instead of pushing the
@@ -66,8 +94,8 @@ struct InboxRowView: View {
                     .background(CompanionPalette.island, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .padding(.top, 4)
                     .padding(.trailing, IslandMetrics.rowInset)
-                    .opacity(hovered || showSnoozeMenu ? 1 : 0)
-                    .allowsHitTesting(hovered || showSnoozeMenu)
+                    .opacity(hovered || showSnoozeMenu || confirmUntrack || busyAction != nil ? 1 : 0)
+                    .allowsHitTesting(hovered || showSnoozeMenu || confirmUntrack || busyAction != nil)
             }
             .overlay {
                 // Dedicated VoiceOver expand/collapse control: invisible and
@@ -75,7 +103,7 @@ struct InboxRowView: View {
                 // an .accessibilityAction on the row container is dropped
                 // because .contain makes the row itself a non-element.
                 Button(panelState.expandedInboxItemID == item.id ? "收起详情" : "展开详情") {
-                    withMotion(CompanionMotion.rowExpand()) {
+                    withMotion(CompanionMotion.islandRowExpand()) {
                         panelState.expandedInboxItemID =
                             panelState.expandedInboxItemID == item.id ? nil : item.id
                     }
@@ -84,16 +112,6 @@ struct InboxRowView: View {
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(false)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withMotion(CompanionMotion.rowExpand()) {
-                    if panelState.expandedInboxItemID == item.id {
-                        panelState.expandedInboxItemID = nil
-                    } else {
-                        panelState.expandedInboxItemID = item.id
-                    }
-                }
             }
             .accessibilityElement(children: .contain)
             .contextMenu {
@@ -109,27 +127,33 @@ struct InboxRowView: View {
                 )
                 .onAppear { panelState.islandTextInputActive = true }
             }
-            .confirmationDialog(
-                "取消关注「\(item.chatName)」",
-                isPresented: $confirmUntrack,
-                titleVisibility: .visible
-            ) {
-                Button("取消关注并清空", role: .destructive) {
-                    monitor.untrackInboxItem(item)
-                }
-                Button("先不", role: .cancel) {}
-            } message: {
-                Text("同时清掉这个对话的承诺、待办、静音和稍后提醒设置，无法撤销。")
-            }
 
             if showSnoozeMenu {
                 IslandSnoozeMenu { date in
                     showSnoozeMenu = false
                     panelState.setSnoozeMenuExpanded(false)
-                    onSnooze?(date)
+                    runInboxAction(.snooze) { onSnooze?(date) }
                 }
                 .padding(.horizontal, IslandMetrics.rowInset)
                 .padding(.bottom, IslandMetrics.rowPadding)
+                .transition(.islandDetailReveal)
+            }
+
+            if confirmUntrack {
+                IslandUntrackConfirm(
+                    chatName: item.chatName,
+                    isUntracking: isUntracking,
+                    error: untrackError,
+                    onCancel: {
+                        guard !isUntracking else { return }
+                        confirmUntrack = false
+                        untrackError = nil
+                    },
+                    onConfirm: confirmUntrackNow
+                )
+                .padding(.horizontal, IslandMetrics.rowInset)
+                .padding(.bottom, IslandMetrics.rowPadding)
+                .transition(.islandDetailReveal)
             }
 
             if panelState.expandedInboxItemID == item.id {
@@ -170,22 +194,23 @@ struct InboxRowView: View {
             }
         }
         .companionAnimation(CompanionMotion.hover(), value: hovered)
-        .companionAnimation(CompanionMotion.rowExpand(), value: showSnoozeMenu)
-        .companionAnimation(CompanionMotion.rowExpand(), value: panelState.expandedInboxItemID)
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: showSnoozeMenu)
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: panelState.expandedInboxItemID)
+        .companionAnimation(CompanionMotion.islandRowExpand(), value: confirmUntrack)
     }
 
     @ViewBuilder
     private var contextMenuContent: some View {
         Button(item.actionRequired ? "标为已处理" : "隐藏这条更新") {
-            onDismiss()
+            runInboxAction(.dismiss, onDismiss)
         }
         Menu("稍后提醒") {
             ForEach(CompanionProductCopy.snoozeChoices()) { choice in
-                Button("\(choice.label)  \(choice.whenLabel)") { onSnooze?(choice.until) }
+                Button("\(choice.label)  \(choice.whenLabel)") { runInboxAction(.snooze) { onSnooze?(choice.until) } }
             }
         }
         Button("静音此对话") {
-            onSilence?()
+            runInboxAction(.silence) { onSilence?() }
         }
 
         Divider()
@@ -201,13 +226,11 @@ struct InboxRowView: View {
                                       chatName: monitor.displayName(for: item.chatUsername))
         }
         Button("复制消息原文") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(item.preview, forType: .string)
+            copyInboxText(item.preview)
         }
         if let summary = item.aiSummary, !summary.isEmpty {
             Button("复制 AI 摘要") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(summary, forType: .string)
+                copyInboxText(summary)
             }
         }
 
@@ -216,26 +239,29 @@ struct InboxRowView: View {
         if item.isWhitelisted {
             if item.isVIP {
                 Button("降为普通关注") {
-                    monitor.setInboxItemVIP(item, isVIP: false)
+                    applyFollowChange { monitor.setInboxItemVIP(item, isVIP: false) }
                 }
             } else {
                 Button("设为 VIP") {
-                    monitor.setInboxItemVIP(item, isVIP: true)
+                    applyFollowChange { monitor.setInboxItemVIP(item, isVIP: true) }
                 }
             }
             Button("取消关注此对话", role: .destructive) {
+                showSnoozeMenu = false
+                panelState.setSnoozeMenuExpanded(false)
+                untrackError = nil
                 confirmUntrack = true
             }
         } else {
             Button(item.isGroup ? "关注此群聊" : "关注此联系人") {
-                monitor.setInboxItemVIP(item, isVIP: !item.isGroup)
+                applyFollowChange { monitor.setInboxItemVIP(item, isVIP: !item.isGroup) }
             }
         }
 
         if item.isGroup, !item.senderName.isEmpty {
             Divider()
             Button("忽略 \(item.senderName) 的消息") {
-                monitor.ignoreInboxItemSender(item)
+                applyFollowChange { monitor.ignoreInboxItemSender(item) }
             }
         }
     }
@@ -347,8 +373,8 @@ struct InboxRowView: View {
         }
     }
 
-    /// Rendered "他想你: ..." inline briefing, or a compact "分析中"
-    /// placeholder while the briefing is in flight. Returns nil (row
+    /// Rendered "他想你: ..." inline briefing, or a compact "正在分析"
+   /// placeholder while the briefing is in flight. Returns nil (row
     /// doesn't render this region) when the item isn't a group
     /// @mention or when no briefing activity has been started yet —
     /// keeps rows that don't need this feature visually unchanged.
@@ -361,8 +387,8 @@ struct InboxRowView: View {
                     Image(systemName: "sparkles")
                         .islandMicro()
                         .foregroundColor(.orange.opacity(0.7))
-                    Text("分析中…")
-                        .islandMeta()
+                    Text("正在分析…")
+                       .islandMeta()
                         .foregroundColor(IslandInk.tertiary)
                 }
             } else if let briefing = state.briefing {
@@ -422,31 +448,98 @@ struct InboxRowView: View {
         HStack(spacing: 6) {
             if !item.replied {
                 Button(action: {
-                    showSnoozeMenu.toggle()
+                    withMotion(CompanionMotion.islandRowExpand()) {
+                        showSnoozeMenu.toggle()
+                        if showSnoozeMenu {
+                            confirmUntrack = false
+                            untrackError = nil
+                        }
+                    }
                 }) {
                     // SF Symbol, not the ⏰ emoji — the emoji renders in
                     // full colour and fights the monochrome chrome.
-                    Image(systemName: "clock")
-                        .islandButton()
-                        .foregroundColor(showSnoozeMenu ? IslandInk.primary : IslandInk.tertiary)
+                    Group {
+                        if busyAction == .snooze {
+                            ProgressView()
+                                .controlSize(.mini)
+                        } else {
+                            Image(systemName: "clock")
+                                .islandButton()
+                                .foregroundColor(showSnoozeMenu ? IslandInk.primary : IslandInk.tertiary)
+                        }
+                    }
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(CompanionPressStyle())
-                .help("稍后提醒")
-                .accessibilityLabel("稍后提醒")
+                .buttonStyle(IslandIconButtonStyle())
+                .disabled(isRowBusy)
+                .help(busyAction == .snooze ? InboxRowBusy.snooze.help : "稍后提醒")
+                .accessibilityLabel(busyAction == .snooze ? InboxRowBusy.snooze.help : "稍后提醒")
             }
 
-            Button(action: onDismiss) {
-                Image(systemName: "xmark")
-                    .islandMicro()
-                    .foregroundColor(IslandInk.tertiary)
+            Button {
+                runInboxAction(.dismiss, onDismiss)
+            } label: {
+                Group {
+                    if busyAction == .dismiss {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "xmark")
+                            .islandMicro()
+                            .foregroundColor(IslandInk.tertiary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(CompanionPressStyle())
-            .help(item.actionRequired ? "标为已处理" : "隐藏这条更新")
-            .accessibilityLabel(item.actionRequired ? "标为已处理" : "隐藏这条更新")
+            .buttonStyle(IslandIconButtonStyle())
+            .disabled(isRowBusy)
+            .help(busyAction == .dismiss ? InboxRowBusy.dismiss.help : (item.actionRequired ? "标为已处理" : "隐藏这条更新"))
+            .accessibilityLabel(busyAction == .dismiss ? InboxRowBusy.dismiss.help : (item.actionRequired ? "标为已处理" : "隐藏这条更新"))
         }
     }
 
     // MARK: - Helpers
+
+    /// Named copy has to inspect the pasteboard write. The menu vanishes as
+    /// soon as the click lands, so the receipt is the island toast — same
+    /// contract as `WeChatLauncher.copyText`.
+    private func copyInboxText(_ text: String) {
+        let ok = CompanionClipboard.write(text)
+        panelState.showToast(ok ? CompanionInteractionCopy.copied : CompanionInteractionCopy.copyFailed)
+    }
+
+    /// Context menus vanish on click, so a failed follow/VIP/ignore write has
+    /// to land as a toast — the same receipt path as copy.
+    private func applyFollowChange(_ work: () -> Bool) {
+        guard !work() else { return }
+        panelState.showToast(monitor.inboxActionError ?? CompanionInteractionCopy.followLevelFailed)
+    }
+
+    private func runInboxAction(_ action: InboxRowBusy, _ work: @escaping () -> Void) {
+        guard !isRowBusy else { return }
+        busyAction = action
+        Task { @MainActor in
+            defer { busyAction = nil }
+            work()
+        }
+    }
+
+    private func confirmUntrackNow() {
+        guard !isUntracking else { return }
+        isUntracking = true
+        untrackError = nil
+        Task { @MainActor in
+            let ok = monitor.untrackInboxItem(item)
+            isUntracking = false
+            if ok {
+                confirmUntrack = false
+            } else {
+                untrackError = CompanionInteractionCopy.untrackFailed
+            }
+        }
+    }
     // NOTE: timestamps use the shared relativeTime(_:) in ViewHelpers.swift
     // ("5分前" style) so every surface formats recency the same way.
 }
@@ -455,7 +548,7 @@ struct InboxRowView: View {
 
 /// Priority dot with an optional expanding pulse ring for p0 items —
 /// draws the eye in peripheral vision without being obnoxious
-/// (1.4s period, low opacity).
+/// (shared `CompanionMotion.pulse()` breathe, low opacity).
 private struct PriorityPulseDot: View {
     let color: Color
     let isUrgent: Bool
@@ -507,6 +600,10 @@ private struct PriorityPulseDot: View {
     /// the pulse can never move a pixel of layout again. The uniform slot
     /// also keeps urgent and quiet rows on the same leading alignment instead
     /// of the dot column breathing with the pulse.
+    ///
+    /// The breathe itself uses the house pulse (easeInOut, autoreverses),
+    /// not a one-shot ease-out that restarts from the small ring every
+    /// cycle. A restart is a jump; a reverse is a breath.
     var body: some View {
         ZStack {
             if isUrgent, !CompanionMotion.reduceMotion {
@@ -520,7 +617,7 @@ private struct PriorityPulseDot: View {
         .frame(width: 14, height: 14)
         .onAppear {
             guard isUrgent, !CompanionMotion.reduceMotion else { return }
-            withMotion(CompanionMotion.easeOut(1.4).map { $0.repeatForever(autoreverses: false) }) {
+            withMotion(CompanionMotion.pulse()) {
                 pulseOn = true
             }
         }
@@ -564,6 +661,53 @@ struct IslandSnoozeMenu: View {
         .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("稍后提醒时间")
+    }
+}
+
+private struct IslandUntrackConfirm: View {
+    let chatName: String
+    let isUntracking: Bool
+    let error: String?
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("取消关注「\(chatName)」？")
+                .islandRowTitle()
+                .foregroundStyle(IslandInk.primary)
+            Text("同时清掉这个对话的承诺、待办、静音和稍后提醒设置，无法撤销。")
+                .islandMeta()
+                .foregroundStyle(IslandInk.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error {
+                Text(error)
+                    .islandMeta()
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.companionStatusReveal)
+            }
+            HStack {
+                Spacer()
+                Button("先不", action: onCancel)
+                    .buttonStyle(IslandRowButtonStyle())
+                    .foregroundStyle(IslandInk.secondary)
+                    .companionBusyHold(isUntracking, "正在取消关注")
+                Button(action: onConfirm) {
+                    Text(isUntracking ? "正在取消关注…" : "取消关注并清空")
+                }
+                .buttonStyle(IslandRowButtonStyle())
+                .foregroundStyle(.red)
+                .disabled(isUntracking)
+                .help(isUntracking ? "正在取消关注" : "")
+                .accessibilityHint(isUntracking ? "正在取消关注" : "")
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("取消关注确认")
+        .companionAnimation(CompanionMotion.ease(), value: error)
     }
 }
 

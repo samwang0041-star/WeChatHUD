@@ -129,11 +129,14 @@ struct InsightRadarSection: View {
                         } else {
                             radarInfoLine(label: "依据", icon: "lightbulb", text: Self.radarInterpretationOnlyText(finding))
                         }
-                        if isExpanded, let reason = finding.reason, !reason.isEmpty {
-                            radarInfoLine(label: "意义", icon: "lightbulb", text: reason)
-                        }
                         if isExpanded {
-                            radarInfoLine(label: "建议", icon: "arrowshape.turn.up.right", text: radarNextStepText(finding))
+                            VStack(alignment: .leading, spacing: 5) {
+                                if let reason = finding.reason, !reason.isEmpty {
+                                    radarInfoLine(label: "意义", icon: "lightbulb", text: reason)
+                                }
+                                radarInfoLine(label: "建议", icon: "arrowshape.turn.up.right", text: radarNextStepText(finding))
+                            }
+                            .transition(.companionStatusReveal)
                         }
                     }
 
@@ -156,7 +159,8 @@ struct InsightRadarSection: View {
             .cornerRadius(10)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionPressStyle())
+        .companionAnimation(CompanionMotion.ease(), value: isExpanded)
     }
 
     private func radarInfoLine(label: String, icon: String, text: String, primary: Bool = false) -> some View {
@@ -183,7 +187,7 @@ struct InsightRadarSection: View {
         case .openChat(let chatUsername):
             onOpenChat(chatUsername)
         case .expandExplanation, .expandPressure, .expandRelationships, .expandMetrics:
-            withMotion(CompanionMotion.ease(0.18)) {
+            withMotion(CompanionMotion.ease()) {
                 expandedFindingID = expandedFindingID == finding.id ? nil : finding.id
                 switch finding.route {
                 case .expandPressure:

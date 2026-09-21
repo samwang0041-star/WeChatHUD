@@ -22,8 +22,14 @@ final class StaleViewShapeGatesTests: XCTestCase {
     func testSourcePaneKeysItsLoadToTheItemItDisplays() {
         let file = source("Views/DiscussionSourceView.swift")
         XCTAssertFalse(file.isEmpty, "DiscussionSourceView not found")
+        // The key also carries a retry token, so 再试一次 can re-read the same
+        // item; what must not come back is a key that ignores the item.
+        let taskKey = file
+            .split(separator: "\n")
+            .first { $0.contains(".task(id:") }
+            .map(String.init) ?? ""
         XCTAssertTrue(
-            file.contains(".task(id: item.id)"),
+            taskKey.contains("item.id"),
             "the source window must reload when the item changes under a mounted view"
         )
         XCTAssertFalse(

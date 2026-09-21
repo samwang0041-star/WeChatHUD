@@ -12,13 +12,13 @@ enum AISettingsValidation {
               let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = url.host, !host.isEmpty,
               url.user == nil, url.password == nil else {
-            return "请填写有效的 http:// 或 https:// 接口地址，不要将密钥放入地址。"
+            return "请填写有效的 http:// 或 https:// 接口地址，不要把访问凭据写进地址。"
         }
         if scheme == "http", !AIEndpointPolicy.isLoopbackHost(host) {
             return "远程 AI 接口必须使用 https://。仅本机（localhost / 127.0.0.1 / ::1）允许 http://"
         }
         if AIProvider.find(slot.providerID)?.requiresKey == true && slot.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "请填写此供应商的 API Key。"
+            return "请填写此供应商的访问凭据。"
         }
         return nil
     }
@@ -80,17 +80,32 @@ enum AISettingsValidation {
         let code = Int(raw[match].dropFirst("HTTP ".count)) ?? 0
         switch code {
         case 400:
-            return "服务拒绝了请求（HTTP 400），请确认模型名与该服务匹配。"
+            return "服务拒绝了这次请求，请确认模型名与该服务匹配。"
         case 401, 403:
-            return "服务拒绝了凭据（HTTP \(code)），请检查 API Key 是否正确、是否有额度。"
+            return "服务拒绝了访问凭据，请检查是否填写正确、是否还有额度。"
         case 404:
-            return "接口或模型不存在（HTTP 404），请确认服务地址和模型名。"
+            return "找不到这个接口或模型，请确认服务地址和模型名。"
         case 429:
-            return "请求过多或额度用尽（HTTP 429），请稍后重试。"
+            return "请求过多或额度用尽，请稍后重试。"
         case 500...599:
-            return "服务内部错误（HTTP \(code)），请稍后重试。"
+            return "服务暂时出了问题，请稍后重试。"
         default:
-            return "服务返回错误（HTTP \(code)），请检查服务配置。"
+            return "服务返回错误，请检查服务配置。"
         }
+    }
+
+    /// Last-mile filter before a mapped sentence is painted. Raw transport
+    /// leftovers collapse here; already-mapped Chinese — including sentences
+    /// that mention 模型 or https — passes through so a missing model is not
+    /// rewritten as "please pick one".
+    static func displayable(_ message: String) -> String {
+        if message.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil {
+            return requestFailureGuidance(message)
+        }
+        if message.localizedCaseInsensitiveContains("api key")
+            || message.localizedCaseInsensitiveContains("token") {
+            return "请补充该服务要求的访问凭据。"
+        }
+        return message
     }
 }

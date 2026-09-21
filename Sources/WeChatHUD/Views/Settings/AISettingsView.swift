@@ -44,13 +44,14 @@ struct ModelPicker: View {
                             .contentShape(Rectangle())
                     }
                 }
-                .buttonStyle(.borderless)
-                .help("从接口获取模型列表")
-                .accessibilityLabel("获取模型列表")
+                .buttonStyle(CompanionIconButtonStyle())
                 .disabled(isFetching)
+                .help(isFetching ? "正在获取模型列表" : "从接口获取模型列表")
+                .accessibilityLabel(isFetching ? "正在获取模型列表" : "获取模型列表")
+                .accessibilityHint(isFetching ? "正在获取模型列表" : "")
 
                 if !models.isEmpty {
-                    Button { isExpanded.toggle() } label: {
+                    Button { withMotion(CompanionMotion.drawer()) { isExpanded.toggle() } } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 12))
                             // Measured at 10×6pt — the smallest target in the
@@ -60,7 +61,7 @@ struct ModelPicker: View {
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(CompanionIconButtonStyle())
                     .accessibilityLabel(isExpanded ? "收起模型列表" : "展开模型列表")
                     .help(isExpanded ? "收起模型列表" : "展开模型列表")
                 }
@@ -80,24 +81,27 @@ struct ModelPicker: View {
                             get: { model },
                             set: { if let selected = $0 { model = selected } }
                         )) { m in
-                            Text(m)
-                                .font(.system(size: 13))
-                                .foregroundColor(.primary)
-                                .padding(.vertical, 2)
-                                .tag(m)
-                                .id(m)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    model = m
-                                    isExpanded = false
-                                }
+                            Button {
+                                model = m
+                                withMotion(nil) { isExpanded = false }
+                            } label: {
+                                Text(m)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 2)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(CompanionRowPressStyle())
+                            .tag(m)
+                            .id(m)
                         }
                         .listStyle(.plain)
-                        .onKeyPress(.return) { isExpanded = false; return .handled }
-                        .onKeyPress(.escape) { isExpanded = false; return .handled }
+                        .onKeyPress(.return) { withMotion(nil) { isExpanded = false }; return .handled }
+                        .onKeyPress(.escape) { withMotion(nil) { isExpanded = false }; return .handled }
                         .frame(height: min(CGFloat(filtered.count) * 24 + 8, 180))
                         .onChange(of: model) { _, new in
-                            withMotion(CompanionMotion.systemDefault) { proxy.scrollTo(new, anchor: .center) }
+                            withMotion(nil) { proxy.scrollTo(new, anchor: .center) }
                         }
                     }
                 }
@@ -108,12 +112,18 @@ struct ModelPicker: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
                 )
+                .transition(.companionStatusReveal)
             }
         }
+        .companionAnimation(CompanionMotion.drawer(), value: isExpanded)
     }
 }
 
 // MARK: - Provider Card
+
+enum AISettingsTestVerdict {
+    case none, ok, failed
+}
 
 struct ProviderCard: View {
     let isCustomSource: Bool
@@ -127,8 +137,9 @@ struct ProviderCard: View {
     @Binding var model: String
     @Binding var apiKey: String
     @Binding var models: [String]
-    @Binding var testResult: String
-    @Binding var isTesting: Bool
+   @Binding var testResult: String
+    @Binding var testVerdict: AISettingsTestVerdict
+   @Binding var isTesting: Bool
     @Binding var isFetching: Bool
 
     let onTest: () -> Void
@@ -142,9 +153,11 @@ struct ProviderCard: View {
     /// presets can share an address with different keys); re-syncing the same
     /// preset keeps it (otherwise two ordinary clicks silently empty a working
     /// credential). Nil until the first sync so hydration never wipes.
-    @State private var lastSyncedPresetID: String?
+   @State private var lastSyncedPresetID: String?
 
-    private var usesUnencryptedRemoteHTTP: Bool {
+    @State private var signupOpenError: String?
+
+   private var usesUnencryptedRemoteHTTP: Bool {
         guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
               url.scheme?.lowercased() == "http",
               let host = url.host?.lowercased() else { return false }
@@ -242,18 +255,26 @@ struct ProviderCard: View {
                         )
                         .frame(maxWidth: 220)
                         if !isCustomSource, provider?.requiresKey == true, let signup = provider?.signupURL, !signup.isEmpty {
-                            Button("获取 API Key") {
-                                if let u = URL(string: signup) { NSWorkspace.shared.open(u) }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .accessibilityLabel("打开供应商密钥页面")
-                        }
-                    }
-                }
+                           Button("获取访问凭据") {
+                                openSignup(signup)
+                           }
+                           .buttonStyle(CompanionPressStyle())
+                           .controlSize(.mini)
+                          .accessibilityLabel("打开获取访问凭据的页面")
+                       }
+                   }
+               }
+           }
+
+            if let signupOpenError {
+                Text(signupOpenError)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 14)
+                    .transition(.companionStatusReveal)
             }
 
-            if providerID == "openai-codex" {
+           if providerID == "openai-codex" {
                 Text("使用这台 Mac 上 Codex 的登录状态。连接测试会向 ChatGPT 发送一条测试请求，不包含聊天记录。")
                     .font(.system(size: 12)).foregroundColor(.secondary)
                     .padding(14)
@@ -271,8 +292,9 @@ struct ProviderCard: View {
                 .frame(maxWidth: 280)
             }
             if !testResult.isEmpty {
+                Group {
                 SettingsRowDivider()
-                if isFailedTestResult {
+                if testVerdict == .failed {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("连接没有通过", systemImage: "exclamationmark.triangle.fill")
                             .font(.system(size: 13, weight: .semibold))
@@ -297,12 +319,24 @@ struct ProviderCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
                 }
+                }
+                .transition(.companionStatusReveal)
             }
         }
+       .companionAnimation(CompanionMotion.ease(), value: testResult)
+       .companionAnimation(CompanionMotion.ease(), value: signupOpenError)
 
+   }
+
+    private func openSignup(_ signup: String) {
+        guard let url = URL(string: signup), NSWorkspace.shared.open(url) else {
+            signupOpenError = "没能打开获取访问凭据的页面，请在浏览器里打开供应商网站。"
+            return
+        }
+        signupOpenError = nil
     }
 
-    private var hasPresetBaseURL: Bool {
+   private var hasPresetBaseURL: Bool {
         !(provider?.baseURL.isEmpty ?? true)
     }
 
@@ -310,32 +344,30 @@ struct ProviderCard: View {
         HStack(spacing: 4) {
             if !testResult.isEmpty {
                 Circle()
-                    .fill(isSuccessfulTestResult ? Color.green : (isFailedTestResult ? Color.red : Color.secondary))
+                    .fill(testVerdict == .ok ? Color.green : (testVerdict == .failed ? Color.red : Color.secondary))
                     .frame(width: 6, height: 6)
                     .help(testResult)
             }
             Button(action: onTest) {
                 if isTesting {
-                    ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
+                        Text("正在测试…").font(.system(size: 12))
+                    }
                 } else {
                     Text("测试连接").font(.system(size: 12))
                 }
             }
             .buttonStyle(.bordered).controlSize(.mini)
             .disabled(isTesting || isFetching)
+            .help(isTesting ? "正在测试连接" : (isFetching ? "正在获取模型列表" : ""))
+            .accessibilityHint(isTesting ? "正在测试连接" : (isFetching ? "正在获取模型列表" : ""))
         }
     }
 
-    private var isSuccessfulTestResult: Bool {
-        testResult.hasPrefix("连接成功") || testResult.hasPrefix("上次测试成功")
-    }
-
-    private var isFailedTestResult: Bool {
-        testResult.hasPrefix("失败") || testResult.hasPrefix("连接未完成") || testResult.hasPrefix("获取失败") || testResult.hasPrefix("上次测试失败")
-    }
-
-    private func syncProviderPreset() {
+   private func syncProviderPreset() {
         testResult = ""
+        testVerdict = .none
         guard let preset = provider, !isCustomSource else { return }
         defer { lastSyncedPresetID = preset.id }
         guard let previous = lastSyncedPresetID else {
@@ -396,7 +428,8 @@ struct AISettingsView: View {
     @State private var model = "kimi-for-coding"
     @State private var apiKey = ""
     @State private var models: [String] = []
-    @State private var testResult = ""
+   @State private var testResult = ""
+    @State private var testVerdict: AISettingsTestVerdict = .none
     @State private var isTesting = false
     @State private var isFetching = false
     @State private var testRequestID = UUID()
@@ -506,13 +539,7 @@ struct AISettingsView: View {
                     )
                 }
                 let summary = "\(activeProviderName) · \(configuredSlot.model.isEmpty ? "未选择模型" : configuredSlot.model)"
-                Text(summary)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .contextMenu {
-                        Button("复制") { CompanionClipboard.write(summary) }
-                    }
+                CompanionCopyableText(text: summary, weight: .medium)
                 // 「打开后」 pointed at a switch that is not on this page — the
                 // on/off toggles live under AI 分析与建议.
                 Text("改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。先点测试，确认能用。")
@@ -526,7 +553,7 @@ struct AISettingsView: View {
             // and the picker is hidden — so this button did nothing. It now
             // goes through the same tab switch the "去 AI 服务配置" row uses.
             Button("更换服务") { switchToAIServiceTab() }
-            .buttonStyle(.bordered)
+            .buttonStyle(CompanionPressStyle())
             .controlSize(.small)
             .accessibilityLabel("更换 AI 服务")
         }
@@ -554,7 +581,7 @@ struct AISettingsView: View {
                 SettingsSection {
                     SettingsRow("还没有可用的 AI 服务", icon: "exclamationmark.circle", iconColor: .orange) {
                         Button("去 AI 服务配置") { switchToAIServiceTab() }
-                            .buttonStyle(.bordered)
+                            .buttonStyle(CompanionPressStyle())
                             .controlSize(.small)
                     }
                     Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
@@ -647,8 +674,8 @@ struct AISettingsView: View {
         }
         .onChange(of: serviceSource) { _, source in
             guard !isHydrating else { return }
-            testRequestID = UUID()
-            testResult = ""
+           testRequestID = UUID()
+            setTestResult("", verdict: .none)
             switch source {
             case .preset:
                 if providerID == "custom" || AIProvider.find(providerID) == nil {
@@ -717,9 +744,10 @@ struct AISettingsView: View {
             baseURL: $baseURL,
             model: $model,
             apiKey: $apiKey,
-            models: $models,
-            testResult: $testResult,
-            isTesting: $isTesting,
+           models: $models,
+           testResult: $testResult,
+            testVerdict: $testVerdict,
+           isTesting: $isTesting,
             isFetching: $isFetching,
             onTest: { testSlot() },
             onFetch: { fetchModels() },
@@ -795,6 +823,7 @@ struct AISettingsView: View {
                     Text(saveError)
                         .font(.system(size: 12))
                         .foregroundStyle(.red)
+                        .transition(.companionStatusReveal)
                 }
             }
             Spacer()
@@ -802,9 +831,11 @@ struct AISettingsView: View {
                 Button("重试保存", action: saveAIConfig)
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .transition(.companionStatusReveal)
             }
         }
         .companionSurface(padding: 14)
+        .companionAnimation(CompanionMotion.ease(), value: saveError)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(saveError.isEmpty ? "设置保存状态" : "设置保存失败")
         .accessibilityValue(!saveError.isEmpty ? saveError : serviceSaveStatusText)
@@ -827,8 +858,13 @@ struct AISettingsView: View {
 
     private func applyPreviewTestFailure() {
         PreviewRuntime.pendingAITestFailure = false
-        testResult = "失败：演示用的连接没有通过。"
+        setTestResult("失败：演示用的连接没有通过。", verdict: .failed)
         isTesting = false
+    }
+
+    private func setTestResult(_ text: String, verdict: AISettingsTestVerdict) {
+        testResult = text
+        testVerdict = text.isEmpty ? .none : verdict
     }
 
     private func testSlot() {
@@ -844,12 +880,12 @@ struct AISettingsView: View {
             let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
             let suffix = saved ? "" : "；测试结果未保存，请重试"
             let detail = userFacingConfigurationError(error)
-            testResult = "连接未完成：\(detail)\(suffix)"
+            setTestResult("连接未完成：\(detail)\(suffix)", verdict: .failed)
             return
         }
         let service = AIService(config: buildConfig())
         isTesting = true
-        testResult = ""
+        setTestResult("", verdict: .none)
         Task {
             do {
                 _ = try await service.testSlot(slot)
@@ -857,43 +893,34 @@ struct AISettingsView: View {
                     isTesting = false
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: true, requestStartedAt: requestStartedAt)
-                    let message = saved
-                        ? "连接成功，服务已返回有效响应。"
-                        : "连接成功，但测试结果未保存，请重试。"
-                    testResult = message
-                }
+                   let message = saved
+                       ? "连接成功，服务已返回有效响应。"
+                       : "连接成功，但测试结果未保存，请重试。"
+                    setTestResult(message, verdict: .ok)
+               }
             } catch {
                 await MainActor.run {
                     isTesting = false
                     guard requestID == testRequestID, slot == buildSlot() else { return }
                     let saved = recordTestEvidence(slot: slot, succeeded: false, requestStartedAt: requestStartedAt)
                     let detail = userFacingConfigurationError(AISettingsValidation.connectionFailure(error))
-                    let suffix = saved ? "" : "；测试结果未保存，请重试"
-                    testResult = "连接未完成：\(detail)\(suffix)"
-                }
-            }
-        }
-    }
+                   let suffix = saved ? "" : "；测试结果未保存，请重试"
+                    setTestResult("连接未完成：\(detail)\(suffix)", verdict: .failed)
+               }
+           }
+       }
+   }
 
     private func userFacingConfigurationError(_ message: String) -> String {
-        if message.localizedCaseInsensitiveContains("api key") || message.localizedCaseInsensitiveContains("token") {
-            return "请补充该服务要求的访问凭据。"
-        }
-        if message.contains("接口地址") || message.contains("http://") || message.contains("https://") {
-            return "请补充有效的服务地址。"
-        }
-        if message.contains("模型") {
-            return "请选择一个模型。"
-        }
-        return message
+        AISettingsValidation.displayable(message)
     }
 
     private func fetchModels() {
         let slot = buildSlot()
-        if let error = AISettingsValidation.connectionError(slot, requireModel: false) {
-            testResult = "获取失败：\(userFacingConfigurationError(error))"
-            return
-        }
+       if let error = AISettingsValidation.connectionError(slot, requireModel: false) {
+            setTestResult("获取失败：\(userFacingConfigurationError(error))", verdict: .failed)
+           return
+       }
         isFetching = true
         let service = AIService(config: buildConfig())
         Task {
@@ -904,16 +931,16 @@ struct AISettingsView: View {
                     guard slot == buildSlot() else { return }
                     models = list
                     // If current model not in list, keep it but notify via test result
-                    if !list.isEmpty, !list.contains(model) {
-                        testResult = "已获取 \(list.count) 个模型"
-                    }
+                   if !list.isEmpty, !list.contains(model) {
+                        setTestResult("已获取 \(list.count) 个模型", verdict: .none)
+                   }
                 }
             } catch {
                 await MainActor.run {
                     isFetching = false
-                    guard slot == buildSlot() else { return }
-                    testResult = "获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))"
-                }
+                   guard slot == buildSlot() else { return }
+                    setTestResult("获取失败：\(userFacingConfigurationError(AISettingsValidation.connectionFailure(error)))", verdict: .failed)
+               }
             }
         }
     }
@@ -922,9 +949,9 @@ struct AISettingsView: View {
 
     private func configurationDidChange() {
         guard !isHydrating else { return }
-        testRequestID = UUID()
-        testResult = ""
-        debouncedSave()
+       testRequestID = UUID()
+        setTestResult("", verdict: .none)
+       debouncedSave()
     }
 
     private func applyPresetProvider(_ id: String) {
@@ -962,10 +989,12 @@ struct AISettingsView: View {
         }
     }
 
-    private func restoredTestResult(for slot: AIProviderSlot) -> String {
-        guard let record = store.loadAIConnectionEvidence().record(for: slot) else { return "" }
+    private func restoredTestResult(for slot: AIProviderSlot) -> (text: String, verdict: AISettingsTestVerdict) {
+        guard let record = store.loadAIConnectionEvidence().record(for: slot) else { return ("", .none) }
         let date = record.testedAt.formatted(.dateTime.month().day().hour().minute())
-        return record.succeeded ? "上次测试成功 \(date)，可重新测试" : "上次测试失败 \(date)，请重新测试"
+        return record.succeeded
+            ? ("上次测试成功 \(date)，可重新测试", .ok)
+            : ("上次测试失败 \(date)，请重新测试", .failed)
     }
 
     private func buildSlot() -> AIProviderSlot {
@@ -1059,7 +1088,8 @@ struct AISettingsView: View {
         moodDetectionEnabled = cfg.moodDetectionEnabled
         dailyReportActionInsightsEnabled = cfg.dailyReportActionInsightsEnabled
 
-        testResult = restoredTestResult(for: buildSlot())
+        let restored = restoredTestResult(for: buildSlot())
+        setTestResult(restored.text, verdict: restored.verdict)
         if PreviewRuntime.pendingAITestFailure {
             applyPreviewTestFailure()
         }

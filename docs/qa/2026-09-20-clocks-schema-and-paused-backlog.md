@@ -2119,3 +2119,26 @@ SQLITE_ROW` 会把它当成"读完了"）。结果是同一个对话只剩一个
 对照、永远不用来回滚；撤销动作完成后必须 `grep` 一个只属于本次修复的锚点行，再看
 `git diff --stat` 是否还列着这个文件。同一轮里 M9/M11 两次变异因为改错形状编译不过 ——
 那不是判据红了，是自己的实验没做到"改完还能编译"（§240 已记，本轮再犯）。
+
+## §249 收尾：原文窗重试换了任务键，钉它的门禁要跟着走语义（已修）
+
+`DiscussionSourceView`（待办/承诺的「查看原文」）这轮在读失败的空态补了「再试一次」，
+而重试要能在**同一个事项**上重读，于是 `.task(id: item.id)` 变成
+`.task(id: "\(item.id)-\(reloadToken)")`。`StaleViewShapeGatesTests` 那条门禁比的是旧
+字面量，全量跑起来当场红：`Executed 2279 tests, with 10 tests skipped and 1 failure`
+（`testSourcePaneKeysItsLoadToTheItemItDisplays`）。
+
+门禁的意图是「事项换了必须重读、且不许出现无键 `.task`」，不是「键要逐字长这样」——
+所以改判据、不回退功能：取出含 `.task(id:` 的那一行，断言它含 `item.id`，并保留
+`.task {` 的禁令。重试路径本身是真被驱动的：任务体一进来就 `messages = []`、
+`failure = nil`、`loading = true`，`defer { loading = false }` 收尾，按下按钮会真的回到
+「正在读取原文…」，不是一颗按了没反应的按钮。
+
+收尾全量：**2279 XCTest（10 skipped）+ 70 swift-testing**，0 失败，`TEST_EXIT=0`；
+生产代码这一收尾只动了两行缩进（15/7 空格 → 16/8 空格，无行为变化）。
+
+仍未做（下一轮接）：`getWhitelist()` 在服务侧还有 14 处「读不到 = 空名单」的读法，
+最高杠杆的是 `ScanEngine:75`（读不到会让已关注的会话看起来已取关）、`ChatMonitor:2727`
+（静音清单显示名回落到 wxid）、`ChatMonitor+MissedReplies:25`、`ChatMonitor+DailyReport:339`
+（导出会写「关注对象 (0)」）、`ChatMonitorScopeProvider:18`、`SupportDiagnosticsView:97`
+（诊断写「关注 0」）。这些不在本提交里，别把本提交当成那条轴收完。

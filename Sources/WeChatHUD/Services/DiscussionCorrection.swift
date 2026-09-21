@@ -72,7 +72,7 @@ enum DiscussionCorrection {
                 default: return entry.userAction ?? "用户修正"
                 }
             }
-        guard !labels.isEmpty else { return "暂无" }
+        guard !labels.isEmpty else { return "还没有修正" }
         return labels.joined(separator: "；")
     }
 }

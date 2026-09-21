@@ -78,10 +78,10 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
         switch self {
         case .previewMode:
             return "演示模式不检查或安装更新"
-        case .currentVersionUnknown:
-            return "无法读取当前版本号"
+       case .currentVersionUnknown:
+            return "读不到当前版本。请到发布页手动下载新版。"
         case .invalidRepository:
-            return "发布仓库地址无效"
+            return "更新地址无效。请到发布页手动下载。"
         case .unauthorized:
             return "GitHub 拒绝了这次读取，请稍后再试，也可以到发布页手动下载。"
         case .rateLimited:
@@ -91,29 +91,29 @@ enum AppUpdateError: Error, Equatable, LocalizedError {
             // developer never published anything".
             return "GitHub 的查询次数暂时用完了（同一网络共用额度），请过几分钟再试。也可以到发布页手动下载。"
         case .privateOrMissingRelease:
-            return "没有找到已发布的版本，或仓库尚未公开。"
+            return "没有找到已发布的版本，或仓库尚未公开。请到发布页确认。"
         case .httpStatus:
-            return "暂时无法检查更新，请稍后再试"
+            return "暂时无法检查更新，请稍后再试。也可以到发布页手动下载。"
         case .noInstallableAsset(let version):
-            return "已发布 \(version)，但还没有 macOS 安装包。"
+            return "已发布 \(version)，但还没有 macOS 安装包。请到发布页查看。"
         case .invalidDownloadURL:
-            return "安装包地址无效"
+            return "安装包地址无效。请到发布页手动下载。"
         case .invalidArchive:
-            return "下载的安装包无法打开"
+            return "下载的安装包打不开。请再试一次，或到发布页手动下载。"
         case .bundleIdentityMismatch:
-            return "安装包与当前应用不匹配，已取消替换"
+            return "这份安装包不是当前这个应用，已取消替换。请到发布页手动下载。"
         case .destinationNotReplaceable:
             return "请从完整的应用打开后再安装更新"
         case .checksumMismatch:
-            return "安装包校验失败，已取消替换"
+            return "下载的文件不完整或被改过，已取消替换。请再下载一次，或到发布页手动下载。"
         case .unsignedArchive:
-            return "安装包没有通过代码签名校验，已取消替换"
+            return "无法确认这份安装包来自同一发布者，已取消替换。请到发布页手动下载。"
         case .signatureMismatch:
-            return "安装包的签名与当前应用不一致，已取消替换"
+            return "安装包与当前应用不是同一发布者，已取消替换。请到发布页手动下载。"
         case .signingIdentityUnavailable:
-            return "无法确认当前应用的签名身份，请到发布页手动下载新版"
+            return "无法确认当前应用的发布身份，请到发布页手动下载新版。"
         case .replaceFailed:
-            return "未能替换当前应用，原应用仍可使用"
+            return "没能替换当前应用，原来的还能用。请到发布页手动下载。"
         case .restartFailed:
             return "新版本已装好，请手动重新打开助手"
         }

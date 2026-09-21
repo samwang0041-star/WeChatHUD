@@ -11,9 +11,12 @@ struct CommitmentTabView: View {
     @State private var pendingCancel: Commitment?
     @State private var showBatchClearConfirm = false
     @State private var batchUndo: [(msgUID: String, status: CommitmentStatus)]?
+    @State private var isBatchClearing = false
     @State private var receipt: String?
+    @State private var isCancelling = false
     @State private var undo: (msgUID: String, status: CommitmentStatus)?
     @State private var actionError: String?
+    @State private var isUndoing = false
 
     private var activeCount: Int { CommitmentPresentation.activeCount(monitor.commitments) }
     private var overdueCount: Int { CommitmentPresentation.overdueCount(monitor.commitments) }
@@ -62,48 +65,89 @@ struct CommitmentTabView: View {
             }
             if let receipt {
                 receiptBar(receipt)
+                    .transition(.companionStatusReveal)
             }
         }
         .workspacePage(WorkspacePage.wideWidth)
         .background(CompanionPalette.canvas)
+        .companionAnimation(CompanionMotion.ease(), value: receipt)
         .onAppear {
             if expandedID == nil { expandedID = filteredCommitments.first?.id }
         }
-        .companionDialogBackdrop(showBatchClearConfirm) {
+        .companionDialogBackdrop(showBatchClearConfirm || pendingCancel != nil) {
             if showBatchClearConfirm {
-                CompanionDialog(title: "一键清空当前承诺？", onClose: { showBatchClearConfirm = false }) {
+                CompanionDialog(title: "一键清空当前承诺？", onClose: { if !isBatchClearing { showBatchClearConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("将当前显示的 \(filteredCommitments.count) 项承诺标记为已完成。可在「已完成」列表中随时查看。")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let actionError {
+                            Text(actionError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button("取消") { showBatchClearConfirm = false }
-                            Button("全部完成") {
-                                showBatchClearConfirm = false
-                                batchClear()
+                                .companionBusyHold(isBatchClearing, "正在把当前承诺标为已完成")
+                            Button {
+                                guard !isBatchClearing else { return }
+                                isBatchClearing = true
+                                Task { @MainActor in
+                                    let ok = batchClear()
+                                    isBatchClearing = false
+                                    if ok { showBatchClearConfirm = false }
+                                }
+                            } label: {
+                                Text(isBatchClearing ? "正在清空承诺…" : "全部完成")
                             }
                             .tint(SettingsView.Tab.commitments.accentColor)
                             .buttonStyle(.borderedProminent)
+                            .disabled(isBatchClearing)
+                            .help(isBatchClearing ? "正在把当前承诺标为已完成" : "")
+                            .accessibilityHint(isBatchClearing ? "正在把当前承诺标为已完成" : "")
+                        }
+                    }
+                }
+            } else if let commitment = pendingCancel {
+                CompanionDialog(title: CompanionProductCopy.cancelCommitmentTitle, onClose: { if !isCancelling { pendingCancel = nil } }) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(CompanionProductCopy.cancelCommitmentMessage)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let actionError {
+                            Text(actionError)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
+                        HStack {
+                            Spacer()
+                            Button("保留") { pendingCancel = nil }
+                                .companionBusyHold(isCancelling, "正在取消这条承诺")
+                            Button(role: .destructive) {
+                                guard !isCancelling else { return }
+                                isCancelling = true
+                                Task { @MainActor in
+                                    let ok = updateStatus(commitment, .cancelled)
+                                    isCancelling = false
+                                    if ok { pendingCancel = nil }
+                                }
+                            } label: {
+                                Text(isCancelling ? "正在取消承诺…" : "取消承诺")
+                            }
+                            .disabled(isCancelling)
+                            .help(isCancelling ? "正在取消这条承诺" : "")
+                            .accessibilityHint(isCancelling ? "正在取消这条承诺" : "")
                         }
                     }
                 }
             }
-        }
-        .alert(CompanionProductCopy.cancelCommitmentTitle, isPresented: Binding(
-            get: { pendingCancel != nil },
-            set: { if !$0 { pendingCancel = nil } }
-        )) {
-            Button("取消承诺", role: .destructive) {
-                if let commitment = pendingCancel {
-                    pendingCancel = nil
-                    updateStatus(commitment, .cancelled)
-                }
-            }
-            Button("保留", role: .cancel) { pendingCancel = nil }
-        } message: {
-            Text(CompanionProductCopy.cancelCommitmentMessage)
         }
     }
 
@@ -146,7 +190,7 @@ struct CommitmentTabView: View {
                     .accessibilityLabel("搜索承诺、原话或对象")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
-                        .buttonStyle(.plain)
+                        .buttonStyle(CompanionPressStyle())
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(CompanionPalette.jadeInk)
                 }
@@ -156,23 +200,64 @@ struct CommitmentTabView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             if let actionError {
                 Label(actionError, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.red)
+                    .transition(.companionStatusReveal)
             }
         }
         .padding(.bottom, 12)
+        .companionAnimation(CompanionMotion.ease(), value: actionError)
     }
 
-    private var emptyState: some View {
-        ContentUnavailableView(
-            query.isEmpty ? CommitmentPresentation.emptyTitle(for: filter) : "没有匹配的承诺",
-            systemImage: query.isEmpty ? emptyIcon : "magnifyingglass",
-            description: Text(query.isEmpty ? CommitmentPresentation.emptyDescription(for: filter) : "当前搜索：\(query)")
-        )
+   private var emptyState: some View {
+       ContentUnavailableView(
+            emptyTitle,
+           systemImage: query.isEmpty ? emptyIcon : "magnifyingglass",
+            description: Text(emptyDetail)
+       )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if !query.isEmpty {
                 Button("清除搜索") { query = "" }
                     .buttonStyle(.bordered)
                     .padding(.bottom, 24)
+            } else if filter != .all, !monitor.commitments.isEmpty {
+                Button("看全部") {
+                    withMotion(CompanionMotion.pageChange()) { filter = .all }
+                }
+                .buttonStyle(CompanionPressStyle())
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .padding(.bottom, 24)
+                .accessibilityLabel("看全部承诺")
+            }
+            else if monitor.commitments.isEmpty {
+                if monitor.stats.lastSyncAt == nil {
+                    Button("检查连接") {
+                        NotificationCenter.default.post(name: .hudSwitchTab, object: "system")
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .accessibilityLabel("检查微信连接")
+                } else if !monitor.store.hasWhitelistEntries() {
+                    Button("关注谁") {
+                        NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .accessibilityLabel("去选要关注的对话")
+                } else {
+                    Button("打开今天") {
+                        NotificationCenter.default.post(name: .hudSwitchTab, object: "today")
+                    }
+                    .buttonStyle(CompanionPressStyle())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(CompanionPalette.jadeInk)
+                    .padding(.bottom, 24)
+                    .accessibilityLabel("打开今天，从对话里记下承诺")
+                }
             }
         }
     }
@@ -181,12 +266,28 @@ struct CommitmentTabView: View {
         switch filter {
         case .active: return "checkmark.seal"
         case .overdue: return "clock.badge.exclamationmark"
-        case .fulfilled, .all: return "tray"
+       case .fulfilled, .all: return "tray"
+       }
+   }
+
+    private var emptyTitle: String {
+        if !query.isEmpty { return "没有匹配的承诺" }
+        if monitor.commitments.isEmpty { return "还没有记下的承诺" }
+        return CommitmentPresentation.emptyTitle(for: filter)
+    }
+
+    private var emptyDetail: String {
+        if !query.isEmpty { return "当前搜索：\(query)" }
+        if monitor.commitments.isEmpty {
+            if monitor.stats.lastSyncAt == nil { return "连上微信后，答应过别人的话会出现在这里。" }
+            if !monitor.store.hasWhitelistEntries() { return "先选要关注的对话，答应过别人的话会出现在这里。" }
+            return "关注的对话里还没有记下的承诺。今天里答应过的话会出现在这里。"
         }
+        return CommitmentPresentation.emptyDescription(for: filter)
     }
 
 
-    private func card(_ commitment: Commitment) -> some View {
+   private func card(_ commitment: Commitment) -> some View {
         let expanded = expandedID == commitment.id
         let isActive = commitment.status == .pending || commitment.status == .overdue
         // The group header says 已到期 once at the top of a section; scroll past
@@ -226,7 +327,7 @@ struct CommitmentTabView: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionRowPressStyle())
 
             if expanded {
                 VStack(alignment: .leading, spacing: 10) {
@@ -252,7 +353,7 @@ struct CommitmentTabView: View {
                             Button("查看对话") {
                                 monitor.openWeChatChat(commitment.chatUsername)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(CompanionPressStyle())
                             .foregroundStyle(CompanionPalette.jadeInk)
                         }
                         .controlSize(.regular)
@@ -263,6 +364,7 @@ struct CommitmentTabView: View {
                 }
                 .padding(12)
                 .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .transition(.companionStatusReveal)
             }
         }
         .padding(16)
@@ -307,26 +409,35 @@ struct CommitmentTabView: View {
                 .foregroundStyle(CompanionPalette.jadeInk)
             Spacer()
             if undo != nil {
-                Button("撤销") { undoLast() }
+                Button {
+                    commitUndo { undoLast() }
+                } label: {
+                    Text(isUndoing ? "正在撤销…" : "撤销")
+                }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .disabled(isUndoing)
+                    .help(isUndoing ? "正在撤销刚才的操作" : "")
+                    .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             } else if let previous = batchUndo {
-                Button("撤销") {
-                    for item in previous {
-                        try? monitor.updateCommitmentStatus(msgUID: item.msgUID, status: item.status)
-                    }
-                    batchUndo = nil
-                    receipt = nil
+                Button {
+                    commitUndo { undoBatch(previous) }
+                } label: {
+                    Text(isUndoing ? "正在撤销…" : "撤销")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .disabled(isUndoing)
+                .help(isUndoing ? "正在撤销刚才的操作" : "")
+                .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             }
         }
         .font(.system(size: 13, weight: .medium))
         .padding(.top, 10)
     }
 
-    private func updateStatus(_ commitment: Commitment, _ status: CommitmentStatus) {
+    @discardableResult
+    private func updateStatus(_ commitment: Commitment, _ status: CommitmentStatus) -> Bool {
         do {
             let previous = commitment.status
             try monitor.updateCommitmentStatus(msgUID: commitment.msgUID, status: status)
@@ -343,22 +454,27 @@ struct CommitmentTabView: View {
                 undo = nil
                 receipt = "已恢复为进行中"
             }
+            return true
         } catch {
             actionError = "状态没有保存，这条承诺还在原来的位置。请重试。"
+            return false
         }
     }
 
-    private func batchClear() {
+    @discardableResult
+    private func batchClear() -> Bool {
         let targets = filteredCommitments
-        guard !targets.isEmpty else { return }
+        guard !targets.isEmpty else { return false }
         batchUndo = targets.map { ($0.msgUID, $0.status) }
         undo = nil
         do {
             try monitor.batchUpdateCommitmentsStatus(commitments: targets, status: .fulfilled)
             receipt = "已清空 \(targets.count) 项承诺"
             actionError = nil
+            return true
         } catch {
             actionError = "清空失败，请重试。"
+            return false
         }
     }
 
@@ -368,6 +484,28 @@ struct CommitmentTabView: View {
             try monitor.updateCommitmentStatus(msgUID: undo.msgUID, status: undo.status)
             self.undo = nil
             receipt = "已撤销"
+            actionError = nil
+        } catch {
+            actionError = "撤销没有成功，请重试。"
+        }
+    }
+
+    private func commitUndo(_ work: @escaping () -> Void) {
+        guard !isUndoing else { return }
+        isUndoing = true
+        Task { @MainActor in
+            defer { isUndoing = false }
+            work()
+        }
+    }
+
+    private func undoBatch(_ previous: [(msgUID: String, status: CommitmentStatus)]) {
+        do {
+            for item in previous {
+                try monitor.updateCommitmentStatus(msgUID: item.msgUID, status: item.status)
+            }
+            batchUndo = nil
+            receipt = nil
             actionError = nil
         } catch {
             actionError = "撤销没有成功，请重试。"
@@ -484,12 +622,12 @@ enum CommitmentPresentation {
 
     static func emptyDescription(for filter: Filter) -> String {
         switch filter {
-        case .fulfilled:
-            return "更早完成的记录还在本地，不会堆在这一栏。"
-        case .all:
-            return "更早完成或取消的记录还在本地，不会堆在这一栏。"
-        default:
+       case .fulfilled:
+           return "更早完成的记录还在本地，不会堆在这一栏。"
+       case .all:
             return "答应过别人的话会留在这里，带着原话和截止时间。"
+       default:
+           return "答应过别人的话会留在这里，带着原话和截止时间。"
         }
     }
 

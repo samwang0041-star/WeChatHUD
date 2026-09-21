@@ -27,6 +27,8 @@ struct SettingsView: View {
     @State private var hideCaptureChrome = false
     @State private var previewAutoSendDialog = false
     @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var isEnablingPreviewAutoSend = false
+    @State private var previewAutoSendError: String?
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
         case today, tasks, commitments, drafts
@@ -202,12 +204,13 @@ struct SettingsView: View {
                 if PreviewRuntime.isEnabled && !hideCaptureChrome {
                     SettingsPreviewChrome(previewA11yNonce: $previewA11yNonce)
                 }
-                if selectedTab != .guide {
-                    pageHeader
-                        .companionDimmedByDialog(panelState.modalDialogOpen)
-                }
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                Group {
+                    if selectedTab != .guide {
+                        pageHeader
+                            .companionDimmedByDialog(panelState.modalDialogOpen)
+                    }
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     // A page may scroll; it may not paint over the header above
                     // it. Same reason `ReplyDraftsView` clips its panes: with
                     // both the header and a tall body claiming the whole
@@ -217,19 +220,25 @@ struct SettingsView: View {
                     // live-resizing toward the window minimum. Clipping makes
                     // the overflow impossible rather than unlikely.
                     .clipped()
-                    .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
+                }
+                .id(selectedTab)
+                .transition(.opacity)
+                .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
+                SettingsInboxErrorBanner()
                 WorkspaceStatusBar()
                     .companionDimmedByDialog(panelState.modalDialogOpen)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(CompanionBackdrop(tint: selectedTab.accentColor))
+            .background(
+                CompanionBackdrop(tint: selectedTab.accentColor)
+                    .companionAnimation(CompanionMotion.pageChange(), value: selectedTab)
+            )
         }
         .navigationTitle(CompanionProductCopy.brandName)
         .companionDisplayGeneration(displayOptionsGeneration)
         .dynamicTypeSize(CompanionTypeScale.appliedRange(largeType: PreviewRuntime.largeType))
         .tint(CompanionPalette.accent)
         .accentColor(CompanionPalette.accent)
-        .background(SettingsInboxErrorAlert())
         .onAppear { applyPendingTab(panelState.pendingSettingsTab) }
         .onReceive(panelState.$pendingSettingsTab) { applyPendingTab($0) }
         .onReceive(NotificationCenter.default.publisher(for: .hudSwitchTab)) { notification in
@@ -255,26 +264,53 @@ struct SettingsView: View {
         .companionDialogBackdrop(previewAutoSendDialog) {
             if previewAutoSendDialog {
                 CompanionDialog(title: CompanionProductCopy.autoSendConfirmTitle, onClose: {
-                    previewAutoSendDialog = false
+                    if !isEnablingPreviewAutoSend { previewAutoSendDialog = false }
                 }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.autoSendConfirmMessage)
                             .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if let previewAutoSendError {
+                            Text(previewAutoSendError)
+                                .companionFont(size: 13)
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .transition(.companionStatusReveal)
+                        }
                         HStack {
                             Spacer()
                             Button(CompanionProductCopy.autoSendKeepManual) { previewAutoSendDialog = false }
-                            Button(CompanionProductCopy.autoSendAllow) {
-                                previewAutoSendDialog = false
-                                // Same merge rule as the settings page: this is the
-                                // one write that turns unattended sends on, so it
-                                // must not rebuild the config from defaults when
-                                // the stored record could not be read.
-                                _ = try? store.updateAutopilotConfig { $0.autoSendEnabled = true }
+                                .companionBusyHold(isEnablingPreviewAutoSend, "正在开启自动发送")
+                            Button {
+                                guard !isEnablingPreviewAutoSend else { return }
+                                isEnablingPreviewAutoSend = true
+                                Task { @MainActor in
+                                    // Same merge rule as the settings page: this is the
+                                    // one write that turns unattended sends on, so it
+                                    // must not rebuild the config from defaults when
+                                    // the stored record could not be read.
+                                    do {
+                                        let wrote = try store.updateAutopilotConfig { $0.autoSendEnabled = true }
+                                        if wrote {
+                                            previewAutoSendError = nil
+                                            previewAutoSendDialog = false
+                                        } else {
+                                            previewAutoSendError = "读不回当前的托管设置，这次没有保存。"
+                                        }
+                                    } catch {
+                                        previewAutoSendError = "设置没保存成功，现在还是上次的规则。请再试一次。"
+                                    }
+                                    isEnablingPreviewAutoSend = false
+                                }
+                            } label: {
+                                Text(isEnablingPreviewAutoSend ? "正在开启自动发送…" : CompanionProductCopy.autoSendAllow)
                             }
                             .tint(CompanionPalette.jade)
                             .buttonStyle(.borderedProminent)
+                            .disabled(isEnablingPreviewAutoSend)
+                            .help(isEnablingPreviewAutoSend ? "正在保存自动发送设置" : "")
+                            .accessibilityHint(isEnablingPreviewAutoSend ? "正在保存自动发送设置" : "")
                         }
                     }
                 }
@@ -530,7 +566,7 @@ private struct SettingsSidebarRow: View {
             // otherwise swallow a jade ring.
             .companionFocusRing(focused, radius: 9)
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(CompanionRowPressStyle())
         .onHover { hovered = $0 }
         .companionAnimation(CompanionMotion.hover(), value: hovered)
         .companionAnimation(CompanionMotion.sidebarSelection(), value: selected)
@@ -643,14 +679,30 @@ private struct SettingsPreviewChrome: View {
     }
 }
 
-private struct SettingsInboxErrorAlert: View {
+private struct SettingsInboxErrorBanner: View {
     @EnvironmentObject var monitor: ChatMonitor
 
     var body: some View {
-        Color.clear
-            .alert("操作未保存", isPresented: Binding(get: { monitor.inboxActionError != nil }, set: { if !$0 { monitor.inboxActionError = nil } })) {
-                Button("知道了") { monitor.inboxActionError = nil }
-            } message: { Text(monitor.inboxActionError ?? "请重试") }
+        Group {
+            if let error = monitor.inboxActionError {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Spacer(minLength: 8)
+                    Button("知道了") { monitor.inboxActionError = nil }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                }
+                .font(.callout)
+                .padding(.horizontal, WorkspacePage.inset)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(CompanionPalette.surface)
+                .overlay(alignment: .top) { Divider() }
+                .transition(.companionStatusReveal)
+            }
+        }
+        .companionAnimation(CompanionMotion.ease(), value: monitor.inboxActionError)
     }
 }
 
@@ -681,18 +733,26 @@ private struct WorkspaceStatusBar: View {
                     .foregroundStyle(.secondary)
             }
             Button { monitor.refreshNow() } label: {
-                Image(systemName: "arrow.clockwise")
-                    // Measured at 12×14 before this: the footer's refresh was
-                    // the smallest target in the window, on the control a user
-                    // reaches for when the list looks stale. Same glyph, a
-                    // target the pointer can actually find.
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                Group {
+                    if isSyncing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                // Measured at 12×14 before this: the footer's refresh was
+                // the smallest target in the window, on the control a user
+                // reaches for when the list looks stale. Same glyph, a
+                // target the pointer can actually find.
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(CompanionIconButtonStyle())
             .disabled(isSyncing)
-            .accessibilityLabel("查看新消息")
-            .help("查看新消息")
+            .accessibilityLabel(isSyncing ? "正在读取新消息" : "查看新消息")
+            .help(isSyncing ? "正在读取新消息" : "查看新消息")
+            .accessibilityHint(isSyncing ? "正在读取新消息" : "")
         }
         .padding(.horizontal, WorkspacePage.inset)
         .padding(.vertical, 10)
@@ -732,9 +792,9 @@ private struct WorkspaceStatusBar: View {
             return CompanionInteractionCopy.readingChats(watched)
         case .idle: return CompanionInteractionCopy.firstScan
         case .stale: return "读到的是旧消息，可能微信刚更新过"
-        case .waitingForWeChat: return CompanionInteractionCopy.waitingForWeChat
-        case .accountSwitched: return "换了微信账号，之前的记录已经读不到了"
-        case .error: return "暂时读不到新消息，可以重试"
+       case .waitingForWeChat: return CompanionInteractionCopy.waitingForWeChat
+        case .accountSwitched: return CompanionInteractionCopy.accountSwitched
+       case .error: return "暂时读不到新消息，可以重试"
         }
     }
 

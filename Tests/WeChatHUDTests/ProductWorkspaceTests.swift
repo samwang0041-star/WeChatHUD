@@ -56,11 +56,27 @@ final class ProductWorkspaceTests: XCTestCase {
 
         try store.setSetting("composer_draft:wxid_dan", value: "改过的")
         XCTAssertEqual(store.workspaceDraftCount(), 2)
-        try store.clearComposerDraft(chatUsername: "wxid_dan")
-        XCTAssertEqual(store.workspaceDraftCount(), 1)
+       try store.clearComposerDraft(chatUsername: "wxid_dan")
+       XCTAssertEqual(store.workspaceDraftCount(), 1)
+   }
+
+    func testComposerDraftUsesStoredNameAndDoesNotInventWxidWhenUnreadable() throws {
+        let store = HUDStore(dbPath: ":memory:")
+        try store.open()
+        defer { store.close() }
+        try store.saveContactTracking(username: "wxid_dan", displayName: "王丹",
+            isGroup: false, category: .work, attentionLevel: .whitelist, role: .colleague)
+        try store.setSetting("composer_draft:wxid_dan", value: "来吧")
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.chatName, "王丹")
+
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+        try store.exec("ALTER TABLE whitelist RENAME TO whitelist_hidden")
+        XCTAssertEqual(store.loadWorkspaceDrafts().first?.chatName,
+                       ContactIdentityIndex.unreadableNamePlaceholder)
+        XCTAssertNotEqual(store.loadWorkspaceDrafts().first?.chatName, "wxid_dan")
     }
 
-    func testWorkspaceDraftsIgnoreEmptyComposerText() throws {
+   func testWorkspaceDraftsIgnoreEmptyComposerText() throws {
         let store = HUDStore(dbPath: ":memory:")
         try store.open()
         defer { store.close() }
@@ -286,6 +302,7 @@ final class ProductWorkspaceTests: XCTestCase {
         XCTAssertEqual(store.loadDiscussionItems(status: .pending).map(\.content), ["未完成"])
         XCTAssertEqual(store.loadDiscussionItems(excludingStatus: .pending).map(\.content), ["已完成"])
         XCTAssertEqual(store.loadDiscussionItem(id: doneID)?.status, .done)
+        XCTAssertEqual(try store.updateDiscussionItemStatus(id: 9_999_999, status: .done), 0)
     }
 
     func testLiveWindowKeepsOpenItemsAndDropsStaleFinishedOnes() throws {
@@ -626,8 +643,12 @@ final class ProductWorkspaceTests: XCTestCase {
             .map { CommitmentPresentation.emptyTitle(for: $0) }
         XCTAssertEqual(Set(emptyTitles).count, emptyTitles.count,
                        "四个筛选标签的空态标题各自说明自己的集合，不能撞成同一句")
-        XCTAssertTrue(CommitmentPresentation.emptyDescription(for: .all).contains("还在本地"))
-    }
+        XCTAssertEqual(
+            CommitmentPresentation.emptyDescription(for: .all),
+            "答应过别人的话会留在这里，带着原话和截止时间。"
+        )
+        XCTAssertTrue(CommitmentPresentation.emptyDescription(for: .fulfilled).contains("还在本地"))
+   }
 
     func testCommitmentDeadlineTextUsesStoredLabelWhenDateIsMissing() {
         let calendar = Calendar(identifier: .gregorian)
@@ -751,6 +772,84 @@ final class ProductWorkspaceTests: XCTestCase {
             undone.filter { CommitmentPresentation.matches($0, filter: .active) }.map(\.msgUID).sorted(),
             ["cancel", "done", "keep"]
         )
+    }
+
+    @MainActor
+    func testMissingCommitmentStatusWriteDoesNotPretendSuccess() throws {
+        let root = NSTemporaryDirectory() + "commitment-write-honesty-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let store = HUDStore(dbPath: root + "/hud.sqlite3")
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        let reader = WeChatReader(
+            keysPath: root + "/absent-keys.json",
+            dbDir: root + "/synthetic/db_storage",
+            cacheStrategy: .memory
+        )
+        let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
+        XCTAssertThrowsError(try monitor.updateCommitmentStatus(msgUID: "missing-commit", status: .fulfilled))
+        XCTAssertThrowsError(try monitor.batchUpdateCommitmentsStatus(
+            commitments: [Commitment(
+                id: 0,
+                msgUID: "missing-commit",
+                chatUsername: "chat",
+                chatName: "项目群",
+                content: "周五交稿",
+                commitTo: "林晓",
+                deadlineAt: nil,
+                confidence: 0.9,
+                status: .pending,
+                promptVersion: "test",
+                createdAt: Date(),
+                updatedAt: Date()
+            )],
+            status: .fulfilled
+        ))
+        XCTAssertTrue(store.loadCommitments().isEmpty)
+    }
+
+    @MainActor
+    func testMissingDiscussionStatusWriteDoesNotPretendSuccess() throws {
+        let root = NSTemporaryDirectory() + "discussion-write-honesty-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let store = HUDStore(dbPath: root + "/hud.sqlite3")
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        let reader = WeChatReader(
+            keysPath: root + "/absent-keys.json",
+            dbDir: root + "/synthetic/db_storage",
+            cacheStrategy: .memory
+        )
+        let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
+        XCTAssertThrowsError(try monitor.setDiscussionItemStatus(id: 9_999_999, status: .done))
+        XCTAssertThrowsError(try monitor.batchUpdateDiscussionItemsStatus(ids: [9_999_999], status: .done))
+        XCTAssertTrue(store.loadDiscussionItems().isEmpty)
+    }
+
+    @MainActor
+    func testMissingDiscussionOwnerWriteDoesNotPretendSuccess() throws {
+        let root = NSTemporaryDirectory() + "discussion-owner-honesty-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let store = HUDStore(dbPath: root + "/hud.sqlite3")
+        try store.open()
+        defer {
+            store.close()
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        let reader = WeChatReader(
+            keysPath: root + "/absent-keys.json",
+            dbDir: root + "/synthetic/db_storage",
+            cacheStrategy: .memory
+        )
+        let monitor = ChatMonitor(reader: reader, store: store, aiService: AIService(config: AIConfig()))
+        XCTAssertThrowsError(try monitor.setDiscussionItemOwner(id: 9_999_999, owner: .mine))
+        XCTAssertTrue(store.loadDiscussionItems().isEmpty)
     }
 
     func testPendingAskLiveWindowMatchesDiscussionSourceOrDue() {

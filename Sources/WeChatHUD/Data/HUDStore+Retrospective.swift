@@ -438,13 +438,14 @@ extension HUDStore {
     /// To explicitly clear a column, use a follow-up direct update — this
     /// path is purely state-machine driven (markCompleted / snooze /
     /// delegate / archive / notMine).
+    @discardableResult
     nonisolated func updateTodoStatus(
         todoID: Int,
         status: TodoStatus,
         completedAt: Date? = nil,
         snoozedTo: Date? = nil,
         delegatedTo: String? = nil
-    ) {
+    ) -> Int {
         let sql = """
             UPDATE review_todos
             SET status = ?,
@@ -454,7 +455,7 @@ extension HUDStore {
                 last_user_action_at = ?
             WHERE id = ?;
         """
-        executeUpdate(sql) { stmt in
+        let changes = executeUpdate(sql) { stmt in
             sqlite3_bind_text(stmt, 1, status.rawValue, -1, HUDStore.sqliteTransient)
             if let c = completedAt { sqlite3_bind_int64(stmt, 2, Int64(c.timeIntervalSince1970)) } else { sqlite3_bind_null(stmt, 2) }
             if let s = snoozedTo { sqlite3_bind_int64(stmt, 3, Int64(s.timeIntervalSince1970)) } else { sqlite3_bind_null(stmt, 3) }
@@ -470,13 +471,14 @@ extension HUDStore {
             guard let stmt else { return nil }
             return Int(sqlite3_column_int(stmt, 0))
         })
-        if let runID {
+        if changes > 0, let runID {
             NotificationCenter.default.post(
                 name: .retrospectiveLiveUpdate,
                 object: nil,
                 userInfo: ["runId": runID, "kind": "todo", "id": todoID]
             )
         }
+        return changes
     }
 
     nonisolated func bumpTodoCarry(todoID: Int, newRunID: Int) {

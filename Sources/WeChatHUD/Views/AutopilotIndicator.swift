@@ -8,10 +8,13 @@ import SwiftUI
 struct AutopilotIndicator: View {
     @EnvironmentObject var monitor: ChatMonitor
     @EnvironmentObject var panelState: PanelState
-    @State private var showPopover = false
 
     var body: some View {
-        Button(action: { showPopover.toggle() }) {
+        Button(action: {
+            withMotion(CompanionMotion.islandRowExpand()) {
+                panelState.setAutopilotPopoverOpen(!panelState.autopilotPopoverOpen)
+            }
+        }) {
             HStack(spacing: 3) {
                 Image(systemName: "airplane.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -20,22 +23,11 @@ struct AutopilotIndicator: View {
                     stats
                 }
             }
+            .frame(minWidth: 22, minHeight: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(IslandIconButtonStyle())
         .help(tooltip)
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            AutopilotPopoverView(close: { showPopover = false })
-                .environmentObject(monitor)
-                .environmentObject(panelState)
-        }
-        .onChange(of: showPopover) { _, newValue in
-            // Pill collapse is driven by mouseEntered/mouseExited. The
-            // popover renders outside the pill, so the cursor naturally
-            // leaves the pill bounds while interacting with it — lock
-            // the pill open while the popover is visible.
-            panelState.setAutopilotPopoverOpen(newValue)
-        }
     }
 
     // MARK: - Visual state
@@ -86,12 +78,7 @@ struct AutopilotIndicator: View {
     }
 
     static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        if total < 60 { return "\(total)s" }
-        let m = total / 60
-        if m < 60 { return "\(m) 分钟" }
-        let h = m / 60
-        return "\(h) 小时 \(m % 60) 分钟"
+        RelativeTimeFormatter.elapsedLabel(interval)
     }
 }
 
@@ -108,6 +95,8 @@ struct AutopilotPopoverView: View {
     /// button in a named, disabled state instead of letting a second press
     /// queue behind the first one.
     @State private var starting = false
+    @State private var stopping = false
+    @State private var pausing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -123,8 +112,8 @@ struct AutopilotPopoverView: View {
             footerLinks
         }
         .padding(12)
-        .frame(width: 220)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(IslandInk.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     // MARK: - Header
@@ -171,10 +160,12 @@ struct AutopilotPopoverView: View {
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)
-            .background(Color.green.opacity(starting ? 0.45 : 0.8))
-            .cornerRadius(5)
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(IslandInboxRowButtonStyle(
+            highlighted: false,
+            resting: Color.green.opacity(starting ? 0.45 : 0.8),
+            cornerRadius: 5
+        ))
         .disabled(starting)
         .accessibilityLabel(starting ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
         .help(starting ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
@@ -194,6 +185,19 @@ struct AutopilotPopoverView: View {
                 started: await monitor.startAutopilotAndWait()
             )
             starting = false
+            panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
+            if receipt.dismissesPopover { close() }
+        }
+    }
+
+    private func stop() {
+        guard !stopping else { return }
+        stopping = true
+        Task { @MainActor in
+            let receipt = AutopilotStopReceipt.resolve(
+                stopped: await monitor.stopAutopilotAndWait()
+            )
+            stopping = false
             panelState.showToast(receipt.toast, duration: receipt.dismissesPopover ? 2 : 4)
             if receipt.dismissesPopover { close() }
         }
@@ -247,9 +251,10 @@ struct AutopilotPopoverView: View {
     private var pauseResumeButton: some View {
         let paused = monitor.autopilotManuallyPaused
         return Button(action: {
-            // AutopilotService is an actor — manualPause / manualResume
-            // are isolated methods, so we need a Task to cross into it.
-            Task {
+            guard !pausing, !stopping else { return }
+            pausing = true
+            Task { @MainActor in
+                defer { pausing = false }
                 if paused {
                     await monitor.autopilotService?.manualResume()
                 } else {
@@ -260,37 +265,44 @@ struct AutopilotPopoverView: View {
             HStack(spacing: 3) {
                 Image(systemName: paused ? "play.fill" : "pause.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text(paused ? "恢复" : "暂停")
+                Text(pausing ? (paused ? "正在恢复…" : "正在暂停…") : (paused ? "恢复" : "暂停"))
                     .font(.system(size: 10, weight: .semibold))
             }
             .foregroundColor(paused ? .green : .yellow)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background((paused ? Color.green : Color.yellow).opacity(0.15))
-            .cornerRadius(4)
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(IslandInboxRowButtonStyle(
+            highlighted: false,
+            resting: (paused ? Color.green : Color.yellow).opacity(0.15),
+            cornerRadius: 4
+        ))
+        .disabled(stopping || pausing)
+        .help(pausing ? (paused ? "正在恢复整理" : "正在暂停整理") : (stopping ? AutopilotStopCopy.stoppingHint : ""))
+        .accessibilityHint(pausing ? (paused ? "正在恢复整理" : "正在暂停整理") : (stopping ? AutopilotStopCopy.stoppingHint : ""))
     }
 
     private var stopButton: some View {
-        Button(action: {
-            monitor.stopAutopilot()
-            panelState.showToast("自动回复已停止", duration: 2)
-            close()
-        }) {
+        Button(action: stop) {
             HStack(spacing: 3) {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 10, weight: .semibold))
-                Text("停止")
+                Text(stopping ? AutopilotStopCopy.stopping : AutopilotStopCopy.stop)
                     .font(.system(size: 10, weight: .semibold))
             }
             .foregroundColor(.red)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(Color.red.opacity(0.15))
-            .cornerRadius(4)
         }
-        .buttonStyle(CompanionPressStyle())
+        .buttonStyle(IslandInboxRowButtonStyle(
+            highlighted: false,
+            resting: Color.red.opacity(0.15),
+            cornerRadius: 4
+        ))
+        .disabled(stopping || pausing)
+        .help(stopping ? AutopilotStopCopy.stoppingHint : (pausing ? "正在暂停整理" : ""))
+        .accessibilityLabel(stopping ? AutopilotStopCopy.stopping : AutopilotStopCopy.stop)
+        .accessibilityHint(stopping ? AutopilotStopCopy.stoppingHint : (pausing ? "正在暂停整理" : ""))
     }
 
     // MARK: - Footer links
@@ -298,8 +310,7 @@ struct AutopilotPopoverView: View {
     private var footerLinks: some View {
         HStack(spacing: 8) {
             Button(action: {
-                panelState.pendingSettingsTab = "autopilotDashboard"
-                panelState.onShowSettings?()
+                AutopilotPopoverRouting.openPendingRepliesInPanel(panelState)
                 close()
             }) {
                 Text("待确认回复")
@@ -307,22 +318,8 @@ struct AutopilotPopoverView: View {
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(IslandRowButtonStyle())
-
-            Text("·")
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-
-            Button(action: {
-                AutopilotPopoverRouting.openPendingRepliesInPanel(panelState)
-                close()
-            }) {
-                Text("浮窗内查看")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.accentColor)
-            }
-            .buttonStyle(IslandRowButtonStyle())
-            .help("在浮窗面板里打开待确认回复，不弹出设置窗口")
-            .accessibilityHint("在浮窗面板里打开待确认回复")
+            .help("打开待确认列表")
+            .accessibilityHint("打开待确认列表")
 
             Text("·")
                 .font(.system(size: 10))
@@ -354,6 +351,26 @@ enum AutopilotStartCopy {
     static let startingHint = "正在启动自动回复，请稍候…"
     static let started = "自动回复已开始整理"
     static let failed = "自动回复没能启动，服务还没准备好。请重试。"
+}
+
+enum AutopilotStopCopy {
+    static let stop = "停止"
+    static let stopping = "正在停止…"
+    static let stoppingHint = "正在停止自动回复"
+    static let stopped = "自动回复已停止"
+    static let failed = "自动回复没有停干净，整理可能还在跑。请重试。"
+}
+
+struct AutopilotStopReceipt: Equatable {
+    let stopped: Bool
+    let toast: String
+    let dismissesPopover: Bool
+
+    static func resolve(stopped: Bool) -> AutopilotStopReceipt {
+        stopped
+            ? AutopilotStopReceipt(stopped: true, toast: AutopilotStopCopy.stopped, dismissesPopover: true)
+            : AutopilotStopReceipt(stopped: false, toast: AutopilotStopCopy.failed, dismissesPopover: false)
+    }
 }
 
 /// The receipt for one 开始整理 press. Only a confirmed start may dismiss the

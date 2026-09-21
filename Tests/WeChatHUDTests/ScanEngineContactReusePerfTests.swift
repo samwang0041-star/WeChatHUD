@@ -166,10 +166,94 @@ final class ScanEngineContactReusePerfTests: XCTestCase {
                      "the whitelist chat must not be baselined by the autopilot pass")
         XCTAssertNil(store.getAutopilotCursor(username: Chats.group),
                      "group chats must not be baselined by the autopilot pass")
-        XCTAssertFalse(outcome.newInboundMessages.contains { $0.chatUsername == Chats.whitelisted || $0.chatUsername == Chats.group })
+       XCTAssertFalse(outcome.newInboundMessages.contains { $0.chatUsername == Chats.whitelisted || $0.chatUsername == Chats.group })
+   }
+
+    func testUnreadableContactsDoNotEnqueueAutopilotOrAdvanceCursor() async throws {
+        let fixture = try WeChatReaderPerfFixture()
+        defer { fixture.cleanUp() }
+        let reader = try makeCostFixture(fixture).reader
+        let store = try fixture.makeStore()
+        defer { store.close() }
+        try seed(store)
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+
+        let scanned = try await scan(reader, store: store, autopilotActive: true)
+        _ = try XCTUnwrap(scanned)
+        XCTAssertTrue(store.loadPendingAutopilotInbound().isEmpty,
+                      "读不到联系人时不能把老板写成熟人再入队")
+        XCTAssertEqual(store.getAutopilotCursor(username: Chats.vip)?.lastCreateTime, 900,
+                       "读不到就不能把水位推过这些消息")
+        XCTAssertNil(store.getAutopilotCursor(username: Chats.seedMe),
+                     "读不到也不能把没扫过的会话基线到最新一条")
     }
 
-    // MARK: Fixture
+    func testScanEngineDoesNotQueryContactsPerMessageOnTheWhitelistPath() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/WeChatHUD/Services/ScanEngine.swift"),
+            encoding: .utf8)
+        XCTAssertFalse(source.contains("store.getContact(username: msg.senderUsername)"))
+        XCTAssertTrue(source.contains("contactsAllRead"))
+       XCTAssertTrue(source.contains("contactsUnreadable"))
+   }
+
+    func testWhitelistAutopilotKeepsBossRoleFromTheContactSnapshot() async throws {
+        let fixture = try WeChatReaderPerfFixture()
+        defer { fixture.cleanUp() }
+        try fixture.createMessageDB(
+            relPath: messageDB,
+            chats: [Chats.whitelisted: [.init(localId: 2, createTime: 4_000, senderId: 1, text: "合同今晚发")]],
+            name2id: [Chats.whitelisted]
+        )
+        try fixture.createSessionDB(rows: [
+            .init(username: Chats.whitelisted, unreadCount: 1, lastTimestamp: 4_000),
+        ])
+        let reader = try fixture.makeReader(cacheStrategy: .memory)
+        let store = try fixture.makeStore()
+        defer { store.close() }
+        try store.addToWhitelist(username: Chats.whitelisted, displayName: "老板",
+                                 isGroup: false, category: .work, attentionLevel: .vip)
+        try store.upsertContact(username: Chats.whitelisted, displayName: "老板",
+                                attentionLevel: .vip, role: .boss, replyWindowMinutes: 15)
+        try store.setWhitelistCursor(username: Chats.whitelisted, lastCreateTime: 100, lastLocalId: 0)
+
+        _ = try await scan(reader, store: store, autopilotActive: true)
+        let queued = store.loadPendingAutopilotInbound()
+        XCTAssertEqual(queued.map(\.text), ["合同今晚发"])
+        XCTAssertEqual(queued.first?.contactRole, .boss)
+    }
+
+    func testWhitelistAutopilotDoesNotInventAcquaintanceWhenContactsUnreadable() async throws {
+        let fixture = try WeChatReaderPerfFixture()
+        defer { fixture.cleanUp() }
+        try fixture.createMessageDB(
+            relPath: messageDB,
+            chats: [Chats.whitelisted: [.init(localId: 2, createTime: 4_000, senderId: 1, text: "合同今晚发")]],
+            name2id: [Chats.whitelisted]
+        )
+        try fixture.createSessionDB(rows: [
+            .init(username: Chats.whitelisted, unreadCount: 1, lastTimestamp: 4_000),
+        ])
+        let reader = try fixture.makeReader(cacheStrategy: .memory)
+        let store = try fixture.makeStore()
+        defer { store.close() }
+        try store.addToWhitelist(username: Chats.whitelisted, displayName: "老板",
+                                 isGroup: false, category: .work, attentionLevel: .vip)
+        try store.upsertContact(username: Chats.whitelisted, displayName: "老板",
+                                attentionLevel: .vip, role: .boss, replyWindowMinutes: 15)
+        try store.setWhitelistCursor(username: Chats.whitelisted, lastCreateTime: 100, lastLocalId: 0)
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+
+        _ = try await scan(reader, store: store, autopilotActive: true)
+        XCTAssertTrue(store.loadPendingAutopilotInbound().isEmpty)
+        XCTAssertEqual(store.getWhitelistCursor(username: Chats.whitelisted)?.lastCreateTime, 100)
+    }
+
+   // MARK: Fixture
 
     private struct Prepared {
         let reader: WeChatReader

@@ -1920,14 +1920,16 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         ) ?? false
     }
 
-    func updatePendingAskStatus(msgUID: String, status: AskStatus) throws {
+    @discardableResult
+    func updatePendingAskStatus(msgUID: String, status: AskStatus) throws -> Int {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("""
+        return try execReturningChanges("""
             UPDATE pending_asks SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
     }
 
-    func dismissPendingAsk(msgUID: String) throws {
+    @discardableResult
+    func dismissPendingAsk(msgUID: String) throws -> Int {
         try updatePendingAskStatus(msgUID: msgUID, status: .dismissed)
     }
 
@@ -2456,11 +2458,57 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             return .unreadable
         }
         guard exists != nil else { return .absent }
-        guard let contact = getContact(username: username) else { return .unreadable }
-        return .value(contact)
+       guard let contact = getContact(username: username) else { return .unreadable }
+       return .value(contact)
+   }
+
+    enum StoredDisplayNameRead {
+        case value(String)
+        case absent
+        case unreadable
     }
 
-    func getContact(username: String) -> ContactEntry? {
+    /// A name already stored on this machine. `getContact`/`getWhitelistEntry`
+    /// nil is both 「no row」 and 「this read failed」, and the island used that
+    /// nil to print a wxid or 未命名 over a name that was sitting in sqlite.
+    func storedDisplayName(_ username: String) -> StoredDisplayNameRead {
+        var sawUnreadable = false
+        switch contactRead(username) {
+        case .value(let contact):
+            let name = contact.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty, !ContactIdentityIndex.isRawChatIdentifier(name) {
+                return .value(name)
+            }
+        case .unreadable:
+            sawUnreadable = true
+        case .absent:
+            break
+        }
+        switch whitelistEntryRead(username) {
+        case .value(let entry):
+            let name = entry.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty, !ContactIdentityIndex.isRawChatIdentifier(name) {
+                return .value(name)
+            }
+        case .unreadable:
+            sawUnreadable = true
+        case .absent:
+            break
+        }
+        return sawUnreadable ? .unreadable : .absent
+    }
+
+    /// Annotation for prompt windows. Unreadable is omitted, never 熟人.
+    func contextContactAnnotation(_ username: String) -> (AttentionLevel, ContactRole)? {
+        switch contactRead(username) {
+        case .value(let contact):
+            return (contact.attentionLevel, contact.role)
+        case .absent, .unreadable:
+            return nil
+        }
+    }
+
+   func getContact(username: String) -> ContactEntry? {
         queryOne("""
             SELECT username, display_name, attention_level, role, role_note,
                    reply_window_minutes, level_changed_at, created_at, updated_at
@@ -2488,12 +2536,37 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             if let level {
                 sqlite3_bind_text(stmt, 1, level.rawValue, -1, Self.sqliteTransient)
             }
-        }, decode: { stmt in
-            readContactRow(stmt)
-        })
+       }, decode: { stmt in
+           readContactRow(stmt)
+       })
+   }
+
+    /// Bulk sibling of ``contactRead(_:)``. `loadContacts` answers `[]` both
+    /// when the table is empty and when the query failed, and the scan engine
+    /// used that empty map to invent acquaintance / stranger for every sender.
+    enum ContactsAllRead {
+        case value([ContactEntry])
+        case unreadable
     }
 
-    func updateContactLevel(username: String, level: AttentionLevel, role: ContactRole) throws {
+    func contactsAllRead() -> ContactsAllRead {
+        let sql = """
+            SELECT username, display_name, attention_level, role, role_note,
+                   reply_window_minutes, level_changed_at, created_at, updated_at
+            FROM contacts
+            ORDER BY updated_at DESC
+            """
+        do {
+            let rows: [ContactEntry] = try queryAllThrowing(sql, bind: { _ in }) { stmt in
+                readContactRow(stmt)
+            }
+            return .value(rows)
+        } catch {
+            return .unreadable
+        }
+    }
+
+   func updateContactLevel(username: String, level: AttentionLevel, role: ContactRole) throws {
         let now = Int(Date().timeIntervalSince1970)
         try exec("""
             UPDATE contacts SET attention_level=?, role=?, level_changed_at=?, updated_at=?
@@ -3023,9 +3096,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         return results
     }
 
-    func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws {
+    @discardableResult
+    func updateCommitmentStatus(msgUID: String, status: CommitmentStatus) throws -> Int {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("""
+        return try execReturningChanges("""
             UPDATE commitments SET status=?, updated_at=? WHERE msg_uid=?
         """, params: [status.rawValue, "\(now)", msgUID])
     }
@@ -3274,9 +3348,10 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
         ])
     }
 
-    func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws {
+    @discardableResult
+    func updateDiscussionItemStatus(id: Int64, status: DiscussionItemStatus) throws -> Int {
         let now = Int(Date().timeIntervalSince1970)
-        try exec("""
+        return try execReturningChanges("""
             UPDATE discussion_items SET status=?, updated_at=? WHERE id=?
         """, params: [status.rawValue, "\(now)", "\(id)"])
     }
@@ -3444,10 +3519,16 @@ final class HUDStore: ObservableObject, @unchecked Sendable {
             savedTextsByChat[row.chatUsername, default: []].insert(row.text)
         }
         for composer in loadComposerDrafts() {
-            if savedTextsByChat[composer.chatUsername]?.contains(composer.text) == true { continue }
-            let name = getWhitelistEntry(username: composer.chatUsername)?.displayName
-                ?? getContact(username: composer.chatUsername)?.displayName
-                ?? composer.chatUsername
+           if savedTextsByChat[composer.chatUsername]?.contains(composer.text) == true { continue }
+            let name: String
+            switch storedDisplayName(composer.chatUsername) {
+            case .value(let stored):
+                name = stored
+            case .unreadable:
+                name = ContactIdentityIndex.unreadableNamePlaceholder
+            case .absent:
+                name = composer.chatUsername
+            }
             result.insert(
                 WorkspaceDraft(
                     id: Self.composerDraftID(composer.chatUsername),

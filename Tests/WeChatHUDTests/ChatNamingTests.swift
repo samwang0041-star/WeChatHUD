@@ -352,7 +352,22 @@ final class ChatNamingTests: XCTestCase {
         let monitor = makeMonitorWithEmptyReader(store: store)
         // Nothing is stored anywhere: the username is the only honest answer
         // for a non-raw id, and inventing a placeholder would hide the fact
-        // that this chat was never resolved.
-        XCTAssertEqual(monitor.displayName(for: "zhangsan2024"), "zhangsan2024")
+       // that this chat was never resolved.
+       XCTAssertEqual(monitor.displayName(for: "zhangsan2024"), "zhangsan2024")
+   }
+
+    @MainActor
+    func testUnreadableStoredNameDoesNotPrintTheUsername() throws {
+        try store.saveContactTracking(username: "zhangsan2024", displayName: "张三",
+            isGroup: false, category: .work, attentionLevel: .whitelist, role: .colleague)
+        try store.exec("ALTER TABLE contacts RENAME TO contacts_hidden")
+        try store.exec("ALTER TABLE whitelist RENAME TO whitelist_hidden")
+        let monitor = makeMonitorWithEmptyReader(store: store)
+        XCTAssertEqual(monitor.displayName(for: "zhangsan2024"),
+                       ContactIdentityIndex.unreadableNamePlaceholder,
+                       "读不到已存的名字，不能把账号 id 当成名字印出来")
+        XCTAssertNotEqual(monitor.displayName(for: "zhangsan2024"), "zhangsan2024")
+        XCTAssertNotEqual(monitor.displayName(for: "zhangsan2024"),
+                          ContactIdentityIndex.unnamedContactPlaceholder)
     }
 }

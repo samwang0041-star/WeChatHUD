@@ -149,7 +149,7 @@ final class DailyReportPresentationPolicyTests: XCTestCase {
 
         XCTAssertTrue(vm.isSourceUnavailable)
         XCTAssertTrue(md.contains("今日来源未验证"))
-        XCTAssertTrue(md.contains("暂不能判断是否有待处理事项"))
+        XCTAssertTrue(md.contains("不能判断有没有待处理事项"))
         XCTAssertFalse(md.contains("暂无需要处理"))
     }
 

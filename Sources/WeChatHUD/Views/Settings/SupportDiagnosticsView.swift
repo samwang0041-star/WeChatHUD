@@ -35,16 +35,19 @@ struct SupportDiagnosticsView: View {
             SettingsRowDivider()
             HStack {
                 Button("复制诊断概况", action: copySummary)
+                    .buttonStyle(CompanionPressStyle())
                 if let copyFeedback {
                     Text(copyFeedback)
                         .font(.system(size: 12))
-                        .foregroundColor(copyFeedback == "已复制" ? .secondary : .red)
+                        .foregroundColor(copyFeedback == CompanionInteractionCopy.copied ? CompanionPalette.jadeInk : .orange)
+                        .transition(.companionStatusReveal)
                 }
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
         }
+        .companionAnimation(CompanionMotion.ease(), value: copyFeedback)
     }
 
     private var version: String {
@@ -68,12 +71,12 @@ struct SupportDiagnosticsView: View {
     private var syncLabel: String {
         switch monitor.stats.syncStatus {
         case .idle: return "等待首次同步"
-        case .syncing: return "同步中"
+        case .syncing: return "正在同步"
         case .ok: return "正常"
         case .stale: return "延迟"
-        case .waitingForWeChat: return "等待微信"
-        case .accountSwitched: return "数据目录失效"
-        case .error: return "异常"
+       case .waitingForWeChat: return "等待微信"
+        case .accountSwitched: return CompanionInteractionCopy.accountSwitchedShort
+       case .error: return "异常"
         }
     }
 
@@ -133,8 +136,8 @@ struct SupportDiagnosticsView: View {
     }
 
     private func copySummary() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        copyFeedback = pasteboard.setString(summaryText, forType: .string) ? "已复制" : "复制失败，请重试"
+        copyFeedback = CompanionClipboard.write(summaryText)
+            ? CompanionInteractionCopy.copied
+            : CompanionInteractionCopy.copyFailed
     }
 }

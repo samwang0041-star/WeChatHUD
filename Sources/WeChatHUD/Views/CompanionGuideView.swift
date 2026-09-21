@@ -5,6 +5,7 @@ import SwiftUI
 struct CompanionGuideView: View {
     let navigate: (SettingsView.Tab) -> Void
     let showIntroduction: () -> Void
+    @State private var isCheckingUpdates = false
 
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -25,12 +26,12 @@ struct CompanionGuideView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 introCard
-                quickStartCard
-                dailyUseCard.companionStagger(index: 1)
-                privacyCard.companionStagger(index: 2)
-                troubleshootingCard.companionStagger(index: 3)
-                shortcutsCard.companionStagger(index: 4)
-                aboutCard.companionStagger(index: 5)
+                quickStartCard.companionStagger(index: 0)
+                dailyUseCard
+                privacyCard
+                troubleshootingCard
+                shortcutsCard
+                aboutCard
             }
             .padding(.top, WorkspacePage.selfHeadedTopGap)
             .padding(.bottom, WorkspacePage.bottomGap)
@@ -78,7 +79,7 @@ struct CompanionGuideView: View {
     }
 
     private var dailyUseCard: some View {
-        GuideCard(icon: "tray.full.fill", tint: CompanionPalette.accent, title: "每天怎么用") {
+        GuideCard(icon: "tray.full.fill", tint: CompanionPalette.accent, title: "每天怎么用", index: 1) {
             guideTopic("从「今天」开始", "看待回和待办。点开一条消息看原文和摘要。", icon: "bubble.left.and.bubble.right")
             guideTopic("没回的", "在「今天」里选时间，找出私聊和群 @ 里你还没回的。", icon: "clock.badge.questionmark")
             guideTopic("群里有人 @你", "会标出谁提到了你。", icon: "person.2.fill")
@@ -93,7 +94,7 @@ struct CompanionGuideView: View {
     }
 
     private var privacyCard: some View {
-        GuideCard(icon: "lock.shield.fill", tint: CompanionPalette.accent, title: "数据与隐私") {
+        GuideCard(icon: "lock.shield.fill", tint: CompanionPalette.accent, title: "数据与隐私", index: 2) {
             privacyRow("本机聊天资料", "只读取聊天原文，不改微信记录。事项、草稿和设置保存在这台 Mac。", icon: "externaldrive")
             privacyRow("发给 AI 的内容", "打开 AI 后，相关聊天片段会发给你选的服务，用来写摘要和草稿。请只用你信任的服务。", icon: "arrow.up.right")
             privacyRow("发送和自动回复", "默认每次发送都要你确认。自动回复默认关着；若打开「自动发出去」，符合条件的回复会自己发出。钱、红包这类消息仍不会自动回。", icon: "hand.raised")
@@ -101,16 +102,16 @@ struct CompanionGuideView: View {
     }
 
     private var troubleshootingCard: some View {
-        GuideCard(icon: "wrench.and.screwdriver.fill", tint: CompanionPalette.accent, title: "遇到问题时") {
+        GuideCard(icon: "wrench.and.screwdriver.fill", tint: CompanionPalette.accent, title: "遇到问题时", index: 3) {
             troubleshootingRow("看不到新消息", "先确认这台 Mac 上的微信已经登录，再打开「微信连接」。页面会告诉你还差哪一步。连上之后点「查看新消息」。", buttonTitle: "检查连接", tab: .system)
-            troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和密钥，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
+            troubleshootingRow("摘要或草稿写不出来", "打开「AI 服务」，确认服务和访问凭据，再点「测试连接」。能不能用、还有没有额度，由你选的服务决定。", buttonTitle: "检查 AI", tab: .aiService)
             troubleshootingRow("跳转或发送没反应", "确认微信已登录，并在「隐私与安全性 → 辅助功能」里允许 WeChatHUD。发送失败时回微信核对，草稿还在。", buttonTitle: "查看连接说明", tab: .system)
             troubleshootingRow("关注错了人", "到「关注谁」里拿掉或改级别。要换微信账号，用连接页的「更换微信账号」；不同账号的资料分开保存。", buttonTitle: "关注谁", tab: .contacts)
         }
     }
 
     private var shortcutsCard: some View {
-        GuideCard(icon: "command", tint: CompanionPalette.accent, title: "键盘快捷键") {
+        GuideCard(icon: "command", tint: CompanionPalette.accent, title: "键盘快捷键", index: 4) {
             shortcutRow("⌘1", CompanionProductCopy.openCompanion)
             shortcutRow("⌘,", "打开微信连接")
             shortcutRow("Esc", "收起浮窗（仅当前窗口时有效）")
@@ -121,7 +122,7 @@ struct CompanionGuideView: View {
     }
 
     private var aboutCard: some View {
-        GuideCard(icon: "info.circle.fill", tint: CompanionPalette.accent, title: "关于") {
+        GuideCard(icon: "info.circle.fill", tint: CompanionPalette.accent, title: "关于", index: 5) {
             HStack {
                 Text(CompanionProductCopy.brandName)
                     .font(.body.weight(.semibold))
@@ -133,11 +134,21 @@ struct CompanionGuideView: View {
             HStack {
                 Button("重新打开引导", action: showIntroduction)
                     .buttonStyle(.bordered)
-                Button("检查更新") {
-                    navigate(.preferences)
-                    Task { await AppUpdateController.shared.check(force: true, installIfEnabled: false) }
+                Button {
+                    guard !isCheckingUpdates else { return }
+                    isCheckingUpdates = true
+                    Task {
+                        await AppUpdateController.shared.check(force: true, installIfEnabled: false)
+                        isCheckingUpdates = false
+                        navigate(.preferences)
+                    }
+                } label: {
+                    Text(isCheckingUpdates ? "正在检查…" : "检查更新")
                 }
                 .buttonStyle(.bordered)
+                .disabled(isCheckingUpdates)
+                .help(isCheckingUpdates ? "正在检查 GitHub 上的新版本" : "")
+                .accessibilityHint(isCheckingUpdates ? "正在检查 GitHub 上的新版本" : "")
                 Spacer()
             }
             Text("资料保存在本机；启用线上 AI 时，相关聊天会交给所选服务处理。")
@@ -155,7 +166,7 @@ struct CompanionGuideView: View {
             }
             .padding(.vertical, 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(CompanionRowPressStyle())
     }
 
     private func guideStep(number: String, title: String, detail: String, buttonTitle: String, action: @escaping () -> Void) -> some View {

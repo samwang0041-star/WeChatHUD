@@ -216,10 +216,10 @@ enum CompactIslandPolicy {
             return "\(spokenCount(count)) 条待处理。"
         case .notices(let count):
             return "\(spokenCount(count)) 条群消息。"
-        case .quiet:
-            return "暂无待处理。"
-        }
-    }
+       case .quiet:
+            return "现在没有要处理的。"
+       }
+   }
 
     /// The peek pill's whole text budget is `IslandChrome.peekSlotWidth`
     /// (78 pt) minus 20 pt of padding, so every string here is ≤5 CJK glyphs.
@@ -236,16 +236,16 @@ enum CompactIslandPolicy {
             return priority == .p0
                 ? "\(spokenCount(count)) 条急事"
                 : "\(spokenCount(count)) 条待回"
-        case .working:
-            return "AI 整理中"
-        case .waiting(let count):
+       case .working:
+            return "AI 在整理"
+       case .waiting(let count):
             return "\(spokenCount(count)) 条待处理"
         case .notices(let count):
             return "\(spokenCount(count)) 条群消息"
-        case .quiet:
-            return "都处理好了"
-        }
-    }
+       case .quiet:
+            return "没有待处理"
+       }
+   }
 
     private static func spokenCount(_ count: Int) -> String {
         count > 9 ? "9+" : "\(count)"

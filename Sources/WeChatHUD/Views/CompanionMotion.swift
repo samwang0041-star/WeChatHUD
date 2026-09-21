@@ -45,20 +45,70 @@ enum CompanionMotion {
         strongEaseOut(duration)
     }
 
-    /// easeIn with the given duration; nil when reduce motion is on.
-    static func easeIn(_ duration: TimeInterval) -> Animation? {
-        reduceMotion ? nil : .easeIn(duration: duration)
+    /// Occasional surfaces that arrive after the user acted (undo bar, toast).
+    ///
+    /// 250ms sits at the top of the tooltip/popover band and below the 300ms
+    /// UI cap. The curve is still the house ease-out: the bar has to move on
+    /// the first frame, then soften into place.
+    static let enterDuration: TimeInterval = 0.25
+    static func enter() -> Animation? { strongEaseOut(enterDuration) }
+
+    /// System response / toast exit. Faster than enter: the user already saw
+    /// the surface arrive, so the leave should snap rather than wind up.
+    ///
+    /// Both directions stay ease-out. An ease-in exit delays the first pixel
+    /// of motion — the exact moment the eye is watching — and reads as lag
+    /// even when the duration is shorter.
+    static let exitDuration: TimeInterval = 0.16
+    static func exit() -> Animation? { strongEaseOut(exitDuration) }
+
+    /// What the standalone toast window should do on a `toastMessage` tick.
+    ///
+    /// The toast lives in its own NSPanel hung under the island, so SwiftUI
+    /// transitions never run: `orderFront` / `orderOut` is a cut unless we
+    /// drive alpha ourselves. Enter and exit stay in the same family as the
+    /// in-inbox undo bar — strong ease-out, exit faster than enter — and a
+    /// replacement while the window is already up retargets with no motion.
+    /// Reduce Motion and a hidden island both snap; a toast must never
+    /// animate over WeChat mid-send.
+    enum ToastWindowAction: Equatable {
+        case snapShow
+        case animateShow
+        case retarget
+        case snapHide
+        case animateHide
+    }
+
+    static func toastWindowAction(
+        windowVisible: Bool,
+        wantsVisible: Bool,
+        panelVisible: Bool,
+        reduceMotion: Bool = CompanionMotion.reduceMotion
+    ) -> ToastWindowAction {
+        guard wantsVisible, panelVisible else {
+            if !windowVisible { return .snapHide }
+            return reduceMotion || !panelVisible ? .snapHide : .animateHide
+        }
+        if !windowVisible {
+            return reduceMotion ? .snapShow : .animateShow
+        }
+        return .retarget
     }
 
     /// easeOut with the given duration; nil when reduce motion is on.
     static func easeOut(_ duration: TimeInterval) -> Animation? {
-        reduceMotion ? nil : .easeOut(duration: duration)
+        // House curve, not SwiftUI's weak system easeOut. Press, hover and
+        // short fades have to punch on the first frame like every other UI
+        // token — the built-in curve spends its attack barely moving.
+        strongEaseOut(duration)
     }
 
     /// In-place appear/disappear default duration.
     static let easeDuration: TimeInterval = 0.18
-    /// Full page / tab swap. Longer than an in-place disclosure.
-    static let pageChangeDuration: TimeInterval = 0.22
+    /// Frequent Settings tab swaps. Shorter than an in-place disclosure:
+    /// this is tens/day navigation, not an occasional sheet. 160ms still
+    /// reads as one replacement rather than a flicker.
+    static let pageChangeDuration: TimeInterval = 0.16
     /// Row hover wash duration.
     static let hoverDuration: TimeInterval = 0.10
     /// Visible press duration (100–140ms band).
@@ -88,7 +138,7 @@ enum CompanionMotion {
 
     /// Button-press animation (100–140ms).
     static func press() -> Animation? {
-        reduceMotion ? nil : .easeOut(duration: pressDuration)
+        easeOut(pressDuration)
     }
 
     /// How far a pressable surface shrinks under the cursor.
@@ -111,9 +161,9 @@ enum CompanionMotion {
 
     /// Sidebar module selection. Slightly slower than a hover wash: the
     /// selection fill and its tinted border have to arrive together, and a
-    /// 100ms swap on a whole row reads as a flicker next to the page swap
-    /// that follows it.
-    static func sidebarSelection() -> Animation? { ease(0.20) }
+    /// 100ms swap on a whole row still flickers. Matched to pageChange so
+    /// the row and the page land as one gesture.
+    static func sidebarSelection() -> Animation? { ease(pageChangeDuration) }
 
     /// Island compact → hover: same spring family as the frame expand.
     static func islandExpand() -> Animation? { openMorph }
@@ -173,13 +223,18 @@ enum CompanionMotion {
     /// Tests replace this so they do not wait on the live 180ms.
     static var hoverExpandDelayProvider: () -> TimeInterval = { 0.18 }
 
-    /// In-row expand.
+    /// Workspace in-row disclosure. Spec 行内 0.20s — tens/day, house ease-out,
+    /// under the 300ms UI cap. Island rows that re-drive the panel frame use
+    /// `islandRowExpand()` instead, so the row and the window stay on one clock.
+    static let rowExpandDuration: TimeInterval = 0.20
+    static func rowExpand() -> Animation? { ease(rowExpandDuration) }
+
+    /// Island in-row expand that re-drives the panel frame.
     ///
-    /// Same spring as the island open morph: a row's height change re-drives
-    /// the panel frame through the measurement pipe, so the content curve and
-    /// the frame curve must be the same physics or they visibly desync while
-    /// the panel grows around the expanding row.
-    static func rowExpand() -> Animation? { openMorph }
+    /// A row's height change feeds `SizePreferenceKey` and retargets the
+    /// window spring. The content curve has to be the same physics as the
+    /// silhouette opening, or the row and the window visibly desync.
+    static func islandRowExpand() -> Animation? { openMorph }
     /// Source drawer (200–240ms).
     static func drawer() -> Animation? { ease(0.22) }
     /// Modal fade (140–180ms).
@@ -238,16 +293,17 @@ enum CompanionMotion {
     static func staggerDelay(index: Int) -> TimeInterval {
         Double(min(max(0, index), 6)) * staggerStep
     }
-    /// Full page swap (Settings tab, report page). Longer than an in-place
-    /// disclosure: the whole surface changes, so the eye needs a beat to read
-    /// it as one replacement rather than a flicker. Same strong ease-out, so
-    /// it shares the family with every other content transition.
+    /// Frequent tab swap (Settings). Shorter than an in-place disclosure —
+    /// tens/day navigation has to react on the attack. Same strong ease-out.
     static func pageChange() -> Animation? { ease(pageChangeDuration) }
 
-    /// Bare withAnimation default (Animation.default), gated by reduceMotion.
-    static var systemDefault: Animation? {
-        reduceMotion ? nil : .default
-    }
+    /// Last-resort token for a caller that meant "the ordinary in-place ease".
+    ///
+    /// SwiftUI's `Animation.default` is ~350ms easeInOut: over the 300ms UI
+    /// cap, and it eases in. Map it onto the house ease so a forgotten call
+    /// site cannot reintroduce lag. Prefer a named token (`pageChange`,
+    /// `ease`, `nil`) at the call site.
+    static var systemDefault: Animation? { ease() }
 
     /// Trackpad tick for the hover expansion.
     ///
@@ -290,6 +346,10 @@ extension AnyTransition {
     static var islandDetailReveal: AnyTransition {
         .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
     }
+
+    /// Status, error, and receipt lines. Same physicality as a detail reveal,
+    /// named so call sites don't invent a third scale.
+    static var companionStatusReveal: AnyTransition { islandDetailReveal }
 }
 
 /// Sizes for the notch-anchored island. Compact stays notch-height;

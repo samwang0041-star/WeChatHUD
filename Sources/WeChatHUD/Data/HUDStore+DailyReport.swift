@@ -120,14 +120,9 @@ extension HUDStore {
             state.snoozedUntil.map { String(Int($0.timeIntervalSince1970)) },
             String(Int(state.updatedAt.timeIntervalSince1970))
         ]
-        _ = executeUpdate(sql) { stmt in
-            for (i, p) in params.enumerated() {
-                if let p {
-                    sqlite3_bind_text(stmt, Int32(i + 1), p, -1, Self.sqliteTransient)
-                } else {
-                    sqlite3_bind_null(stmt, Int32(i + 1))
-                }
-            }
+        let changes = try execReturningChanges(sql, params: params)
+        guard changes > 0 else {
+            throw HUDStoreError.sqlError("daily_report_state write did not land")
         }
     }
 

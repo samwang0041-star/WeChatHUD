@@ -110,13 +110,60 @@ struct GlobalBriefing: Codable {
     }
 }
 
+extension GlobalBriefing {
+    /// AI `source` is a display name. Bind it to the whitelist username so
+    /// tapping a briefing card opens that chat instead of bouncing back.
+    func bindingChatUsernames(names: [String: String]) -> GlobalBriefing {
+        GlobalBriefing(
+            date: date,
+            actionRequired: actionRequired.map { item in
+                var item = item
+                item.chatUsername = InsightChatIdentity.resolve(item.source, names: names)
+                return item
+            },
+            headline: headline,
+            stats: stats,
+            crossTopics: crossTopics,
+            darkSignals: darkSignals,
+            overallMood: overallMood,
+            blindSpots: blindSpots,
+            topSuggestion: topSuggestion
+        )
+    }
+}
+
 struct ActionRequiredItem: Codable {
     let source: String
     let what: String
     let urgency: String
+    /// Bound after decode from the whitelist the briefing was built on.
+    /// AI only returns a display name in `source`.
+    var chatUsername: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case source, what, urgency
+    }
+
+    init(source: String, what: String, urgency: String, chatUsername: String? = nil) {
+        self.source = source
+        self.what = what
+        self.urgency = urgency
+        self.chatUsername = chatUsername
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        source = try container.decode(String.self, forKey: .source)
+        what = try container.decode(String.self, forKey: .what)
+        urgency = try container.decode(String.self, forKey: .urgency)
+        chatUsername = nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(source, forKey: .source)
+        try container.encode(what, forKey: .what)
+        try container.encode(urgency, forKey: .urgency)
     }
 }
 

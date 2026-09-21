@@ -37,7 +37,7 @@ struct AIBuddyOverlay: View {
 
             if isHovering {
                 activityPanel(now: now)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.islandDetailReveal)
                     .offset(y: 22)
                     .zIndex(1)
             }
@@ -131,7 +131,7 @@ struct AIBuddyOverlay: View {
                     .lineLimit(1)
             }
             if let ended = task.endedAt {
-                Text(String(format: "%.1fs", ended.timeIntervalSince(task.startedAt)))
+                Text(String(format: "%.1f 秒", ended.timeIntervalSince(task.startedAt)))
                     .font(.system(size: 7, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.6))
             }
@@ -139,9 +139,7 @@ struct AIBuddyOverlay: View {
     }
 
     private func elapsedText(_ interval: TimeInterval) -> String {
-        let s = Int(interval)
-        if s < 60 { return "\(s)s" }
-        return "\(s / 60)m\(s % 60)s"
+        RelativeTimeFormatter.elapsedLabel(interval)
     }
 }
 

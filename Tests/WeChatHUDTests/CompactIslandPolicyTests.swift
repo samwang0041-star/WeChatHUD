@@ -122,10 +122,10 @@ final class CompactIslandPolicyTests: XCTestCase {
         XCTAssertEqual(CompactIslandPolicy.snapshot(input(sync: .error("x"))).glance, "微信连不上")
         XCTAssertEqual(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p0)])).glance, "1 条急事")
         XCTAssertEqual(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p1)])).glance, "1 条待回")
-        XCTAssertEqual(CompactIslandPolicy.snapshot(input(aiActive: true)).glance, "AI 整理中")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input(aiActive: true)).glance, "AI 在整理")
         XCTAssertEqual(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p2), item(priority: .p2)])).glance, "2 条待处理")
         XCTAssertEqual(CompactIslandPolicy.snapshot(input(noticeCount: 2)).glance, "2 条群消息")
-        XCTAssertEqual(CompactIslandPolicy.snapshot(input()).glance, "都处理好了")
+        XCTAssertEqual(CompactIslandPolicy.snapshot(input()).glance, "没有待处理")
         XCTAssertFalse(CompactIslandPolicy.snapshot(input()).glance.contains("移入"))
     }
 
@@ -164,7 +164,7 @@ final class CompactIslandPolicyTests: XCTestCase {
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p0)])).spoken.contains("急事"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(aiActive: true)).spoken.contains("AI"))
         XCTAssertTrue(CompactIslandPolicy.snapshot(input(actions: [item(priority: .p2), item(priority: .p2)])).spoken.contains("2"))
-        XCTAssertTrue(CompactIslandPolicy.snapshot(input()).spoken.contains("暂无"))
+        XCTAssertTrue(CompactIslandPolicy.snapshot(input()).spoken.contains("没有要处理"))
     }
 
     /// `spoken` is a VoiceOver value on a button whose label already says

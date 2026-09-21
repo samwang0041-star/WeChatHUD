@@ -8,6 +8,7 @@ import SwiftUI
 /// group is recognised in the first place.
 struct ChatRenameSheet: View {
     @EnvironmentObject private var monitor: ChatMonitor
+    @EnvironmentObject private var panelState: PanelState
     @Environment(\.dismiss) private var dismiss
 
     let chatUsername: String
@@ -16,6 +17,7 @@ struct ChatRenameSheet: View {
 
     @State private var draftName = ""
     @State private var errorMessage: String?
+    @State private var isSaving = false
 
     private var suggestions: [String] {
         var seen = Set<String>()
@@ -68,23 +70,43 @@ struct ChatRenameSheet: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
+                    .transition(.companionStatusReveal)
             }
 
             HStack {
                 if monitor.store.chatAlias(for: chatUsername) != nil {
-                    Button("恢复微信原名") { clearAlias() }
+                    Button {
+                        guard !isSaving else { return }
+                        isSaving = true
+                        Task { @MainActor in
+                            clearAlias()
+                            isSaving = false
+                        }
+                    } label: {
+                        Text(isSaving ? "正在恢复…" : "恢复微信原名")
+                    }
                         .controlSize(.small)
+                        .buttonStyle(CompanionPressStyle())
+                        .companionBusyHold(isSaving, "正在保存名称")
                 }
                 Spacer()
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("保存") { save() }
+                    .companionBusyHold(isSaving, "正在保存名称")
+                Button {
+                    commitRename()
+                } label: {
+                    Text(isSaving ? "正在保存…" : "保存")
+                }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(trimmedDraft.isEmpty)
+                    .disabled(trimmedDraft.isEmpty || isSaving)
+                    .help(isSaving ? "正在保存名称" : (trimmedDraft.isEmpty ? "先写显示名称" : ""))
+                    .accessibilityHint(isSaving ? "正在保存名称" : (trimmedDraft.isEmpty ? "先写显示名称" : ""))
             }
         }
         .padding(18)
         .frame(width: 380)
+        .companionAnimation(CompanionMotion.ease(), value: errorMessage)
         .onAppear {
             // Pre-fill with the alias when one exists; a placeholder or a
             // member-derived label is a starting point, not something the
@@ -93,10 +115,20 @@ struct ChatRenameSheet: View {
         }
     }
 
+    private func commitRename() {
+        guard !isSaving, !trimmedDraft.isEmpty else { return }
+        isSaving = true
+        Task { @MainActor in
+            save()
+            isSaving = false
+        }
+    }
+
     private func save() {
         guard !trimmedDraft.isEmpty else { return }
         do {
             try monitor.renameChat(chatUsername: chatUsername, displayName: trimmedDraft)
+            panelState.showToast(CompanionInteractionCopy.chatRenamed(trimmedDraft))
             dismiss()
         } catch {
             errorMessage = "名字没有保存成功，原名称仍保留。请重试。"
@@ -106,6 +138,7 @@ struct ChatRenameSheet: View {
     private func clearAlias() {
         do {
             try monitor.clearChatAlias(chatUsername: chatUsername)
+            panelState.showToast(CompanionInteractionCopy.chatNameRestored)
             dismiss()
         } catch {
             errorMessage = "没有恢复成微信原名，请重试。"
