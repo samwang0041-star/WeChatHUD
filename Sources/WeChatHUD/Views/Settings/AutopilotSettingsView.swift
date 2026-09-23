@@ -97,119 +97,130 @@ struct AutopilotSettingsView: View {
                     .fill(monitor.autopilotActive ? CompanionPalette.jade : Color.secondary.opacity(0.45))
                     .frame(width: 7, height: 7)
                 Text(monitor.autopilotActive ? "正在整理回复" : "尚未开始整理")
-                    .font(.system(size: 13))
+                    .companionFont(size: 13)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("查看待确认回复") { panelState.pendingSettingsTab = "autopilotDashboard" }
                     .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
             }
 
             // The page header already reads 自动回复; a section repeating it
-            // says nothing. This group is about how far the automation goes.
-            SettingsSection("发到什么程度") {
-                SettingsToggleRow(
-                    AutopilotSettingsCopy.autoSendTitle,
-                    subtitle: autoSendEnabled ? AutopilotSettingsCopy.autoSendOn : AutopilotSettingsCopy.autoSendOff,
-                    isOn: Binding(
-                        get: { autoSendEnabled },
-                        set: { newValue in
-                            if newValue && !autoSendEnabled {
-                                pendingEnableAutoSend = true
-                            } else {
-                                autoSendEnabled = newValue
-                                save()
+            // says nothing. Three cards below answer one question each — how
+            // far the automation goes, when a reply goes out, what is never
+            // automated — and grey out as a set when the config cannot be read.
+            Group {
+                SettingsSection("发到什么程度") {
+                    SettingsToggleRow(
+                        AutopilotSettingsCopy.autoSendTitle,
+                        subtitle: autoSendEnabled ? AutopilotSettingsCopy.autoSendOn : AutopilotSettingsCopy.autoSendOff,
+                        isOn: Binding(
+                            get: { autoSendEnabled },
+                            set: { newValue in
+                                if newValue && !autoSendEnabled {
+                                    pendingEnableAutoSend = true
+                                } else {
+                                    autoSendEnabled = newValue
+                                    save()
+                                }
                             }
+                        )
+                    )
+                    SettingsRowDivider()
+                    SettingsToggleRow(
+                        AutopilotSettingsCopy.groupAtTitle,
+                        subtitle: handleGroupAt
+                            ? AutopilotSettingsCopy.groupRule
+                            : AutopilotSettingsCopy.groupAtOff,
+                        isOn: Binding(
+                            get: { handleGroupAt },
+                            set: { handleGroupAt = $0; save() }
+                        )
+                    )
+                    SettingsRowDivider()
+                    SettingsRow("回复风格", subtitle: replyStyle.hint) {
+                        Picker("回复风格", selection: $replyStyle) {
+                            ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
                         }
-                    )
-                )
-                SettingsRowDivider()
-                SettingsToggleRow(
-                    AutopilotSettingsCopy.groupAtTitle,
-                    subtitle: handleGroupAt
-                        ? AutopilotSettingsCopy.groupRule
-                        : AutopilotSettingsCopy.groupAtOff,
-                    isOn: Binding(
-                        get: { handleGroupAt },
-                        set: { handleGroupAt = $0; save() }
-                    )
-                )
-                SettingsRowDivider()
-                SettingsRow("回复风格", subtitle: replyStyle.hint) {
-                    Picker("回复风格", selection: $replyStyle) {
-                        ForEach(AutopilotReplyStyle.allCases, id: \.self) { Text($0.label).tag($0) }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .companionScaledWidth(140)
+                        .onChange(of: replyStyle) { save() }
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 140)
-                    .onChange(of: replyStyle) { save() }
-                }
-                SettingsRowDivider()
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(AutopilotSettingsCopy.confidenceTitle)
-                            .font(.system(size: 13))
-                        Spacer()
-                        Text("\(Int(confidenceThreshold * 100))%")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(CompanionPalette.jadeInk)
+                    SettingsRowDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(AutopilotSettingsCopy.confidenceTitle)
+                                .companionFont(size: 13)
+                            Spacer()
+                            Text("\(Int(confidenceThreshold * 100))%")
+                                .companionFont(size: 13, weight: .semibold)
+                                .foregroundStyle(CompanionPalette.jadeInk)
+                        }
+                        Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
+                            .tint(CompanionPalette.jade)
+                            .accessibilityLabel(AutopilotSettingsCopy.confidenceTitle)
+                            .onChange(of: confidenceThreshold) { save() }
+                        Text(AutopilotSettingsCopy.confidenceHint)
+                            .companionFont(size: 12)
+                            .foregroundStyle(.secondary)
                     }
-                    Slider(value: $confidenceThreshold, in: 0.5...1.0, step: 0.05)
-                        .tint(CompanionPalette.jade)
-                        .accessibilityLabel(AutopilotSettingsCopy.confidenceTitle)
-                        .onChange(of: confidenceThreshold) { save() }
-                    Text(AutopilotSettingsCopy.confidenceHint)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                SettingsRowDivider()
-                SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
-                    Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
-                        ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
+                    .padding(.horizontal, 12).padding(.vertical, 10)
+                    SettingsRowDivider()
+                    SettingsRow(AutopilotSettingsCopy.perHourTitle, subtitle: AutopilotSettingsCopy.perHourHint) {
+                        Picker(AutopilotSettingsCopy.perHourTitle, selection: $maxRepliesPerHour) {
+                            ForEach(replyLimits, id: \.self) { Text("\($0) 条").tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .companionScaledWidth(80)
+                        .onChange(of: maxRepliesPerHour) { save() }
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 80)
-                    .onChange(of: maxRepliesPerHour) { save() }
                 }
-                SettingsRowDivider()
-                // The batch window lives in the main section: it is part of
-                // "when do replies go out", not an expert tweak, and its old
-                // home behind 高级设置 hid the answer from the question it
-                // answers.
+
+                // The batch window gets its own card: it is part of "when do
+                // replies go out", not an expert tweak, and its old home behind
+                // 高级设置 hid the answer from the question it answers.
                 limitsBatchRow
-                SettingsRowDivider()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(AutopilotSettingsCopy.alwaysManualTitle)
-                        .font(.system(size: 13, weight: .medium))
+
+                SettingsSection(AutopilotSettingsCopy.alwaysManualTitle) {
                     Text(AutopilotSettingsCopy.alwaysManualRule)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                SettingsRowDivider()
-                DisclosureGroup(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count)) {
-                    exclusionSection
-                }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                SettingsRowDivider()
-                DisclosureGroup(AutopilotSettingsCopy.advancedTitle) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        advancedSection
-                        historySection
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                    SettingsRowDivider()
+                    DisclosureGroup {
+                        exclusionSection
+                    } label: {
+                        Text(AutopilotSettingsCopy.excludedTitle(count: excludedContacts.count))
+                            .companionDisclosureLabel()
                     }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    SettingsRowDivider()
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 12) {
+                            advancedSection
+                            historySection
+                        }
+                    } label: {
+                        Text(AutopilotSettingsCopy.advancedTitle)
+                            .companionDisclosureLabel()
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
                 }
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                // The config could not be read, so every control below is drawn
-                // from Swift defaults, and `save()` is gated off: dragging the
-                // 置信度 slider used to move the slider, print nothing, and write
-                // nothing — while 「不会自动回复的人 (0)」 claimed an empty list was
-                // a fact. Editable-looking and inert is worse than greyed out.
-                .disabled(loadError != nil)
-                .opacity(loadError == nil ? 1 : 0.55)
             }
+            // The config could not be read, so every control in these cards is
+            // drawn from Swift defaults, and `save()` is gated off: dragging
+            // the 置信度 slider used to move the slider, print nothing, and
+            // write nothing — while 「不会自动回复的人 (0)」 claimed an empty
+            // list was a fact. Editable-looking and inert is worse than greyed
+            // out. The gate has to sit on the Group wrapping all three cards:
+            // chained onto one sibling it only greys that sibling, which is
+            // what the old chain on the last disclosure did.
+            .disabled(loadError != nil)
+            .opacity(loadError == nil ? 1 : 0.55)
 
             if let loadError {
                 Label(loadError, systemImage: "exclamationmark.triangle")
@@ -269,12 +280,12 @@ struct AutopilotSettingsView: View {
                 }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.autoSendConfirmMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let saveError {
                             Text(saveError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -315,12 +326,12 @@ struct AutopilotSettingsView: View {
                 CompanionDialog(title: AutopilotSettingsCopy.historyClearConfirmTitle, onClose: { if !isClearingHistory { showClearConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(AutopilotSettingsCopy.historyClearConfirmMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let saveError {
                             Text(saveError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -364,7 +375,7 @@ struct AutopilotSettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 80)
+                .companionScaledWidth(80)
                 .onChange(of: batchWindowSeconds) { save() }
             }
         }
@@ -379,7 +390,7 @@ struct AutopilotSettingsView: View {
             if excludedContacts.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(AutopilotSettingsCopy.excludedEmpty)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.secondary)
                     if allContacts.isEmpty {
                         Button("关注谁") {
@@ -396,14 +407,14 @@ struct AutopilotSettingsView: View {
                     if idx > 0 { SettingsRowDivider() }
                     HStack {
                         Text(contactDisplayName(username))
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                         Spacer()
                         Button {
                             excludedContacts.removeAll { $0 == username }
                             save()
                         } label: {
                             Image(systemName: "minus.circle.fill")
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundColor(.red.opacity(0.6))
                                 .frame(width: 22, height: 22)
                                 .contentShape(Rectangle())
@@ -429,10 +440,10 @@ struct AutopilotSettingsView: View {
                         }
                     } label: {
                         Label(AutopilotSettingsCopy.excludedAddButton, systemImage: "plus.circle")
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                     }
                     .menuStyle(.borderlessButton)
-                    .frame(width: 70)
+                    .companionScaledWidth(70)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
             }
@@ -464,7 +475,7 @@ struct AutopilotSettingsView: View {
                     Text("Enter").tag(WeChatSendKey.enter)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 170)
+                .companionScaledWidth(170)
                 .onChange(of: sendKey) { save() }
             }
         }
@@ -476,7 +487,7 @@ struct AutopilotSettingsView: View {
         SettingsSection(AutopilotSettingsCopy.historyTitle) {
            if sessions.isEmpty {
                 Text(AutopilotSettingsCopy.historyEmpty(active: monitor.autopilotActive))
-                   .font(.system(size: 11))
+                   .companionFont(size: 11)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 10)
             } else {
@@ -491,7 +502,7 @@ struct AutopilotSettingsView: View {
                         // Was 10pt red at 0.7 opacity — below the AA
                         // contrast floor and a small hit target for a
                         // destructive action.
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(.red)
                 }
                 .padding(.horizontal, 12).padding(.vertical, 6)
@@ -502,21 +513,21 @@ struct AutopilotSettingsView: View {
     private func sessionRow(_ session: AutopilotSession) -> some View {
         HStack(spacing: 8) {
             Text(formatDate(session.startedAt))
-                .font(.system(size: 11, design: .monospaced))
+                .companionFont(size: 11, design: .monospaced)
                 .foregroundColor(.primary)
             Text(sessionDuration(session))
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
             Spacer()
             HStack(spacing: 6) {
                 Label("\(session.totalSent)", systemImage: "checkmark.circle")
-                    .font(.system(size: 10)).foregroundColor(.green)
+                    .companionFont(size: 10).foregroundColor(.green)
                 Label("\(session.totalPending)", systemImage: "clock")
-                    .font(.system(size: 10)).foregroundColor(.orange)
+                    .companionFont(size: 10).foregroundColor(.orange)
             }
             if session.endedAt == nil {
                 Text("运行中")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(.green)
             }
         }

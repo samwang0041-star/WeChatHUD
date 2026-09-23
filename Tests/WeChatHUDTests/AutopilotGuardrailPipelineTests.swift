@@ -63,8 +63,44 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         return config
     }
 
+    /// The wall clock the pipeline sees, pinned. The deep-night silence gate
+    /// reads the hour, and unpinned this suite failed between 23:00 and 7:00
+    /// while its batches were silently swallowed (§139).
+    private static func clock(hour: Int) -> Date {
+        Calendar.current.date(bySettingHour: hour, minute: 30, second: 0, of: Date()) ?? Date()
+    }
+
+    private static var daytime: Date { clock(hour: 14) }
+
+    /// The3 a.m. batch is held by the night-silence gate — the one wall-clock
+    /// behaviour in the pipeline, and the reason seven of these tests used to
+    /// fail after midnight. The clock is a parameter now, so both sides of the
+    /// gate are testable at any hour.
+    func testLateNightSilenceHoldsTheBatchOnTheRealPath() async throws {
+        URLRequestRecorder.install()
+        defer { URLRequestRecorder.uninstall() }
+        stubDecision(reply: "好的，我看一下", confidence: 0.9, evidenceQuote: "对方发了一张图片")
+
+        let pipeline = makePipelineService()
+        try await pipeline.start()
+        let result = await pipeline.handleNewMessages(
+            [inbound(uid: "night-1", text: "[图片]", messageType: 3)],
+            config: pipelineConfig(),
+            myUsername: "me",
+            now: Self.clock(hour: 3)
+        )
+        XCTAssertEqual(result.logEntries.first?.action, .skipped)
+        XCTAssertTrue(
+            result.logEntries.first?.aiReasoning?.contains("深夜静默模式") == true,
+            "the 3 a.m. batch must say why it is held, got \(result.logEntries)"
+        )
+        let queue = await pipeline.pendingSendQueue
+        XCTAssertTrue(queue.isEmpty, "a night-silent batch must not queue anything")
+        try? await pipeline.stop()
+    }
+
     private func assertForcedPending(_ message: AutopilotService.InboundMessage) async {
-        let result = await service.handleNewMessages([message], config: autoSendConfig(), myUsername: "me")
+        let result = await service.handleNewMessages([message], config: autoSendConfig(), myUsername: "me", now: Self.daytime)
         XCTAssertEqual(result.logEntries.count, 1, "\(message.msgUID) should produce exactly one log entry")
         let entry = result.logEntries.first
         XCTAssertEqual(entry?.action, .pending, "\(message.msgUID) must never auto-send")
@@ -91,7 +127,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await service.handleNewMessages(
             [inbound(uid: "sticker-1", text: "[动画表情]", messageType: 47)],
             config: autoSendConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
         XCTAssertEqual(result.logEntries.first?.action, .skipped)
         let queue = await service.pendingSendQueue
@@ -103,7 +139,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await service.handleNewMessages(
             [inbound(uid: "group-1", text: "@我 看一下", isGroup: true, isAtMention: true)],
             config: autoSendConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
         XCTAssertEqual(result.logEntries.first?.action, .groupLogged)
         let queue = await service.pendingSendQueue
@@ -115,7 +151,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await service.handleNewMessages(
             [inbound(uid: "text-1", text: "帮我看下这个需求")],
             config: autoSendConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
         XCTAssertTrue(result.logEntries.isEmpty)
         let sent = await service.sessionSent
@@ -137,7 +173,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "group-at-1", text: "@我 看一下排期", isGroup: true, isAtMention: true)],
             config: config,
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         XCTAssertFalse(result.logEntries.isEmpty, "expired batch must produce a log row")
@@ -169,7 +205,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "img-1", text: "[图片]", messageType: 3)],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         XCTAssertEqual(
@@ -199,7 +235,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         _ = await pipeline.handleNewMessages(
             [inbound(uid: "kw-1", text: "今晚吃饭吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let queue = await pipeline.pendingSendQueue
@@ -366,7 +402,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         _ = await pipeline.handleNewMessages(
             [inbound(uid: "stall-quote-1", text: "周末一起爬山吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let queue = await pipeline.pendingSendQueue
@@ -393,7 +429,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "read-held-1", text: "转账到这张卡可以吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let reasoning = result.logEntries.first?.aiReasoning ?? ""
@@ -420,7 +456,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "no-quote-1", text: "周末一起爬山吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let queue = await pipeline.pendingSendQueue
@@ -450,7 +486,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         _ = await pipeline.handleNewMessages(
             [inbound(uid: "pending-no-quote-1", text: "明天上午能给我个准话吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let queue = await pipeline.pendingSendQueue
@@ -479,7 +515,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "unknown-action-1", text: "周末一起爬山吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         let queue = await pipeline.pendingSendQueue
@@ -504,7 +540,7 @@ final class AutopilotGuardrailPipelineTests: XCTestCase {
         let result = await pipeline.handleNewMessages(
             [inbound(uid: "unknown-action-2", text: "在吗")],
             config: pipelineConfig(),
-            myUsername: "me"
+            myUsername: "me", now: Self.daytime
         )
 
         XCTAssertFalse(result.logEntries.isEmpty, "the decision must still be auditable")

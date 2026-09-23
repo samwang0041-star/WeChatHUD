@@ -227,6 +227,11 @@ enum ChatStatsEngine {
         /// a ratio of a period against itself is 1.0 by construction, and 1.0
         /// is not evidence that the rhythm is normal.
         let recentDensityRatio: Double?
+        /// The measured daily averages behind `recentDensityRatio`, so the KPI
+        /// can state what it compares instead of only grading it. nil with the
+        /// ratio: no second span, no pair of averages.
+        let recentDailyAvg: Double?
+        let overallDailyAvg: Double?
 
         /// The quantity `boundaryScore` is made of. The score is literally
         /// `100 - 下班后的工作消息 / 全部工作消息`, so showing 「边界分 70」 asked
@@ -400,10 +405,17 @@ enum ChatStatsEngine {
         // so the ratio is 1.0 by construction. That is not "节奏正常" — it is no
         // comparison available, and the card says so instead of grading it.
         let densityRatio: Double?
+        let recentDailyAvg: Double?
+        let overallDailyAvg: Double?
         if windowDays > InsightRecentWindow.days, dailyAvgOverall > 0 {
-            densityRatio = (Double(recentWindowMsgs) / Double(InsightRecentWindow.days)) / dailyAvgOverall
+            let recentDaily = Double(recentWindowMsgs) / Double(InsightRecentWindow.days)
+            densityRatio = recentDaily / dailyAvgOverall
+            recentDailyAvg = recentDaily
+            overallDailyAvg = dailyAvgOverall
         } else {
             densityRatio = nil
+            recentDailyAvg = nil
+            overallDailyAvg = nil
         }
 
         return GlobalOverview(
@@ -439,7 +451,8 @@ enum ChatStatsEngine {
             neglectedHighValue: neglectedHigh,
             avgMessagesPerChat: avgPerChat,
             pendingAsks: pendingAskCount, urgentAsks: urgentAskCount,
-            recalledMessages: recalledMessageCount, recentDensityRatio: densityRatio
+            recalledMessages: recalledMessageCount, recentDensityRatio: densityRatio,
+            recentDailyAvg: recentDailyAvg, overallDailyAvg: overallDailyAvg
         )
     }
 

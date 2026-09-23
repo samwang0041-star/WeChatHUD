@@ -170,7 +170,10 @@ final class PanelState: ObservableObject {
     /// to surface silent failures (e.g. WeChatLauncher can't open a
     /// chat because Accessibility isn't granted). Nil = no toast.
     @Published var toastMessage: String? = nil
-    private var toastTimer: Timer?
+    /// The auto-dismiss countdown. Pauseable so a lock or display sleep
+    /// cannot eat the surface (and the snooze-undo riding on it) while the
+    /// user is away — the toast is a promise to be seen, not a race.
+    private var toastDeadline: PauseableDeadline?
 
     /// The standalone toast is shrinking back toward the island.
     ///
@@ -307,20 +310,24 @@ final class PanelState: ObservableObject {
     /// calls replace the previous message and reset the timer, so
     /// spamming doesn't queue up stale messages.
     func showToast(_ message: String, duration: TimeInterval = 4) {
-        toastTimer?.invalidate()
         toastCollapsing = false
         toastMessage = message
-        // .common so the toast still expires while a menu is tracking —
-        // default-mode timers freeze under event-tracking and a held-open
-        // menu would pin the toast on screen indefinitely.
-        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
+        if toastDeadline == nil {
+            toastDeadline = PauseableDeadline { [weak self] in
                 self?.toastMessage = nil
-                self?.toastTimer = nil
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        toastTimer = timer
+        toastDeadline?.start(duration)
+    }
+
+    /// Sonner's hover rule: a surface the user is pointing at is being read,
+    /// so its auto-dismiss clock stops until the pointer leaves.
+    func setToastCountdownSuspended(_ suspended: Bool) {
+        if suspended {
+            toastDeadline?.suspend()
+        } else {
+            toastDeadline?.resume()
+        }
     }
 
     /// Exit debounce: the window resize animation sweeps the frame past
@@ -738,6 +745,7 @@ final class PanelState: ObservableObject {
         guard currentState != .detail, currentState != .extended, !popoverOpen, !menuTrackingOpen, !islandTextInputActive else { return }
         islandSnoozeUndo = nil
         toastMessage = nil
+        toastDeadline?.cancel()
         // A new banner may be much shorter or taller than the previous one
         // (short snippet vs. long group message vs. expanded briefing), so
         // drop the stale measurement and let the fresh render drive the

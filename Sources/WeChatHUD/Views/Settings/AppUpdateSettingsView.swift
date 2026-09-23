@@ -26,7 +26,7 @@ struct AppUpdateSettingsView: View {
         SettingsSection("版本与更新") {
             SettingsRow("当前版本", subtitle: updates.statusText, icon: "arrow.triangle.2.circlepath", iconColor: CompanionPalette.jade) {
                 Text(updates.currentVersionText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .companionFont(size: 12, weight: .medium, design: .monospaced)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -91,7 +91,7 @@ struct AppUpdateSettingsView: View {
            .padding(.bottom, 12)
             if let browserOpenError {
                 Text(browserOpenError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
@@ -100,7 +100,7 @@ struct AppUpdateSettingsView: View {
             }
            if PreviewRuntime.isEnabled {
                 Text("演示模式不检查或安装更新。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)

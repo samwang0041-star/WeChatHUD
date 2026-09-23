@@ -22,14 +22,14 @@ struct InsightRadarSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "radar")
-                    .font(.system(size: 13, weight: .semibold))
+                    .companionFont(size: 13, weight: .semibold)
                     .foregroundColor(.accentColor)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("需要留意")
-                        .font(.system(size: 14, weight: .semibold))
+                        .companionFont(size: 14, weight: .semibold)
                     Text("先看谁需要回应、哪段关系要补一句、哪些信号值得确认")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -39,7 +39,7 @@ struct InsightRadarSection: View {
                     // seventh signal had already been dropped, so the number the
                     // user trusts is the one that was truncated.
                     Text(InsightRadarBadge.text(shown: findings.count, total: allFindings.count))
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .companionFont(size: 10, weight: .medium).monospacedDigit()
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -73,14 +73,14 @@ struct InsightRadarSection: View {
                     .fill(Color.green.opacity(0.12))
                     .frame(width: 30, height: 30)
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 13, weight: .semibold))
+                    .companionFont(size: 13, weight: .semibold)
                     .foregroundColor(.green)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("今天没有强异常")
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                 Text("下面仍保留统计概览；如果有新消息、等待或语气变化，会自动浮到这里。")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
@@ -102,18 +102,18 @@ struct InsightRadarSection: View {
                             .fill(color.opacity(0.13))
                             .frame(width: 32, height: 32)
                         Image(systemName: radarIcon(finding))
-                            .font(.system(size: 13, weight: .semibold))
+                            .companionFont(size: 13, weight: .semibold)
                             .foregroundColor(color)
                     }
 
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(spacing: 6) {
                             Text(finding.source)
-                                .font(.system(size: 10, weight: .semibold))
+                                .companionFont(size: 10, weight: .semibold)
                                 .foregroundColor(color)
                                 .lineLimit(1)
                             Text(radarSeverityLabel(finding.severity))
-                                .font(.system(size: 10, weight: .semibold))
+                                .companionFont(size: 10, weight: .semibold)
                                 .foregroundColor(color)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
@@ -144,10 +144,10 @@ struct InsightRadarSection: View {
 
                     HStack(spacing: 4) {
                         Text(radarActionText(finding, isExpanded: isExpanded))
-                            .font(.system(size: 10, weight: .medium))
+                            .companionFont(size: 10, weight: .medium)
                             .foregroundColor(color)
                         Image(systemName: radarDisclosureIcon(finding.route))
-                            .font(.system(size: 10, weight: .semibold))
+                            .companionFont(size: 10, weight: .semibold)
                             .foregroundColor(color.opacity(0.75))
                             .rotationEffect(.degrees(!finding.route.isChatNavigation && isExpanded ? 180 : 0))
                     }
@@ -166,16 +166,16 @@ struct InsightRadarSection: View {
     private func radarInfoLine(label: String, icon: String, text: String, primary: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: primary ? 10 : 9, weight: .medium))
+                .companionFont(size: primary ? 10 : 9, weight: .medium)
                 .foregroundColor(primary ? .primary.opacity(0.75) : .secondary.opacity(0.75))
                 .frame(width: 12)
                 .padding(.top, 2)
             Text(label)
-                .font(.system(size: primary ? 10 : 9, weight: .semibold))
+                .companionFont(size: primary ? 10 : 9, weight: .semibold)
                 .foregroundColor(primary ? .primary.opacity(0.82) : .secondary)
-                .frame(width: 34, alignment: .leading)
+                .companionScaledWidth(34, alignment: .leading)
             Text(text)
-                .font(.system(size: primary ? 12 : 10, weight: primary ? .semibold : .regular))
+                .companionFont(size: primary ? 12 : 10, weight: primary ? .semibold : .regular)
                 .foregroundColor(primary ? .primary : .secondary)
                 .lineLimit(primary ? 2 : 3)
                 .fixedSize(horizontal: false, vertical: true)

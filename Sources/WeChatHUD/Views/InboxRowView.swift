@@ -722,7 +722,7 @@ struct SnoozePopoverContent: View {
             }
         }
         .padding(.vertical, 4)
-        .frame(width: 220)
+        .companionScaledWidth(220)
     }
 
     private func snoozeButton(label: String, date: Date, name: String) -> some View {

@@ -165,7 +165,7 @@ struct InsightOverviewDashboard: View {
                 // measurement of an empty week and closes it — instead of pressing
                 // the 刷新 that would have produced the numbers.
                 Text(InsightOverviewCounts.text(for: insightStore.overview))
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -180,10 +180,10 @@ struct InsightOverviewDashboard: View {
                         ForEach(InsightScope.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 140)
+                    .companionScaledWidth(140)
                     Button(action: onRefresh) {
                         Image(systemName: insightCoordinator.insightLoading ? "stop.circle" : "arrow.clockwise")
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
@@ -193,7 +193,7 @@ struct InsightOverviewDashboard: View {
                     .accessibilityHint(insightRefreshHoldReason ?? "")
                     Button(action: copyOverviewReport) {
                         overviewCopyIcon
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
@@ -209,7 +209,7 @@ struct InsightOverviewDashboard: View {
                     ForEach(InsightTimeWindow.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 280)
+                .companionScaledWidth(280)
             }
             .fixedSize()
         }
@@ -228,10 +228,10 @@ struct InsightOverviewDashboard: View {
                 .frame(width: 12, height: 12)
             VStack(alignment: .leading, spacing: 1) {
                 Text("AI 正在分析…")
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .foregroundColor(.accentColor)
                 Text(insightCoordinator.insightProgress)
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
             }
             Spacer(minLength: 0)
@@ -247,7 +247,7 @@ struct InsightOverviewDashboard: View {
         VStack(spacing: 12) {
             ProgressView().controlSize(.regular)
             Text("正在加载统计数据…")
-                .font(.system(size: 13))
+                .companionFont(size: 13)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -301,7 +301,7 @@ struct InsightOverviewDashboard: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
                     Text("暂时没有明确可忽略的活跃对话。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(.secondary)
                     Spacer()
                 }
@@ -310,20 +310,20 @@ struct InsightOverviewDashboard: View {
                     Button(action: { onSelectChat(stats.chatUsername) }) {
                         HStack(spacing: 8) {
                             Image(systemName: stats.isGroup ? "person.3" : "person")
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .foregroundColor(.secondary)
                                 .frame(width: 16)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(stats.chatName)
-                                    .font(.system(size: 12, weight: .medium))
+                                    .companionFont(size: 12, weight: .medium)
                                     .lineLimit(1)
                                 Text("\(stats.messageCount) 条消息 · 没有强行动信号")
-                                    .font(.system(size: 10))
+                                    .companionFont(size: 10)
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
+                                .companionFont(size: 10, weight: .semibold)
                                 .foregroundColor(.secondary.opacity(0.55))
                         }
                         .padding(.vertical, 3)
@@ -348,11 +348,27 @@ struct InsightOverviewDashboard: View {
         collapsibleSection(id: "time", title: "时间节奏", icon: "clock", summary: "最忙 \(weekdayNames[o.busiestWeekday]) \(o.busiestHour) 点 · 工作日 \(o.weekdayTotal) / 周末 \(o.weekendTotal)") {
             VStack(alignment: .leading, spacing: 12) {
                 hourlyBarChart(o.messagesByHour).frame(height: 90)
-                HStack(spacing: 12) {
-                    timeSlotChip("早 6-9", count: o.morningMessages, color: .orange)
-                    timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
-                    timeSlotChip("晚 18-23", count: o.eveningMessages, color: .purple)
-                    timeSlotChip("夜 23-6", count: o.nightMessages, color: .red)
+                // One line when it fits, 2×2 when it does not. The fixed
+                // one-line row ran past the right edge at 大字号 × 窄窗 and the
+                // 夜 23-6 chip was cut off mid-glyph (§46's stacked narrow
+                // branch); wrapping keeps every count readable at any size.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        timeSlotChip("早 6-9", count: o.morningMessages, color: .orange)
+                        timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
+                        timeSlotChip("晚 18-23", count: o.eveningMessages, color: .purple)
+                        timeSlotChip("夜 23-6", count: o.nightMessages, color: .red)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 12) {
+                            timeSlotChip("早 6-9", count: o.morningMessages, color: .orange)
+                            timeSlotChip("工作 9-18", count: o.workHourMessages, color: .blue)
+                        }
+                        HStack(spacing: 12) {
+                            timeSlotChip("晚 18-23", count: o.eveningMessages, color: .purple)
+                            timeSlotChip("夜 23-6", count: o.nightMessages, color: .red)
+                        }
+                    }
                 }
                 if o.messagesByWeekday.contains(where: { $0 > 0 }) {
                     Divider()
@@ -381,7 +397,7 @@ struct InsightOverviewDashboard: View {
                     HStack(alignment: .top, spacing: 16) {
                         if !o.tierDistribution.isEmpty {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("层级").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                Text("层级").companionFont(size: 10, weight: .semibold).foregroundColor(.secondary)
                                 ForEach(o.tierDistribution, id: \.tier) { row in
                                     tinyRow(label: row.tier, count: row.count)
                                 }
@@ -390,7 +406,7 @@ struct InsightOverviewDashboard: View {
                         }
                         if !o.roleDistribution.isEmpty {
                             VStack(alignment: .leading, spacing: 5) {
-                                Text("角色").font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
+                                Text("角色").companionFont(size: 10, weight: .semibold).foregroundColor(.secondary)
                                 ForEach(o.roleDistribution.prefix(6), id: \.role) { row in
                                     tinyRow(label: row.role, count: row.count)
                                 }
@@ -409,18 +425,18 @@ struct InsightOverviewDashboard: View {
                 if !o.oneWayChats.isEmpty {
                     Divider()
                     Text("单向沟通 (对方远多于你)")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                     ForEach(o.oneWayChats.prefix(3), id: \.name) { c in
                         Button(action: { onSelectChat(c.chatUsername) }) {
                             HStack {
-                                Text(c.name).font(.system(size: 12)).lineLimit(1)
+                                Text(c.name).companionFont(size: 12).lineLimit(1)
                                 Spacer()
                                 Text("对方 \(c.theirCount) / 你 \(c.myCount)")
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .companionFont(size: 10, design: .monospaced)
                                     .foregroundColor(.secondary)
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .companionFont(size: 10, weight: .semibold)
                                     .foregroundColor(.secondary.opacity(0.55))
                             }
                             .padding(.vertical, 1)
@@ -479,11 +495,11 @@ struct InsightOverviewDashboard: View {
                             )
                             .rotationEffect(.degrees(-90))
                         Text("\(Int((share * 100).rounded()))%")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .companionFont(size: 15, weight: .bold, design: .rounded)
                     }
                     .frame(width: 56, height: 56)
                     Text("\(o.workAfterHoursCount) / \(o.workMessages) 条在下班后")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                 }
             }
@@ -491,10 +507,11 @@ struct InsightOverviewDashboard: View {
     }
 
     private func collapsibleTopChats() -> some View {
-        collapsibleSection(id: "top", title: "最活跃聊天", icon: "flame", summary: "按消息量 TOP 5") {
-            let sorted = insightStore.allStats.values.sorted { $0.messageCount > $1.messageCount }
+        let sorted = insightStore.allStats.values.sorted { $0.messageCount > $1.messageCount }
+        let shown = Array(sorted.prefix(5))
+        return collapsibleSection(id: "top", title: "最活跃聊天", icon: "flame", summary: InsightOverviewCounts.topChatsSummary(shown: shown.count)) {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(sorted.prefix(5).enumerated()), id: \.offset) { idx, s in
+                ForEach(Array(shown.enumerated()), id: \.offset) { idx, s in
                     Button(action: { onSelectChat(s.chatUsername) }) {
                         topChatRow(rank: idx + 1, stats: s)
                             .contentShape(Rectangle())
@@ -531,21 +548,21 @@ struct InsightOverviewDashboard: View {
             }) {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.secondary)
                         .frame(width: 14)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(title)
-                            .font(.system(size: 12, weight: .semibold))
+                            .companionFont(size: 12, weight: .semibold)
                             .foregroundColor(.primary)
                         Text(summary)
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -575,14 +592,14 @@ struct InsightOverviewDashboard: View {
     private func sectionHeader(title: String, subtitle: String, icon: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .companionFont(size: 12, weight: .semibold)
                 .foregroundColor(.accentColor)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .companionFont(size: 13, weight: .semibold)
                 Text(subtitle)
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
             }
             Spacer()
@@ -597,29 +614,29 @@ struct InsightOverviewDashboard: View {
                         .fill(color.opacity(0.12))
                         .frame(width: 30, height: 30)
                     Image(systemName: icon)
-                        .font(.system(size: 12, weight: .semibold))
+                        .companionFont(size: 12, weight: .semibold)
                         .foregroundColor(color)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(title)
-                            .font(.system(size: 13, weight: .semibold))
+                            .companionFont(size: 13, weight: .semibold)
                             .foregroundColor(.primary)
                             .lineLimit(1)
                         Text(meta)
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(color)
                             .lineLimit(1)
                     }
                     Text(subtitle)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(.secondary.opacity(0.55))
                     .padding(.top, 7)
             }
@@ -633,19 +650,19 @@ struct InsightOverviewDashboard: View {
 
     private func tinyRow(label: String, count: Int) -> some View {
         HStack {
-            Text(label).font(.system(size: 11)).foregroundColor(.secondary)
+            Text(label).companionFont(size: 11).foregroundColor(.secondary)
             Spacer()
-            Text("\(count)").font(.system(size: 11, weight: .medium).monospacedDigit())
+            Text("\(count)").companionFont(size: 11, weight: .medium).monospacedDigit()
         }
     }
 
     private func relRow(label: String, name: String, ratio: Double, good: Bool, chatUsername: String) -> some View {
         Button(action: { onSelectChat(chatUsername) }) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.system(size: 10, weight: .semibold)).foregroundColor(.secondary)
-                Text(name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Text(label).companionFont(size: 10, weight: .semibold).foregroundColor(.secondary)
+                Text(name).companionFont(size: 12, weight: .medium).lineLimit(1)
                 Text("对等度 \(Int(ratio * 100))%")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(good ? .green : .orange)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -667,7 +684,7 @@ struct InsightOverviewDashboard: View {
                         .fill((i == 0 || i == 6) ? Color.orange.opacity(0.6) : Color.blue.opacity(0.6))
                         .frame(width: 26, height: CGFloat(val) / CGFloat(maxVal) * 48)
                     Text(weekdayNames[i])
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                 }
             }
@@ -686,11 +703,11 @@ struct InsightOverviewDashboard: View {
                         .frame(width: 14, height: maxVal > 0 ? CGFloat(messagesByHour[hour]) / CGFloat(maxVal) * 80 : 0)
                     if hour % 3 == 0 {
                         Text("\(hour)")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary)
                     } else {
                         Text("")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                     }
                 }
             }
@@ -701,7 +718,7 @@ struct InsightOverviewDashboard: View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text("\(label) \(count)")
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
         }
     }
@@ -710,9 +727,9 @@ struct InsightOverviewDashboard: View {
         let fraction = total > 0 ? CGFloat(count) / CGFloat(total) : 0
         return HStack(spacing: 8) {
             Text(label)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(.secondary)
-                .frame(width: 30, alignment: .leading)
+                .companionScaledWidth(30, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 3)
@@ -724,16 +741,16 @@ struct InsightOverviewDashboard: View {
             }
             .frame(height: 8)
             Text("\(count)")
-                .font(.system(size: 10).monospacedDigit())
+                .companionFont(size: 10).monospacedDigit()
                 .foregroundColor(.secondary)
-                .frame(width: 40, alignment: .trailing)
+                .companionScaledWidth(40, alignment: .trailing)
         }
     }
 
     private func topChatRow(rank: Int, stats: ChatStatsData) -> some View {
         HStack(spacing: 10) {
             Text("\(rank)")
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
+                .companionFont(size: 11, weight: .bold).monospacedDigit()
                 .foregroundColor(.secondary)
                 .frame(width: 16)
 
@@ -743,28 +760,28 @@ struct InsightOverviewDashboard: View {
                    .frame(width: 24, height: 24)
                 if let monogram = ContactIdentityIndex.avatarMonogram(from: stats.chatName) {
                     Text(monogram)
-                        .font(.system(size: 10, weight: .medium))
+                        .companionFont(size: 10, weight: .medium)
                         .foregroundColor(categoryColor(stats.category))
                 } else {
                     Image(systemName: stats.isGroup ? "person.3" : "person")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(categoryColor(stats.category))
                 }
            }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(stats.chatName)
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .lineLimit(1)
                 Text("\(stats.participantCount) 人参与 · 平均回复 \(RelativeTimeFormatter.durationLabel(stats.avgResponseTimeSeconds))")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
             }
 
             Spacer()
 
             Text("\(stats.messageCount) 条")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .companionFont(size: 11, weight: .medium).monospacedDigit()
                 .foregroundColor(.blue)
         }
         .padding(.vertical, 4)
@@ -773,9 +790,9 @@ struct InsightOverviewDashboard: View {
     private func pressurePill(_ label: String, count: Int, threshold: Int) -> some View {
         VStack(spacing: 2) {
             Text("\(count)")
-                .font(.system(size: 12, weight: .bold).monospacedDigit())
+                .companionFont(size: 12, weight: .bold).monospacedDigit()
                 .foregroundColor(count >= threshold ? .red : .secondary)
-            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
+            Text(label).companionFont(size: 10).foregroundColor(.secondary)
         }
     }
 
@@ -852,5 +869,11 @@ enum InsightOverviewCounts {
     static func text(for overview: ChatInsightEngine.GlobalOverview?) -> String {
         guard let overview else { return pending }
         return text(activeChats: overview.activeChats, totalMessages: overview.totalMessages)
+    }
+
+    /// The row count, not the cap. 「按消息量 TOP 5」 over 2 rows read as three
+    /// rows missing (§83) — one shape at any size that states what is listed.
+    static func topChatsSummary(shown: Int) -> String {
+        "按消息量前 \(shown)"
     }
 }

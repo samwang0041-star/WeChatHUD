@@ -27,3 +27,4 @@ classify_real_*.json
 docs/qa/**/*-pixel/
 docs/qa/**/*.png
 docs/qa/**/*.jpg
+docs/qa/archives/

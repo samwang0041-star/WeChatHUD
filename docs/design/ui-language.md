@@ -228,3 +228,63 @@ SwiftUI 因为 body 里读到的东西变了才重绘，而读一个 static 不�
 `.dynamicTypeSize(.large)` 与「忽略系统设置」在用户那里是同一件事。
 允许区间是 `.large ... .accessibility2`：下限是浮岛固定高 chrome 的实测尺寸，
 上限是走查过的最大档。
+
+---
+
+## 动效的无障碍与瞬时面（v5，2026-09-22）
+
+依据：emilkowalski/skills（emil-design-eng / apple-design / review-animations 标准）
+对全量动效代码的一轮走查。前三条补的是「走查发现的差距」，不是新审美。
+
+### Reduce Motion 是「温和」，不是「零」
+
+Apple 与 Emil 的标准一致：减少动态时去掉的是**运动**（弹簧、位移、缩放、按压、hover），
+不是理解所依赖的**透明度过渡**。硬切一行状态会读成故障，120ms 淡入淡出不带任何
+前庭刺激，只说明「一个状态换成了另一个」。
+
+- 空间类 token（morph、行展开、抽屉、按压、hover、错峰、呼吸）在 reduceMotion 下仍**完全归零**。
+- 内容替换类 token（`ease` / `enter` / `exit` / `dialog` / `complete` / `saveReceipt` /
+  `pageChange` / `systemDefault`）在 reduceMotion 下降级为 `CompanionMotion.reducedCrossfade()`
+  （120ms 同曲线）。
+- `withMotion(nil)` 语义不变：那是「显式瞬切」（键盘操作），与 reduceMotion 无关。
+- reveal 类 transition 在 reduceMotion 下去掉 scale 只留 opacity（`companionDialogReveal` 同理）。
+
+### 瞬时面的倒计时跟着可见性走
+
+toast、撤销条与发送回执是「用户看得见才成立」的承诺，不是赛跑（Sonner 的不可见边缘情形）。
+`PauseableDeadline` 在锁屏 / 快速用户切换 / 显示器睡眠时冻结倒计时，回来续跑剩余时长。
+app 失活**不**暂停——浮岛本来就在别的 App 之上，那时用户看得见。
+撤销窗口因此不会在用户离开的那几秒里悄悄消失。
+
+### 完成时刻给触感
+
+`CompanionMotion.performCommitTick()`（`.alignment`）：承诺标记完成、批量清空时与回执同帧触发。
+与 hover tick 不同，它**不受 Reduce Motion 关闭**——hover 是附带活动，完成确认不是，
+而恰恰是希望少看动效的用户更需要非视觉的完成回执。
+
+### 滚动内容渐隐进 chrome，不被切断
+
+apple-design 的滚动边缘规则：内容被页头/输入区下的发丝线「铡断」读作内容到此为止。
+`companionScrollEdgeFade(_:)` 用**宿主自己的地面色**在滚动区上下各留 8pt 渐变，
+让滚过的内容淡入固定 chrome——不引入新颜色、不动画、不进 AX。配套的 content margin
+保证内容不满一屏时首尾行不会被渐变洗掉。第一批挂在：工作台页体（`workspacePage`）
+与对话转写区（宿主岛黑）。
+
+### 验收补充
+
+1. `CompanionMotionTests.testSpatialMotionStaysOffWhenReduceMotion` /
+   `testContentCrossfadesSurviveReduceMotion` 全绿（两档策略各锁一半）。
+2. `PauseableDeadlineTests` 全绿（冻结续跑、替换不叠加、取消即死）。
+3. `ChromeMotionHygieneTests` / `CompanionMaterialTests` 仍全绿。
+
+### 点击热区与命名是测量出来的（v5 补充，2026-09-22）
+
+截图测不出的两类缺陷由 `--preview-hig-audit` 走 AX 树实测（13 页全测）：
+
+- 自定义控件热区 ≥24×24pt：按钮经 `CompanionPressStyle`/`CompanionRowPressStyle`
+  自带 `minHeight: 24`；`DisclosureGroup` label 统一挂 `companionDisclosureLabel()`
+  （判据单点，不许各处各写）。系统控件形态（`.mini` 按钮、NSSlider 轨道）属平台规格豁免。
+- 搜索框一类 plain TextField 的 AX 面固定为文字行（框架口径），以「整行点击聚焦」
+  达成同等可用性——判据是"用户能点到哪"，不是"AX 报多少"。
+- 纯图标控件必须有 spoken name（`accessibilityLabel`）与 tooltip；实测口径
+  `iconOnly=0` 是硬门。

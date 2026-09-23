@@ -53,10 +53,10 @@ struct MissedReplyFeed: View {
             if !visible.isEmpty, let caveat = coverageCaveat {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundStyle(.orange)
                     Text(caveat)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
@@ -171,10 +171,10 @@ struct MissedReplyFeed: View {
                     CompanionAvatar(name: item.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.chatName)
-                            .font(.system(size: 14, weight: .semibold))
+                            .companionFont(size: 14, weight: .semibold)
                             .foregroundStyle(.primary)
                         Text(item.timestamp, format: .dateTime.month().day().hour().minute())
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
@@ -189,7 +189,7 @@ struct MissedReplyFeed: View {
                     }
                     if !expanded {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11, weight: .semibold))
+                            .companionFont(size: 11, weight: .semibold)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -197,7 +197,7 @@ struct MissedReplyFeed: View {
             .buttonStyle(CompanionPressStyle())
 
             Text(item.preview)
-                .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
+                .companionFont(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular)
                 .lineSpacing(4)
                 .textSelection(.enabled)
                 .lineLimit(expanded ? 6 : 1)
@@ -217,7 +217,7 @@ struct MissedReplyFeed: View {
                     .buttonStyle(.borderedProminent)
                     Spacer()
                     Text(item.senderName)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
                 .controlSize(.regular)

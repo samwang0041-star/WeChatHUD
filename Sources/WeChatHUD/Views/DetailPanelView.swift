@@ -61,7 +61,7 @@ struct DetailPanelView: View {
                 panelState.collapse()
             }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
+                    .companionFont(size: 14)
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -148,7 +148,7 @@ struct DetailNoticeBar: View {
                 onClose()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -203,7 +203,7 @@ struct MissingChatPane: View {
     var body: some View {
         VStack(spacing: 9) {
             Image(systemName: "questionmark.bubble")
-                .font(.system(size: WorkspaceType.title))
+                .companionFont(size: WorkspaceType.title)
                 .foregroundColor(.secondary)
             Text(MissingChatPaneCopy.title)
                 .companionFont(size: 13, weight: .semibold)
@@ -263,7 +263,7 @@ struct AutopilotDetailPane: View {
                 panelState.goExtended()
             }) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -272,16 +272,16 @@ struct AutopilotDetailPane: View {
             .accessibilityLabel("返回")
 
             Image(systemName: monitor.autopilotActive ? "bolt.fill" : "bolt")
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(monitor.autopilotActive ? .green : .secondary)
 
             Text("自动回复")
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
                 .foregroundColor(.primary)
 
             if monitor.autopilotActive {
                 Text(statusLabel)
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
             }
 
@@ -290,9 +290,9 @@ struct AutopilotDetailPane: View {
             Button(action: toggleAutopilotSession) {
                 HStack(spacing: 4) {
                     Image(systemName: monitor.autopilotActive ? "stop.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .companionFont(size: 11, weight: .semibold)
                     Text(toggleTitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                 }
                 .foregroundColor(monitor.autopilotActive ? .red : .green)
                 .padding(.horizontal, 7)

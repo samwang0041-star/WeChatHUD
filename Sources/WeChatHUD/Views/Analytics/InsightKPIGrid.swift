@@ -5,7 +5,7 @@ struct InsightKPIGrid: View {
 
     var body: some View {
         let rowA = [
-            KPI(label: "消息总量", value: "\(overview.totalMessages)", hint: densityHint(overview.recentDensityRatio), status: densityStatus(overview.recentDensityRatio)),
+            KPI(label: "消息总量", value: "\(overview.totalMessages)", hint: Self.densityHint(overview), status: densityStatus(overview.recentDensityRatio)),
             KPI(label: "非工时占比", value: "\(Int(overview.afterHoursRatio * 100))%", hint: overview.afterHoursRatio > 0.4 ? "偏多" : "健康", status: overview.afterHoursRatio > 0.4 ? .red : overview.afterHoursRatio > 0.2 ? .orange : .green),
            KPI(label: "平均响应", value: RelativeTimeFormatter.durationLabel(overview.avgResponseSeconds), hint: responseHint(overview.avgResponseSeconds), status: responseStatus(overview.avgResponseSeconds)),
         ]
@@ -53,7 +53,7 @@ struct InsightKPIGrid: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Text(kpi.label)
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                 Spacer()
                 Circle()
@@ -61,10 +61,10 @@ struct InsightKPIGrid: View {
                     .frame(width: 6, height: 6)
             }
             Text(kpi.value)
-                .font(.system(size: WorkspaceType.title, weight: .semibold, design: .rounded).monospacedDigit())
+                .companionFont(size: WorkspaceType.title, weight: .semibold, design: .rounded).monospacedDigit()
                 .foregroundColor(.primary)
             Text(kpi.hint)
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(kpi.status.color.opacity(0.8))
                 .lineLimit(1)
         }
@@ -73,21 +73,29 @@ struct InsightKPIGrid: View {
         .companionPanelFace()
     }
 
-    /// Direction only. The number this used to print was a ratio of two
-    /// averages (`近 7 天日均 / 全窗口日均`) dressed as a percentage delta, so
-    /// 「-100% 近期偏闲」 was both unreadable and — the numerator counted a
-    /// chat's whole window history whenever its latest message was recent —
-    /// not a count of the last seven days at all. Words carry the same guidance
-    /// without implying a precision the computation does not have.
+    /// The measured pair, not a fabricated delta. This used to print a
+    /// percentage of two daily averages as 「-100% 近期偏闲」 — a broken
+    /// numerator (a chat's whole history counted whenever its latest message
+    /// was recent) dressed in the most dramatic number the format has. Now the
+    /// numerator is the seven day-buckets themselves (`InsightRecentWindow`),
+    /// so the honest move is to state both averages — the §78 statement form —
+    /// and let the status dot grade them. There is no percentage left to hit
+    /// a floor when the week is quiet.
     ///
     /// `nil` means the two spans are the same span: a 7-day-or-shorter window
     /// cannot compare "recent" against "overall", and printing 节奏正常 for that
     /// would be a verdict on no evidence.
-    private func densityHint(_ ratio: Double?) -> String {
-        guard let ratio else { return "时间范围不足 7 天，无法比较近期与整体" }
-        if ratio > 1.3 { return "近期更活跃" }
-        if ratio < 0.7 { return "近期更安静" }
-        return "节奏正常"
+    static func densityHint(_ overview: ChatInsightEngine.GlobalOverview) -> String {
+        guard let recent = overview.recentDailyAvg, let overall = overview.overallDailyAvg else {
+            return "时间范围不足 7 天，无法比较近期与整体"
+        }
+        return "近期日均 \(daily(recent)) · 窗口日均 \(daily(overall))"
+    }
+
+    /// One decimal where it carries information, none where it does not.
+    private static func daily(_ value: Double) -> String {
+        let tenths = (value * 10).rounded() / 10
+        return tenths == tenths.rounded() ? String(Int(tenths)) : String(format: "%.1f", tenths)
     }
 
     private func densityStatus(_ ratio: Double?) -> KPIStatus {

@@ -17,6 +17,8 @@ struct ConversationDetailView: View {
     @State private var replyText = ""
     @State private var isSending = false
    @State private var sendResult: String?
+    /// Auto-dismiss for the send receipt. Pauseable — see PauseableDeadline.
+    @State private var receiptDeadline: PauseableDeadline?
    @State private var isSavingDraft = false
     @State private var copyReceipt: String?
     @State private var copyReceiptFailed = false
@@ -56,6 +58,9 @@ struct ConversationDetailView: View {
                 .onChange(of: chatUsername) { _, _ in scrollTranscriptToLatest(proxy) }
                 .onChange(of: transcriptRows.count) { _, _ in scrollTranscriptToLatest(proxy) }
                 .onChange(of: hasTranscriptFocus) { _, _ in scrollTranscriptToLatest(proxy) }
+                // The transcript scrolls under the header and the composer;
+                // fade it into both instead of cutting mid-glyph.
+                .companionScrollEdgeFade(CompanionPalette.island)
             }
 
             Divider().background(Color.white.opacity(0.12))
@@ -202,6 +207,7 @@ struct ConversationDetailView: View {
                 sourceSavedDraftID = nil
                 replyText = ""
                 panelState.showToast("已存为草稿")
+                CompanionMotion.performCommitTick()
             } catch {
                 if case HUDStoreError.draftNotFound = error {
                     sendResult = "这条草稿已被删除，回复内容仍保留"
@@ -319,7 +325,7 @@ struct ConversationDetailView: View {
                 if replyText.isEmpty {
                     Text("输入回复…")
                         .companionFont(size: 14)
-                        .companionDimmedForeground(0.35)
+                        .companionDimmedForeground(0.5)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 11)
                         .allowsHitTesting(false)
@@ -345,7 +351,7 @@ struct ConversationDetailView: View {
                     }
                     Text(composerStatusDetail)
                         .companionFont(size: 10)
-                        .companionDimmedForeground(0.35)
+                        .companionDimmedForeground(0.5)
                 }
                 Spacer()
 
@@ -452,6 +458,7 @@ struct ConversationDetailView: View {
             sendSucceeded = true
             sendConfirmError = nil
             copyReceipt = nil
+            CompanionMotion.performCommitTick()
             if replyText == draftAtSend { replyText = "" }
             // Record as positive AI feedback if the reply came from a suggestion
             if suggestions.contains(where: { $0.text == text }) {
@@ -475,7 +482,14 @@ struct ConversationDetailView: View {
         } else {
             recordSendFailure(result.failureMessage ?? CompanionProductCopy.sendUncertain)
         }
-        if confirmed { DispatchQueue.main.asyncAfter(deadline: .now() + 4) { sendResult = nil } }
+        if confirmed {
+            // The receipt is a promise to be seen: pause its countdown while
+            // the session is away instead of letting a lock eat it.
+            if receiptDeadline == nil {
+                receiptDeadline = PauseableDeadline { sendResult = nil }
+            }
+            receiptDeadline?.start(4)
+        }
         return confirmed
     }
 
@@ -585,7 +599,7 @@ struct ConversationDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("这段对话暂时没有本地消息。")
                        .companionFont(size: 13)
-                        .companionDimmedForeground(0.35)
+                        .companionDimmedForeground(0.55)
                     Button("在微信中查看") {
                         monitor.openWeChatChat(chatUsername)
                     }
@@ -620,7 +634,7 @@ struct ConversationDetailView: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 Text(sender)
                     .companionFont(size: 10, weight: .medium)
-                    .companionDimmedForeground(0.45)
+                    .companionDimmedForeground(0.5)
                 Text(body)
                     .companionFont(size: 13)
                     .companionDimmedForeground(0.9)
@@ -684,14 +698,14 @@ struct ConversationDetailView: View {
                     ProgressView().scaleEffect(0.6)
                     Text("正在生成…")
                         .companionFont(size: 10)
-                        .companionDimmedForeground(0.4)
+                        .companionDimmedForeground(0.5)
                 }
                 .padding(.vertical, 6)
                 .transition(.companionStatusReveal)
             } else if suggestions.isEmpty {
                 Text(suggestionMessage ?? (hasReplyDebtContext ? "点击「生成建议」获取 AI 回复建议" : "当前没有待回复上下文"))
                     .companionFont(size: 10)
-                    .companionDimmedForeground(0.3)
+                    .companionDimmedForeground(0.55)
                     .padding(.vertical, 4)
                     .transition(.companionStatusReveal)
             } else {
@@ -742,7 +756,7 @@ struct ConversationDetailView: View {
         HStack(spacing: 4) {
             Text(label)
                 .companionFont(size: 10, weight: .semibold)
-                .companionDimmedForeground(0.45)
+                .companionDimmedForeground(0.5)
             Spacer()
         }
     }
@@ -770,14 +784,14 @@ private struct SuggestionRowView: View {
                     HStack(spacing: 6) {
                         Text(suggestion.tone)
                             .companionFont(size: 10)
-                            .companionDimmedForeground(0.4)
+                            .companionDimmedForeground(0.5)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Color.white.opacity(0.06))
                             .cornerRadius(3)
                         Text(suggestion.rationale)
                             .companionFont(size: 10)
-                            .companionDimmedForeground(0.3)
+                            .companionDimmedForeground(0.55)
                             .lineLimit(1)
                     }
                 }

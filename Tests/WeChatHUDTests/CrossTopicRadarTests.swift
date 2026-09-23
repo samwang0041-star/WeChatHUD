@@ -193,6 +193,34 @@ final class CrossTopicRadarTests: XCTestCase {
         }
     }
 
+    // MARK: - Top chats summary
+
+    /// 「按消息量 TOP 5」 over 2 rows read as three rows missing (§83). The
+    /// summary states the real row count at any size, one shape throughout.
+    func testTopChatsSummaryCountsRowsItActuallyShows() {
+        XCTAssertEqual(InsightOverviewCounts.topChatsSummary(shown: 2), "按消息量前 2")
+        XCTAssertEqual(InsightOverviewCounts.topChatsSummary(shown: 5), "按消息量前 5")
+    }
+
+    /// Regression lives at the call site (§10): the builder only helps if the
+    /// section feeds it, and the hard-coded cap must not come back. Comment
+    /// lines are allowed to name the banned copy — this doc does (§27's rule).
+    func testTopChatsSectionFeedsTheRowCountFromTheCallSite() throws {
+        let source = try read("Sources/WeChatHUD/Views/Analytics/InsightOverviewDashboard.swift")
+        let code = source
+            .split(separator: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        XCTAssertFalse(
+            code.contains("TOP 5"),
+            "「按消息量 TOP 5」promised the cap as a count — say how many are listed"
+        )
+        XCTAssertTrue(
+            code.contains("topChatsSummary(shown:"),
+            "the summary must come from the count builder"
+        )
+    }
+
     // MARK: - Helpers
 
     private func radarFindings(for crossTopics: [CrossTopic]) -> [InsightRadarFinding] {

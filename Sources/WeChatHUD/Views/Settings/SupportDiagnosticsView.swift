@@ -11,26 +11,26 @@ struct SupportDiagnosticsView: View {
 
     var body: some View {
         SettingsSection("诊断概况") {
-            SettingsRow("版本") { Text(version).font(.system(size: 12)).foregroundColor(.secondary) }
+            SettingsRow("版本") { Text(version).companionFont(size: 12).foregroundColor(.secondary) }
             SettingsRowDivider()
-            SettingsRow("macOS") { Text(macOSVersion).font(.system(size: 12)).foregroundColor(.secondary) }
+            SettingsRow("macOS") { Text(macOSVersion).companionFont(size: 12).foregroundColor(.secondary) }
             SettingsRowDivider()
-            SettingsRow("架构") { Text(architecture).font(.system(size: 12)).foregroundColor(.secondary) }
+            SettingsRow("架构") { Text(architecture).companionFont(size: 12).foregroundColor(.secondary) }
             SettingsRowDivider()
             SettingsRow("同步状态", subtitle: lastSyncText, icon: "arrow.triangle.2.circlepath", iconColor: syncColor) {
-                Text(syncLabel).font(.system(size: 12)).foregroundColor(.secondary)
+                Text(syncLabel).companionFont(size: 12).foregroundColor(.secondary)
             }
             SettingsRowDivider()
             SettingsRow("汇总数量", subtitle: countSummary, icon: "number", iconColor: .secondary) {
-                Text("仅统计").font(.system(size: 12)).foregroundColor(.secondary)
+                Text("仅统计").companionFont(size: 12).foregroundColor(.secondary)
             }
             SettingsRowDivider()
             SettingsRow("密钥文件") {
-                Text(keyState).font(.system(size: 12)).foregroundColor(keyColor)
+                Text(keyState).companionFont(size: 12).foregroundColor(keyColor)
             }
             SettingsRowDivider()
             SettingsRow("AI 服务") {
-                Text(aiProviderLabel).font(.system(size: 12)).foregroundColor(.secondary)
+                Text(aiProviderLabel).companionFont(size: 12).foregroundColor(.secondary)
             }
             SettingsRowDivider()
             HStack {
@@ -38,7 +38,7 @@ struct SupportDiagnosticsView: View {
                     .buttonStyle(CompanionPressStyle())
                 if let copyFeedback {
                     Text(copyFeedback)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(copyFeedback == CompanionInteractionCopy.copied ? CompanionPalette.jadeInk : .orange)
                         .transition(.companionStatusReveal)
                 }

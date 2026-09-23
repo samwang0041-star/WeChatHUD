@@ -27,7 +27,7 @@ struct DiscussionSourceView: View {
                     if let onClose { onClose() } else { dismiss() }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
+                        .companionFont(size: 11, weight: .semibold)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }

@@ -263,16 +263,26 @@ struct ChatStatsData {
     var recentMessageCount: Int = 0
 }
 
-/// The "近期" the insight overview means.
+/// The "近期" the insight overview means: the seven day-buckets ending today —
+/// a per-day histogram over the last 7 calendar days, summed.
 ///
-/// Declared once because the window has to agree between the SQL scan that
-/// counts it and the overview that divides it: a cutoff computed in one place
-/// and a `/ 7.0` written in another is how a metric silently stops being about
-/// the last seven days.
+/// Declared once because the window has to agree between the scan that counts
+/// it and the overview that divides it: a cutoff computed in one place and a
+/// `/ 7.0` written in another is how a metric silently stops being about the
+/// last seven days.
+///
+/// Calendar-aligned (today's start plus six days back), not a rolling 168
+/// hours: 「近 7 天」 on the screen reads as days on the calendar, and the
+/// 「日均」 derived from the span is a true daily average only when the span is
+/// exactly those seven days.
 enum InsightRecentWindow {
     static let days = 7
 
-    static func cutoff(now: Date = Date()) -> Int {
-        Int(now.timeIntervalSince1970) - days * 86_400
+    /// Epoch seconds of the first instant in the oldest bucket — the start of
+    /// the local day `days - 1` days ago. A message at or after this instant
+    /// sits in one of the seven buckets.
+    static func cutoff(now: Date = Date(), calendar: Calendar = .current) -> Int {
+        let first = calendar.date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: now)) ?? now
+        return Int(first.timeIntervalSince1970)
     }
 }

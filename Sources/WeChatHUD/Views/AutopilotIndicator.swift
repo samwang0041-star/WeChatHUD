@@ -17,7 +17,7 @@ struct AutopilotIndicator: View {
         }) {
             HStack(spacing: 3) {
                 Image(systemName: "airplane.circle.fill")
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .foregroundColor(iconColor)
                 if monitor.autopilotActive {
                     stats
@@ -46,19 +46,19 @@ struct AutopilotIndicator: View {
         HStack(spacing: 2) {
             if monitor.autopilotSessionSent > 0 {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .companionFont(size: 10, weight: .bold)
                     .foregroundColor(.green.opacity(0.85))
                 Text("\(monitor.autopilotSessionSent)")
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                     .monospacedDigit()
                     .foregroundColor(.green.opacity(0.85))
             }
             if monitor.autopilotSessionPending > 0 {
                 Image(systemName: "hourglass")
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                     .foregroundColor(.orange.opacity(0.85))
                 Text("\(monitor.autopilotSessionPending)")
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                     .monospacedDigit()
                     .foregroundColor(.orange.opacity(0.85))
             }
@@ -121,18 +121,18 @@ struct AutopilotPopoverView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "airplane.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .companionFont(size: 14, weight: .semibold)
                 .foregroundColor(monitor.autopilotActive ? .green : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text("自动回复")
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                 if monitor.autopilotActive {
                     Text(runningHeaderSubtitle)
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                 } else {
                     Text("当前关着")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                 }
             }
@@ -153,9 +153,9 @@ struct AutopilotPopoverView: View {
         Button(action: start) {
             HStack(spacing: 4) {
                 Image(systemName: starting ? "hourglass" : "play.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                 Text(starting ? AutopilotStartCopy.starting : AutopilotStartCopy.start)
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
@@ -216,7 +216,7 @@ struct AutopilotPopoverView: View {
 
             if monitor.autopilotPaused && !monitor.autopilotManuallyPaused {
                 Text("已暂停 — 你正在用微信，离开后自动恢复")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
@@ -236,13 +236,13 @@ struct AutopilotPopoverView: View {
 
     private func statRow(systemIcon: String, label: String, value: Int, color: Color) -> some View {
         HStack(spacing: 4) {
-            Image(systemName: systemIcon).font(.system(size: 10))
+            Image(systemName: systemIcon).companionFont(size: 10)
             Text(label)
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
             Spacer()
             Text("\(value)")
-                .font(.system(size: 11, weight: .semibold))
+                .companionFont(size: 11, weight: .semibold)
                 .monospacedDigit()
                 .foregroundColor(color)
         }
@@ -264,9 +264,9 @@ struct AutopilotPopoverView: View {
         }) {
             HStack(spacing: 3) {
                 Image(systemName: paused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                 Text(pausing ? (paused ? "正在恢复…" : "正在暂停…") : (paused ? "恢复" : "暂停"))
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
             }
             .foregroundColor(paused ? .green : .yellow)
             .frame(maxWidth: .infinity)
@@ -286,9 +286,9 @@ struct AutopilotPopoverView: View {
         Button(action: stop) {
             HStack(spacing: 3) {
                 Image(systemName: "stop.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                 Text(stopping ? AutopilotStopCopy.stopping : AutopilotStopCopy.stop)
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
             }
             .foregroundColor(.red)
             .frame(maxWidth: .infinity)
@@ -314,7 +314,7 @@ struct AutopilotPopoverView: View {
                 close()
             }) {
                 Text("待确认回复")
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(IslandRowButtonStyle())
@@ -322,7 +322,7 @@ struct AutopilotPopoverView: View {
             .accessibilityHint("打开待确认列表")
 
             Text("·")
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
 
             Button(action: {
@@ -333,7 +333,7 @@ struct AutopilotPopoverView: View {
                 close()
             }) {
                 Text("设置")
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                     .foregroundColor(.accentColor)
             }
             .buttonStyle(IslandRowButtonStyle())

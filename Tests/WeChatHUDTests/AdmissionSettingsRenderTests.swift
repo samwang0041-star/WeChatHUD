@@ -216,4 +216,64 @@ final class AdmissionSettingsRenderTests: XCTestCase {
         let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: "/tmp/wechathud-admission-one-quiet.png"))
     }
+
+    /// A failed rule read renders a failure, never the empty state.
+    ///
+    /// 「没能读到……不代表它是空的」 is a promise the pixels have to keep: the
+    /// lists used to draw their empty copy in exactly the state where the read
+    /// failed, which is the one moment that copy is a lie.
+    func testUnreadableRuleListsRenderTheirFailureNotAnEmptyList() throws {
+        let store = HUDStore(dbPath: root.appendingPathComponent("hud-unreadable.sqlite3").path)
+        try store.open()
+        defer { store.close() }
+
+        func render(_ snapshot: AdmissionSettingsView.Snapshot, path: String) throws -> NSBitmapImageRep {
+            let view = AdmissionSettingsView(snapshot: snapshot)
+                .content
+                .environmentObject(store)
+                .environmentObject(PanelState())
+                .frame(width: 640, alignment: .topLeading)
+                .padding(16)
+                .background(Color.white)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.nsImage, "the settings screen produced no image")
+            let rep = try XCTUnwrap(NSBitmapImageRep(data: image.tiffRepresentation ?? Data()))
+            let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: path))
+            return rep
+        }
+
+        var broken = AdmissionSettingsView.Snapshot(
+            config: AdmissionConfig(),
+            followed: [entry("team@chatroom", "产品协作群", isGroup: true, level: .watch)]
+        )
+        broken.memberRulesUnreadable = true
+        broken.mutedUnreadable = true
+
+        let brokenRep = try render(broken, path: "/tmp/wechathud-admission-unreadable.png")
+        // The identical page with the reads intact and both lists empty: what a
+        // failure must NOT look like.
+        let emptyRep = try render(
+            AdmissionSettingsView.Snapshot(
+                config: AdmissionConfig(),
+                followed: [entry("team@chatroom", "产品协作群", isGroup: true, level: .watch)]
+            ),
+            path: "/tmp/wechathud-admission-empty-lists.png"
+        )
+
+        let ink = inkRatio(brokenRep)
+        XCTAssertGreaterThan(ink, 0.02, "the failure rows did not draw (ink=\(ink)); the block went blank")
+        let brokenPNG = try XCTUnwrap(brokenRep.representation(using: .png, properties: [:]))
+        let emptyPNG = try XCTUnwrap(emptyRep.representation(using: .png, properties: [:]))
+        // A second identical render first: if the renderer were nondeterministic,
+        // "the two differ" would prove nothing.
+        let brokenAgain = try render(broken, path: "/tmp/wechathud-admission-unreadable-again.png")
+        let brokenAgainPNG = try XCTUnwrap(brokenAgain.representation(using: .png, properties: [:]))
+        XCTAssertEqual(brokenAgainPNG, brokenPNG, "ImageRenderer is not deterministic; the comparison below is meaningless")
+        XCTAssertNotEqual(
+            brokenPNG, emptyPNG,
+            "an unreadable list renders exactly like an empty one — the failure is being dressed up as emptiness"
+        )
+    }
 }

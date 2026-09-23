@@ -148,9 +148,9 @@ struct AssistantTodayView: View {
                     Button { showUpdates.toggle() } label: {
                         HStack(spacing: 4) {
                             Text(showUpdates ? "只看需要回复的" : "全部 \(TodayFeed.allUpdatesCount(monitor.inboxItems)) 条")
-                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                            Image(systemName: "chevron.right").companionFont(size: 10, weight: .semibold)
                         }
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                         .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     .buttonStyle(CompanionPressStyle())
@@ -174,6 +174,10 @@ struct AssistantTodayView: View {
                     .help("搜索联系人或消息（⌘F）")
                 TextField("搜索联系人或消息", text: $query)
                     .textFieldStyle(.plain)
+                    // The AX frame of a plain text field is its text line
+                    // (16pt) — padding is what grows the field itself to the
+                    // 24pt hit floor; an outer frame would not count.
+                    .padding(.vertical, 4)
                     .focused($searchFocused)
                     .accessibilityLabel("搜索联系人或消息")
                 if !query.isEmpty {
@@ -186,10 +190,15 @@ struct AssistantTodayView: View {
                         .buttonStyle(CompanionIconButtonStyle()).accessibilityLabel("清除搜索")
                         .help("清除搜索")
                 } else {
-                    Text("⌘ F").font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary)
+                    Text("⌘ F").companionFont(size: 11, design: .monospaced).foregroundStyle(.tertiary)
                 }
             }
             .padding(12)
+            // The plain field's AX face is its 16pt text line and cannot be
+            // grown; the row itself becomes the target instead — clicking
+            // anywhere in the well focuses the field.
+            .contentShape(Rectangle())
+            .onTapGesture { searchFocused = true }
             .background(searchFieldFace)
             .overlay(
                 RoundedRectangle(cornerRadius: CompanionElevation.insetRadius, style: .continuous)
@@ -343,37 +352,47 @@ struct AssistantTodayView: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    Text("接下来").font(.system(size: 15, weight: .semibold))
+                    Text("接下来").companionFont(size: 15, weight: .semibold)
                     Spacer()
                     if !upcoming.isEmpty { CompanionBadge(title: "\(upcoming.count) 项") }
                 }
                 if upcoming.isEmpty {
                     Text("现在没有排上日程的事")
-                        .font(.system(size: 13, weight: .medium))
+                        .companionFont(size: 13, weight: .medium)
                     Text("答应过的截止时间会按顺序出现在这里。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .companionFont(size: 12).foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(upcoming.prefix(3))) { commitment in
                         Button { navigate(.commitments) } label: {
                             VStack(alignment: .leading, spacing: 7) {
-                                Text(commitment.content).font(.system(size: 13, weight: .medium))
+                                Text(commitment.content).companionFont(size: 13, weight: .medium)
                                     .foregroundStyle(.primary).lineLimit(3).multilineTextAlignment(.leading)
-                                Text(commitment.chatName).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(commitment.chatName).companionFont(size: 11).foregroundStyle(.secondary)
                                 if let deadline = commitment.deadlineAt {
                                     Label(deadline.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
-                                        .font(.system(size: 11, weight: .medium))
+                                        .companionFont(size: 11, weight: .medium)
                                         .foregroundStyle(deadline < Date() ? Color.orange : CompanionPalette.accent)
                                 } else if !commitment.deadlineLabel.isEmpty {
-                                    Text(commitment.deadlineLabel).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    Text(commitment.deadlineLabel).companionFont(size: 11).foregroundStyle(.secondary)
                                 }
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }.buttonStyle(CompanionRowPressStyle())
                         if commitment.id != upcoming.prefix(3).last?.id { Divider() }
                     }
+                    if upcoming.count > 3 {
+                        Button { navigate(.commitments) } label: {
+                            Text("还有 \(upcoming.count - 3) 项 ›")
+                                .companionFont(size: 11, weight: .medium)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(CompanionRowPressStyle())
+                        .accessibilityLabel("还有 \(upcoming.count - 3) 项承诺，查看全部")
+                    }
                 }
                 Button { navigate(.commitments) } label: {
                     HStack { Text("查看我答应的事"); Spacer(); Image(systemName: "chevron.right") }
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                 }.buttonStyle(CompanionRowPressStyle())
             }.companionSurface()
             connectionCard
@@ -390,13 +409,13 @@ struct AssistantTodayView: View {
             HStack(spacing: 12) {
                 Image(systemName: icon).foregroundStyle(CompanionPalette.accent).frame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+                    Text(title).companionFont(size: 13, weight: .medium).foregroundStyle(.primary)
                     if let subtitle {
-                        Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(subtitle).companionFont(size: 11).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").companionFont(size: 10, weight: .semibold).foregroundStyle(.tertiary)
             }.padding(16).contentShape(Rectangle())
         }.buttonStyle(CompanionRowPressStyle())
     }
@@ -576,9 +595,9 @@ struct AssistantTodayView: View {
             HStack(spacing: 4) {
                 Text("\(title) \(count)")
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
             }
-            .font(.system(size: 13, weight: .semibold))
+            .companionFont(size: 13, weight: .semibold)
             .foregroundStyle(.primary)
             // Same metrics as CompanionFilterPill: these sit in one row,
             // and the 2pt mismatch made the group look misaligned.
@@ -601,18 +620,18 @@ struct AssistantTodayView: View {
                 HStack(spacing: 10) {
                     CompanionAvatar(name: item.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(item.chatName).font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
-                        Text(item.timestamp, format: .dateTime.hour().minute()).font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(item.chatName).companionFont(size: 14, weight: .semibold).foregroundStyle(.primary)
+                        Text(item.timestamp, format: .dateTime.hour().minute()).companionFont(size: 11).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     if item.isAtMention { CompanionBadge(title: "@ 我") }
-                    if !expanded { Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary) }
+                    if !expanded { Image(systemName: "chevron.right").companionFont(size: 11, weight: .semibold).foregroundStyle(.tertiary) }
                 }
             }
             .buttonStyle(CompanionPressStyle())
 
             Text(item.aiSummary?.isEmpty == false ? (expanded ? item.aiSummary! : collapsedSummary(item.aiSummary!)) : item.preview)
-                .font(.system(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular))
+                .companionFont(size: expanded ? 16 : 14, weight: expanded ? .semibold : .regular)
                 .lineSpacing(4).textSelection(.enabled).lineLimit(expanded ? 6 : 1)
 
             if expanded {
@@ -628,8 +647,8 @@ struct AssistantTodayView: View {
                         Circle()
                             .fill(CompanionPalette.jadeInk)
                             .frame(width: 5, height: 5)
-                        Text("AI 解读").font(.system(size: 11, weight: .semibold)).foregroundStyle(CompanionPalette.jadeInk)
-                        Text("·").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text("AI 解读").companionFont(size: 11, weight: .semibold).foregroundStyle(CompanionPalette.jadeInk)
+                        Text("·").companionFont(size: 11).foregroundStyle(.tertiary)
                         Button(revealedOriginalIDs.contains(item.id) ? "收起原文" : "查看消息原文") {
                             withMotion(CompanionMotion.ease()) {
                                 if revealedOriginalIDs.contains(item.id) {
@@ -640,7 +659,7 @@ struct AssistantTodayView: View {
                             }
                         }
                         .buttonStyle(CompanionPressStyle())
-                        .font(.system(size: 11, weight: .medium))
+                        .companionFont(size: 11, weight: .medium)
                         .foregroundStyle(CompanionPalette.jadeInk)
                         Spacer(minLength: 8)
                     }

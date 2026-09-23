@@ -65,7 +65,7 @@ struct AIBuddyOverlay: View {
                     .fill(tracker.isActive ? Color.green : Color.gray.opacity(0.5))
                     .frame(width: 5, height: 5)
                 Text(tracker.isActive ? "AI \(tracker.taskList.count) 个任务" : "AI 空闲")
-                    .font(.system(size: 9, weight: .semibold))
+                    .companionFont(size: 9, weight: .semibold)
                     .foregroundColor(tracker.isActive ? .primary : .secondary)
             }
 
@@ -101,16 +101,16 @@ struct AIBuddyOverlay: View {
                 .scaleEffect(0.4)
                 .frame(width: 8, height: 8)
             Text(task.label)
-                .font(.system(size: 9, weight: .medium))
+                .companionFont(size: 9, weight: .medium)
                 .foregroundColor(.primary)
             if !task.detail.isEmpty {
                 Text(task.detail)
-                    .font(.system(size: 8))
+                    .companionFont(size: 8)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
             Text(elapsedText(task.elapsed(now: now)))
-                .font(.system(size: 8, design: .monospaced))
+                .companionFont(size: 8, design: .monospaced)
                 .foregroundColor(.orange)
         }
     }
@@ -118,21 +118,21 @@ struct AIBuddyOverlay: View {
     private func completedRow(_ task: AIActivityTracker.TaskInfo, now: Date) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "checkmark")
-                .font(.system(size: 6, weight: .bold))
+                .companionFont(size: 6, weight: .bold)
                 .foregroundColor(.green.opacity(0.6))
                 .frame(width: 8, height: 8)
             Text(task.label)
-                .font(.system(size: 8))
+                .companionFont(size: 8)
                 .foregroundColor(.secondary)
             if !task.detail.isEmpty {
                 Text(task.detail)
-                    .font(.system(size: 7))
+                    .companionFont(size: 7)
                     .foregroundColor(.secondary.opacity(0.6))
                     .lineLimit(1)
             }
             if let ended = task.endedAt {
                 Text(String(format: "%.1f 秒", ended.timeIntervalSince(task.startedAt)))
-                    .font(.system(size: 7, design: .monospaced))
+                    .companionFont(size: 7, design: .monospaced)
                     .foregroundColor(.secondary.opacity(0.6))
             }
         }

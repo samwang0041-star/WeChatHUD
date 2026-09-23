@@ -9,13 +9,14 @@ struct CommitmentTabView: View {
     @State private var query = ""
     @State private var expandedID: Int64?
     @State private var pendingCancel: Commitment?
-    @State private var showBatchClearConfirm = false
+    @State private var showBatchClearConfirm = PreviewRuntime.parksBatchClearDialog
     @State private var batchUndo: [(msgUID: String, status: CommitmentStatus)]?
     @State private var isBatchClearing = false
     @State private var receipt: String?
     @State private var isCancelling = false
     @State private var undo: (msgUID: String, status: CommitmentStatus)?
     @State private var actionError: String?
+    @FocusState private var searchFocused: Bool
     @State private var isUndoing = false
 
     private var activeCount: Int { CommitmentPresentation.activeCount(monitor.commitments) }
@@ -52,7 +53,7 @@ struct CommitmentTabView: View {
                         ForEach(CommitmentPresentation.groups(filteredCommitments), id: \.title) { group in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(group.title)
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .companionFont(size: 12, weight: .semibold)
                                     .foregroundStyle(.secondary)
                                 ForEach(group.items) { commitment in
                                     card(commitment)
@@ -78,13 +79,13 @@ struct CommitmentTabView: View {
             if showBatchClearConfirm {
                 CompanionDialog(title: "一键清空当前承诺？", onClose: { if !isBatchClearing { showBatchClearConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("将当前显示的 \(filteredCommitments.count) 项承诺标记为已完成。可在「已完成」列表中随时查看。")
-                            .font(.system(size: 13))
+                        Text("将当前显示的 \(filteredCommitments.count) 项承诺标记为已完成。14 天内可在「已完成」列表中查看和撤销。")
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let actionError {
                             Text(actionError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -116,12 +117,12 @@ struct CommitmentTabView: View {
                 CompanionDialog(title: CompanionProductCopy.cancelCommitmentTitle, onClose: { if !isCancelling { pendingCancel = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.cancelCommitmentMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let actionError {
                             Text(actionError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -158,8 +159,8 @@ struct CommitmentTabView: View {
             // narrowest category there is (extraction applies a 0.72 gate and
             // only keeps explicit commitments). Without this line the two
             // pages look like they disagree about what was promised.
-            Text("这里只记你明确答应过的事，所以不受「待办」页保留档位的影响。")
-                .font(.system(size: 11))
+            Text("这里只记你明确答应过的事；14 天内创建、到期或动过的都会显示。")
+                .companionFont(size: 11)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
@@ -187,15 +188,20 @@ struct CommitmentTabView: View {
                     // reported this field as `AXTextField` with an empty label,
                     // while the identically-built fields on 待办 and 草稿 read
                     // their titles out. VoiceOver users got an unnamed box.
+                    .focused($searchFocused)
                     .accessibilityLabel("搜索承诺、原话或对象")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
                         .buttonStyle(CompanionPressStyle())
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                         .foregroundStyle(CompanionPalette.jadeInk)
                 }
             }
             .padding(10)
+            // The field's AX face is its 16pt text line; the well is the
+            // target instead (same rule as 今天's search).
+            .contentShape(Rectangle())
+            .onTapGesture { searchFocused = true }
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             if let actionError {
@@ -224,7 +230,7 @@ struct CommitmentTabView: View {
                     withMotion(CompanionMotion.pageChange()) { filter = .all }
                 }
                 .buttonStyle(CompanionPressStyle())
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .padding(.bottom, 24)
                 .accessibilityLabel("看全部承诺")
@@ -235,7 +241,7 @@ struct CommitmentTabView: View {
                         NotificationCenter.default.post(name: .hudSwitchTab, object: "system")
                     }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                     .accessibilityLabel("检查微信连接")
@@ -244,7 +250,7 @@ struct CommitmentTabView: View {
                         NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
                     }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                     .accessibilityLabel("去选要关注的对话")
@@ -253,7 +259,7 @@ struct CommitmentTabView: View {
                         NotificationCenter.default.post(name: .hudSwitchTab, object: "today")
                     }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                     .accessibilityLabel("打开今天，从对话里记下承诺")
@@ -309,20 +315,20 @@ struct CommitmentTabView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(CommitmentPresentation.deadlineText(for: commitment))
-                                .font(.system(size: 12, weight: .semibold))
+                                .companionFont(size: 12, weight: .semibold)
                                 .foregroundStyle(isLate ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                             Text(commitment.content.isEmpty ? "未命名承诺" : commitment.content)
-                                .font(.system(size: 15, weight: .semibold))
+                                .companionFont(size: 15, weight: .semibold)
                                 .foregroundStyle(.primary)
                                 .multilineTextAlignment(.leading)
                         }
                         Text("答应 \(monitor.commitmentTargetName(commitment.commitTo, chatUsername: commitment.chatUsername))")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
@@ -385,8 +391,8 @@ struct CommitmentTabView: View {
 
     private func contextBlock(_ label: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 13)).foregroundStyle(.primary).textSelection(.enabled)
+            Text(label).companionFont(size: 11, weight: .semibold).foregroundStyle(.secondary)
+            Text(text).companionFont(size: 13).foregroundStyle(.primary).textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -432,7 +438,7 @@ struct CommitmentTabView: View {
                 .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             }
         }
-        .font(.system(size: 13, weight: .medium))
+        .companionFont(size: 13, weight: .medium)
         .padding(.top, 10)
     }
 
@@ -446,6 +452,7 @@ struct CommitmentTabView: View {
                 undo = (commitment.msgUID, previous)
                 batchUndo = nil
                 receipt = "\(commitment.content)已标记完成"
+                CompanionMotion.performCommitTick()
             } else if status == .cancelled {
                 undo = (commitment.msgUID, previous)
                 batchUndo = nil
@@ -471,6 +478,7 @@ struct CommitmentTabView: View {
             try monitor.batchUpdateCommitmentsStatus(commitments: targets, status: .fulfilled)
             receipt = "已清空 \(targets.count) 项承诺"
             actionError = nil
+            CompanionMotion.performCommitTick()
             return true
         } catch {
             actionError = "清空失败，请重试。"
@@ -485,6 +493,7 @@ struct CommitmentTabView: View {
             self.undo = nil
             receipt = "已撤销"
             actionError = nil
+            CompanionMotion.performCommitTick()
         } catch {
             actionError = "撤销没有成功，请重试。"
         }

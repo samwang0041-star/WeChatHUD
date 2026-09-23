@@ -38,11 +38,32 @@ enum CompanionMotion {
         reduceMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: duration)
     }
 
+    /// Reduce Motion keeps exactly one kind of motion: a short opacity
+    /// crossfade for content that replaces content in place.
+    ///
+    /// The accessibility standard is "gentler, not zero" — drop the movement
+    /// (springs, rises, scales, washes), but a status line that hard-snaps on
+    /// screen reads as a glitch. A 120ms fade carries no vestibular motion
+    /// and still explains that one state replaced another. Tokens that move
+    /// anything in space stay fully gated (`strongEaseOut`); only tokens
+    /// whose reduced form is a pure opacity swap route through here.
+    static let reducedCrossfadeDuration: TimeInterval = 0.12
+    static func reducedCrossfade() -> Animation? {
+        reduceMotion ? .timingCurve(0.23, 1, 0.32, 1, duration: reducedCrossfadeDuration) : nil
+    }
+
+    /// House ease-out for content that only appears / disappears in place.
+    /// Under Reduce Motion the whole transform goes, but the opacity swap
+    /// stays as `reducedCrossfade()`.
+    static func strongContentFade(_ duration: TimeInterval = 0.2) -> Animation? {
+        reduceMotion ? reducedCrossfade() : .timingCurve(0.23, 1, 0.32, 1, duration: duration)
+    }
+
     /// The generic in-place content transition. Still called `ease` because
     /// every caller means "this thing appears / disappears in place", not
     /// "please run an easeInOut".
     static func ease(_ duration: TimeInterval = easeDuration) -> Animation? {
-        strongEaseOut(duration)
+        strongContentFade(duration)
     }
 
     /// Occasional surfaces that arrive after the user acted (undo bar, toast).
@@ -51,7 +72,7 @@ enum CompanionMotion {
     /// UI cap. The curve is still the house ease-out: the bar has to move on
     /// the first frame, then soften into place.
     static let enterDuration: TimeInterval = 0.25
-    static func enter() -> Animation? { strongEaseOut(enterDuration) }
+    static func enter() -> Animation? { strongContentFade(enterDuration) }
 
     /// System response / toast exit. Faster than enter: the user already saw
     /// the surface arrive, so the leave should snap rather than wind up.
@@ -60,7 +81,7 @@ enum CompanionMotion {
     /// of motion — the exact moment the eye is watching — and reads as lag
     /// even when the duration is shorter.
     static let exitDuration: TimeInterval = 0.16
-    static func exit() -> Animation? { strongEaseOut(exitDuration) }
+    static func exit() -> Animation? { strongContentFade(exitDuration) }
 
     /// What the standalone toast window should do on a `toastMessage` tick.
     ///
@@ -162,8 +183,9 @@ enum CompanionMotion {
     /// Sidebar module selection. Slightly slower than a hover wash: the
     /// selection fill and its tinted border have to arrive together, and a
     /// 100ms swap on a whole row still flickers. Matched to pageChange so
-    /// the row and the page land as one gesture.
-    static func sidebarSelection() -> Animation? { ease(pageChangeDuration) }
+    /// the row and the page land as one gesture. Spatial (the fill travels),
+    /// so it snaps under Reduce Motion.
+    static func sidebarSelection() -> Animation? { strongEaseOut(pageChangeDuration) }
 
     /// Island compact → hover: same spring family as the frame expand.
     static func islandExpand() -> Animation? { openMorph }
@@ -226,8 +248,10 @@ enum CompanionMotion {
     /// Workspace in-row disclosure. Spec 行内 0.20s — tens/day, house ease-out,
     /// under the 300ms UI cap. Island rows that re-drive the panel frame use
     /// `islandRowExpand()` instead, so the row and the window stay on one clock.
+    /// Height is spatial: under Reduce Motion the row snaps open instead of
+    /// crossfading, so this routes through `strongEaseOut`, not `ease`.
     static let rowExpandDuration: TimeInterval = 0.20
-    static func rowExpand() -> Animation? { ease(rowExpandDuration) }
+    static func rowExpand() -> Animation? { strongEaseOut(rowExpandDuration) }
 
     /// Island in-row expand that re-drives the panel frame.
     ///
@@ -235,8 +259,9 @@ enum CompanionMotion {
     /// window spring. The content curve has to be the same physics as the
     /// silhouette opening, or the row and the window visibly desync.
     static func islandRowExpand() -> Animation? { openMorph }
-    /// Source drawer (200–240ms).
-    static func drawer() -> Animation? { ease(0.22) }
+    /// Source drawer (200–240ms). Slides in from an edge — spatial, so it
+    /// snaps under Reduce Motion rather than crossfading.
+    static func drawer() -> Animation? { strongEaseOut(0.22) }
     /// Modal fade (140–180ms).
     static func dialog() -> Animation? { ease(0.16) }
     /// Mark complete (160–180ms).
@@ -317,6 +342,18 @@ enum CompanionMotion {
         guard !reduceMotion else { return }
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
     }
+
+    /// Trackpad tick for a commitment the user just made good on — marking a
+    /// promise done, sending a reply, saving.
+    ///
+    /// Apple's multimodal rule: fire on the causal event (the status flip),
+    /// on the same frame as the visual receipt. Unlike the hover tick this
+    /// one *survives* Reduce Motion: it is not incidental motion but the
+    /// non-visual half of a completion confirmation, which is exactly the
+    /// audience that benefits from feedback beyond pixels.
+    static func performCommitTick() {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
 }
 
 /// Run body inside the given animation, or with animation explicitly
@@ -343,13 +380,23 @@ extension View {
 extension AnyTransition {
     /// Codex Island detailReveal: small anchored scale + fade, no slide.
     /// A translation would fight the panel-frame spring on row expand.
+    /// Reduce Motion keeps only the opacity half — the 2% shrink is movement,
+    /// and the fade is the part that explains the swap.
     static var islandDetailReveal: AnyTransition {
-        .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+        if CompanionMotion.reduceMotion { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
     }
 
     /// Status, error, and receipt lines. Same physicality as a detail reveal,
     /// named so call sites don't invent a third scale.
     static var companionStatusReveal: AnyTransition { islandDetailReveal }
+
+    /// Modal dialog surface: a touch more scale than a status line because it
+    /// is a new surface, not a swap. Same Reduce Motion rule.
+    static var companionDialogReveal: AnyTransition {
+        if CompanionMotion.reduceMotion { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.95))
+    }
 }
 
 /// Sizes for the notch-anchored island. Compact stays notch-height;

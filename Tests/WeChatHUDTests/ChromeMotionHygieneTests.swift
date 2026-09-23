@@ -189,7 +189,9 @@ final class ChromeMotionHygieneTests: XCTestCase {
             contentsOf: sourcesRoot().appendingPathComponent("Views/CompanionStyle.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(dialog.contains(".scale(scale: 0.95)"))
+        // The dialog's 0.95 scale lives in the token file with the rest; the
+        // call site must route through it rather than inline a third value.
+        XCTAssertTrue(dialog.contains(".transition(.companionDialogReveal)"))
         let hud = try String(
             contentsOf: sourcesRoot().appendingPathComponent("Views/HUDRootView.swift"),
             encoding: .utf8
@@ -301,7 +303,19 @@ final class ChromeMotionHygieneTests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertTrue(dialog.contains(".animation(CompanionMotion.dialog(), value: presented)"))
-        XCTAssertTrue(dialog.contains(".transition(.opacity.combined(with: .scale(scale: 0.95)))"))
+        XCTAssertTrue(dialog.contains(".transition(.companionDialogReveal)"))
+        let dialogMotionSource = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/CompanionMotion.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            dialogMotionSource.contains("static var companionDialogReveal: AnyTransition"),
+            "dialog reveal token went missing — dialogs would snap on screen"
+        )
+        XCTAssertTrue(
+            dialogMotionSource.contains(".scale(scale: 0.95)"),
+            "companionDialogReveal must keep its physical entry scale"
+        )
         XCTAssertFalse(dialog.contains("withMotion(CompanionMotion.pageChange()) { action() }"))
         XCTAssertTrue(dialog.contains("Button(action: action)"))
         XCTAssertTrue(dialog.contains("companionAnimation(CompanionMotion.hover(), value: selected)"))
@@ -462,6 +476,71 @@ final class ChromeMotionHygieneTests: XCTestCase {
         XCTAssertTrue(autopilot.contains("IslandInboxRowButtonStyle("))
         XCTAssertFalse(autopilot.contains("CompanionPressStyle()"))
    }
+
+    /// Scrolling surfaces fade into their fixed chrome instead of being cut
+    /// by it (apple-design scroll edges). Both hosts must route through the
+    /// shared wash with their own ground colour.
+    func testScrollingSurfacesFadeIntoTheirChrome() throws {
+        let workspace = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/WorkspacePageLayout.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            workspace.contains(".companionScrollEdgeFade(WorkspacePage.ground)"),
+            "workspace pages must fade into the header / status bar"
+        )
+        let conversation = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/ConversationDetailView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            conversation.contains(".companionScrollEdgeFade(CompanionPalette.island)"),
+            "the transcript must fade into the header / composer"
+        )
+        // The fade may be applied at exactly two hosts and defined once —
+        // a scattered definition invites a third, untested variant.
+        let material = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/CompanionMaterial.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            material.contains("func companionScrollEdgeFade"),
+            "the wash lives in the material layer with the rest of the light language"
+        )
+        let total = [workspace, conversation, material]
+            .joined()
+            .components(separatedBy: ".companionScrollEdgeFade(")
+            .count - 1
+        XCTAssertEqual(total, 2, "exactly the workspace body and the transcript take the wash")
+    }
+
+    /// Pointing at a transient surface (undo bar, toast) is reading it — the
+    /// auto-dismiss clock must hold while the pointer is on it (Sonner's
+    /// hover rule), or the user loses the undo mid-sentence. Keyboard focus
+    /// holds it through the same combined check, so the two cannot cut each
+    /// other's holds short.
+    func testTransientSurfacesHoldTheirClockUnderThePointer() throws {
+        let inbox = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/InboxView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            inbox.contains("applyUndoClockHold()"),
+            "the undo bar must freeze its window through one combined hold rule"
+        )
+        XCTAssertTrue(
+            inbox.contains("undoHovering || undoFocused"),
+            "pointer and keyboard focus share the hold — either keeps the undo alive"
+        )
+        let hud = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/HUDRootView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            hud.contains("setToastCountdownSuspended(toastHovering || toastUndoFocused)"),
+            "the toast carries the snooze undo — hover and focus both hold its clock"
+        )
+    }
 
     func testEmptyAndErrorStatesOfferTheNextAction() throws {
         let discussion = try String(
@@ -644,6 +723,29 @@ final class ChromeMotionHygieneTests: XCTestCase {
        XCTAssertTrue(admission.contains("去关注谁添加群"))
         XCTAssertTrue(admission.contains("CompanionRowPressStyle()"))
         XCTAssertTrue(admission.contains("还没有设为不提醒的人。"))
+        // A failed read must never masquerade as an empty list: the empty-state
+        // copy sits behind an unreadable branch, and the load path takes the
+        // Optional read so "did not load" stays distinguishable from "nobody".
+        XCTAssertTrue(
+            admission.contains("不代表它是空的"),
+            "admission lost its 'a failed read is not an empty list' state"
+        )
+        XCTAssertTrue(
+            admission.contains("store.ignoredSendersRead()"),
+            "admission must distinguish an unreadable mute list from an empty one"
+        )
+        XCTAssertTrue(
+            admission.contains("store.groupMemberRulesRead()"),
+            "admission must distinguish unreadable member rules from empty ones"
+        )
+        let contactsMuteLists = try String(
+            contentsOf: sourcesRoot().appendingPathComponent("Views/Settings/ContactsSettingsView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            contactsMuteLists.contains("store.ignoredSendersRead()"),
+            "the block-rules list must not read an unreadable list as empty"
+        )
         XCTAssertTrue(admission.contains("添加不提醒的人"))
         XCTAssertTrue(admission.contains("已不提醒"))
         XCTAssertFalse(admission.contains("拉黑"))
@@ -1702,5 +1804,26 @@ final class ChromeMotionHygieneTests: XCTestCase {
         // promised 确认后发送 while only one of them sends anything.
         let glosses = SettingsView.Tab.allCases.compactMap(\.subtitle)
         XCTAssertEqual(glosses.count, Set(glosses).count, "two pages share a gloss")
+    }
+
+    /// Every text run follows Dynamic Type. A hardcoded `.font(.system(size:`
+    /// freezes one glyph run at one size forever — §86 task #10 found the
+    /// island detail rendering byte-identical at 文字大小=更大, and the app-wide
+    /// sweep converted 723 such sites to `companionFont`. One carve-out: the
+    /// compact bar's mark glyphs (● dots at 6–8pt) are decoration, not text —
+    /// letting them scale would push them out of the 32pt chrome they live in.
+    func testNoHardcodedFontSizesOutsideTheMarks() throws {
+        for file in try swiftFiles(under: "Views") {
+            for line in file.text.split(separator: "\n") {
+                guard line.contains(".font(.system(size:") else { continue }
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("//") || trimmed.hasPrefix("*") { continue }
+                let isMark = file.name == "CompactInboxBar.swift" && line.contains("markSize")
+                XCTAssertTrue(
+                    isMark,
+                    "\(file.name) hardcodes a font size (only the compact bar's mark glyphs may): \(trimmed)"
+                )
+            }
+        }
     }
 }

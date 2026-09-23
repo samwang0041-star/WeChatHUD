@@ -55,7 +55,7 @@ struct DailyReportCommandCenterView: View {
             if let commandError {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(commandError)
-                        .font(.system(size: isWorkspace ? 13 : 11))
+                        .companionFont(size: isWorkspace ? 13 : 11)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
@@ -192,18 +192,18 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: isWorkspace ? 13 : 10, weight: .semibold))
+                    .companionFont(size: isWorkspace ? 13 : 10, weight: .semibold)
                     .foregroundColor(.secondary)
                 Text("当日记录")
-                    .font(.system(size: isWorkspace ? 15 : 11, weight: .semibold))
+                    .companionFont(size: isWorkspace ? 15 : 11, weight: .semibold)
                     .foregroundColor(.primary)
                 Text(date.formatted(.dateTime.year().month().day()))
-                    .font(.system(size: isWorkspace ? 14 : 10))
+                    .companionFont(size: isWorkspace ? 14 : 10)
                     .foregroundColor(.secondary)
                 Spacer()
             }
             Text("回顾这一天记录的消息与承诺。处理当前事项请回到今天。")
-                .font(.system(size: isWorkspace ? 13 : 10))
+                .companionFont(size: isWorkspace ? 13 : 10)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -217,7 +217,7 @@ struct DailyReportCommandCenterView: View {
                 .scaleEffect(0.7)
                 .progressViewStyle(.circular)
             Text("正在生成日报…")
-                .font(.system(size: isWorkspace ? 14 : 11))
+                .companionFont(size: isWorkspace ? 14 : 11)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -228,17 +228,17 @@ struct DailyReportCommandCenterView: View {
         let isHistorical = monitor.dailyReport.map { !Calendar.current.isDateInToday($0.date) } ?? false
         return VStack(alignment: .leading, spacing: 8) {
             Label(isHistorical ? "没有这一天的可用记录" : "今日来源未验证", systemImage: "exclamationmark.triangle")
-                .font(.system(size: 12, weight: .semibold))
+                .companionFont(size: 12, weight: .semibold)
                 .foregroundColor(.orange)
             Text(isHistorical
                  ? "没有找到这一天可用于整理的消息或事项。可以查看其他日期，或在连接微信后重新整理。"
                  : "还没有成功读到今天的微信，当前没有足够来源，不能判断有没有待处理事项。")
-                .font(.system(size: isWorkspace ? 14 : 11))
+                .companionFont(size: isWorkspace ? 14 : 11)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !isHistorical {
                 Text("请先连上微信并完成一次读取，再刷新日报。")
-                    .font(.system(size: isWorkspace ? 14 : 11))
+                    .companionFont(size: isWorkspace ? 14 : 11)
                     .foregroundColor(.secondary)
             }
             HStack(spacing: 12) {
@@ -247,7 +247,7 @@ struct DailyReportCommandCenterView: View {
                    Task { await monitor.loadDailyReport(force: true) }
                }) {
                     Text(monitor.dailyReportIsLoading ? "正在生成…" : "重新生成")
-                        .font(.system(size: 11, weight: .medium))
+                        .companionFont(size: 11, weight: .medium)
                         .foregroundColor(.accentColor)
               }
               .buttonStyle(CompanionPressStyle())
@@ -279,7 +279,7 @@ struct DailyReportCommandCenterView: View {
    private func emptyStateWithRetry(_ text: String) -> some View {
         VStack(spacing: 8) {
             Text(text)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(Color.primary.opacity(0.4))
             Button(action: {
                 guard !monitor.dailyReportIsLoading else { return }
@@ -287,9 +287,9 @@ struct DailyReportCommandCenterView: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                     Text(monitor.dailyReportIsLoading ? "正在生成…" : "重新生成")
-                        .font(.system(size: 11, weight: .medium))
+                        .companionFont(size: 11, weight: .medium)
                 }
                 .foregroundColor(.accentColor)
             }
@@ -320,14 +320,14 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "target")
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .foregroundColor(.green.opacity(0.85))
                 Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "今日进度")
-                    .font(.system(size: isWorkspace ? 15 : 11, weight: .semibold))
+                    .companionFont(size: isWorkspace ? 15 : 11, weight: .semibold)
                     .foregroundColor(.primary)
                 Spacer()
                 Text("截至刚才")
-                    .font(.system(size: isWorkspace ? 12 : 10))
+                    .companionFont(size: isWorkspace ? 12 : 10)
                     .foregroundColor(.secondary)
             }
 
@@ -339,7 +339,7 @@ struct DailyReportCommandCenterView: View {
                 }
             }
             Text(DailyReportPresentationPolicy.followUpCaption)
-                .font(.system(size: isWorkspace ? 12 : 10))
+                .companionFont(size: isWorkspace ? 12 : 10)
                 .foregroundStyle(.secondary)
         }
         .padding(isWorkspace ? 14 : 10)
@@ -351,11 +351,11 @@ struct DailyReportCommandCenterView: View {
     private func statLabel(_ label: String, value: Int, color: Color) -> some View {
         HStack(spacing: 3) {
             Text("\(value)")
-                .font(.system(size: 10, weight: .semibold))
+                .companionFont(size: 10, weight: .semibold)
                 .foregroundColor(color)
                 .monospacedDigit()
             Text(label)
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
         }
     }
@@ -364,14 +364,14 @@ struct DailyReportCommandCenterView: View {
         HStack(spacing: 4) {
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(tint)
             }
             Text(text)
-                .font(.system(size: isWorkspace ? 14 : 10, weight: .semibold))
+                .companionFont(size: isWorkspace ? 14 : 10, weight: .semibold)
                 .foregroundColor(.secondary)
             Text("\(count)")
-                .font(.system(size: isWorkspace ? 12 : 9))
+                .companionFont(size: isWorkspace ? 12 : 9)
                 .foregroundColor(Color.primary.opacity(0.4))
                 .monospacedDigit()
             Spacer()
@@ -391,7 +391,7 @@ struct DailyReportCommandCenterView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(action.content)
-                    .font(.system(size: isWorkspace ? 14 : 11, weight: isUrgent ? .semibold : .medium))
+                    .companionFont(size: isWorkspace ? 14 : 11, weight: isUrgent ? .semibold : .medium)
                     .foregroundColor(.primary)
                     .lineLimit(isWorkspace ? nil : 2)
                     .fixedSize(horizontal: false, vertical: isWorkspace)
@@ -399,11 +399,11 @@ struct DailyReportCommandCenterView: View {
                 HStack(spacing: 6) {
                     urgencyChip(action.urgency)
                     Text(resolvedChatName(action.sourceChatName, username: action.sourceChatUsername))
-                        .font(.system(size: isWorkspace ? 12 : 9))
+                        .companionFont(size: isWorkspace ? 12 : 9)
                         .foregroundColor(.secondary)
                     if let deadline = action.deadline {
                         Text(Self.deadlineText(deadline))
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(deadlineColor(deadline))
                     }
                     Spacer()
@@ -413,20 +413,20 @@ struct DailyReportCommandCenterView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 10))
+                                .companionFont(size: 10)
                                 .foregroundColor(.cyan.opacity(0.85))
                             Text(insight.reason)
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .italic()
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         HStack(alignment: .top, spacing: 4) {
                             Image(systemName: "arrow.right")
-                                .font(.system(size: 10))
+                                .companionFont(size: 10)
                                 .foregroundColor(.orange.opacity(0.85))
                             Text(insight.nextStep)
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .foregroundColor(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -465,7 +465,7 @@ struct DailyReportCommandCenterView: View {
                         Image(systemName: "checklist")
                         Text("待办")
                     }
-                    .font(.system(size: isWorkspace ? 11 : 9))
+                    .companionFont(size: isWorkspace ? 11 : 9)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 3)
@@ -502,18 +502,18 @@ struct DailyReportCommandCenterView: View {
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(), value: isExpanded)
                     Image(systemName: "star.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.yellow.opacity(0.85))
                     Text(expandedByDefault ? "当日高亮" : "今日高亮")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                     Text("\(highlights.count)")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -540,18 +540,18 @@ struct DailyReportCommandCenterView: View {
             Button(action: { withMotion(CompanionMotion.ease()) { showRisks.toggle() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showRisks ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(), value: showRisks)
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.orange.opacity(0.85))
                     Text("风险与异常")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                     Text("\(risks.count)")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -578,18 +578,18 @@ struct DailyReportCommandCenterView: View {
             Button(action: { withMotion(CompanionMotion.ease()) { showCompleted.toggle() } }) {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(showCompleted ? 90 : 0))
                         .companionAnimation(CompanionMotion.ease(), value: showCompleted)
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.green.opacity(0.8))
                     Text("已完成")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                     Text("\(actions.count)")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(Color.primary.opacity(0.4))
                         .monospacedDigit()
                     Spacer()
@@ -605,10 +605,10 @@ struct DailyReportCommandCenterView: View {
                 ForEach(actions) { action in
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.green.opacity(0.7))
                         Text(action.content)
-                            .font(.system(size: isWorkspace ? 14 : 11))
+                            .companionFont(size: isWorkspace ? 14 : 11)
                             .foregroundColor(.secondary)
                             .strikethrough()
                         Spacer()
@@ -626,25 +626,25 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(highlight.category.label)
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(categoryColor(highlight.category))
                 Text(resolvedChatName(highlight.sourceChatName, username: highlight.sourceChatUsername))
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                 Spacer()
                 if highlight.confidence < 0.8 {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.orange.opacity(0.7))
                 }
             }
             Text(highlight.summary)
-                .font(.system(size: isWorkspace ? 14 : 11))
+                .companionFont(size: isWorkspace ? 14 : 11)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if let snippet = highlight.quotedSnippet {
                 Text("「\(snippet)」")
-                    .font(.system(size: isWorkspace ? 13 : 10))
+                    .companionFont(size: isWorkspace ? 13 : 10)
                     .foregroundColor(.secondary)
                     .italic()
             }
@@ -665,11 +665,11 @@ struct DailyReportCommandCenterView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(risk.description)
-                    .font(.system(size: isWorkspace ? 14 : 11))
+                    .companionFont(size: isWorkspace ? 14 : 11)
                     .foregroundColor(.primary)
                 if let name = risk.sourceChatName {
                     Text(resolvedChatName(name, username: risk.sourceChatUsername))
-                        .font(.system(size: isWorkspace ? 12 : 9))
+                        .companionFont(size: isWorkspace ? 12 : 9)
                         .foregroundColor(.secondary)
                 }
             }
@@ -684,7 +684,7 @@ struct DailyReportCommandCenterView: View {
                 }
             }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
                     .background(Color.primary.opacity(isHovered ? 0.08 : 0.04))
@@ -708,26 +708,26 @@ struct DailyReportCommandCenterView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.cyan.opacity(0.8))
                 Text(monitor.dailyReport?.status == .aiEnhanced ? "AI 小结" : "本地统计")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(.cyan.opacity(0.8))
                 Spacer()
             }
             Text(narrative)
-                .font(.system(size: isWorkspace ? 14 : 11))
+                .companionFont(size: isWorkspace ? 14 : 11)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 .lineSpacing(2)
             if let tomorrow = tomorrow, !tomorrow.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "alarm.fill")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.orange.opacity(0.85))
                         .padding(.top, 1)
                     Text(tomorrow)
-                        .font(.system(size: isWorkspace ? 14 : 11))
+                        .companionFont(size: isWorkspace ? 14 : 11)
                         .foregroundColor(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -748,7 +748,7 @@ struct DailyReportCommandCenterView: View {
         DisclosureGroup(isExpanded: $showDraft) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(draft)
-                    .font(.system(size: isWorkspace ? 14 : 10))
+                    .companionFont(size: isWorkspace ? 14 : 10)
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineSpacing(2)
@@ -757,9 +757,9 @@ struct DailyReportCommandCenterView: View {
                 Button(action: { copyDraft(draft) }) {
                     HStack(spacing: 3) {
                         Image(systemName: copyDraftIcon)
-                            .font(.system(size: isWorkspace ? 12 : 9))
+                            .companionFont(size: isWorkspace ? 12 : 9)
                         Text(copyDraftTitle)
-                            .font(.system(size: isWorkspace ? 13 : 10, weight: .medium))
+                            .companionFont(size: isWorkspace ? 13 : 10, weight: .medium)
                     }
                     .foregroundColor(copyDraftTint)
                 }
@@ -771,7 +771,7 @@ struct DailyReportCommandCenterView: View {
             .padding(.top, 6)
         } label: {
             Label("查看可复制的小结", systemImage: "doc.on.doc")
-                .font(.system(size: isWorkspace ? 14 : 10, weight: .semibold))
+                .companionFont(size: isWorkspace ? 14 : 10, weight: .semibold)
             .foregroundColor(.secondary)
         }
         .padding(.horizontal, cardInset)
@@ -828,10 +828,10 @@ struct DailyReportCommandCenterView: View {
     private func actionButtonLabel(icon: String, title: String, tint: Color, background: Color) -> some View {
         HStack(spacing: isWorkspace ? 5 : 0) {
             Image(systemName: icon)
-                .font(.system(size: isWorkspace ? 11 : 10, weight: .semibold))
+                .companionFont(size: isWorkspace ? 11 : 10, weight: .semibold)
             if isWorkspace {
                 Text(title)
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
             }
         }
         .foregroundColor(tint)
@@ -850,7 +850,7 @@ struct DailyReportCommandCenterView: View {
     private func urgencyChip(_ urgency: ActionUrgency) -> some View {
         let (text, color) = urgencyStyle(urgency)
         return Text(text)
-            .font(.system(size: 10, weight: .semibold))
+            .companionFont(size: 10, weight: .semibold)
             .foregroundColor(color)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)

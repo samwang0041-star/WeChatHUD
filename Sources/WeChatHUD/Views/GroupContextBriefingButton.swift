@@ -91,7 +91,7 @@ struct GroupContextBriefingCard: View {
                     HStack(spacing: 3) {
                         Text("查看完整上下文")
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .companionFont(size: 10, weight: .semibold)
                     }
                 }
                 .buttonStyle(IslandRowButtonStyle())
@@ -121,7 +121,7 @@ struct GroupContextBriefingCard: View {
         let retrying = monitor.groupContextState(for: notification).isLoading
         return HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(.orange)
             Text(message)
                 .islandRowBody()
@@ -210,7 +210,7 @@ struct GroupContextBriefingCard: View {
             // followable down the column instead of three identical grey
             // blocks.
             Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
+                .companionFont(size: 11, weight: .semibold)
                 .foregroundStyle(CompanionPalette.islandMint)
                 .frame(width: 20, height: 20)
                 .background(

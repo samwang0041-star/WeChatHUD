@@ -7,6 +7,7 @@ struct InsightSidebarView: View {
     @ObservedObject var reader: WeChatReader
     @Binding var selectedChat: String?
     @Binding var searchText: String
+    @FocusState private var searchFocused: Bool
     let onAnalyzeChat: (String) -> Void
     var selectedDate: Date = Date()
     @State private var filter: ChatReviewFilter = .all
@@ -96,19 +97,22 @@ struct InsightSidebarView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
             TextField("搜索聊天或联系人", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
+                .focused($searchFocused)
                 .accessibilityLabel("搜索聊天或联系人")
             if !searchText.isEmpty {
                 Button("清除搜索") { searchText = "" }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 11, weight: .medium))
+                    .companionFont(size: 11, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
         .padding(8)
+        .contentShape(Rectangle())
+        .onTapGesture { searchFocused = true }
         .background(CompanionPalette.surface)
         .cornerRadius(8)
         .padding(.horizontal, 12)
@@ -183,7 +187,7 @@ struct InsightSidebarView: View {
               .accessibilityLabel("看全部对话")
            } else if insightStore.isFollowListUnreadable(store: store) {
                 Text("暂时读不到关注名单")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 16)
@@ -212,15 +216,15 @@ struct InsightSidebarView: View {
                         .fill(CompanionPalette.jade.opacity(0.15))
                         .frame(width: 28, height: 28)
                     Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(CompanionPalette.jadeInk)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text("总览")
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .companionFont(size: 12, weight: isSelected ? .semibold : .regular)
                         .foregroundColor(.primary)
                     Text("跨对话的提醒和趋势")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary.opacity(0.6))
                         .lineLimit(1)
                 }
@@ -239,13 +243,13 @@ struct InsightSidebarView: View {
     private func sidebarSection(_ title: String, icon: String, count: Int) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary)
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .companionFont(size: 11, weight: .semibold)
                 .foregroundColor(.secondary)
             Text("\(count)")
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(.secondary.opacity(0.6))
             Spacer()
         }
@@ -279,33 +283,33 @@ struct InsightSidebarView: View {
                        .frame(width: 28, height: 28)
                     if let monogram = ContactIdentityIndex.avatarMonogram(from: title) {
                         Text(monogram)
-                            .font(.system(size: 12, weight: .medium))
+                            .companionFont(size: 12, weight: .medium)
                             .foregroundColor(categoryColor(entry.category))
                     } else {
                         Image(systemName: entry.isGroup ? "person.3" : "person")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(categoryColor(entry.category))
                     }
                }
 
                VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .companionFont(size: 12, weight: isSelected ? .semibold : .regular)
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     if let insight = insight {
                         Text(insight.headline)
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     } else if let s = stats {
                         Text("\(s.messageCount) 条消息 · \(s.participantCount) 人")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary.opacity(0.6))
                     } else {
                         Text(entry.category.label)
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary.opacity(0.6))
                     }
                 }
@@ -314,7 +318,7 @@ struct InsightSidebarView: View {
 
                 if let s = stats, s.messageCount > 0 {
                     Text("\(s.messageCount)")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .companionFont(size: 10, weight: .medium).monospacedDigit()
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -332,7 +336,7 @@ struct InsightSidebarView: View {
                         Circle().fill(Color.red).frame(width: 6, height: 6)
                     } else {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.green.opacity(0.6))
                     }
                 }
@@ -367,24 +371,24 @@ struct InsightSidebarView: View {
                         .fill(Color.gray.opacity(0.1))
                         .frame(width: 28, height: 28)
                     Image(systemName: session.isGroup ? "person.3" : "person")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.gray)
                 }
 
                VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                       .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                       .companionFont(size: 12, weight: isSelected ? .semibold : .regular)
                        .foregroundColor(.primary)
                        .lineLimit(1)
                    Text("\(count) 条消息")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary.opacity(0.6))
                 }
 
                 Spacer()
 
                 Text("\(count)")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .companionFont(size: 10, weight: .medium).monospacedDigit()
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)

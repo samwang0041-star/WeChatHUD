@@ -85,11 +85,11 @@ struct FirstLaunchContactPicker: View {
             }
             if followListUnreadable {
                 Text("暂时读不到关注名单，已选数量先不要采信。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             } else {
                 Text("已选 \(candidates.filter { tracked.contains($0.username) }.count) 个对话")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             }
             if let sessionLoadError, !sessions.isEmpty {
@@ -151,11 +151,11 @@ struct FirstLaunchContactPicker: View {
                         .frame(width: 36, height: 36)
                     if session.isGroup {
                         Image(systemName: "person.2.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                            .companionFont(size: 13, weight: .semibold)
                             .foregroundStyle(following ? Color.white : CompanionPalette.jadeInk)
                     } else {
                         Text(String(displayName(for: session).prefix(1)))
-                            .font(.system(size: 14, weight: .semibold))
+                            .companionFont(size: 14, weight: .semibold)
                             .foregroundStyle(following ? Color.white : CompanionPalette.jadeInk)
                     }
                 }

@@ -16,10 +16,10 @@ struct InsightAttentionBar: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.red)
                     Text("需要你立即处理")
-                        .font(.system(size: 12, weight: .semibold))
+                        .companionFont(size: 12, weight: .semibold)
                         .foregroundColor(.red)
                     Spacer()
                 }
@@ -78,17 +78,17 @@ struct InsightAttentionBar: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
                         Text(source)
-                            .font(.system(size: 12, weight: .semibold))
+                            .companionFont(size: 12, weight: .semibold)
                     }
                     Text(what)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.primary.opacity(0.75))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary.opacity(0.5))
             }
             .padding(.vertical, 4)
@@ -100,10 +100,10 @@ struct InsightAttentionBar: View {
     private func actionCountRow(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10))
+                .companionFont(size: 10)
                 .foregroundColor(color)
             Text(text)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(.primary.opacity(0.85))
             Spacer()
         }

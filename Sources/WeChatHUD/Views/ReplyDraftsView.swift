@@ -50,7 +50,7 @@ struct ReplyDraftsView: View {
             searchBar
            if let feedback {
                 Label(feedback, systemImage: feedbackFailed ? "exclamationmark.triangle" : "checkmark.circle")
-                    .font(.system(size: 13))
+                    .companionFont(size: 13)
                     .foregroundStyle(feedbackFailed ? .orange : CompanionPalette.jadeInk)
                     .padding(.vertical, 8)
                     .transition(.companionStatusReveal)
@@ -66,8 +66,8 @@ struct ReplyDraftsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredDrafts.isEmpty {
                 VStack(spacing: 10) {
-                    Text("没有匹配的草稿").font(.system(size: 15, weight: .semibold))
-                    Text("当前搜索：\(query)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("没有匹配的草稿").companionFont(size: 15, weight: .semibold)
+                    Text("当前搜索：\(query)").companionFont(size: 12).foregroundStyle(.secondary)
                     Button("清除搜索") { query = "" }
                         .buttonStyle(.bordered)
                 }
@@ -109,7 +109,7 @@ struct ReplyDraftsView: View {
                 CompanionDialog(title: CompanionProductCopy.draftConflictTitle, onClose: { if !isContinuingDraft { pendingContinueDraft = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.draftConflictMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
@@ -139,7 +139,7 @@ struct ReplyDraftsView: View {
                 CompanionDialog(title: CompanionProductCopy.deleteDraftTitle(name: draft.chatName), onClose: { if !isDeletingDraft { pendingDeleteDraft = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.deleteDraftMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {
@@ -176,7 +176,7 @@ struct ReplyDraftsView: View {
             if !query.isEmpty {
                 Button("清除搜索") { query = "" }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
             }
         }
@@ -197,16 +197,16 @@ struct ReplyDraftsView: View {
                             CompanionAvatar(name: draft.chatName, size: 32)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(draft.chatName).font(.system(size: 13, weight: .semibold))
+                                    Text(draft.chatName).companionFont(size: 13, weight: .semibold)
                                     Spacer()
                                     if draft.isComposerOnly {
-                                        Text("正在写").font(.system(size: 11)).foregroundStyle(.secondary)
+                                        Text("正在写").companionFont(size: 11).foregroundStyle(.secondary)
                                     }
                                     Text(draft.createdAt, format: .dateTime.hour().minute())
-                                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                                        .companionFont(size: 11).foregroundStyle(.secondary)
                                 }
                                 Text(draft.text)
-                                    .font(.system(size: 12))
+                                    .companionFont(size: 12)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
@@ -238,15 +238,15 @@ struct ReplyDraftsView: View {
                 HStack(spacing: 10) {
                     CompanionAvatar(name: selected.chatName, size: 36)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(selected.chatName) · \(isGroupChat(selected) ? "群聊" : "私聊")").font(.system(size: 15, weight: .semibold))
-                        Text(selected.isComposerOnly ? "正在写，还没存成草稿" : "未发送").font(.system(size: 12)).foregroundStyle(.secondary)
+                        Text("\(selected.chatName) · \(isGroupChat(selected) ? "群聊" : "私聊")").companionFont(size: 15, weight: .semibold)
+                        Text(selected.isComposerOnly ? "正在写，还没存成草稿" : "未发送").companionFont(size: 12).foregroundStyle(.secondary)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("对方原话").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("对方原话").companionFont(size: 11, weight: .semibold).foregroundStyle(.secondary)
                     Text(counterpartQuote(for: selected))
-                        .font(.system(size: 13))
+                        .companionFont(size: 13)
                         .foregroundStyle(.primary)
                         .textSelection(.enabled)
                 }
@@ -256,7 +256,7 @@ struct ReplyDraftsView: View {
 
                 VStack(alignment: .leading, spacing: 8) {
                     TextEditor(text: $drafts[index].text)
-                        .font(.system(size: 14))
+                        .companionFont(size: 14)
                         .frame(minHeight: 120)
                         .focused($editorFocused)
                         .scrollContentBackground(.hidden)
@@ -267,7 +267,7 @@ struct ReplyDraftsView: View {
                         }
                     HStack {
                         Text("\(drafts[index].text.count) / 2000")
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -289,7 +289,7 @@ struct ReplyDraftsView: View {
                 FlowRow(spacing: 8) {
                     if let savedAt {
                         Label("修改已保存 · \(savedAt.formatted(date: .omitted, time: .shortened))", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(CompanionPalette.jadeInk)
                             .transition(.companionStatusReveal)
                     }
@@ -318,7 +318,7 @@ struct ReplyDraftsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .companionAnimation(CompanionMotion.ease(), value: savedAt)
                 Text("继续回复会打开对话，发送前再次确认。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             }
             .padding(.leading, 16)

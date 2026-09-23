@@ -12,6 +12,7 @@ struct SettingsView: View {
             print("[WCHUD] preview: --preview-tab=\(raw) 不是已知分页，落在「今天」")
             return .today
         }
+        print("[WCHUD] preview: launch tab \(raw) -> \(tab.rawValue)")
         return tab
     }()
     /// Owned here rather than left implicit so ⌃⌘S (显示 menu) has something to
@@ -392,6 +393,7 @@ struct SettingsView: View {
 
     private func applyPendingTab(_ raw: String?) {
         guard let tab = Tab.from(raw: raw) else { return }
+        print("[WCHUD] preview: applyPendingTab \(raw ?? "nil") -> \(tab.rawValue) (was \(selectedTab.rawValue))")
         selectedTab = tab
         panelState.pendingSettingsTab = nil
     }
@@ -530,7 +532,7 @@ private struct SettingsSidebarRow: View {
         return Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                    .companionFont(size: 13, weight: selected ? .semibold : .medium)
                     .foregroundStyle(selected ? CompanionPalette.accent : Color.secondary)
                     .frame(width: 22, height: 22)
                     .accessibilityHidden(true)

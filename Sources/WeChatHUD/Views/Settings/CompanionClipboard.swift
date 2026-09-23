@@ -302,13 +302,13 @@ struct CompanionCopyableText: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(text)
-                .font(.system(size: 13, weight: weight, design: monospaced ? .monospaced : .default))
+                .companionFont(size: 13, weight: weight, design: monospaced ? .monospaced : .default)
                 .textSelection(.enabled)
                 .lineLimit(lineLimit)
                 .truncationMode(.middle)
             if let copyFeedback {
                 Text(copyFeedback)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(copyFeedback == CompanionInteractionCopy.copied ? CompanionPalette.jadeInk : .orange)
                     .transition(.companionStatusReveal)
             }

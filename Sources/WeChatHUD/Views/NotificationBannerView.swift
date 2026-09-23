@@ -346,7 +346,7 @@ struct NotificationBannerView: View {
     /// Button it has no effect.
     private var closeButton: some View {
         Button { panelState.collapseAndYield() } label: {
-            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+            Image(systemName: "xmark").companionFont(size: 11, weight: .semibold)
                 .foregroundStyle(hovering ? IslandInk.secondary : IslandInk.tertiary)
                 .frame(width: 24, height: 22)
                 .contentShape(Rectangle())
@@ -370,7 +370,7 @@ struct NotificationBannerView: View {
                         .controlSize(.mini)
                 } else {
                     Image(systemName: "clock")
-                        .font(.system(size: 11, weight: .semibold))
+                        .companionFont(size: 11, weight: .semibold)
                         .foregroundStyle(showSnooze
                             ? CompanionPalette.islandMint
                             : (hovering ? IslandInk.secondary : IslandInk.tertiary))

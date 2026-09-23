@@ -76,6 +76,58 @@ final class InsightDensityAndShardTests: XCTestCase {
         XCTAssertEqual(overview(busy, windowDays: 30).recentDensityRatio ?? 0, 4.2857, accuracy: 0.01)
     }
 
+    /// 「近期」 is the seven day-buckets ending today — the screen says 近 7 天
+    /// and a reader counts that off the calendar. A rolling 168 hours drifts a
+    /// day across the week, and the 「日均」 divided out of it becomes an
+    /// average of a span nobody can picture.
+    func testRecentWindowIsSevenCalendarDayBucketsEndingToday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)! // fixed: no DST games
+        let now = Date(timeIntervalSince1970: 1_758_000_123)
+        let cutoff = InsightRecentWindow.cutoff(now: now, calendar: calendar)
+        let startOfToday = Int(calendar.startOfDay(for: now).timeIntervalSince1970)
+        XCTAssertEqual(startOfToday - cutoff, 6 * 86_400, "today plus six back: exactly seven buckets")
+        // Later clock, same day: the bucket edges do not move within a day.
+        XCTAssertEqual(
+            InsightRecentWindow.cutoff(
+                now: Date(timeIntervalSince1970: TimeInterval(startOfToday + 80_000)),
+                calendar: calendar
+            ),
+            cutoff
+        )
+    }
+
+    /// The KPI states both measured daily averages (§78's statement form) and
+    /// lets the status dot grade them. With a real numerator there is no
+    /// percentage left to dramatize a quiet week with.
+    func testDensityHintStatesBothDailyAverages() {
+        let even = ["a": stats("a", messages: 300, recent: 70)]
+        XCTAssertEqual(
+            InsightKPIGrid.densityHint(overview(even, windowDays: 30)),
+            "近期日均 10 · 窗口日均 10"
+        )
+
+        let busy = ["a": stats("a", messages: 300, recent: 300)]
+        XCTAssertEqual(
+            InsightKPIGrid.densityHint(overview(busy, windowDays: 30)),
+            "近期日均 42.9 · 窗口日均 10"
+        )
+
+        let quiet = ["a": stats("a", messages: 300, recent: 0)]
+        XCTAssertEqual(
+            InsightKPIGrid.densityHint(overview(quiet, windowDays: 30)),
+            "近期日均 0 · 窗口日均 10"
+        )
+    }
+
+    func testDensityHintSaysNoComparisonInsteadOfGradingIt() {
+        let short = ["a": stats("a", messages: 10, recent: 4)]
+        XCTAssertEqual(
+            InsightKPIGrid.densityHint(overview(short, windowDays: 7)),
+            "时间范围不足 7 天，无法比较近期与整体"
+        )
+    }
+
     /// With a 7-day range, "recent" and "overall" are the same span and the
     /// ratio is 1.0 by construction. Reporting that as 节奏正常 would be a
     /// verdict with no evidence behind it.

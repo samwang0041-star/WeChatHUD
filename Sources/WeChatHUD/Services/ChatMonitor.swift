@@ -1545,7 +1545,7 @@ final class ChatMonitor: ObservableObject {
             lastStaleArchiveSweepAt = now
             let archived = (try? store.archiveStalePendingDiscussionItems(cutoff: cutoff)) ?? 0
             if archived > 0 {
-                discussionArchiveNotice = "已把 \(archived) 件很久没处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
+                discussionArchiveNotice = "已把 \(archived) 件 \(DiscussionLiveWindow.pendingDays) 天没处理的待办收起。可在待办里打开「看已处理的」，里面的「较早收起」不是你标完成的。"
             }
             _ = try? store.archiveStalePendingAsks(cutoff: cutoff)
             // Commitments get the longer catalog window — a real pending

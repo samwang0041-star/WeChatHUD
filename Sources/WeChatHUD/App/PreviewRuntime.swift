@@ -38,6 +38,12 @@ enum PreviewRuntime {
         isEnabled && CommandLine.arguments.contains("--preview-today-missed")
     }
 
+    /// Parks 我答应的事 / 待办 on their batch-clear confirm dialogs, which are
+    /// otherwise click-only, so the dialog copy can be screenshotted and measured.
+    static var parksBatchClearDialog: Bool {
+        isEnabled && CommandLine.arguments.contains("--preview-batch-clear")
+    }
+
     /// A partial walk of the 「没回的」 corpus, so the disclosure line that a
     /// complete scan can never show is still screenshot-able.
     static var missedRepliesCoverageOverride: MissedReplyFinder.Coverage? {
@@ -440,6 +446,18 @@ enum PreviewRuntime {
             deadlineAt: now.addingTimeInterval(-90000), confidence: 0.88, promptVersion: "preview",
             sourceText: "今天下午前我把验收清单发群里。", contextText: "联调前需要大家对齐范围。",
             captureReason: "明确承诺今天下午交付", nextStep: "补发清单并说明缺项", deadlineLabel: "今天下午")
+        // More upcoming than the 今天 rail renders (3 rows + 「还有 N 项」), so the
+        // overflow row and the badge's full count are exercised in every repro.
+        try? store.upsertCommitment(msgUID: "preview-promise-followup", chatUsername: "preview-project",
+            chatName: "项目协作群", content: "把联调时间同步给大家", commitTo: "项目协作群",
+            deadlineAt: now.addingTimeInterval(86_400), confidence: 0.9, promptVersion: "preview",
+            sourceText: "我明天把联调时间定下来发群里。", contextText: "群里还在等一个明确时间。",
+            captureReason: "明确承诺由我同步联调时间", nextStep: "确认参与人时间后发群", deadlineLabel: "明天")
+        try? store.upsertCommitment(msgUID: "preview-promise-design", chatUsername: "preview-xu",
+            chatName: "许宁", content: "给出设计评审的修改意见", commitTo: "许宁",
+            deadlineAt: now.addingTimeInterval(3 * 86_400), confidence: 0.86, promptVersion: "preview",
+            sourceText: "这周内我把修改意见整理给你。", contextText: "设计评审后需要合并意见清单。",
+            captureReason: "明确承诺这周内交付", nextStep: "过一遍评审记录再整理意见", deadlineLabel: "这周内")
         if store.loadDrafts().isEmpty {
             try? store.saveDraft(chatUsername: "preview-colleague", chatName: "林晓 · 产品同事",
                 text: "我确认一下大家的时间，15:00 前回复你。", sendAt: nil)
@@ -1181,6 +1199,7 @@ enum PreviewRuntime {
         if let raw = CommandLine.arguments.first(where: { $0.hasPrefix(tabPrefix) }) {
             let tab = String(raw.dropFirst(tabPrefix.count))
             if !tab.isEmpty {
+                print("[WCHUD] preview: windows = \(NSApp.windows.map { "\($0.title)[\($0.isVisible ? "vis" : "hid")]" })")
                 panelState.pendingSettingsTab = tab
                 panelState.showDetail()
             }
@@ -1299,6 +1318,7 @@ enum PreviewRuntime {
                 try? data.write(to: url)
             }
         }
+        print("[WCHUD] preview: capture windows = \(NSApp.windows.map { "\($0.title)[\(type(of: $0))][\(String(describing: $0.identifier?.rawValue))]" })")
         for window in NSApp.windows where window.isVisible {
             if window is FloatingPanel {
                 write(window, name: "island\(suffix)")

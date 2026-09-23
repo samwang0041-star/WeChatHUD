@@ -725,7 +725,8 @@ actor AutopilotService {
     func handleNewMessages(
         _ messages: [InboundMessage],
         config: AutopilotConfig,
-        myUsername: String
+        myUsername: String,
+        now: Date = Date()
     ) async -> HandleResult {
         guard let sid = sessionId else {
             return HandleResult(
@@ -856,23 +857,25 @@ actor AutopilotService {
 
             // Buffer this message for batching
             batchBuffer[msg.chatUsername, default: []].append(msg)
-            let now = monotonic()
+            // `mono`, not `now`: this is the monotonic batch timer, and the
+            // wall-clock `now` parameter above is the night gate's business.
+            let mono = monotonic()
             if batchTimers[msg.chatUsername] == nil {
                 // First message from this chat — set batch timer
-                batchStartTimes[msg.chatUsername] = now
+                batchStartTimes[msg.chatUsername] = mono
                 batchTimers[msg.chatUsername] = Self.batchDeadline(
-                    firstArrival: now,
-                    now: now,
+                    firstArrival: mono,
+                    now: mono,
                     window: batchWindowSeconds,
                     existingDeadline: nil
                 )
             } else {
                 // Extend window by 10s on each new message (sender still typing)
                 // Cap at 60s total from actual first message arrival
-                let firstArrival = batchStartTimes[msg.chatUsername] ?? now
+                let firstArrival = batchStartTimes[msg.chatUsername] ?? mono
                 batchTimers[msg.chatUsername] = Self.batchDeadline(
                     firstArrival: firstArrival,
-                    now: now,
+                    now: mono,
                     window: batchWindowSeconds,
                     existingDeadline: batchTimers[msg.chatUsername]
                 )
@@ -886,7 +889,9 @@ actor AutopilotService {
 
         // Phase 2: Process ALL batches whose window has expired (both new and old).
         var batchEntries: [AutopilotLogEntry] = []
-        let now = monotonic()
+        // `mono`, not `now`: the monotonic batch timer, distinct from the
+        // wall-clock `now` the night gate reads.
+        let mono = monotonic()
         // Force-pending media rows are action='pending' — they await a human
         // and must count toward sessionPending, not skipped, or the approval
         // badge under-counts and their approve decrements an unraised counter.
@@ -895,14 +900,14 @@ actor AutopilotService {
                               - unrecordedAwaitingHuman)
         var skipped = immediateEntries.count - pending
 
-        let allExpired = isPaused ? [] : batchTimers.filter { now >= $0.value }.map(\.key)
+        let allExpired = isPaused ? [] : batchTimers.filter { mono >= $0.value }.map(\.key)
         for chatUsername in allExpired {
             guard !isPaused else { break }
             guard let batch = batchBuffer.removeValue(forKey: chatUsername) else { continue }
             let savedTimer = batchTimers.removeValue(forKey: chatUsername)
             let savedStart = batchStartTimes.removeValue(forKey: chatUsername)
 
-            let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername)
+            let entry = await processBatch(batch, sessionId: sid, config: config, myUsername: myUsername, now: now)
             if sid != sessionId {
                 // `stop()` (or a restart into a new session id) landed while the
                 // model was running. Inserting this row would put a 待确认 card on
@@ -1343,7 +1348,8 @@ actor AutopilotService {
         _ batch: [InboundMessage],
         sessionId: Int64,
         config: AutopilotConfig,
-        myUsername: String
+        myUsername: String,
+        now: Date = Date()
     ) async -> AutopilotLogEntry {
         guard let latest = batch.last else {
             // Empty batch — should not happen, but don't crash (C3 fix)
@@ -1372,7 +1378,7 @@ actor AutopilotService {
         }
 
         // --- Deep night silence check (configurable threshold) ---
-        let currentPeriod = StyleProfiler.timePeriod(unixTime: Int(Date().timeIntervalSince1970))
+        let currentPeriod = StyleProfiler.timePeriod(unixTime: Int(now.timeIntervalSince1970))
         if currentPeriod == .lateNight {
             let timing = await styleProfiler.getTimingProfile(chatUsername: representative.chatUsername)
             // nil is 「没测到」, not 「测到 0%」. Both still hold the send — the 3 a.m.
@@ -2259,10 +2265,11 @@ actor AutopilotService {
     func testingProcessBatch(
         _ messages: [InboundMessage],
         config: AutopilotConfig,
-        myUsername: String
+        myUsername: String,
+        now: Date = Date()
     ) async -> AutopilotLogEntry {
         let sid = sessionId ?? 0
-        return await processBatch(messages, sessionId: sid, config: config, myUsername: myUsername)
+        return await processBatch(messages, sessionId: sid, config: config, myUsername: myUsername, now: now)
     }
 
     private func persistSessionCounts() {

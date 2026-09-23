@@ -345,6 +345,10 @@ struct IslandToastContent: View {
     /// asked for a snap — the scale would otherwise replay from 0.95.
     var playsEnter: Bool = true
     @State private var landed: Bool
+    /// Same hold rule as the inbox undo bar: pointer or keyboard focus on the
+    /// toast holds its auto-dismiss clock through one combined check.
+    @State private var toastHovering = false
+    @FocusState private var toastUndoFocused: Bool
 
     init(message: String, playsEnter: Bool = true) {
         self.message = message
@@ -360,6 +364,15 @@ struct IslandToastContent: View {
                 panelState.toastCollapsing ? CompanionMotion.exit() : CompanionMotion.enter(),
                 value: toastSettled
             )
+            // The toast carries the snooze undo; pointing at it — or tabbing
+            // onto its button — is reading it, so the clock waits.
+            .onHover { hovering in
+                toastHovering = hovering
+                panelState.setToastCountdownSuspended(toastHovering || toastUndoFocused)
+            }
+            .onChange(of: toastUndoFocused) {
+                panelState.setToastCountdownSuspended(toastHovering || toastUndoFocused)
+            }
             .onAppear {
                 guard !landed else { return }
                 landed = true
@@ -378,7 +391,7 @@ struct IslandToastContent: View {
         let snoozeUndo = panelState.islandSnoozeUndo
         return HStack(spacing: 6) {
             Image(systemName: snoozeUndo == nil ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 10, weight: .medium))
+                .companionFont(size: 10, weight: .medium)
                 .foregroundColor(toastTint)
             // The message gets the space the action would have taken when
             // there is no action. A toast is one line of news; letting the
@@ -403,15 +416,17 @@ struct IslandToastContent: View {
                     }
                     panelState.islandSnoozeUndo = nil
                     panelState.toastMessage = nil
+                    CompanionMotion.performCommitTick()
                 }
                 .buttonStyle(IslandRowButtonStyle())
                 .islandSection()
                 .foregroundStyle(CompanionPalette.islandMint)
                 .accessibilityLabel("撤销")
+                .focused($toastUndoFocused)
             }
             Button(action: { panelState.toastMessage = nil }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(IslandInk.tertiary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())

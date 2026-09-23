@@ -18,9 +18,8 @@ struct RetrospectiveWindow: View {
                     .workspaceTitle()
                     .companionDimmedForeground(0.92)
                 Spacer()
-                Text(CompanionProductCopy.brandName)
-                    .font(.system(size: 11, weight: .medium))
-                    .companionDimmedForeground(0.35)
+                // The grey "WeChatHUD" corner mark is gone (§87 item 4): it
+                // repeated the window title and sat at 3.0:1 contrast.
             }
             .padding(.horizontal, 18)
             .padding(.top, 18)

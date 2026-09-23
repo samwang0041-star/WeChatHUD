@@ -253,6 +253,13 @@ final class CompanionMaterialTests: XCTestCase {
         XCTAssertFalse(CompanionInteractionCopy.pageHint(for: "nope").isEmpty)
     }
 
+    /// The scroll-edge wash is a whisper, not a vignette: taller than 12pt
+    /// and a dense row passing through it stops being readable.
+    func testScrollEdgeFadeStaysWhisperThin() {
+        XCTAssertGreaterThan(CompanionScrollEdge.fadeHeight, 0)
+        XCTAssertLessThanOrEqual(CompanionScrollEdge.fadeHeight, 12)
+    }
+
     /// A failure sentence always carries a next step. This is the rule the
     /// copy layer exists for: never a bare failure.
     func testFailureCopyAlwaysCarriesANextStep() {

@@ -35,9 +35,9 @@ struct ChatRenameSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("给这个会话起个名字")
-                    .font(.system(size: 14, weight: .semibold))
+                    .companionFont(size: 14, weight: .semibold)
                 Text("微信里这个群没有名字，助手只能显示成员信息。起个名字后，收件箱和「我答应的事」都会用这个名字。")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -53,7 +53,7 @@ struct ChatRenameSheet: View {
             if !suggestions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("群成员")
-                        .font(.system(size: 11, weight: .semibold))
+                        .companionFont(size: 11, weight: .semibold)
                         .foregroundStyle(.secondary)
                     FlowRow(spacing: 6) {
                         ForEach(suggestions, id: \.self) { name in
@@ -67,7 +67,7 @@ struct ChatRenameSheet: View {
 
             if let errorMessage {
                 Text(errorMessage)
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.companionStatusReveal)

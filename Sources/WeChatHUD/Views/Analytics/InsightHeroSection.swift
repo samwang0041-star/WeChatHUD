@@ -19,15 +19,15 @@ struct InsightHeroSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundColor(.accentColor)
                 Text(InsightBriefingCaption.text(generatedAt: generatedAt, now: now))
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .foregroundColor(.accentColor)
                 Spacer()
                 if !briefing.overallMood.isEmpty {
                     Text(briefing.overallMood)
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -36,17 +36,17 @@ struct InsightHeroSection: View {
                 }
             }
             Text(briefing.headline)
-                .font(.system(size: 15, weight: .semibold))
+                .companionFont(size: 15, weight: .semibold)
                 .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !briefing.topSuggestion.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "lightbulb.fill")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.orange)
                         .padding(.top, 2)
                     Text(briefing.topSuggestion)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(.primary.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -55,15 +55,15 @@ struct InsightHeroSection: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 3) {
                     Text("盲区提醒")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(.secondary)
                     ForEach(briefing.blindSpots.prefix(3), id: \.self) { spot in
                         HStack(alignment: .top, spacing: 4) {
                             Text("•")
-                                .font(.system(size: 10))
+                                .companionFont(size: 10)
                                 .foregroundColor(.secondary)
                             Text(spot)
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .foregroundColor(.primary.opacity(0.8))
                         }
                     }
@@ -92,13 +92,13 @@ struct InsightHeroSection: View {
     private var ctaHero: some View {
         HStack(spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: WorkspaceType.title))
+                .companionFont(size: WorkspaceType.title)
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text("生成今日摘要")
                     .workspaceRowTitle()
                 Text("把已关注对话今天的聊天，汇总成待办和跨对话话题")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -106,7 +106,7 @@ struct InsightHeroSection: View {
             Spacer()
             Button(action: onGenerate) {
                 Text(isLoading ? "正在分析…" : "开始分析")
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
             }

@@ -19,6 +19,10 @@ struct AdmissionSettingsView: View {
     @State private var followListUnreadable = false
     @State private var memberRules: [GroupMemberRule] = []
     @State private var globalMuted: [IgnoredSenderRule] = []
+    /// A failed read is not an empty list. These two keep the empty-state copy
+    /// from claiming "nobody is set" when the truth is "the list did not load".
+    @State private var memberRulesUnreadable = false
+    @State private var mutedUnreadable = false
     @State private var loaded = false
     @State private var error: String?
     /// Set when the stored 托管规则 could not be read at all (`.unreadable`) or
@@ -41,6 +45,10 @@ struct AdmissionSettingsView: View {
         var followed: [WhitelistEntry] = []
         var memberRules: [GroupMemberRule] = []
         var globalMuted: [IgnoredSenderRule] = []
+        /// Read-failure faces of the two rule lists, so the failure state is as
+        /// renderable offscreen as the populated and empty ones.
+        var memberRulesUnreadable = false
+        var mutedUnreadable = false
     }
 
     init() {}
@@ -50,6 +58,8 @@ struct AdmissionSettingsView: View {
         _followed = State(initialValue: snapshot.followed)
         _memberRules = State(initialValue: snapshot.memberRules)
         _globalMuted = State(initialValue: snapshot.globalMuted)
+        _memberRulesUnreadable = State(initialValue: snapshot.memberRulesUnreadable)
+        _mutedUnreadable = State(initialValue: snapshot.mutedUnreadable)
         _loaded = State(initialValue: true)
     }
 
@@ -168,7 +178,7 @@ struct AdmissionSettingsView: View {
             if let error {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(error)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.red)
                     Spacer(minLength: 8)
                     if configSaveFailed {
@@ -193,9 +203,9 @@ struct AdmissionSettingsView: View {
     private var summary: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("现在的规则")
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
             Text(summaryText)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -242,14 +252,14 @@ struct AdmissionSettingsView: View {
                     } label: {
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: config.mode == mode ? "largecircle.fill.circle" : "circle")
-                                .font(.system(size: 14))
+                                .companionFont(size: 14)
                                 .foregroundStyle(config.mode == mode ? CompanionPalette.jadeInk : .secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(mode.label)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .companionFont(size: 13, weight: .medium)
                                     .foregroundStyle(.primary)
                                 Text(mode.detail)
-                                    .font(.system(size: 12))
+                                    .companionFont(size: 12)
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .multilineTextAlignment(.leading)
@@ -284,11 +294,14 @@ struct AdmissionSettingsView: View {
                         .help(followListUnreadable ? "暂时读不到关注名单" : (followedGroups.isEmpty ? "先在「关注谁」里添加群" : "添加群里的重点成员"))
                 }
 
-               if memberRules.isEmpty {
+               if memberRulesUnreadable {
+                   SettingsRowDivider()
+                    unreadableRow("没能读到重点成员名单——不代表它是空的。")
+                } else if memberRules.isEmpty {
                    SettingsRowDivider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text("还没有设置。适合用在「群里只有两三个人值得看」的场合。")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                         Button("添加") { picker = .groupMember }
                             .buttonStyle(CompanionPressStyle())
@@ -305,15 +318,15 @@ struct AdmissionSettingsView: View {
                         SettingsRowDivider()
                         VStack(alignment: .leading, spacing: 6) {
                             Text(group.group)
-                                .font(.system(size: 12, weight: .semibold))
+                                .companionFont(size: 12, weight: .semibold)
                                 .foregroundStyle(.secondary)
                             ForEach(group.rules) { rule in
                                 HStack(spacing: 8) {
                                     Image(systemName: "person.fill")
-                                        .font(.system(size: 11))
+                                        .companionFont(size: 11)
                                         .foregroundStyle(CompanionPalette.jadeInk)
                                     Text(rule.senderName)
-                                        .font(.system(size: 13))
+                                        .companionFont(size: 13)
                                     Spacer(minLength: 4)
                                     Button("移除") {
                                         do {
@@ -381,7 +394,7 @@ struct AdmissionSettingsView: View {
                     SettingsRowDivider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text(CompanionInteractionCopy.followListUnreadableAdmission)
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                         Button("再试一次") { reload() }
                             .buttonStyle(CompanionPressStyle())
@@ -393,7 +406,7 @@ struct AdmissionSettingsView: View {
                     SettingsRowDivider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text("还没有关注的群。先在「关注的人」里添加群。")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                         Button("关注谁") {
                             NotificationCenter.default.post(name: .hudSwitchTab, object: "contacts")
@@ -407,7 +420,7 @@ struct AdmissionSettingsView: View {
                 } else if quietGroups.isEmpty {
                     SettingsRowDivider()
                     Text("所有关注的群，@ 你时都会弹出来。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -479,11 +492,14 @@ struct AdmissionSettingsView: View {
                     Button("添加") { picker = .mutedPerson }
                         .controlSize(.small)
                 }
-               if globalMuted.isEmpty {
+               if mutedUnreadable {
+                   SettingsRowDivider()
+                    unreadableRow("没能读到不提醒名单——不代表它是空的。")
+               } else if globalMuted.isEmpty {
                    SettingsRowDivider()
                     VStack(alignment: .leading, spacing: 8) {
                         Text("还没有设为不提醒的人。")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                         Button("添加") { picker = .mutedPerson }
                             .buttonStyle(CompanionPressStyle())
@@ -525,6 +541,22 @@ struct AdmissionSettingsView: View {
 
     // MARK: - Data
 
+    /// Shared "the read failed" row for the two rule lists: the failure says it
+    /// is not an empty list and offers the one next step.
+    private func unreadableRow(_ notice: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(notice)
+                .companionFont(size: 12)
+                .foregroundStyle(.secondary)
+            Button("重新读取") { reload() }
+                .buttonStyle(CompanionPressStyle())
+                .foregroundStyle(CompanionPalette.jadeInk)
+                .accessibilityLabel("重新读取名单")
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func reload() {
         // The whole config is written back by `save()`, so a read that failed has
         // to stop the write rather than hydrate the page from defaults: that used
@@ -548,8 +580,18 @@ struct AdmissionSettingsView: View {
         case .unreadable:
             followListUnreadable = true
         }
-        memberRules = store.loadGroupMemberRules()
-        globalMuted = store.loadIgnoredSenders().filter { $0.scope == .global }
+        memberRulesUnreadable = false
+        mutedUnreadable = false
+        if let rules = store.groupMemberRulesRead() {
+            memberRules = rules
+        } else {
+            memberRulesUnreadable = true
+        }
+        if let rules = store.ignoredSendersRead() {
+            globalMuted = rules.filter { $0.scope == .global }
+        } else {
+            mutedUnreadable = true
+        }
     }
 
     /// What one read of the stored rules costs this page. One place decides, and
@@ -670,7 +712,7 @@ private struct GroupMemberPickerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(selectedGroup == nil ? "先选一个群" : "选群里要提醒你的人")
-                .font(.system(size: 15, weight: .semibold))
+                .companionFont(size: 15, weight: .semibold)
             if selectedGroup != nil {
                 TextField("搜索群成员", text: $search)
                     .textFieldStyle(.roundedBorder)
@@ -681,20 +723,20 @@ private struct GroupMemberPickerSheet: View {
                     if let selectedGroup {
                         if members.isEmpty {
                             Text("这个群的成员名单还没读到。微信需要先同步过这个群的消息。")
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundStyle(.secondary)
                                 .padding(.vertical, 8)
                         }
                         ForEach(filteredMembers, id: \.username) { member in
                             HStack(spacing: 8) {
                                 Image(systemName: "person.fill")
-                                    .font(.system(size: 11))
+                                    .companionFont(size: 11)
                                     .foregroundStyle(.secondary)
-                                Text(member.name).font(.system(size: 13))
+                                Text(member.name).companionFont(size: 13)
                                 Spacer(minLength: 4)
                                 if alreadyAdded(member.username) {
                                     Text("已添加")
-                                        .font(.system(size: 11))
+                                        .companionFont(size: 11)
                                         .foregroundStyle(.secondary)
                                 } else {
                                     Button {
@@ -725,12 +767,12 @@ private struct GroupMemberPickerSheet: View {
                             } label: {
                                 HStack {
                                     Image(systemName: "person.3.fill")
-                                        .font(.system(size: 11))
+                                        .companionFont(size: 11)
                                         .foregroundStyle(CompanionPalette.jadeInk)
-                                    Text(group.displayName).font(.system(size: 13))
+                                    Text(group.displayName).companionFont(size: 13)
                                     Spacer(minLength: 4)
                                     Image(systemName: "chevron.right")
-                                        .font(.system(size: 10))
+                                        .companionFont(size: 10)
                                         .foregroundStyle(.tertiary)
                                 }
                                 .padding(.vertical, 5)
@@ -756,7 +798,7 @@ private struct GroupMemberPickerSheet: View {
             }
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .transition(.companionStatusReveal)
             }
@@ -807,9 +849,9 @@ private struct QuietGroupPickerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("哪个群 @ 我不要弹出来")
-                .font(.system(size: 15, weight: .semibold))
+                .companionFont(size: 15, weight: .semibold)
             Text("消息还是会在收件箱里，只是不打断你。")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             TextField("搜索群", text: $search)
                 .textFieldStyle(.roundedBorder)
@@ -819,9 +861,9 @@ private struct QuietGroupPickerSheet: View {
                     ForEach(filtered, id: \.id) { group in
                         HStack(spacing: 8) {
                             Image(systemName: "person.3.fill")
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .foregroundStyle(.secondary)
-                            Text(group.displayName).font(.system(size: 13))
+                            Text(group.displayName).companionFont(size: 13)
                             Spacer(minLength: 4)
                             Button {
                                 commit(key: group.id, receipt: CompanionInteractionCopy.quietGroupSilenced(name: group.displayName)) { try onPick(group) }
@@ -849,7 +891,7 @@ private struct QuietGroupPickerSheet: View {
             }
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .transition(.companionStatusReveal)
             }
@@ -905,9 +947,9 @@ private struct MutedPersonPickerSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("不想再看到谁的消息")
-                .font(.system(size: 15, weight: .semibold))
+                .companionFont(size: 15, weight: .semibold)
             Text("选谁，就哪个对话都不再提醒——包括他所在的群。")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             TextField("搜索联系人", text: $search)
                 .textFieldStyle(.roundedBorder)
@@ -916,11 +958,11 @@ private struct MutedPersonPickerSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(contacts, id: \.username) { contact in
                         HStack(spacing: 8) {
-                            Text(contact.displayName).font(.system(size: 13))
+                            Text(contact.displayName).companionFont(size: 13)
                             Spacer(minLength: 4)
                             if alreadyMuted(contact.username) {
                                 Text("已不提醒")
-                                   .font(.system(size: 11))
+                                   .companionFont(size: 11)
                                     .foregroundStyle(.secondary)
                             } else {
                                 Button {
@@ -952,7 +994,7 @@ private struct MutedPersonPickerSheet: View {
             }
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .transition(.companionStatusReveal)
             }

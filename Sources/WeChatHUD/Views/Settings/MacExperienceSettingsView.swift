@@ -35,7 +35,7 @@ struct MacExperienceSettingsView: View {
                 HStack(spacing: 8) {
                     Label(accessibilityGranted ? "已允许" : "待授权",
                           systemImage: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.circle")
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                         .foregroundStyle(accessibilityGranted ? CompanionPalette.jadeInk : .orange)
                     Button(accessibilityGranted ? "管理权限" : "打开辅助功能设置") {
                         openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
@@ -49,11 +49,11 @@ struct MacExperienceSettingsView: View {
             if !accessibilityGranted {
                 HStack(alignment: .center, spacing: 12) {
                     Image(systemName: "exclamationmark.bubble")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.orange)
                         .frame(width: 28)
                     Text("已经打开开关？请先重新检查。若仍未生效，退出并重新打开 WeChatHUD 后再试。")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .companionFont(size: 12).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 12)
                     Button("重新检查权限") {
@@ -74,11 +74,11 @@ struct MacExperienceSettingsView: View {
             if let permissionCheckMessage {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "checkmark.circle")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.secondary)
                         .frame(width: 28)
                     Text(permissionCheckMessage)
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .companionFont(size: 12).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -94,7 +94,7 @@ struct MacExperienceSettingsView: View {
                 HStack(spacing: 8) {
                     if notificationStatus == .authorized {
                         Label("已允许", systemImage: "checkmark.circle.fill")
-                            .font(.system(size: 12, weight: .medium))
+                            .companionFont(size: 12, weight: .medium)
                             .foregroundStyle(CompanionPalette.jadeInk)
                     }
                     if notificationStatus == .notDetermined {
@@ -115,7 +115,7 @@ struct MacExperienceSettingsView: View {
             SettingsRowDivider()
             SettingsRow("动画与透明度", subtitle: "减少动态效果时立刻切换状态；减少透明度时用实底，不靠桌面衬出字。", icon: "circle.dotted", iconColor: CompanionPalette.jade) {
                 Text(accessibilityStatus)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.trailing)
             }
@@ -127,7 +127,7 @@ struct MacExperienceSettingsView: View {
             // permission of its own.
             SettingsRowDivider()
             Text("关闭这个窗口后，助手仍留在顶部和菜单栏。")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .companionFont(size: 12).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.vertical, 12)
@@ -138,7 +138,7 @@ struct MacExperienceSettingsView: View {
                     .padding(.horizontal, 16).padding(.bottom, 12)
             }
             if let errorMessage {
-                Text(errorMessage).font(.system(size: 12)).foregroundStyle(.red)
+                Text(errorMessage).companionFont(size: 12).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.bottom, 12)

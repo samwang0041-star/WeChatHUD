@@ -67,7 +67,7 @@ struct RetrospectiveTabView: View {
                     .workspaceTitle()
                     .companionDimmedForeground(0.94)
                 Text(statusLine)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .companionDimmedForeground(0.52)
             }
 
@@ -99,7 +99,7 @@ struct RetrospectiveTabView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(runningText)
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .companionDimmedForeground(0.82)
             }
 
@@ -107,8 +107,8 @@ struct RetrospectiveTabView: View {
                 ProgressView(value: Double(progress), total: Double(max(total, 1)))
                     .tint(.cyan)
                 Text("\(progress) / \(total) 个对话")
-                    .font(.system(size: 11))
-                    .companionDimmedForeground(0.45)
+                    .companionFont(size: 11)
+                    .companionDimmedForeground(0.5)
             }
         }
         .padding(14)
@@ -121,7 +121,7 @@ struct RetrospectiveTabView: View {
             // A rising trend line promised analytics that don't exist yet; this
             // state is about looking back, not about a chart.
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: WorkspaceType.display, weight: .medium))
+                .companionFont(size: WorkspaceType.display, weight: .medium)
                 .symbolRenderingMode(.hierarchical)
                 .foregroundColor(.cyan.opacity(0.9))
 
@@ -130,7 +130,7 @@ struct RetrospectiveTabView: View {
                     .workspaceTitle()
                     .companionDimmedForeground(0.9)
                 Text("从上次回顾到现在、你关注的对话里，提取重点、待办和风险。第一次使用默认回顾本周。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .companionDimmedForeground(0.56)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -178,14 +178,14 @@ struct RetrospectiveTabView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
+                    .companionFont(size: 10, weight: .medium)
             }
-            .companionDimmedForeground(0.45)
+            .companionDimmedForeground(0.5)
 
             Text(value)
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
                 .companionDimmedForeground(0.9)
                 .lineLimit(1)
         }
@@ -222,7 +222,7 @@ struct RetrospectiveTabView: View {
 
             if let commandError {
                 Text(commandError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundColor(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.companionStatusReveal)
@@ -258,17 +258,17 @@ struct RetrospectiveTabView: View {
     private func todoRow(_ todo: ReviewTodo) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: todo.direction == .mine ? "person.fill.checkmark" : "questionmark.circle.fill")
-                .font(.system(size: 12, weight: .medium))
+                .companionFont(size: 12, weight: .medium)
                 .foregroundColor(todo.direction == .mine ? .cyan.opacity(0.9) : .orange.opacity(0.9))
                 .frame(width: 18, height: 18)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(todo.content)
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .companionDimmedForeground(0.86)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(todoMeta(todo))
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .companionDimmedForeground(0.42)
             }
 
@@ -288,19 +288,19 @@ struct RetrospectiveTabView: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(categoryLabel(highlight.category))
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(.cyan.opacity(0.85))
                 Text(highlight.sourceChatName)
-                    .font(.system(size: 10))
-                    .companionDimmedForeground(0.42)
+                    .companionFont(size: 10)
+                    .companionDimmedForeground(0.5)
                 Spacer()
                 Text(highlight.date.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 10))
-                    .companionDimmedForeground(0.35)
+                    .companionFont(size: 10)
+                    .companionDimmedForeground(0.42)
             }
 
             Text(highlight.summary)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .companionDimmedForeground(0.82)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -310,9 +310,9 @@ struct RetrospectiveTabView: View {
     private func sectionTitle(_ text: String, icon: String) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .semibold))
+                .companionFont(size: 12, weight: .semibold)
             Text(text)
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
         }
         .companionDimmedForeground(0.82)
     }
@@ -320,10 +320,10 @@ struct RetrospectiveTabView: View {
     private func summaryRow(label: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .companionFont(size: 10, weight: .semibold)
                 .foregroundColor(.cyan.opacity(0.78))
             Text(text)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .companionDimmedForeground(0.8)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -332,8 +332,8 @@ struct RetrospectiveTabView: View {
 
     private func placeholderLine(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12))
-            .companionDimmedForeground(0.42)
+            .companionFont(size: 12)
+            .companionDimmedForeground(0.55)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
     }
@@ -349,14 +349,14 @@ struct RetrospectiveTabView: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .companionFont(size: 14, weight: .semibold)
                 .foregroundColor(tint)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .companionFont(size: 13, weight: .semibold)
                     .companionDimmedForeground(0.9)
                 Text(detail)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .companionDimmedForeground(0.56)
                     .fixedSize(horizontal: false, vertical: true)
                 if let actionTitle, let action {

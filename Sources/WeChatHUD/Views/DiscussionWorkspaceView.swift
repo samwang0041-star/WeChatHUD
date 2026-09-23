@@ -6,6 +6,7 @@ struct DiscussionWorkspaceView: View {
     @EnvironmentObject var panelState: PanelState
     @State private var scope: DiscussionScope = .mine
     @State private var query = ""
+    @FocusState private var searchFocused: Bool
     @State private var showHistory = false
     @State private var selectedID: Int64?
     @State private var showingSource = false
@@ -14,7 +15,7 @@ struct DiscussionWorkspaceView: View {
     @State private var receipt: String?
     @State private var undo: (id: Int64, status: DiscussionItemStatus)?
     @State private var batchUndo: [(id: Int64, status: DiscussionItemStatus)]?
-    @State private var showBatchClearConfirm = false
+    @State private var showBatchClearConfirm = PreviewRuntime.parksBatchClearDialog
     @State private var historyItems: [DiscussionItem] = []
     @State private var groupingAnchor = Calendar.current.startOfDay(for: Date())
     @State private var isBatchClearing = false
@@ -66,16 +67,24 @@ struct DiscussionWorkspaceView: View {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text("保留")
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                     .foregroundStyle(.secondary)
-                Picker("保留", selection: strictnessBinding) {
+                // Pills, not a segmented Picker — the pill family is what the
+                // scope row above uses. (The §144 bisect credited the picker
+                // with most of the phantom ideal; single-variable work in
+                // §145 re-attributed it to the explanation's `fixedSize`.
+                // The pills stay for the family unification.)
+                HStack(spacing: 6) {
                     ForEach(DiscussionStrictness.allCases, id: \.self) { level in
-                        Text(level.label).tag(level)
+                        CompanionFilterPill(
+                            title: level.label,
+                            selected: strictness == level,
+                            tint: SettingsView.Tab.tasks.accentColor
+                        ) {
+                            monitor.setDiscussionStrictness(level)
+                        }
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
                 .accessibilityLabel("保留哪些内容")
                 Spacer(minLength: 8)
                 if !hidden.isEmpty {
@@ -88,25 +97,24 @@ struct DiscussionWorkspaceView: View {
                         Text(receiptLabel(hidden: hidden.count, mine: hiddenMine))
                     }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .accessibilityHint("切到「全记」，这些内容会回到列表里")
                 }
             }
             Text(strictness.explanation)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // No `fixedSize(horizontal: false, vertical: true)` here: it is
+            // the ghost-ideal source of the §142 overflow. Measured at 窄窗 ×
+            // 大字号, that one modifier's ideal search over-reported the bar
+            // until the whole content column spilled 43pt past the window
+            // (锚点 0/23/1867/151 → 32/66/1810/1842/0 with it removed —
+            // same text, single-variable attribution). The text already wraps
+            // to its full height without it.
         }
         .padding(10)
         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    private var strictnessBinding: Binding<DiscussionStrictness> {
-        Binding(
-            get: { strictness },
-            set: { monitor.setDiscussionStrictness($0) }
-        )
     }
 
     /// The scope filters — the shared pill, in the one workspace accent.
@@ -135,7 +143,7 @@ struct DiscussionWorkspaceView: View {
                 }
             }
             Toggle("看已处理的", isOn: $showHistory)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .fixedSize()
@@ -173,11 +181,24 @@ struct DiscussionWorkspaceView: View {
             if items.isEmpty {
                 emptyState
             } else {
-                HSplitView {
-                    listPane(items: items, selectedID: selected?.id)
-                        .frame(minWidth: 240, idealWidth: 420)
-                    detailPane(selected: selected)
-                        .frame(minWidth: 240, idealWidth: 380)
+                // Pure SwiftUI two panes — no HSplitView (option D, §143).
+                // HSplitView is an NSSplitView representable whose fitting
+                // *echoes its frame*, and that echo climbed back up the
+                // layout as an ideal: the 待办 content demanded 977pt against
+                // the 934pt window at 窄窗 × 大字号 and spilled the header up,
+                // the status bar down. Five SwiftUI-side fixes could not kill
+                // an AppKit intrinsic, so the representable itself goes. The
+                // trade is deliberate: the divider is no longer drag-resizable
+                // (fixed 55/45 instead), in exchange for panes that can never
+                // overflow their window at any width or type size.
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        listPane(items: items, selectedID: selected?.id)
+                            .frame(width: geo.size.width * 0.55)
+                        Divider()
+                        detailPane(selected: selected)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
             if let receipt {
@@ -232,13 +253,13 @@ struct DiscussionWorkspaceView: View {
             } else if showBatchClearConfirm {
                 CompanionDialog(title: "一键清空当前待办？", onClose: { if !isBatchClearing { showBatchClearConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("将当前列表中的 \(items.count) 件待办全部标记为完成。可在「看已处理的」中随时查看或恢复。")
-                            .font(.system(size: 13))
+                        Text("将当前列表中的 \(items.count) 件待办全部标记为完成。14 天内可在「看已处理的」中查看和恢复。")
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let error {
                             Text(error)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -308,21 +329,24 @@ struct DiscussionWorkspaceView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("搜索待办或对话", text: $query)
                     .textFieldStyle(.plain)
+                    .focused($searchFocused)
                     .accessibilityLabel("搜索待办或对话")
                 if !query.isEmpty {
                     Button("清除搜索") { query = "" }
                         .buttonStyle(CompanionPressStyle())
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                         .foregroundStyle(CompanionPalette.jadeInk)
                 }
             }
             .padding(10)
+            .contentShape(Rectangle())
+            .onTapGesture { searchFocused = true }
             .background(CompanionPalette.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10).companionHairline())
             Text(showHistory
-                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是很久没处理的，不是你标完成的。"
-                 : "当前只显示还没做完的。很久没处理的会收起，不占这个列表。")
-                .font(.system(size: 11))
+                 ? "完成或忽略的只留近 \(DiscussionLiveWindow.historyDays) 天。「较早收起」是 \(DiscussionLiveWindow.pendingDays) 天没处理的，不是你标完成的。"
+                 : "当前只显示还没做完的。\(DiscussionLiveWindow.pendingDays) 天没处理的会收起，不占这个列表。")
+                .companionFont(size: 11)
                 // `.secondary`, not `.tertiary`.
                 //
                 // This is a sentence the user has to read to understand what the
@@ -360,7 +384,7 @@ struct DiscussionWorkspaceView: View {
             systemImage: query.isEmpty ? "checklist" : "magnifyingglass",
             description: Text(query.isEmpty
                 ? (showHistory
-                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。很久没处理、自动收起的在「较早收起」里。"
+                    ? "近 \(DiscussionLiveWindow.historyDays) 天你完成或忽略的事会留在这里。\(DiscussionLiveWindow.pendingDays) 天没处理、自动收起的在「较早收起」里。"
                    : (heldBackByLevel
                        ? "当前是「\(strictness.label)」，收起了 \(hiddenHere.count) 条。切到「全记」能看到它们。"
                         : emptyLiveDescription))
@@ -379,7 +403,7 @@ struct DiscussionWorkspaceView: View {
                     }
                 }
                 .buttonStyle(CompanionPressStyle())
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .padding(.bottom, 24)
                 .accessibilityLabel("切到全记，查看收起的 \(hiddenHere.count) 条")
@@ -388,7 +412,7 @@ struct DiscussionWorkspaceView: View {
                     withMotion(CompanionMotion.pageChange()) { scope = other }
                 }
                 .buttonStyle(CompanionPressStyle())
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .padding(.bottom, 24)
                 .accessibilityLabel("去\(other.rawValue)")
@@ -397,21 +421,21 @@ struct DiscussionWorkspaceView: View {
                     withMotion(CompanionMotion.pageChange()) { showHistory = false }
                 }
                 .buttonStyle(CompanionPressStyle())
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .padding(.bottom, 24)
                 .accessibilityLabel("看未处理的待办")
             } else if query.isEmpty && !showHistory && monitor.stats.lastSyncAt == nil {
                 Button("检查连接") { panelState.pendingSettingsTab = "system" }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                     .accessibilityLabel("检查微信连接")
             } else if query.isEmpty && !showHistory && !monitor.store.hasWhitelistEntries() {
                 Button("关注谁") { panelState.pendingSettingsTab = "contacts" }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                    .accessibilityLabel("去选要关注的对话")
@@ -419,7 +443,7 @@ struct DiscussionWorkspaceView: View {
             else if query.isEmpty && !showHistory {
                 Button("看今天") { panelState.pendingSettingsTab = "today" }
                     .buttonStyle(CompanionPressStyle())
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(CompanionPalette.jadeInk)
                     .padding(.bottom, 24)
                     .accessibilityLabel("去今天看待回和待办")
@@ -450,14 +474,14 @@ struct DiscussionWorkspaceView: View {
                 ForEach(DiscussionPresentation.groups(items, now: Date(), history: showHistory), id: \.title) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(group.title)
-                            .font(.system(size: 12, weight: .semibold))
+                            .companionFont(size: 12, weight: .semibold)
                             .foregroundStyle(.secondary)
                         if group.title == DiscussionPresentation.archivedGroupTitle, !expandArchived {
                             Button {
                                 withMotion(CompanionMotion.rowExpand()) { expandArchived = true }
                             } label: {
-                                Text("\(group.items.count) 件很久没处理，点开查看")
-                                    .font(.system(size: 13, weight: .medium))
+                                Text("\(group.items.count) 件 \(DiscussionLiveWindow.pendingDays) 天没处理，点开查看")
+                                    .companionFont(size: 13, weight: .medium)
                                     .foregroundStyle(CompanionPalette.jadeInk)
                             }
                             .buttonStyle(CompanionPressStyle())
@@ -479,7 +503,7 @@ struct DiscussionWorkspaceView: View {
                             if group.title == DiscussionPresentation.archivedGroupTitle {
                                 Button("收起") { withMotion(CompanionMotion.rowExpand()) { expandArchived = false } }
                                     .buttonStyle(CompanionPressStyle())
-                                    .font(.system(size: 12, weight: .medium))
+                                    .companionFont(size: 12, weight: .medium)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -520,7 +544,7 @@ struct DiscussionWorkspaceView: View {
                 metaRow("来源", systemImage: "bubble.left", value: item.chatName)
                 if let detail = item.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 13))
+                        .companionFont(size: 13)
                         .foregroundStyle(.secondary)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -541,7 +565,7 @@ struct DiscussionWorkspaceView: View {
                     }
                     .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(SettingsView.Tab.tasks.accentColor)
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     Spacer(minLength: 12)
                     if item.status == .pending {
                         Button {
@@ -566,7 +590,7 @@ struct DiscussionWorkspaceView: View {
                     }
                 }
                 Text("这是助手从聊天里整理的，只改这里不会改微信原文。")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     // An assurance the user has to be able to read: it is what
                     // tells them editing here will not touch WeChat. It measured
                     // 2.27:1 in `.tertiary` (see the note on the hint above).
@@ -580,10 +604,10 @@ struct DiscussionWorkspaceView: View {
     private func metaRow(_ title: String, systemImage: String, value: String) -> some View {
         HStack(spacing: 10) {
             Label(title, systemImage: systemImage)
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
-                .frame(width: 88, alignment: .leading)
-            Text(value).font(.system(size: 13, weight: .medium))
+                .companionScaledWidth(88, alignment: .leading)
+            Text(value).companionFont(size: 13, weight: .medium)
             Spacer()
         }
     }
@@ -591,7 +615,7 @@ struct DiscussionWorkspaceView: View {
     private func receiptBar(_ text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(CompanionPalette.jadeInk)
-            Text(text).font(.system(size: 13, weight: .medium))
+            Text(text).companionFont(size: 13, weight: .medium)
             Spacer()
             if let undo {
                 Button {
@@ -601,7 +625,7 @@ struct DiscussionWorkspaceView: View {
                 }
                     .buttonStyle(CompanionPressStyle())
                     .foregroundStyle(CompanionPalette.jadeInk)
-                    .font(.system(size: 13, weight: .semibold))
+                    .companionFont(size: 13, weight: .semibold)
                     .disabled(isUndoing)
                     .help(isUndoing ? "正在撤销刚才的操作" : "")
                     .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
@@ -613,14 +637,14 @@ struct DiscussionWorkspaceView: View {
                 }
                 .buttonStyle(CompanionPressStyle())
                 .foregroundStyle(CompanionPalette.jadeInk)
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
                 .disabled(isUndoing)
                 .help(isUndoing ? "正在撤销刚才的操作" : "")
                 .accessibilityHint(isUndoing ? "正在撤销刚才的操作" : "")
             }
             Button { receipt = nil } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
+                    .companionFont(size: 11, weight: .semibold)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
@@ -749,19 +773,19 @@ private struct DiscussionRow: View, Equatable {
                     .accessibilityLabel(item.status == .done ? "已完成" : "未完成")
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.content)
-                        .font(.system(size: 14, weight: .semibold))
+                        .companionFont(size: 14, weight: .semibold)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
                     Text("\(item.chatName) · \(item.owner.workspaceLabel)")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
                 Text(DiscussionPresentation.dueLabel(item.dueAt, now: now))
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundStyle(.secondary)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundStyle(.tertiary)
             }
             .padding(12)
@@ -807,13 +831,13 @@ struct DiscussionCorrectionForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("内容").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("内容").companionFont(size: 12).foregroundStyle(.secondary)
                 TextField("待办内容", text: $content)
                     .textFieldStyle(.roundedBorder)
                     .focused($contentFocused)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("谁来做").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("谁来做").companionFont(size: 12).foregroundStyle(.secondary)
                 Picker("谁来做", selection: $owner) {
                     Text(DiscussionItemOwner.mine.workspaceLabel).tag(DiscussionItemOwner.mine)
                     Text(DiscussionItemOwner.theirs.workspaceLabel).tag(DiscussionItemOwner.theirs)
@@ -831,18 +855,18 @@ struct DiscussionCorrectionForm: View {
             }
             if let detail = item.detail, !detail.isEmpty {
                 Text("来源：\(detail)")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 8))
             }
             Label("只修改助手里的待办，不会修改聊天原文。", systemImage: "info.circle")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 13))
+                    .companionFont(size: 13)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.companionStatusReveal)

@@ -23,7 +23,7 @@ struct OnboardingView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .companionFont(size: 15, weight: .semibold)
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     // The same lit tile the sidebar and page headers use, at
@@ -103,7 +103,7 @@ struct OnboardingView: View {
                 Spacer()
                 if let footerHint {
                     Text(footerHint)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
                 Button(primaryCTA) {
@@ -178,7 +178,7 @@ struct OnboardingView: View {
             ForEach(Array(FirstLaunchGuide.pageTitles.enumerated()), id: \.offset) { index, title in
                 VStack(spacing: 6) {
                     Text("\(index + 1)")
-                        .font(.system(size: 12, weight: .bold))
+                        .companionFont(size: 12, weight: .bold)
                         .foregroundStyle(index <= step ? Color.white : .secondary)
                         .frame(width: 26, height: 26)
                         .background(
@@ -200,7 +200,7 @@ struct OnboardingView: View {
                             radius: 7, y: 2
                         )
                     Text(title)
-                        .font(.system(size: 11, weight: index == step ? .semibold : .regular))
+                        .companionFont(size: 11, weight: index == step ? .semibold : .regular)
                         .foregroundStyle(index == step ? CompanionPalette.jadeInk : .secondary)
                 }
                 if index < FirstLaunchGuide.pageTitles.count - 1 {
@@ -225,15 +225,15 @@ struct OnboardingView: View {
                 }
                 VStack(spacing: 8) {
                     Image(systemName: "laptopcomputer")
-                        .font(.system(size: 22, weight: .light))
+                        .companionFont(size: 22, weight: .light)
                         .foregroundStyle(CompanionPalette.jadeInk)
                     Text((!NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat").isEmpty
                           || !NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.WeChat").isEmpty)
                          ? "微信已登录" : "等待连接")
-                        .font(.system(size: 12, weight: .medium))
+                        .companionFont(size: 12, weight: .medium)
                         .foregroundStyle(.secondary)
                 }
-                .frame(width: 140)
+                .companionScaledWidth(140)
                 .padding(.top, 8)
             }
             WeChatConnectionSetupView()
@@ -246,13 +246,13 @@ struct OnboardingView: View {
     private func numberedStep(_ number: Int, _ title: String, _ detail: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(number)")
-                .font(.system(size: 12, weight: .bold))
+                .companionFont(size: 12, weight: .bold)
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
                 .background(CompanionPalette.jade, in: Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 14, weight: .semibold))
-                Text(detail).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(title).companionFont(size: 14, weight: .semibold)
+                Text(detail).companionFont(size: 12).foregroundStyle(.secondary)
             }
         }
     }

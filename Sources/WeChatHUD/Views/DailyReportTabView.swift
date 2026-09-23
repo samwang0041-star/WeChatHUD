@@ -103,7 +103,7 @@ struct DailyReportTabView: View {
            }
             Spacer(minLength: 0)
         }
-        .font(.system(size: isWorkspace ? 12 : 11))
+        .companionFont(size: isWorkspace ? 12 : 11)
         .foregroundColor(exportFailed ? .red : .secondary)
         .padding(.horizontal, isWorkspace ? 0 : 14)
         .padding(.bottom, 6)
@@ -130,7 +130,7 @@ struct DailyReportTabView: View {
                 .accessibilityHint(previousDayHoldReason ?? "")
                 .accessibilityLabel(scope == .weekly ? "上一周" : "前一天")
                 Text(scope == .weekly ? weekRangeText(monitor.dailyReportViewedDate) : dateText(monitor.dailyReportViewedDate))
-                    .font(.system(size: 14, weight: .semibold))
+                    .companionFont(size: 14, weight: .semibold)
                     .frame(minWidth: 96)
                 Button(action: nextDay) {
                     Image(systemName: "chevron.right")
@@ -155,7 +155,7 @@ struct DailyReportTabView: View {
             if monitor.dailyReportIsLoading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("正在整理…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("正在整理…").companionFont(size: 12).foregroundStyle(.secondary)
                 }
             }
         }
@@ -190,35 +190,35 @@ struct DailyReportTabView: View {
                    }
                } else {
                     if !done.isEmpty {
-                        Text("已经推进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("已经推进").companionFont(size: 13, weight: .semibold).foregroundStyle(.secondary)
                        ForEach(Array(done.prefix(8).enumerated()), id: \.element.id) { index, item in
                            HStack(alignment: .top, spacing: 10) {
                                Text("\(index + 1)")
-                                   .font(.system(size: 13, weight: .bold))
+                                   .companionFont(size: 13, weight: .bold)
                                    .foregroundStyle(.white)
                                    .frame(width: 24, height: 24)
                                    .background(CompanionPalette.jade, in: Circle())
                                VStack(alignment: .leading, spacing: 4) {
-                                   Text(item.content).font(.system(size: 15, weight: .semibold))
+                                   Text(item.content).companionFont(size: 15, weight: .semibold)
                                    Text("来自：\(item.chatName)")
-                                       .font(.system(size: 12)).foregroundStyle(.secondary)
+                                       .companionFont(size: 12).foregroundStyle(.secondary)
                                }
                            }
                        }
                         if done.count > 8 {
                             Text("还有 \(done.count - 8) 件已完成，在待办的「看已处理的」里。")
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     if !pending.isEmpty {
-                        Text("还需要跟进").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                        Text("还需要跟进").companionFont(size: 13, weight: .semibold).foregroundStyle(.secondary)
                         ForEach(pending.prefix(8)) { item in
                             HStack {
                                 Image(systemName: "circle")
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.content)
-                                    Text(DiscussionPresentation.dueLabel(item.dueAt)).font(.system(size: 12)).foregroundStyle(.secondary)
+                                    Text(DiscussionPresentation.dueLabel(item.dueAt)).companionFont(size: 12).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Button("查看待办") {
@@ -227,7 +227,7 @@ struct DailyReportTabView: View {
                                 .buttonStyle(CompanionPressStyle())
                                 .foregroundStyle(CompanionPalette.jadeInk)
                             }
-                           .font(.system(size: 14))
+                           .companionFont(size: 14)
                        }
                         if pending.count > 8 {
                             Button("还有 \(pending.count - 8) 件在待办里") {
@@ -235,12 +235,12 @@ struct DailyReportTabView: View {
                             }
                             .buttonStyle(CompanionPressStyle())
                             .foregroundStyle(CompanionPalette.jadeInk)
-                            .font(.system(size: 13, weight: .medium))
+                            .companionFont(size: 13, weight: .medium)
                         }
                     }
                 }
                 Text("根据已同步的关注对话生成。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             }
             .padding(20)
@@ -269,7 +269,7 @@ struct DailyReportTabView: View {
             HStack(spacing: 6) {
                 Button(action: previousDay) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(.secondary)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
@@ -281,12 +281,12 @@ struct DailyReportTabView: View {
                 .disabled(monitor.dailyReportIsLoading)
 
                 Text("日报 · \(dateText(monitor.dailyReportViewedDate))")
-                    .font(.system(size: 12, weight: .semibold))
+                    .companionFont(size: 12, weight: .semibold)
                     .foregroundColor(.primary)
 
                 Button(action: nextDay) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10))
+                        .companionFont(size: 10)
                         .foregroundColor(canGoNext ? .secondary : .secondary.opacity(0.45))
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
@@ -303,7 +303,7 @@ struct DailyReportTabView: View {
 
             Button(action: exportReport) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 10))
+                    .companionFont(size: 10)
                     .foregroundColor(.secondary)
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
@@ -324,7 +324,7 @@ struct DailyReportTabView: View {
                             .controlSize(.small)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 10))
+                            .companionFont(size: 10)
                             .foregroundColor(.secondary)
                     }
                 }

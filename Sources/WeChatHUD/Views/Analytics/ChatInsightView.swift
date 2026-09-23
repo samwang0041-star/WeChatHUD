@@ -21,7 +21,7 @@ struct ChatInsightView: View {
             if let error = insightStore.reloadError {
                 HStack(alignment: .top, spacing: 10) {
                     Text(error)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
@@ -40,7 +40,7 @@ struct ChatInsightView: View {
             if let error = insightCoordinator.briefingError {
                 HStack(alignment: .top, spacing: 10) {
                     Text(error)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)

@@ -98,7 +98,7 @@ struct SyncSettingsView: View {
             }
             if !saveError.isEmpty {
                 HStack {
-                    Text(saveError).font(.system(size: 12)).foregroundColor(.red)
+                    Text(saveError).companionFont(size: 12).foregroundColor(.red)
                     Spacer()
                     if syncSaveFailed { Button("重试保存设置", action: save) }
                 }
@@ -110,7 +110,7 @@ struct SyncSettingsView: View {
                         .companionSurface(padding: 22)
                     connectionCapabilityList
                     keyPermissionNotice
-                    DisclosureGroup("高级连接设置", isExpanded: $showAdvancedConnection) {
+                    DisclosureGroup(isExpanded: $showAdvancedConnection, content: {
                         VStack(alignment: .leading, spacing: 16) {
                             databaseSection
                             syncSection
@@ -124,7 +124,10 @@ struct SyncSettingsView: View {
                             }
                             SupportDiagnosticsView()
                         }.padding(.top, 14)
-                    }.font(.callout)
+                    }, label: {
+                        Text("高级连接设置").companionDisclosureLabel()
+                    })
+                    .font(.callout)
                 }
             }
             settingsPane(.preferences) {
@@ -144,12 +147,12 @@ struct SyncSettingsView: View {
                 CompanionDialog(title: "确认这是当前账号的旧版资料？", onClose: { if !isBindingLegacy { showLegacyBindConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("只有在当前新账号还没有待办、草稿和关注名单时才应绑定。绑定不会复制或删除资料；重启助手后，将读取旧版记录。请先备份旧资料，以及同文件夹里一起出现的配套文件。")
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if !saveError.isEmpty {
                             Text(saveError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -182,12 +185,12 @@ struct SyncSettingsView: View {
                 CompanionDialog(title: CompanionProductCopy.cancelCommitmentTitle, onClose: { if !isCancellingCommitment { pendingCommitmentCancel = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.cancelCommitmentMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if !saveError.isEmpty {
                             Text(saveError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -218,18 +221,18 @@ struct SyncSettingsView: View {
                 CompanionDialog(title: "安装新版本？", onClose: { if !isInstallingUpdate { showInstallConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(AppUpdateInstallCopy.confirmMessage(version: updates.offer?.version.description ?? "新版本"))
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if case .failed(let message) = updates.phase {
                             Text(message)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
                         } else if isInstallingUpdate {
                             Text(updates.statusText)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.secondary)
                                 .transition(.companionStatusReveal)
                         }
@@ -289,7 +292,7 @@ struct SyncSettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 92)
+                .companionScaledWidth(92)
                 .onChange(of: interval) { save() }
             }
 
@@ -304,7 +307,7 @@ struct SyncSettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 90)
+                .companionScaledWidth(90)
                 .onChange(of: cacheStrategy) { save() }
             }
 
@@ -324,7 +327,7 @@ struct SyncSettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 110)
+                .companionScaledWidth(110)
                 .onChange(of: displayScreen) { save() }
             }
         }
@@ -383,7 +386,7 @@ struct SyncSettingsView: View {
           }
             if let accessibilitySettingsError {
                 Text(accessibilitySettingsError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -393,7 +396,7 @@ struct SyncSettingsView: View {
                 Image(systemName: "info.circle")
                     .foregroundStyle(CompanionPalette.jadeInk)
                 Text(Self.connectionFooter(readingReady: readingReady, sendReady: sendReady))
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             }
            .padding(14)
@@ -418,18 +421,18 @@ struct SyncSettingsView: View {
        if monitor.reader.keyFilePermissionsAreLoose {
            HStack(alignment: .top, spacing: 10) {
                Image(systemName: "exclamationmark.triangle.fill")
-                   .font(.system(size: 12))
+                   .companionFont(size: 12)
                    .foregroundStyle(.orange)
                VStack(alignment: .leading, spacing: 4) {
                    Text("密钥文件权限过宽")
-                       .font(.system(size: 13, weight: .semibold))
+                       .companionFont(size: 13, weight: .semibold)
                     Text("同一台 Mac 上的其他账号也能读到这个文件。收紧后只有你能读，不必重新准备。")
-                       .font(.system(size: 12))
+                       .companionFont(size: 12)
                        .foregroundStyle(.secondary)
                        .fixedSize(horizontal: false, vertical: true)
                     if let keyPermissionFixError {
                         Text(keyPermissionFixError)
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
                             .transition(.companionStatusReveal)
@@ -469,33 +472,33 @@ struct SyncSettingsView: View {
    ) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
+                .companionFont(size: 14, weight: .medium)
                 .foregroundStyle(CompanionPalette.jadeInk)
                 .frame(width: 28, height: 28)
                 .background(CompanionPalette.jade.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 14, weight: .semibold))
+                Text(title).companionFont(size: 14, weight: .semibold)
                 Text(detail)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 6) {
                 Label(status, systemImage: ready ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .foregroundStyle(ready ? CompanionPalette.jadeInk : .secondary)
                 if let actionTitle, let action {
                     Button(action: action) {
                         HStack(spacing: 3) {
                             Text(actionTitle)
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
+                                .companionFont(size: 10, weight: .semibold)
                         }
                     }
                        .buttonStyle(CompanionPressStyle())
                        .foregroundStyle(CompanionPalette.jadeInk)
-                       .font(.system(size: 12, weight: .medium))
+                       .companionFont(size: 12, weight: .medium)
                         .disabled(actionHoldReason != nil)
                         .help(actionHoldReason ?? "")
                         .accessibilityHint(actionHoldReason ?? "")
@@ -516,10 +519,10 @@ struct SyncSettingsView: View {
                 }
             }
            Text("原资料没有删除，也没有合并到当前账号。只有你已核实目录归属、且当前新账号还没有关注/待办/草稿等资料时，才可显式绑定。绑定不会自动认领，也不会移动或覆盖文件；重启助手后生效。")
-               .font(.system(size: 12)).foregroundColor(.secondary).padding(14)
+               .companionFont(size: 12).foregroundColor(.secondary).padding(14)
             if let finderRevealError {
                 Text(finderRevealError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 10)
@@ -601,13 +604,13 @@ struct SyncSettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(directoryDiagnosis.message)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundColor(directoryDiagnosis.needsAttention ? .orange : .secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if case .directoryUnreadable = directoryDiagnosis {
                     if let fullDiskSettingsError {
                         Text(fullDiskSettingsError)
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.red)
                             .transition(.companionStatusReveal)
                     }
@@ -633,7 +636,7 @@ struct SyncSettingsView: View {
                     SettingsRow(accountDirectoryName(path), subtitle: shortenPath(path), icon: "folder", iconColor: .secondary) {
                         if dbPath == path {
                             Label("已选择", systemImage: "checkmark.circle.fill")
-                                .font(.system(size: 12)).foregroundColor(.green)
+                                .companionFont(size: 12).foregroundColor(.green)
                         } else {
                             Button("使用此目录") { dbPath = path; save() }
                         }
@@ -658,7 +661,7 @@ struct SyncSettingsView: View {
             SettingsRow("密钥文件", subtitle: keyFileMessage, icon: "key", iconColor: keyFileNeedsAttention ? .orange : .secondary) {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("下次启动：" + (keysFilePath.isEmpty ? "默认路径" : shortenPath(keysFilePath)))
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                     HStack(spacing: 8) {
@@ -680,13 +683,13 @@ struct SyncSettingsView: View {
             }
             if !keyPathMessage.isEmpty {
                 Text(keyPathMessage)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundColor(.red)
                     .padding(.horizontal, 14)
                     .transition(.companionStatusReveal)
             }
             Text("聊天读取缓存按账号资料目录分开。选择目录不会合并账号，也不会证明这份密钥文件属于该账号。请使用与当前微信账号匹配的密钥文件。")
-                .font(.system(size: 12)).foregroundColor(.secondary).padding(14)
+                .companionFont(size: 12).foregroundColor(.secondary).padding(14)
         }
         .companionAnimation(CompanionMotion.ease(), value: keyPathMessage)
     }
@@ -813,7 +816,7 @@ struct SyncSettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             if PreviewRuntime.isEnabled {
                 Text("当前账号 演示数据")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -828,7 +831,7 @@ struct SyncSettingsView: View {
                 HStack(spacing: 12) {
                     sectionHeaderIcon("square.and.arrow.up", color: .blue)
                     Text("导出报告")
-                        .font(.system(size: 13, weight: .medium))
+                        .companionFont(size: 13, weight: .medium)
                         .foregroundColor(.primary)
                     Spacer(minLength: 8)
                    if let url = exportedURL {
@@ -856,7 +859,7 @@ struct SyncSettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
                 Text(LocalDataRetrospection.exportCaption)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -866,7 +869,7 @@ struct SyncSettingsView: View {
                         Image(systemName: exportFailed ? "exclamationmark.triangle" : "checkmark.circle.fill")
                             .foregroundStyle(exportFailed ? Color.red : CompanionPalette.jadeInk)
                         Text(msg)
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundColor(exportFailed ? .red : .secondary)
                        if let url = exportedURL, !exportFailed {
                             Button("查看文件") { revealInFinder(url) }
@@ -888,7 +891,7 @@ struct SyncSettingsView: View {
                }
                 if let finderRevealError {
                     Text(finderRevealError)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.red)
                         .padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
                         .transition(.companionStatusReveal)
@@ -907,9 +910,9 @@ struct SyncSettingsView: View {
                         sectionHeaderIcon("clock.arrow.circlepath", color: CompanionPalette.jadeInk)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("记录回溯")
-                                .font(.system(size: 13, weight: .medium))
+                                .companionFont(size: 13, weight: .medium)
                             Text(LocalDataRetrospection.windowCaption)
-                                .font(.system(size: 11))
+                                .companionFont(size: 11)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)
@@ -944,7 +947,7 @@ struct SyncSettingsView: View {
 
     private func sectionHeaderIcon(_ systemName: String, color: Color) -> some View {
         Image(systemName: systemName)
-            .font(.system(size: 13))
+            .companionFont(size: 13)
             .foregroundColor(color)
             .frame(width: 28, height: 28, alignment: .center)
             .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
@@ -960,30 +963,30 @@ struct SyncSettingsView: View {
                 ForEach(recalledMessages.filter { matchesDataSearch($0.senderName, $0.chatName, $0.originalText) }) { msg in
                     SettingsRowDivider()
                     HStack(spacing: 8) {
-                        Text(msg.senderRole.icon).font(.system(size: 12))
+                        Text(msg.senderRole.icon).companionFont(size: 12)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
                                 Text(msg.senderName)
-                                    .font(.system(size: 13, weight: .medium))
+                                    .companionFont(size: 13, weight: .medium)
                                 Text("·")
                                     .foregroundColor(.secondary)
                                 Text(msg.chatName)
-                                    .font(.system(size: 12))
+                                    .companionFont(size: 12)
                                     .foregroundColor(.secondary)
                                 Spacer()
                                 Text("\(msg.recallDelaySeconds) 秒后撤回")
-                                    .font(.system(size: 11))
+                                    .companionFont(size: 11)
                                     .foregroundColor(.orange)
                             }
                             Text("「\(msg.originalText)」")
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             if let reason = msg.aiReason {
                                 HStack(spacing: 4) {
                                     pill(reason, color: msg.aiIntelligenceValue == "high" ? .red : .gray)
                                     if let d = msg.aiDetail, !d.isEmpty {
-                                        Text(d).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                                        Text(d).companionFont(size: 11).foregroundColor(.secondary).lineLimit(1)
                                     }
                                 }
                             }
@@ -1009,18 +1012,18 @@ struct SyncSettingsView: View {
                             .frame(width: 8, height: 8)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.content)
-                                .font(.system(size: 13, weight: .medium))
+                                .companionFont(size: 13, weight: .medium)
                             HStack(spacing: 6) {
                                 Text("→ \(item.commitTo)")
-                                    .font(.system(size: 12))
+                                    .companionFont(size: 12)
                                     .foregroundColor(.secondary)
                                 if item.status == .fulfilled {
                                     Text("已完成")
-                                        .font(.system(size: 12))
+                                        .companionFont(size: 12)
                                         .foregroundColor(CompanionPalette.jadeInk)
                                 } else if item.status == .pending || item.status == .overdue, let d = item.deadlineAt {
                                     Text(CommitmentPresentation.deadlineCaption(d))
-                                        .font(.system(size: 12))
+                                        .companionFont(size: 12)
                                         .foregroundColor(d < Date() ? .red : .secondary)
                                 }
                             }
@@ -1049,7 +1052,7 @@ struct SyncSettingsView: View {
                             .foregroundColor(.red)
                         } else {
                             Text(commitmentStatusLabel(item.status))
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundColor(item.status == .fulfilled ? CompanionPalette.jadeInk : .secondary)
                         }
                     }
@@ -1073,20 +1076,20 @@ struct SyncSettingsView: View {
                             .frame(width: 8, height: 8)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 4) {
-                                if let role = ask.senderRole { Text(role.icon).font(.system(size: 12)) }
-                                Text(ask.senderName).font(.system(size: 13, weight: .medium))
-                                Text(ask.chatName).font(.system(size: 12)).foregroundColor(.secondary)
+                                if let role = ask.senderRole { Text(role.icon).companionFont(size: 12) }
+                                Text(ask.senderName).companionFont(size: 13, weight: .medium)
+                                Text(ask.chatName).companionFont(size: 12).foregroundColor(.secondary)
                             }
                             Text(ask.summary)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             HStack(spacing: 4) {
                                 pill(ask.askType.label, color: .blue)
                                 Text(String(format: "%.0f%%", ask.confidence * 100))
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                                    .companionFont(size: 11).foregroundColor(.secondary)
                                 Text(MessageInfo.formatRelative(Int(ask.createdAt.timeIntervalSince1970)))
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                                    .companionFont(size: 11).foregroundColor(.secondary)
                             }
                         }
                         Spacer()
@@ -1102,7 +1105,7 @@ struct SyncSettingsView: View {
                             .controlSize(.small)
                             .frame(minHeight: 22)
                         } else {
-                            Text(ask.status.rawValue).font(.system(size: 12)).foregroundColor(.secondary)
+                            Text(ask.status.rawValue).companionFont(size: 12).foregroundColor(.secondary)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -1122,7 +1125,7 @@ struct SyncSettingsView: View {
 
     private func emptyRow(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13))
+            .companionFont(size: 13)
             .foregroundColor(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
@@ -1130,7 +1133,7 @@ struct SyncSettingsView: View {
 
     private func pill(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            .companionFont(size: 11, weight: .medium)
             .foregroundColor(color)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)

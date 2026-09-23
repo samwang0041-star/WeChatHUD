@@ -163,13 +163,42 @@ enum CompanionTypeScale {
     }
 }
 
-private struct CompanionScaledFont: ViewModifier {
-    let size: CGFloat
-    let weight: Font.Weight
+/// A fixed chrome width, scaled with the type — the width twin of
+/// `companionFont`. A box measured at the default type size squeezes its ×1.48
+/// contents at 大字号, and the outvoted overflow shows up as clipped glyphs at
+/// the window edge (§77's 「全部」 kept getting cut). Hit-target squares stay
+/// fixed on purpose: pass those to plain `.frame`.
+private struct CompanionScaledWidth: ViewModifier {
+    let width: CGFloat
+    var alignment: Alignment = .center
     @Environment(\.dynamicTypeSize) private var typeSize
 
     func body(content: Content) -> some View {
-        content.font(.system(size: max(10, (size * CompanionTypeScale.factor(for: typeSize)).rounded()), weight: weight))
+        content.frame(width: width * CompanionTypeScale.factor(for: typeSize), alignment: alignment)
+    }
+}
+
+private struct CompanionScaledFont: ViewModifier {
+    let size: CGFloat
+    let weight: Font.Weight
+    /// Passed through so `.monospaced` / `.rounded` call sites can scale too —
+    /// routing a design through a plain weight-only scaler silently restyled
+    /// it, which is why the 14 `.monospaced` sites stayed hardcoded for so long.
+    var design: Font.Design = .default
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    func body(content: Content) -> some View {
+        let scaled = max(10, (size * CompanionTypeScale.factor(for: typeSize)).rounded())
+        // `.default` keeps the two-argument call this modifier always made;
+        // measured at the default type size the three-argument form moves
+        // fewer than 75 pixels, but the legacy call shape costs nothing to
+        // keep. The 723 converted call sites do leave a 0.14% glyph-antialias
+        // scatter at default (same metrics, same layout) — their old
+        // one-argument `.system(size:)` form rasterizes a hair differently
+        // from this explicit-weight path.
+        return content.font(design == .default
+            ? .system(size: scaled, weight: weight)
+            : .system(size: scaled, weight: weight, design: design))
     }
 }
 
@@ -178,8 +207,13 @@ extension View {
         modifier(CompanionSurface(padding: padding))
     }
 
-    func companionFont(size: CGFloat, weight: Font.Weight = .regular) -> some View {
-        modifier(CompanionScaledFont(size: size, weight: weight))
+    func companionFont(size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        modifier(CompanionScaledFont(size: size, weight: weight, design: design))
+    }
+
+    /// Fixed chrome width that grows with Dynamic Type. See `CompanionScaledWidth`.
+    func companionScaledWidth(_ width: CGFloat, alignment: Alignment = .center) -> some View {
+        modifier(CompanionScaledWidth(width: width, alignment: alignment))
     }
 
     func workspaceDisplay() -> some View { companionFont(size: WorkspaceType.display, weight: .semibold) }
@@ -244,6 +278,8 @@ struct CompanionPressStyle: ButtonStyle {
             // feels responsive without going rubbery — see codex-island's
             // PressableButtonStyle, Emil Kowalski's press-feedback rule.
             .scaleEffect(configuration.isPressed && !CompanionMotion.reduceMotion ? CompanionMotion.pressScale : 1)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
             .animation(CompanionMotion.press(), value: configuration.isPressed)
     }
 }
@@ -254,7 +290,19 @@ struct CompanionRowPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.82 : 1)
+            .frame(minHeight: 24)
+            .contentShape(Rectangle())
             .animation(CompanionMotion.press(), value: configuration.isPressed)
+    }
+}
+
+extension View {
+    /// A stock `DisclosureGroup` label draws at glyph height (15–16pt) —
+    /// under the 24pt hit floor the HIG audit measures. This fills the row
+    /// without moving the text.
+    func companionDisclosureLabel() -> some View {
+        frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }
 
@@ -353,10 +401,10 @@ struct CompanionBatchClearButton: View {
         Button(action: action) {
             if showingTitle {
                 Label(title, systemImage: glyph)
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
             } else {
                 Image(systemName: glyph)
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                     .frame(minWidth: 14)
             }
         }
@@ -423,7 +471,7 @@ struct CompanionDialog<Content: View>: View {
         .accessibilityLabel(title)
         .accessibilityHint("按 Esc 关闭，不会执行当前操作")
         .onExitCommand(perform: onClose)
-        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+        .transition(.companionDialogReveal)
         .onAppear {
             panelState.modalDialogOpen = true
             dialogFocused = true
@@ -489,7 +537,7 @@ struct CompanionAvatar: View {
 
     var body: some View {
         Text(glyph)
-            .font(.system(size: size * 0.38, weight: .semibold))
+            .companionFont(size: size * 0.38, weight: .semibold)
             .foregroundStyle(CompanionPalette.accent)
             .frame(width: size, height: size)
             .background(CompanionPalette.selectedFill, in: Circle())

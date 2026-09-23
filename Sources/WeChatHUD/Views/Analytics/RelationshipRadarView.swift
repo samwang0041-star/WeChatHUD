@@ -153,7 +153,7 @@ struct RelationshipRadarView: View {
             }
             Spacer()
             Text("本机计算 · 不自动发消息")
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundStyle(.secondary)
             Button {
                 Task { await refreshNow() }
@@ -188,11 +188,11 @@ struct RelationshipRadarView: View {
                                 .padding(.top, 6)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(displayName(snap))
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .companionFont(size: 13, weight: .semibold)
                                     .foregroundStyle(.primary)
                                     .lineLimit(1)
                                 Text(listSubtitle(snap))
-                                    .font(.system(size: 11))
+                                    .companionFont(size: 11)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
@@ -227,7 +227,7 @@ struct RelationshipRadarView: View {
                         Text(displayName(snap))
                             .workspaceTitle()
                         Text(snap.summary)
-                            .font(.system(size: 14))
+                            .companionFont(size: 14)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -258,13 +258,13 @@ struct RelationshipRadarView: View {
                     if !snap.darkSignals.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("需要留意")
-                                .font(.system(size: 13, weight: .semibold))
+                                .companionFont(size: 13, weight: .semibold)
                             ForEach(snap.darkSignals, id: \.self) { signal in
                                 HStack(alignment: .top, spacing: 8) {
                                     Image(systemName: "exclamationmark.circle")
                                         .foregroundStyle(.orange)
                                     Text(signal)
-                                        .font(.system(size: 13))
+                                        .companionFont(size: 13)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
@@ -277,17 +277,17 @@ struct RelationshipRadarView: View {
                     if !snap.toneChanges.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("语气轨迹")
-                                .font(.system(size: 13, weight: .semibold))
+                                .companionFont(size: 13, weight: .semibold)
                             ForEach(Array(snap.toneChanges.enumerated()), id: \.offset) { _, change in
                                 Text("\(change.aroundDay)  \(change.from) → \(change.to)")
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .companionFont(size: 12, design: .monospaced)
                                     .foregroundStyle(.secondary)
                             }
                         }
                     }
 
                     Text("单天分析仍然没有态度、语气变化或心情转向。这里只根据已经存下的跨天事实计算，证据以哈希保存。")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.secondary)
                 }
                 .padding(24)
@@ -347,12 +347,12 @@ struct RelationshipRadarView: View {
     private func metricCard(title: String, value: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .companionFont(size: 11, weight: .semibold)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 16, weight: .semibold))
+                .companionFont(size: 16, weight: .semibold)
             Text(detail)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }

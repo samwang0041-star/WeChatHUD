@@ -111,6 +111,51 @@ final class RelativeTimeVocabularyTests: XCTestCase {
         XCTAssertGreaterThan(unified, 5, "the guard is only meaningful while 已到期 is the live word")
     }
 
+    /// A windowed history list states its window; 「随时查看」claimed none.
+    ///
+    /// Both batch-clear dialogs promised permanence for 14-day lists —
+    /// 承诺的「已完成」(`commitmentRelevantSinceClause`) and 待办的「看已处理的」
+    /// (`DiscussionLiveWindow.historyDays`) — and each contradicted the window
+    /// its own page prints elsewhere on the same screen.
+    func testWindowedHistoryListsStateTheirWindowNotAlways() throws {
+        let root = try Self.repoRoot()
+        let files = try FileManager.default.subpathsOfDirectory(atPath: root.path)
+            .filter { $0.hasPrefix("Sources/") && $0.hasSuffix(".swift") }
+        XCTAssertGreaterThan(files.count, 100, "the scan found nothing to scan")
+
+        var violations: [String] = []
+        for file in files {
+            let text = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
+            for line in text.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.starts(with: "//") || trimmed.starts(with: "*") { continue }
+                guard line.contains("随时查看") || line.contains("很久没处理") else { continue }
+                violations.append("\(file): \(trimmed)")
+            }
+        }
+        XCTAssertEqual(
+            violations, [],
+            "「随时查看」lies about a 14-day window and 「很久没处理」hides one; write the number."
+        )
+
+        let commitment = try String(
+            contentsOf: root.appendingPathComponent("Sources/WeChatHUD/Views/CommitmentTabView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            commitment.contains("14 天内可在「已完成」列表中查看和撤销"),
+            "the 承诺 batch-clear dialog names its window"
+        )
+        let discussion = try String(
+            contentsOf: root.appendingPathComponent("Sources/WeChatHUD/Views/DiscussionWorkspaceView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            discussion.contains("14 天内可在「看已处理的」中查看和恢复"),
+            "the 待办 batch-clear dialog names its window"
+        )
+    }
+
     func testDurationBadgesUseSpacedWordsNotCompactUnits() throws {
         let detail = try ViewSource.load("Sources/WeChatHUD/Views/DetailPanelView.swift")
         XCTAssertTrue(detail.text.contains("overdueMinutes) 分钟"))

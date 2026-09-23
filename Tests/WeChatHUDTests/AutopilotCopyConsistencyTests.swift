@@ -107,7 +107,9 @@ final class AutopilotCopyConsistencyTests: XCTestCase {
     func testBatchSettingSitsInTheMainSectionNotOnlyUnderAdvanced() throws {
         let source = try AutopilotViewSource.load()
         let mainRange = try XCTUnwrap(source.text.range(of: "limitsBatchRow"))
-        let advancedRange = try XCTUnwrap(source.text.range(of: "DisclosureGroup(AutopilotSettingsCopy.advancedTitle)"))
+        // The disclosure title moved into a label closure when the label
+        // gained its 24pt hit target; the anchor is the same landmark.
+        let advancedRange = try XCTUnwrap(source.text.range(of: "Text(AutopilotSettingsCopy.advancedTitle)"))
         XCTAssertLessThan(mainRange.lowerBound, advancedRange.lowerBound, "the window is visible without opening 高级设置")
         XCTAssertFalse(source.text.contains("DisclosureGroup(\"高级设置\")"), "the window left the advanced disclosure group")
     }

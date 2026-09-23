@@ -2420,3 +2420,753 @@ HTTP 响应，断言结果里是 0、雷达里既没有「已等」也不是 hig
 负数收成 0 即"没有游标"，读回为 nil ⇒ 宁可重扫也不当成已读。测试
 `ScanCursorClampTests` 覆盖三条写路的钳制、正常值逐值不变、负值与 Int.max。
 证伪：把共享写入里的钳制改回原值 ⇒ 2 条失败。
+
+### §130 浅色外观走查（emil 标准轮 4）+ 阈值语义提进可视层
+
+浅色（`--preview-light`）此前基本没走过（全文只提过 7 次）。本轮走查 today /
+我答应的事 / 聊天回顾 / 待办 / 关注谁 / 关系雷达 6 页：
+
+- **侧栏选中洗层达标**：初测判"洗层丢失"是假阳性——采样落在行间空隙，扫列
+  （x=250 逐行）证实选中行 y=188–246 有 g-r +7.9 的玉洗（行底 +2.0），正是
+  v3「安静的玉色浅洗」的强度。焦点环为系统蓝，正常。
+- **语义色浅色下全部正确**：橙=到期/超时线、红点=有更新、玉=主操作、红=移除关注。
+- **1 处真缺陷已修**：关注列表行的 `120 分钟` 是裸阈值数值——语义只活在
+  hover/AX（576 行注释记录了旧处置），扫读时被当成"已等 120 分钟"（§128 同类
+  误读）。行内改为「120 分钟算超时」，与详情面板「120 分钟没回算超时」同口径。
+  验证：同区域墨迹像素 668→823（+155 = 「算超时」三字），二进制 grep 含新文案。
+- 承诺页副标题同轮已修（「不受保留档位影响」→「14 天内创建、到期或动过的都会显示」，
+  对齐 `commitmentRelevantSinceClause` 的三路 OR 窗口语义）。
+- 关系雷达空态、关注谁「TA 是谁」空态、待办详情免责句均达标（原因 + 下一步 + 不冒充）。
+- **待重拍**：aiButler / autopilot / guide 三张——批量串行截图哨兵超时后拷回了上一轮
+  残留 PNG（aiButler 显示的是 contacts 页），不能作数。坑已记进像素质检 memory。
+- 遗留小面：待办页「很久没处理的会收起」的「很久」未量化（改前需先量作用面窗口）。
+
+### §131 HIG 实测轮：13 页点击热区与命名全覆盖（emil 标准轮 5-6）
+
+`--preview-hig-audit=<秒>` 走 AX 树实测（截图测不出的两类缺陷：点击目标、纯图标的
+spoken name/tooltip），配合 `caffeinate -u -t 3` + `caffeinate -i` 防休眠旧帧：
+
+- **13 页全测**（今天/待办/关注谁/承诺/洞察/AI 与建议/提醒方式/AI 服务/自动回复/
+  微信连接/使用偏好/本地资料/怎么用）：`iconOnly=0 smallIcons=0` 全程保持——
+  没有一个按钮缺 spoken name，没有一个小于 22pt 的图标热区。
+- **自定义控件热区 12 处达标**：8 个文本按钮/字段（字高 14-16pt）经
+  `CompanionPressStyle`/`CompanionRowPressStyle` 自带 `minHeight: 24` 一处治全部；
+  5 处 `DisclosureGroup` label（字高 15-16pt）经 `companionDisclosureLabel()` 单点判据；
+  4 个搜索框以「整行点击聚焦」达成（SwiftUI plain TextField 的 AX 面固定为文字行，
+  padding/frame 均改不动——框架报告口径，非可用性缺陷）。
+- **口径豁免（平台控件形态）**：`.controlSize(.mini)` 按钮（17pt）、NSSlider 轨道
+  （16pt）——系统控件规格，HIG 24pt 下限针对自定义控件。
+- 复核实测：contacts 页 1→0 归零；aiService/autopilot 各 3→1（剩的即豁免项）。
+- 过程中两次「DisclosureGroup 只换开头破坏闭合」编译错误当场修复——改尾随闭包
+  结构必须连 label 闭包一起给，值得记住。
+
+### §132 动效机会扫描（emil 标准轮 7，find-animation-opportunities）——0 条幸存
+
+按该 skill 的四问门（频率/目的/速度/功能）对全部 seam 类过筛。该 skill 的前提是
+Emil 的「You Don't Need Animations」——克制即产出。本产品是密排工作台（crisp
+personality），建议预算本就该低。拒绝清单（每条注明击杀它的门）：
+
+- 收件箱行增删过渡 —— **频率门击杀**：tens/day 硬切是 Finder/Mail 惯例（第 3 轮同判）。
+- 贪睡菜单 origin-aware scale（从「⋯」按钮弹出而非岛顶）—— **确信度门击杀**：
+  菜单本就贴行弹出，anchor 差距 20px 级，不值一条新 transition 变体。
+- 空态图标轻入场（delight budget）—— **功能门击杀**：crisp 工作台的空态是
+  「告诉用户下一步」的信息面，v3 简洁优先 +「错峰只留给使用指南」的既有决策。
+- 洞察总览 KPI 卡错峰入场 —— **既有产品决策击杀**（v2 错峰封顶条款）。
+- 关系雷达图形绘制动画 —— **功能门击杀**：用户要读的功能性图形，装饰妨碍阅读。
+
+结论：现有动效系统（CompanionMotion 闸门 + companionStatusReveal + 弹簧 morph +
+stagger 封顶）已经覆盖全部高频价值 seam；「不加动画」是本轮的正确产出。
+
+### §133 新门禁证伪抽查（emil 标准轮 8，收尾加固）
+
+对本轮核心新门禁做「删掉它会失效吗」的翻转验证：临时把
+`CompanionMotion.strongContentFade` 的 reduceMotion 分支降级为全瞬切 ⇒
+`CompanionMotionTests` **9 个断言立刻变红**（两档策略的跨界断言全部真实生效）；
+手动还原（未用 git checkout）⇒ 29 项全绿、无残留破坏。门禁不是摆设。
+
+### §134 emil 轮 4 欠账补拍 + 自动回复页拆卡（emil 标准轮 9）
+
+§130 留的「aiButler / autopilot / guide 待重拍」（当时批量截图哨兵超时拷回上一轮残留
+PNG）本轮补齐。`/tmp/wcsnap.sh` 已被 /tmp 清理，重建 `/tmp/wcsnap2.sh`：先清
+`wechathud-*` 旧产物再启动（NULL_GLOB 防 zsh glob 不匹配时整条 rm 不执行的坑），
+等 `wechathud-capture-done` 哨兵、kill app、三张 md5 互异才作数。
+
+**aiButler（r18-light-aiButler.png）**：语义色、层级、渐隐、焦点环（系统蓝在选中行）
+全部达标，无新缺陷。**guide（r18-light-guide.png）**：§27 的两处修复都在（第 3 步
+「岛上报数，这里列明细。」、「群聊不会自动发出」），无新缺陷。
+
+**autopilot（r18-light-autopilot.png → r18-light-autopilot-v2.png）一处拆卡 + 一个
+潜伏 bug**：
+
+1. 整页只有一个 `SettingsSection("发到什么程度")`，而卡里嵌着一个**内层同款
+   `SettingsSection`**（`limitsBatchRow` 的「连发的时候」）和一个自带 13pt/medium
+   小标题的「哪些一定交给你」块——分区标题与卡内小标题同权重，第一眼读成两张卡的
+   两个标题（v1「一卡多功能拆卡」+ Grouping & mapping：邻近即关系，一个标题下的
+   黑名单 disclosure 会被读成「连发时不会自动回复的人」）。拆成三卡，标题即内容：
+   「发到什么程度」（5 控件行）/「连发的时候」（连发等待）/「哪些一定交给你」
+   （强制人工规则 + 黑名单 + 高级）。
+2. **读失败时的 inert 门此前只罩住最后一个 disclosure**：`.disabled(loadError != nil)
+   .opacity(…)` 链在高级 disclosure 的修饰链上——SwiftUI 里这只作用于该兄弟节点，
+   不会传播给前面的 toggle/滑条。注释写的意图（「Editable-looking and inert is worse
+   than greyed out」）没有真正生效，loadError 时置信度滑条仍可拖（`save()` 被 gate
+   不写，正是注释里描述的那个「拖了动了什么都没发生」）。现在门挂在包住三卡的
+   `Group` 上，环境传播覆盖全部控件。无新测试（两处都是渲染结构问题，像素已锁）。
+
+**Emil 全量 gap 复扫（防下轮重查，结论：0 缺口）**：裸 `withAnimation(` 仅剩显式
+瞬切的 `withAnimation(nil)` 一处；`easeIn` 零命中（呼吸 pulse 用 easeInOut 属循环
+例外）；动画时长 >300ms 零命中（命中的 `duration: 5/8` 是 toast 保持时长）；
+`companionScrollEdgeFade` 覆盖面已全（`content` 各 case 均走 `.workspacePage()`，
+设置页也是，§「设置页缺渐隐」的怀疑不成立）；onTapGesture 5 处均为输入聚焦/遮罩吞
+点击，不是可提交控件，不适用按压反馈；无自定义 DragGesture，velocity/rubber-band
+条款不适用；toast 进出场同路径（exit 缩回岛侧）；tabular numbers 已铺开。
+
+**performance-cheatsheet.md（Emil 仓库最后一份未消化文档）**：web 性能清单，
+映射项全部已被既有规范覆盖（transform/opacity → Core Animation 合成属性、
+blur < 20px → v5 的 blur(2px) crossfade 规则、列表虚拟化 → Lazy 容器），0 新增行动项。
+至此 emilkowalski/skills 仓库中与本产品相关的文档全部消化完（apple-design /
+emil-design-eng / review-animations+STANDARDS / improve-animations+AUDIT /
+find-animation-opportunities / animation-vocabulary / write-swift / performance-cheatsheet；
+animate-expo / mobile-native / pick-ui-library / ask-sonner / prototype 为 web·Expo
+专用，不适用）。
+
+**§134 验证**：`swift build` 通过；`swift build -c release` 零警告（warning/error 0 命中）；
+全量 `swift test` exit 0（XCTest 2298 条 / 10 skip / 0 失败 + swift-testing 全过）；
+受影响套件（Autopilot|Settings|ChromeMotion|PrimaryAction|Companion）373 条 / 3 skip /
+0 失败。像素证据：`r18-light-aiButler.png` / `r18-light-autopilot.png`（改前）/
+`r18-light-autopilot-v2.png`（改后）/ `r18-light-guide.png`，存
+`2026-09-18-island-pixel/`。教训记一条：`swift test | grep` 的 exit code 是 grep 的，
+本轮两次「exit 0」都是假通过信号——验证退出码必须不经管道。
+
+### §135 小面三条收口 + 像素取证（emil 标准轮 10，2026-09-22）
+
+第 18 轮交接清单第 12 条的三条小面，修复本体在 v5 未提交批次里已就位
+（`还有 N 项 ›` 溢出行、承诺弹窗 14 天文案、双名单 `unreadableRow` 失败态），
+本轮做的是核验、补齐第三条的同类漏网、并把三条全部钉进像素与门禁：
+
+1. **「随时查看」是同一句谎的第二处**：待办批量清空弹窗
+   （`DiscussionWorkspaceView:236`）写着「可在「看已处理的」中随时查看或恢复」，
+   而同文件 327/367 行自己就印着「完成或忽略的只留近 14 天」
+   （`DiscussionLiveWindow.historyDays`）——与承诺页被修的那句一模一样的自相矛盾。
+   改为「14 天内可在「看已处理的」中查看和恢复。」
+2. **门禁** `RelativeTimeVocabularyTests.testWindowedHistoryListsStateTheirWindowNotAlways`：
+   Sources 里「随时查看」零容忍 + 两句 14 天文案正钉。证伪口径同 §133 家族。
+3. **渲染注入口**：`AdmissionSettingsView.Snapshot` 补
+   `memberRulesUnreadable` / `mutedUnreadable` 两个布尔（离屏渲染像可渲染成功态一样
+   可渲染失败态）。
+4. **渲染证据** `testUnreadableRuleListsRenderTheirFailureNotAnEmptyList`：
+   失败态 ink>0.02（不再整块变空）+ 与「列表恰好为空」的渲染**字节互异**
+   （读失败不许长得像空）+ 先证确定性（同输入两渲字节相等，否则互异断言无意义）。
+5. **像素取证**（全部核过「上次同步」= 启动时刻，防 §58/§130 的旧图坑）：
+   - `r18-today-overflow.png`：徽标「4 项」= 全量计数、3 行 + 「还有 1 项 ›」。
+     为此预览夹具补了 2 条承诺（`preview-promise-followup/-design`）——2 条夹具
+     根本放不出溢出行，等于这条分支在预览里永远不可见（§80 同类陷阱）。
+   - `r18-dialog-commitments.png`：「14 天内可在「已完成」列表中查看和撤销。」
+   - `r18-dialog-tasks.png`：「14 天内可在「看已处理的」中查看和恢复。」
+   - `r18-admission-unreadable.png` / `r18-admission-empty-lists.png`：失败态 vs 空态。
+   新开关 `--preview-batch-clear` 把两个一键清空弹窗停靠在打开态（沿
+   `--preview-today-missed` 的「原本只能点击到达」先例），两页共用一个开关。
+
+**取证路上踩到的坑（比修复本身贵，记下来）**：`cacheDisplay` 在显示器休眠的会话里
+会**回吐上一次被合成的旧帧**——21:15/21:18 两次「今天」截图拿到的都是 21:10 那次
+承诺弹窗帧（同步时间 21:10 是铁证：`PreviewRuntime.seed` 每次预览启动都跑，
+「上次同步」= 启动时刻，是免费的新鲜度 oracle）。§131 的完整配方是
+`caffeinate -u -t 3` **加 `caffeinate -i`**，此前脚本只抄了前者；补上 `-i` 后
+同参数重拍即为正确帧（同步 21:22）。判据一句话：**图里的「上次同步」不等于本分钟，
+这张图就不作数。**
+
+**§135 验证**：`swift build` 通过；受影响套件（Admission|Commitment|RelativeTime|
+Discussion|ChromeMotion|Preview|Copy）297 条 / 3 skip / 0 失败（真实退出码，不经管道）；
+新增渲染用例 1 条 + 词汇门禁 1 条均实跑通过；全量 `swift test` 见下节数字。
+
+**§135 收口数字**：全量 `swift test` exit 0 —— XCTest **2300 条 / 10 skip / 0 失败**
+（较上轮 2298 净增 2 = 本轮渲染用例 + 词汇门禁），swift-testing 72 条全过；
+`swift build -c release` 零警告。
+
+### §136 §130「很久」销账 + §88 回顾窗死区收口（emil 标准轮 11，2026-09-22）
+
+**§130 遗留「很久没处理未量化」已销——修复本体在 v5 未提交批次里，记录过时了。**
+git diff 证实四处全部改为 `\(DiscussionLiveWindow.pendingDays) 天没处理` 插值
+（327/328/367 行的解释句 + 分组头「N 件很久没处理，点开查看」），与自动清扫的真实
+作用窗（`ChatMonitor.reloadPendingDiscussionItems` 的 `archiveStalePendingDiscussionItems
+(cutoff: pendingDays)`）同一把常量尺子。本轮补的是它欠的证据与门禁：
+
+- 像素 `r19-tasks-window-copy.png`（同步时间 = 启动时刻的新鲜度铁证）：
+  「当前只显示还没做完的。14 天没处理的会收起，不占这个列表。」
+- 门禁升级：`testWindowedHistoryListsStateTheirWindowNotAlways` 的禁语扫描加
+  「很久没处理」（与「随时查看」同罪：一个隐瞒窗口、一个谎称没窗口），并正钉
+  `\(DiscussionLiveWindow.pendingDays) 天没处理的会收起` 这句插值在源码里。
+
+**§88 回顾窗死区收口（532pt → 56pt）**。基线实测（`r19-retro-baseline.png`，像素级）：
+600×796pt 窗、空态内容墨迹止于 264pt、下方 **532pt 纯背景**（比 §88 记录的还大——
+当年的「约 530pt/270pt」是像素当点数读的）。修法是窗口按状态定尺寸：
+
+- 空态（打开时没有已完成回顾）→ 内容高 **320pt**（264 实测 + 呼吸）；
+  有报告 → **796pt**（r20 证明该高度下报告免滚动；更长的报告走 resultView 的
+  ScrollView，不设更高的地板）。
+- 首次生成落地（`.retrospectiveLiveUpdate`）且窗口还在未动过的空态尺寸时，
+  一次性长到 796pt。**只在报告真实存在时长**——该通知对任何 run 表写入都发
+  （含找不到任何东西的 reap），只看高度的旧判据会把空窗长成不存在的报告。
+- `minSize` 高度 500 → 320（空态默认值可达）；宽度保持出货的 600 不动。
+
+**踩到的机制坑（两次量出 796 才逼出来）**：`NSHostingController` 挂上
+`contentViewController` 后会**持续按 fitting 尺寸追改窗口**，而这棵树的
+`maxHeight: .infinity` 让 fitting 恒报 796pt——同步 `setContentSize` 写完就被
+异步覆盖，画出来是「新尺寸的旧意图」。根治是 `hostingController.sizingOptions = []`
+（只关「视图→窗口」的反向定尺寸，窗口手动缩放时视图照常铺满）。像素对照一锤定音：
+改前/改后的**内容墨迹同在 528px 行**（内容零变化），画布 1592→640（只砍死区），
+且 640 这个高度只有新构建才画得出（旧帧必为 1592——尺寸即新鲜度 oracle）。
+
+**§136 验证**：`swift build` 通过；受影响套件（RelativeTime|Retrospective|
+ChromeMotion|Companion|Admission）210 条 / 3 skip / 0 失败（真实退出码）；
+像素证据 `r19-tasks-window-copy.png` / `r19-retro-baseline.png` / `r19-retro-fixed.png`
+（1200×640，死区 56pt）。全量与 release 见下。
+
+**§136 收口数字**：全量 `swift test` exit 0 —— XCTest 2300 条 / 10 skip / 0 失败
+（禁语扩展在原用例内，不增条数），swift-testing 全过；`swift build -c release` 零警告。
+
+### §137 §86 第 4 条收口：「按消息量 TOP 5」不再虚报（emil 标准轮 12，2026-09-22）
+
+§83 记的「标签承诺的是上限不是数量，读起来像缺了 3 条」——措辞策略取
+「不足 5 条时写实际数量」（§83 的选项 2），且与兄弟节同构（趋势指标/时间节奏/
+压力信号的摘要全是计数插值，这节是唯一写死的）：
+
+- `InsightOverviewCounts.topChatsSummary(shown:)` → 「按消息量前 \(n)」，一种形状
+  管所有数量（2 条时「前 2」，5 条封顶时「前 5」），行数取自渲染同一个
+  `shown` 数组的 `.count`——标签与行由构造保证相等，不存在第二个数字源。
+- 调用点钉桩 `testTopChatsSectionFeedsTheRowCountFromTheCallSite`（§10 的教训：
+  回归在调用点）：禁「TOP 5」字面量 + 必须走构造器。门禁被我自己引用旧文案的
+  注释绊了一跤（§27 同款），按既有规则改成跳过 `//` 行——解释性散文必须有权
+  点名被禁词。
+
+**像素证据**（`r19-topchats-summary.png`，一帧闭环）：「最活跃聊天 · 按消息量前 2」
+与正好 2 行（项目协作群 96 条 / 林晓 42 条）同框互证；上下文帧
+`r19-topchats-context.png`（KPI + 时间节奏 + 关系分布 + 工作/生活）。新鲜度判据
+再添一条硬的：**「按消息量前 2」这个措辞只有新构建才画得出来，旧帧必是「TOP 5」
+——文案修复自带新鲜度 oracle**，比同步时间还硬。
+
+**取证杂记**：`--preview-insight-overview` 是「把洞察页停在总览」的停靠开关，
+不是导航——不带 `--preview-tab=insight` 会落在持久化的旧 tab 上（第一张就拍歪到
+待办页）。滚动偏移 1750 见节头、1950 节头带行数。
+
+**§137 收口数字**：`swift build` 通过；受影响套件（CrossTopicRadar|Insight|ProductWorkspace）
+141 条 / 0 失败；全量 `swift test` exit 0 —— XCTest **2302 条 / 10 skip / 0 失败**
+（净增 2 = 构造器断言 + 调用点钉桩），swift-testing 全过；`swift build -c release` 零警告。
+
+### §138 §86 第 3 条收口：「近期」钉成按天直方图，KPI 恢复实测比较（emil 标准轮 13，2026-09-22）
+
+**口径落定：「近期」= 按天直方图的 7 个日桶（今天 + 前 6 天）**。`InsightRecentWindow.cutoff()`
+从滚动 168 小时（`now - 7×86400`）改为**日历对齐**（今天零点往前 6 天）：
+
+- 屏幕上写「近 7 天」，读者就是掰着日历数的——滚动窗口一周里会悄悄漂掉一天；
+- 「日均」只有当分子的跨度正好是那 7 天时，才是任何人能想象的「一天的量」。
+- 逐条时间戳 ≥ cutoff 的计数（WeChatReader:1871，分片相加）就是 7 个日桶之和，
+  单一 cutoff 源的架构不变（ChatInsightModels 的 doc 保留了那条「一个地方算 cutoff、
+  另一个地方写 /7」的教训）。日界稳定性有边界测试（同一天内 cutoff 不漂移）。
+
+**「消息总量」KPI 文案恢复实测比较**。§81 把「-100% 近期偏闲」降级成纯方向词是对的——
+当时的分子是坏的（会话整段历史被计入）；现在分子就是日桶本身，诚实的动作是
+**照实陈述两个日均**（§78 的陈述口径），判定交给状态点：
+
+- `GlobalOverview` 增 `recentDailyAvg` / `overallDailyAvg`（与 ratio 同生同 nil：7 天及
+  以下的窗口没有第二个跨度可比）。
+- `densityHint` → 「近期日均 4.9 · 窗口日均 4.6」（`InsightKPIGrid.densityHint` 提为
+  static 供测试断言字面）。不再有百分比——也就没有 -100% 那种「格式能说出的最狠的话
+  用在最安静的一周上」的地板戏剧。方向词退场：两个数字的大小关系就是方向，
+  红橙绿点就是判定。
+- 「无法比较」的 nil 态保留原句（窗口 ≤7 天说没有比较，不冒充 节奏正常）。
+
+**证据**（`r19-kpi-density.png` 一帧）：消息总量 138 /「近期日均 4.9 · 窗口日均 4.6」
+（夹具算术互洽：recent = Σtotal/4 = 34 → 34/7≈4.9；138/30 = 4.6），同帧可见
+承诺履约「—/还没有承诺记录」、VIP「0 条 / 共 138 条」、最活跃聊天「按消息量前 2」等
+前几轮修复。新措辞本身就是新鲜度 oracle（旧帧只有方向词）。
+
+**§138 验证**：`swift build` 通过；受影响套件（InsightDensity|CrossTopicRadar|Insight|
+ChatInsight）109 条 / 0 失败（真实退出码），新增 3 例：日桶日界边界、双日均字面断言
+（含 42.9 一位小数与整数两种形状）、nil 态不打分。全量与 release 见下。
+
+**§138 收口数字**：全量 `swift test` exit 0 —— XCTest **2305 条 / 10 skip / 0 失败**
+（净增 3 = 日桶边界 + 双日均字面 + nil 态），swift-testing 全过；`swift build -c release`
+零警告。（`GlobalOverview` 增两字段令 `InsightRadarTests.makeOverview` 手搓构造同步
+补参，0/1 与原 ratio:0 自洽。）
+
+### §139 大字号档全页复核 + 723 处硬编码字号全量收口（emil 标准轮 14，2026-09-23）
+
+**全页像素复核（--preview-large-type）**：今天页 def↔lg 仅 8.2% 像素变化、关注谁 5.6%
+——未跟随 Dynamic Type 的硬编码字号占绝对主导。源码盘点同结论：`.font(.system(size:`
+**726 处**（45+ 个文件，DailyReport 64、SyncSettings 56、ChatInsight 51…）对
+`companionFont` 家族 106 处。任务 #10 的「逐像素不变」是整页版病灶，根因就在这 726。
+
+**收口：723 处机械转换为 `companionFont`**（默认档 factor=1.0 逐参数等值——零默认回归
+是转换的前提），仅两类保留硬写：
+
+1. `CompanionScaledFont` 自己（Scaler 是全 App 唯一有权造字体的地方）；
+2. 压缩条的装饰点符（`markSize` 8pt / `quietMarkSize` 6pt 的 ● 圆点——不是文字，
+   缩放会顶出 32pt 岛条）。顺带堵上 `isWorkspace ? 12 : 9` 这类 ternary 藏的 sub-10
+   可读字号——字面量门禁扫不到 ternary，转换后走 companionFont 的 10pt 地板。
+
+`companionFont` 增 `design:` 透传（14 处 `.monospaced`/`.rounded` 因无此参数而长期
+硬编码）；`.default` 保持原有两参调用形状（实测三参形状影响 <75px，但保留旧形状零成本）。
+
+**回归网**：渲染套件全绿（AdmissionSettingsRender/IslandTypeScale/
+CompanionAccessibilityRender/RenderProbe/ScrollEdgeRender/WorkspacePageLaunchSurvival）
+—— 默认档像素回归的判据是这批阈值断言。app 捕获对质给出默认档 0.14%（7321px）
+散布式抗锯齿微差：转换处从无字重参数的 `.system(size:)` 改走显式 `.regular` 路径，
+字号/度量/布局未变（同一画布、行带位置一致）。
+
+**增长铁证（确定性通道）**：`testConvertedBodyTextGrowsWithTheTypeScale`
+（IslandTypeScaleTests）——正文 12pt 在 .large→.accessibility2 高宽均涨 >1.35×
+（1.48 名义值）；`testNoHardcodedFontSizesOutsideTheMarks`（ChromeMotionHygiene）
+钉住全库不再出现硬编码字号（注释行免禁、点符豁免）。§86 任务 #10 的单页门禁
+（ConversationDetailView）由后者全库化取代。
+
+**取证杂记（这轮的坑密度再创新高，判据都记下）**：
+- zsh 无引号变量**不做分词**——批量循环里 `$flags` 整串成一个参数，四次裸启动拍了同一状态。
+  循环式批量截图不可用，单发+启动日志（`launch tab X -> X`）逐张核。
+- 「上次同步」是**持久值**（`reloadAIData` 会覆盖 seed 的 now），不是启动时刻——
+  §135 写的「同步=启动时刻铁证」言过其实，撤回该表述；可靠 oracle 是**新措辞本身**
+  （旧构建画不出新文案）与启动日志。
+- 读图通道两度端错视觉（retro-fixed2、after2-lg），盘上文件经 md5/sips/PIL 对质无误——
+  数字对质为准，视觉为辅。
+- 三参 `design: .default` 假说被 7246→7321 的实测证伪，注释按 §71 规则改为实测陈述。
+
+**新发现（非本轮引入，在案）**：`AutopilotGuardrailPipelineTests` 7 例（14 断言）
+**看表失败**——「深夜静默模式（23:00-7:00）」闸门无条件读墙钟，凌晨 05:17 全量跑时
+集体跳过自动发送导致断言落空；字号转换零关联（失败全在 Services 护栏链路，渲染/
+排版套件全绿）。应注入时钟（照 `BriefingFreshnessTests` 的 `now` 先例），下轮处理。
+
+**§139 收口数字**：`swift build` 通过；受影响套件（IslandTypeScale|ChromeMotionHygiene）
+31 条 / 0 失败（含 2 条新增）；全量 `swift test` 2307 条 / 10 skip / **14 失败——
+全部是上文所述 AutopilotGuardrailPipelineTests 的夜间窗口看表失败**（05:4x 落在
+23:00-7:00 内；同一批用例在 §138 的 22:3x 全量里 0 失败），渲染/排版/文案面零失败；
+`swift build -c release` 零警告。
+
+### §140 看表缺陷根治 + §46 窄窗复检抓到「全部」再截（emil 标准轮 15，2026-09-23）
+
+**一、§139 在案的夜间看表缺陷已根治**。`AutopilotService.processBatch` 的深夜静默闸门
+直读 `Date()`，`AutopilotGuardrailPipelineTests` 7 例在 23:00-7:00 集体被闸门吞掉批次
+而失败（且该闸门**零直接测试**）。修法照仓库的显式 `now:` 注入惯例：
+
+- `handleNewMessages` / `testingProcessBatch` / `processBatch` 贯穿 `now: Date = Date()`
+  （生产调用零改动）；闸门改读 `now`。顺带改名两个遮蔽参数的单调钟局部
+  （`let now = monotonic()` → `mono`，批处理计时器与墙钟是两回事）。
+- 13 处测试调用钉 `now: Self.daytime`（14:30）；**新增 `testLateNightSilenceHoldsThe
+  BatchOnTheRealPath`**（钉 03:00）：批到 .skipped、理由含「深夜静默模式」、队列为空——
+  闸门从「误伤测试的隐性依赖」变成两侧都有钉的行为。
+- **当场自证**：修复后即在凌晨 06 时档跑全套 —— 该套件 20 条 0 失败（此前同档 14 败），
+  全量 `swift test` **2308 条 / 10 skip / 0 失败（exit 0）**，验收信号恢复真实。
+
+**二、§46 窄窗 <800pt 复检抓到真缺陷：大字号 × 窄窗下「全部」再截**。堆叠分支
+（`ChatInsightView` <800pt：列表固定 190pt 在上、仪表盘在下）逐像素走查：
+右缘 x=1518 处 y712-730 有**两枚被拦腰截断的汉字笔画**（逐像素位图存档），
+默认档为 0。证伪链三次出手：
+
+1. `densityHint` 单字符化 → 贴边**不变**（§138 的文案排除）；
+2. `ViewThatFits` 图例改动前后像素差仅 250px（全在状态栏时间戳）→ 图例测量显示
+   放得下、不是它；
+3. 整个 `InsightKPIGrid` 摘除 → 贴边**依旧**（KPI 网格排除）。
+
+几何终审锁定 `overviewHeader` 的选择器行：`.frame(width: 280/140)` 是**固定点宽**，
+而分段选择器的内容 ×1.48；尾部块 `.fixedSize()` 后理想宽超出内容列
+（760pt 窗 −236 侧栏 ≈ 524pt 对 560pt+），溢出内边距、在窗边截断末段「全部」——
+与 §77 同元素同形状（当年注释自己就写着「『全部』被右边界从中间裁断」）。
+默认档恰好卡进 492pt（差值 0-2pt），大字号必然爆。
+
+**根修**：`CompanionScaledWidth`（`companionFont` 的宽度孪生——固定 chrome 宽度随
+`CompanionTypeScale.factor` 缩放；点击热区方块保持固定是刻意的），头部两个选择器
+`.frame(width:)` → `.companionScaledWidth(...)`。**像素定音**：贴边行
+[712…730] → **[]**（x-2 与 x-5 双探针均归零），`r20-narrow-760-lg-final.png` 对
+`r20-narrow-760-lg.png`。同窗默认档复核零变化（factor 1.0 逐参数等值）。
+
+**取证杂记**：读图通道本轮彻底拒读（连工作区文件都报不存在），全程用逐像素位图 +
+ASCII 墨迹图 + AX 审计（`--preview-hig-audit` 的 screen 坐标 + 滚动外元素帧）替代——
+「全部」的 AX 右缘 752-760pt 恰在裁切线，数字证据比视觉更快到位。二分实验
+（单字符化/摘网格）各 ~90 秒一次，证伪链比顺藤摸瓜便宜。
+
+**§140 收口数字**：`swift build` 通过；`swift build -c release` 零警告；
+全量 `swift test` **2308 条 / 10 skip / 0 失败（exit 0）**——含新增夜间闸门用例、
+在 §139 的失败时段（凌晨档）实测通过；护栏套件 20 条 / 0 失败。
+
+### §141 全量判定收口「固定宽装缩放内容」病灶（emil 标准轮 16，2026-09-23）
+
+遍历 Sources 全部 **188 处 `.frame(width:)`**，逐个判定（判定表如下），**25 处内容框
+换 `companionScaledWidth`**（新增 `alignment:` 参数——标签列的左/右对齐不能丢），其余 163 处
+按豁免留固定：
+
+| 类别 | 处置 | 例 |
+|---|---|---|
+| 点击热区方块 / 图标槽 | **豁免**（HIG 热区是固定命中尺寸） | 22×22、24×22、28×28、`inlineIconTarget` |
+| 点符 / 徽标点 | **豁免**（装饰非文字，缩放会顶出 32pt 岛条） | 5×5、6×6、8×8、markSize |
+| 岛体硬件几何 | **豁免**（ui-language：硬件几何不参与插值） | wingWidth、peekSlotWidth、bannerWidth、expandedWidth |
+| 图表几何 | **豁免**（图形不是内容框） | 柱条 `width: geo*fraction`、滑轨 120、进度条 90、迷你条 60×6/80×8 |
+| 画布网格 / 弹窗表面 / 渲染夹具 | **豁免** | PixelBuddy cellSize、对话框 380/460、ImageRenderer 380×420 |
+| 会换行的文字列 / 栏目列 | **豁免**（文字自行折行、不被挤出） | 今天页 280pt 接下来栏、SetupCard 24pt 图标列 |
+| **装不可换行内容的固定宽** | **→ `companionScaledWidth`** | 分段/菜单选择器 ×9、单行值列 ×6、标签列 ×7、DatePicker/统计方块/贪睡浮层/引导状态块 ×4 |
+
+病灶 25 处明细：选择器 9（AI 服务来源 220、展示时间 100、同步间隔 92/缓存 90/屏幕 110、
+回复风格 140、每小时 80、连发 80、发送键 170）、Menu 标签 70、值列 6（42/28/60/40/…）、
+标签列 7（88/52×2/58/34/28/30）、`ChatInsightDetailView` 统计方块 80×80（即上轮点名的
+「`frame(width: 80)`」——同文件另一处 80×8 是条形轨道属豁免，判定表落锤）、
+回顾日期 DatePicker 120、贪睡浮层 220、引导状态块 140。
+
+**像素证据**（`r21-autopilot-lg-before/after.png`、`r21-detail-lg-before/after.png`）：
+自动回复页表单区差 **40,498 px**（选择器行加宽落位）、会话详情差 **227,632 px**
+（统计方块 80→118、图例列、DatePicker 加宽）；四图右缘贴边墨迹**全净**
+（改前改后均 []——这批站点此前是「挤出/截断内部文字」型病灶，不是贴边型，两型都归零）。
+默认档零回归由全量 **2308 条 / 0 失败（exit 0）** 的渲染网背书：factor 1.0 时
+`companionScaledWidth(N, alignment:)` 与原 `.frame(width: N, alignment:)` 逐参数等值。
+
+**取证杂记**：两个截图并行跑会互相 rm `$T` 产物（wcsnap4 每次清场）——本轮开场就丢了一张，
+串行重拍；另 Bash 的 cwd 会跨调话筒残留（早前 `cd Sources/WeChatHUD` 让相对路径 cp 找不到
+目标），一律绝对路径。
+
+**§141 收口数字**：`swift build` 通过；`swift build -c release` 零警告；全量
+`swift test` **2308 条 / 10 skip / 0 失败（exit 0）**；受影响套件 474 条 / 0 失败。
+
+### §142 窄窗 × 大字号逐页复检（emil 标准轮 17，2026-09-23）：10 页干净、待办页一处布局振荡病灶
+
+**复检面（11 页全过 §140/§141 双判据）**：今天、待办 + 设置九分区（关注谁/AI 分析与建议/
+提醒方式/AI 服务/自动回复/微信连接/使用偏好/本地资料/怎么用），全部 760pt × accessibility2。
+四锚点全景表（侧栏顶墨迹 / detail 页头墨迹 / 状态条墨迹起止 / 底缘贴边计数）：
+
+| 页面 | 侧栏顶 | 页头 | 状态条 | 底缘 |
+|---|---|---|---|---|
+| 9 个设置页 + 今天 + 怎么用 | 32 | 49（怎么用 66，无页头属正常） | 1810–1842 | **0** |
+| **待办（4 次捕获全同）** | **0** | **23** | **1853–1867（贴底裁切）** | **150px** |
+
+**待办页病灶（未修，见下）**：窄窗 × 大字号下内容列整体高于窗体约 34pt——页头上移 13pt、
+状态条下压 21pt（居中溢出签名）、侧栏锁图标贴顶截断、页脚被顶出窗底、底缘 150px 贴边墨迹。
+跨 3 次构建 4 次捕获逐锚点完全一致（确定性成立，非捕获瞬态）。
+
+**机制追查（两轮仪器实测）**：
+1. 窗几何两页**完全相同**（760×934 content / 760×986 含标题栏）——窗口尺寸层排除；
+2. 待办根视图**宽度稳定 424pt、高度在 603 ↔ 872.5 间循环振荡**（同宽下高度反复跳、
+   每轮 layout pass 互相触发成环）；溢出帧 = 872.5 > 830 可用高。
+3. **病灶定性 = 高度反馈式 relayout 振荡器**（某块的尺寸依赖其收到的 proposal，回写成环）。
+   待办链上带 proposal 敏感构造：filters 的 `ViewThatFits` 双行胶囊回退（±35pt 正好是
+   34pt 溢出量级）、`HSplitView`（NSSplitView 内禀理想高）、detailPane 的
+   `fixedSize(vertical: true)` 文本群。其余 10 页无此组合故全净。
+
+**证伪记录（两处假修复已按 §66 撤除，树回到 §141 已验证态）**：
+1. 页脚 `minimumScaleFactor(0.75)` 测量失真说 —— 摘除后四锚点逐值不变，**证伪**，已恢复原样；
+2. `HSplitView` 加 `.frame(minHeight: 0, maxHeight: .infinity)` —— 锚点逐值不变
+   （frame 不缩子级 min，NSSplitView 内禀照旧），**证伪**，已撤。
+临时量测仪器（`onGeometryChange` 两行 + capture 一行打印）用完即撤。
+
+**已定价选项（按 AGENTS「两次修复失败→停手带选项上报」）**：
+- **A. 捉振荡边（推荐先做）**：在 listPane/detailPane/filters 三处加 per-pass 提案-实高打印，
+  找到回写边（预计 1–2h），修复本身大概率一行（断开 proposal→height 的反馈）；
+  风险：侦探工作量不确定，但产品改动极小。
+- **B. 结构性去振**：filters 的 `ViewThatFits` 换成确定性换行 Layout、`HSplitView` 换
+  `HStack + Divider` 固定比例（约半日）；风险：filters 是 §11/§12 崩溃旧地，
+  但 `WorkspacePageLaunchSurvivalTests` 兜底。
+- **C. 美观止血（不治本）**：SettingsView 层把内容列溢出钳住（页头/状态条不再被顶走，
+  约 1h）；风险：振荡回路继续空转 CPU，只是看不见。
+
+**§142 收口数字**：证伪回滚后 `swift build` 通过、`swift build -c release` 零警告、
+全量 `swift test` **2308 条 / 10 skip / 0 失败（exit 0）**（树与 §141 收口态一致，
+本轮产品代码净变化为零——这正是「不留假修复」的代价与目的）。证据：
+`r22-nlg-{today,tasks,contacts,aiButler,notifications,aiService,autopilot,system,preferences,localData,guide}.png`
+11 张 + `r22-nlg-tasks-{fixed,fixed2}.png` 证伪帧 2 张。
+
+### §143 选项 A 侦破轮（emil 标准轮 18，2026-09-23）：病灶测量链闭合、五次修复全部证伪、停手升级
+
+**测量链（全部实测，树 dump 双采样 0.6s 相邻一致 = 收敛态，无振荡——§142 的「振荡」表述
+修正为「多轮 settle 走查」）**：
+
+| 量 | 待办（窄窗×大字号） | 今天（同参数） |
+|---|---|---|
+| 根宿主 frame | **760×977** | 760×934 |
+| 根宿主 fitting（理想） | **605×977** | 424×**182** |
+| 窗口 content | 760×934 | 760×934 |
+
+**病灶定性（比 §142 更准）**：待办链的内容**理想高 977**（页头 70 + 内容 874 + 状态条 33）
+把 NavigationSplitView 的 AppKit 内禀理想顶出，representable 的 ideal 压过 proposal，
+934 窗体溢出 43pt。特征性怪相：`_NSSplitViewItemViewWrapper` 的 **fitting 回声 frame**
+（fitting==frame 自指），且 ScrollView 节点 fitting=0、子树无一 ≥400——理想不在叶子、
+在 representable 接缝上「爬回来」，这解释了为何 SwiftUI 侧逐点杀理想都动不了 frame。
+
+**五次修复全部证伪（树已按 §66 撤净，产品代码净变化为零）**：
+1. 页脚 `minimumScaleFactor` 摘除 —— 锚点逐值不变，证伪（§142 已录）；
+2. `HSplitView` 加 `frame(minHeight:0, maxHeight:.infinity)` —— 无效（frame 不缩子级 min）；
+3. detailPane ScrollView 内 `Spacer(minLength:12)` 删除 —— 仅削 11px 边缘墨（151→140），
+   全局位移不动，证伪；
+4. 内层 `GeometryReader` 包任务 HSplitView —— split fitting 确实坍缩到 16，
+   但根理想 977 依旧（经 NSSplitView fitting 回声爬回），无效果；
+5. **根 `GeometryReader` 包 SettingsView** —— 侧栏顶/底缘干净了（32 / 0），**但状态条与
+   侧栏页脚被裁出画布**（底带左半墨迹 0 对今天 108px）——以藏尾换边缘净 = 回归，撤。
+
+**已定价选项（第二次升级，AGENTS「两次以上失败→停手上报」）**：
+- **D. 换掉 tasks 的 `HSplitView`（推荐）**：换成纯 SwiftUI 双栏（`HStack + Divider` 或
+  自绘分隔），消灭 fitting 回声的来源（AppKit representable）——这是被点名的接缝本体。
+  估 2–4h（分隔条拖拽交互需以 `Divider + 手势`重建或有意识放弃）；净
+  `WorkspacePageLaunchSurvivalTests` + 本轮锚点表回归。
+- **E. 压 detailPane 内容理想**：检查器栈（594pt fixedSize 文本群）改可折行/去掉
+  `fixedSize(vertical:)` 级联——治源头但理想回声可能仍在（同 4 的教训）。估 1–2h，效果存疑。
+- **F. SettingsView 层显式分高**：`content` 用 GeometryReader 取「窗高−页头−状态条」
+  显式 frame（chrome 永不被顶走，内容内部滚动）——治标不治本但用户可见行为全对。
+  估 1h，风险低；注意与选项 5 的区别：包 `content` 而非整根，chrome 不在裁切面内。
+
+推荐 **D**（治本于被点名的接缝）+ 验收锚点表（32/49/1810/0 那一行）为完成判据。
+
+**§143 收口数字**：撤净后 `swift build` 通过、`swift build -c release` 零警告、
+全量 `swift test` **2308 条 / 10 skip / 0 失败（exit 0）**——树与 §141 收口态一致。
+本轮证据：`r23-tasks-{oscfix,geofix,rootfix}.png` 三张证伪帧 + 树 dump 数据（tree*.log
+留在 /tmp，关键数已录于上表）。
+
+### §144 选项 D 执行轮（emil 标准轮 19，2026-09-23）：representable 接缝已灭、残余隔离至 strictnessBar
+
+**选项 D 已执行**：待办页 `HSplitView`（NSSplitView representable、fitting 回声源）
+整块换成**纯 SwiftUI 双栏**——`GeometryReader + HStack(55/45) + Divider`，
+分隔条拖拽按选项 D 定价**有意识放弃**（固定比例换取任意宽度/字号下永不溢出）。
+`strictnessBinding` 因改造失去全部引用，按孤儿规则清除。
+
+**D 自身交付物已验证**：二分链里「摘 strictnessBar、保留双栏新布局」一测达到**全锚点健康
+（32/66/0）**——split 不再贡献任何理想（此前它至少占 594pt 回声）。`WorkspacePageLaunchSurvivalTests`
+（tasks 最小宽实跑）2308 条全量绿 = 改造的存活网。
+
+**残余病灶精确隔离（二分链全程实测）**：
+
+| 状态 | sideTop | detHead | botEdge |
+|---|---|---|---|
+| 健康参考（今天 / 摘 strictnessBar） | 32 | 51 / 66 | 0 |
+| filters 全量（含 strictnessBar） | 0 | 23 | 151 |
+| strictnessBar 内 Picker→单行占位文本 | 9 | 43 | 0 |
+| strictnessBar 内 Picker→pills 家族（本轮落地） | 0 | 19 | **115** |
+
+- `filters` 内其余成员（ViewThatFits 双行胶囊、搜索、说明文本）**全部排除**（摘
+  strictnessBar 即全正常）；「双计」假说排除（strictnessBar/filters 各仅一处引用）。
+- 分段 Picker 是**主源**：换成单行文本即从 151→0 底缘、位移消 2/3。
+- pills 化（本轮产品改动）：底缘 **151→115**（实测部分有效）、与 scopePills 视觉家族统一；
+  残余 ~11.5pt 幽灵理想在 strictnessBar 其余成分（保留标签/展开按钮/padding/
+  `fixedSize(vertical:)` 说明文本的组合）。
+- **6 秒延迟捕获复测同态**（0/…/116）= 稳定错理想，非慢收敛（排除「捕获抓在 settle 中途」）。
+
+**完成判据核对（诚实记录）**：锚点表 **32/49/1810/0 未达成**——现状 0/19/1867/115，
+较改前（0/23/1867/151）部分改善但未归位。选项 D 的点名目标（消灭 representable 接缝）
+**已达成并验证**；溢出的最终源头经二分落在 strictnessBar 的组合件上。
+
+**选项 G（下一刀，已定价）**：
+- **G1. 吃掉 strictnessBar 残余（推荐）**：按二分法对 bar 内剩余四件逐一摘测（说明文本的
+  `fixedSize(vertical:)` / 展开按钮 / 保留标签 / padding 组合），找到那 11.5pt 的幽灵理想
+  并断掉——**估 1–2h**（二分循环每刀 2 分钟，机制清楚后修复大概率一行）。
+- **G2. 止血钳（可与 G1 并行）**：选项 F 的 content 显式分高，chrome 永不被顶走——
+  估 1h，用户可见行为即刻正确，G1 落地后可留可撤。
+
+**§144 收口数字**：`swift build` 零警告；`swift build -c release` 零警告；全量
+`swift test` **2308 条 / 10 skip / 0 失败（exit 0）**。证据：`r24-tasks-{twopane,pills}.png`、
+`r22-nlg-tasks.png`（改前）对照 + 四态锚点表（上）。
+
+### §145 选项 G1 终局（emil 标准轮 20，2026-09-23）：幽灵理想正身 = `fixedSize(vertical:)`，四锚点全归位
+
+**根因（单变量归因闭合）**：`strictnessBar` 说明文本上的
+`Text(strictness.explanation).fixedSize(horizontal: false, vertical: true)`——
+这**一个修饰符**就是 §142 全部溢出的幽灵理想源。归因两刀：
+
+- B1：说明文本换占位（无 fixedSize）→ 全锚点健康（32/66/1809-1842/0）；
+- **B1b：恢复原文、仅去 `fixedSize`** → 同样全健康（同文归因 ✓ 内容无关，纯修饰符之过）。
+
+机制：`fixedSize(vertical: true)` 让文本的理想高度脱离提议自报，而 AppKit fitting 搜索
+（无约束宽）与渲染宽（404pt 三行）下它反复报不同高度——正是 §143 测到的 977 幽灵理想的
+制造者。文本本就按行数取全高，删掉它渲染语义零变化。原写法（如同文件 §534 注释警告过
+的形状）属历史残留。
+
+**终局锚点表（完成判据 32/49/1810/0 归位）**：
+
+| 帧 | sideTop | detHead | status | botEdge | leftEdge |
+|---|---|---|---|---|---|
+| 改前（r22-nlg-tasks） | 0 | 23 | 1756–1867 | 151 | 0 |
+| **判据页（r25-tasks-ghostfix）** | **32** | **66** | **1809–1842** | **0** | 0 |
+| 回归 今天（r25-today-regression） | 32 | 51 | 1750–1842 | 0 | 0 |
+| 回归 自动回复（r25-autopilot-regression） | 32 | 49 | 1809–1842 | 0 | 0 |
+
+（detHead 49/51/66 为各页页头自然位；status 1809–1842 与 1810–1842 同健康档；四缘全净。）
+
+**归因更正（§71 纪律）**：§144 把幽灵理想的 2/3 记在「分段 Picker」名下是**混杂变量误判**
+（摘 Picker 时顺带压缩了整条 row 的布局宽度，fixedSize 文本的折行态随之改变）；
+单变量重判后正身是 fixedSize。pills 化**保留**（与 scopePills 控件家族统一，注释已改为
+终局口径），Picker 归因句已改写不留错误机制。
+
+**六轮小史（一并收档）**：§142 发现病灶并定性（含「振荡」表述的后修正）→ §143 五次修复
+证伪 + 定价选项 → §144 选项 D 执行（HSplitView→纯 SwiftUI 双栏、representable 接缝消灭、
+pills 化）+ 二分隔离 → §145 选项 G1 一刀归因、判据归位。全程教训：**同一症状的多因混杂
+必须单变量归因**（六次「无效/部分有效」的修复里有五次是被混杂变量带偏的假线索）。
+
+**§145 收口数字**：`swift build` 零警告；`swift build -c release` 零警告；全量
+`swift test` **2308 条 / 10 skip / 0 失败（exit 0）**。证据：`r25-tasks-ghostfix.png`
+（判据页）+ `r25-{today,autopilot}-regression.png`（回归对照）+ 终局锚点表（上）。
+在案遗留仅剩：证据目录归档/清理（等用户定夺）。
+
+### §146 证据目录归档执行轮（2026-09-23）：零损归档已落、删除项待定夺
+
+**盘点（保守口径）**：目录 `2026-09-18-island-pixel/` 共 **732 张 / 255MB**。
+引用检测取保守口径（QA 文档 `docs/qa/*.md` 精确点名 + 花括号缩写 `{a,b}` 展开 +
+`前缀-*` 通配一律算引用，避免 §142「r22-nlg-{…} 11 张」这类缩写误伤）：
+
+- **保留 99 张 / 64MB**（QA 引用证据，含各轮对照帧）
+- **清理候选 633 张 / 191MB**（auto/auto2 双份帧、失败尝试帧、早期 h*/n*/set-* 系列）
+
+**已执行（零损、可逆）**：
+1. `2026-09-18-island-pixel/MANIFEST.md`——732 行全量清单（文件/大小/md5(12)/保留-候选），
+   任何未来清理都有据可依；
+2. 候选 633 张打包 `docs/qa/archives/2026-09-18-island-pixel-uncited-20260923.tar.gz`
+   （**161MB**，gzip 省 16%——PNG 本身已压缩，「压缩」杠杆有限，核心杠杆是删未引用），
+   已 gitignore（`docs/qa/archives/`）防入版本库；
+3. **归档完整性验证**：包内 633 张齐全；抽检解压 2/2 与原图 md5 逐字节一致
+   （该包是未来删除的唯一恢复源，必须先证明完好）。
+4. **原图 732 张全部原地保留**——目录未入 git（`git ls-files` 为 0），删除即永久丢失，
+   按边界规则未获确认不执行删除。
+
+**待定夺（已发选项、未获答复，未臆造偏好）**——删除这一步仅需你一句话：
+- **B（推荐）**：删 633 张候选原图（归档包已在 `docs/qa/archives/`，可随时解压恢复）
+  → 目录 255→64MB。执行命令即 `python3` 按 MANIFEST 的「候选」分类删图，或我下轮执行。
+- **A**：什么都不删（现状即归档态），255MB 维持。
+- **D**：删候选且连归档包不留（不可逆最重，释放 191MB+161MB）。
+
+**§146 收口数字**：归档包 161MB / 633 文件 / 抽检 2/2 完好；MANIFEST 732 行；
+产品代码零改动（本轮纯证据治理，无需重跑套件；上轮基线仍为全量 2308 条 / 0 失败 exit 0）。
+
+### §147 窄窗 × 大字号全页复检收官（emil 标准轮 21，2026-09-23）：17/17 过完、零新缺陷
+
+§142 的 11 页之外，本轮补齐其余 6 个工作台页（草稿 / 会话详情 / 今日小结 / 关系雷达 /
+待确认回复 / 洞察总览-全展开），**四锚点 + 三缘全绿**：
+
+| 页面 | sideTop | detHead | status | bot | left | right |
+|---|---|---|---|---|---|---|
+| 草稿 | 32 | 53 | 1809–1842 | 0 | 0 | 0 |
+| 会话详情 | 32 | 51 | 1809–1842 | 0 | 0 | 0 |
+| 今日小结 | 32 | 49 | 1809–1842 | 0 | 0 | 0 |
+| 关系雷达 | 32 | 49 | 1809–1842 | 0 | 0 | 0 |
+| 待确认回复 | 32 | 49 | 1809–1842 | 0 | 0 | 0 |
+| 洞察总览 | 32 | 51 | 1809–1842 | 0 | 0 | 0 |
+
+**全页复检正式收官**：17 页（今天 / 待办 / 草稿 / 会话详情 / 今日小结 / 关系雷达 /
+待确认回复 / 洞察总览 / 设置九分区）在 窄窗 760pt × 大字号（accessibility2）下
+**16 页原生健康、1 页（待办）病灶已于 §145 根修后归位**——本轮 6 页零新缺陷。
+
+复检方法即 §145 的战利品：四锚点表（侧栏顶 32 / 页头 49-66 / 状态条 1809-1842 / 底缘 0）
++ 三缘贴边扫描，幽灵理想类病灶（`fixedSize(vertical:)`、AppKit representable 内禀）
+一量即现。至此「大字号 × 窄窗」这个压力组合在全部页面验证完毕，方法与判据已沉淀为
+可复跑的量测口径。
+
+**§147 收口数字**：本轮纯取证（产品代码零改动），§145 基线仍有效（全量 2308 条 /
+0 失败 exit 0、release 零警告）。证据 `r27-nlg-{drafts,insight-detail,dailyReport,
+relationshipRadar,autopilotDashboard,overview}.png` 六张 + 上表。
+悬置项不变：证据目录删除结论（「按 B 删」/「按 D 彻底清」/「不删」）待用户一句话。
+
+### §148 深色 × 窄窗 × 大字号全页复检（emil 标准轮 22，2026-09-23）：17/17 几何全绿、零新缺陷
+
+17 页矩阵的浅色档（§142/§147）之外，补齐**深色档**同参数（760pt × accessibility2）。
+扫描器改「底色偏离法」（|luma − 角落底色| > 45/30）双主题通吃。**sideTop=32 全 17 页一致**
+——§145 根修的几何在深色下同样成立（几何与外观无关的预期被证实）。
+
+三处扫描差异逐一排伪，全部为**测量噪声 / 主题级 chrome**，非缺陷：
+1. `right=1` 全 17 页统一 —— 深色窗框 1px 发丝线（裁切必页面级，统一即 chrome）；
+2. `status` 起点 1784（浅色 1809）全页统一 —— 深色状态条上沿发丝线被墨迹法捕捉，
+   底端同样落在 1842 ✓；
+3. `detHead` 三页异常值（today 86 / tasks 114 / drafts 108，其余 48–51）——
+   **today 深浅两档页头墨迹轮廓逐行吻合**（54/66/84/90/102… 全同），差异纯属
+   「>2 采样/行」阈值对细笔画 AA 的敏感度（同款字浅色下落在阈上、深色落在阈下）。
+   排判方法沉淀：**同一区域深浅轮廓逐行对拍**，一行即判「布局异常 vs 测量噪声」。
+
+| 维度 | 结果 |
+|---|---|
+| 17 页 sideTop | 全部 32 ✓ |
+| 17 页 detHead | 48–51（+三页阈值噪声，轮廓对拍无异常）|
+| 17 页 status | 全部 1784–1842（主题发丝线 + 底端 1842 ✓）|
+| 三缘贴边 | bot=0 left=0 全页；right=1 全页统一=窗框线 |
+
+**深色档复检收官**：窄窗 × 大字号 × {浅色, 深色} × 17 页 = 34 帧矩阵全部健康
+（唯一病灶待办页已于 §145 根修、双外观归位）。方向留档：**深色档的对比度走查**
+（§130 类的次级文字 WCAG 复测）可作独立轮次——本轮判据是几何（锚点/贴边），
+对比度属另一判据面。
+
+**§148 收口数字**：纯取证轮（产品代码零改动），基线仍为 §145 全量 2308 条 / 0 失败
+exit 0、release 零警告。证据 `r28-nlgdark-*.png` 17 张 + 上表。悬置不变：
+证据目录删除结论待用户一句话（问选两开未获答复，不臆造、不自删）。
+
+### §149 深色档对比度走查（emil 标准轮 23，2026-09-23）：15 处抬升 + §87-4 角标删除
+
+**判据**：token → WCAG 解析表（精确非估计；`foregroundOpacity` 默认档原样返回 nominal，
+斜坡只在「提高对比度」下生效 ⇒ 深色默认档对比度=nominal 阶梯本身）：
+
+| nominal | 黑底对比度 | 判定（小字 4.5 / 大字 3.0） |
+|---|---|---|
+| 0.30 | 2.46:1 | ✗✗ 不及大字线 |
+| 0.35 | 3.01:1 | △ 仅大字 |
+| 0.40 | 3.66:1 | △ 仅大字 |
+| 0.42 | 3.95:1 | △ 仅大字（IslandInk.tertiary 档，政策认可的「时间戳/提示」档） |
+| 0.45 | 4.41:1 | △ 仅大字（擦边） |
+| 0.50 | **5.28:1** | ✓ 小字达标 |
+| 0.55 | **6.27:1** | ✓（IslandInk.meta「用户仍需读的事实」档） |
+
+**修复（15 处，按 §89 政策「散文字 ≥secondary、tertiary 只给 affordance」重新分层）**：
+- `0.30 → 0.55`（2.46:1 全场最差）：AI 建议理由（可读正文）、引导句「点击生成建议…」；
+- `0.35 → 0.55`：空态句「这段对话暂时没有本地消息。」；
+- `0.35 → 0.5`：输入占位「输入回复…」、composer 状态详情句；
+- `0.40 → 0.5`：「正在生成…」状态词、建议语气标签；
+- `0.42 → 0.5`：发信人名/对话名（身份信息）、亮点正文、metaRow 标签列、指标标签；
+- `0.45 → 0.5`：进度句「N / M 个对话」、发信人 sender 行；
+- `0.35 → 0.42`：亮点时间戳（归一到 sanctioned tertiary 档，不再低于它）。
+- **§87-4 闭环**：回顾窗右上角灰字「WeChatHUD」**删除**（与窗口标题重复 + 3.0:1），
+  该条自 §87 挂账至今清零。像素实证：`r29-retro-no-cornermark.png` 右上角亮像素 **0**。
+
+**报告档（不改动、留档）**：0.42 时间戳类（todoMeta 等）= 3.95:1——小字严格
+WCAG AA（4.5）擦不过，但这是 §89 立档认可的「时间戳/提示」tier；全面抬升属色彩
+体系决策，不在本轮顺手改。同理 IslandInk.quaternary(0.26) 只用于装饰/禁用件（合规）。
+
+**证据**：`r29-island-detail-contrast.png`（岛详情，修复文本群所在面）、
+`r29-retro-no-cornermark.png`（角标删除实证）。渲染核对：≥6:1 桶 31/38 行、
+3–4.5 桶对应时间戳档，与解析表自洽；地板值 1.2:1 行为卡片表面/分隔线的探测器假阳。
+
+**§149 收口数字**：`swift build` 零警告；`swift build -c release` 零警告；全量
+`swift test` **2308 条 / 10 skip / 0 失败（exit 0）**。悬置不变：证据目录删除结论
+待用户一句话（按 B / 按 D / 不删）。
+
+### §150 归档清理执行轮（2026-09-23）：可逆部分已执行、删除决定仍待一句话
+
+**执行口径**：「归档清理」的可逆部分 = **纯移动、零删除**（移动 ≠ 删除，不触
+「删除不自主执行」红线）。按 MANIFEST 分类把 QA 未引用候选移入归档区：
+
+| 区 | 内容 | 体积 |
+|---|---|---|
+| 主目录 `2026-09-18-island-pixel/` | **196 张 QA 引用证据 + MANIFEST.md** | 105MB |
+| `archives/2026-09-18-island-pixel-uncited/` | **561 张候选**（原图原字节） | ~191MB |
+| `archives/…uncited-20260923.tar.gz` | 移动前快照（633 张旧口径，含 72 张后被引用者） | 161MB |
+
+**对账（757 = 196 + 561，逐张闭合）**：总数 757 = §146 时的 732 + 后续轮新增 25
+（r27×6 / r28×17 / r29×2）；保留数 99→196 的增长 = §147–§149 新增小节**点名引用**
+了新帧与旧对照帧（引用即保护，保守口径宁多勿动）。首轮移动漏 1 张
+（`z-tasks-workspace-auto2.png`），复算分类揪出补移后逐张闭合、0 缺失 0 同名。
+
+**待定夺（不可逆、唯一剩余决定）**：归档区 561 张与冗余快照包是否删除——
+「按 B 删」（删 561 张松散候选，快照包可恢复；归档区→0）/「按 D 彻底清」
+（再删 161MB 快照包，不可逆）/「不删」（全保留）。注意快照包与松散文件**内容完全重复**
+（同批候选、移动前快照），其去留可独立于 B/D 单独定。
+
+**§150 收口数字**：纯文件治理轮（产品代码零改动，§149 基线仍有效：全量 2308 条 /
+0 失败 exit 0、release 零警告）。MANIFEST 已重写为终态（757 行全量台账）。
+
+### §151 方案 B 执行轮（2026-09-23）：候选已删、悬置项闭环
+
+用户定夺：「按你推荐处理」→ 推荐方案 = **B（删候选、快照包双保险）**。
+
+**删除前可恢复性证明（逐名核对）**：561 张待删 ⊆ 快照包 633 张，**缺失 0**——
+快照包（`archives/…uncited-20260923.tar.gz`，161MB）为唯一恢复源，完整性此前已
+抽检 2/2 逐字节一致（§146）。证明通过后执行删除。
+
+**执行与对账**：
+- 561 张候选原图已删、归档区目录已移除；
+- 主目录终态：**196 张 QA 引用证据 + MANIFEST**（105MB）= 恢复索引（在册 md5 全量）；
+- 恢复方法一行：`tar xzf docs/qa/archives/2026-09-18-island-pixel-uncited-20260923.tar.gz`。
+
+**执行坑记（while-read 末行）**：首轮删除 `while read` 循环漏掉无尾换行文件的最后一行
+——排序末位的 `z-tasks-workspace-auto2.png` 幸存，终态对账（1 ≠ 0）当场揪出；补删前
+先按名复核其在快照包内（匹配 1）再删。教训：**while-read 删清单必先补尾换行或事后
+按账对数**，「删除完成」必须以对账为准而非循环跑完。
+
+**悬置项闭环**：全会话唯一挂账项（证据目录处置）至此清零。磁盘终态：
+主目录 105MB + 快照包 161MB（B 方案即保留恢复源；若日后要极致瘦身，删快照包
+即 D 方案——不可逆，另议）。
+
+**§151 收口数字**：纯文件治理轮（产品代码零改动，基线仍为 §149：全量 2308 条 /
+0 失败 exit 0、release 零警告）。

@@ -45,7 +45,7 @@ struct ContactsSettingsView: View {
         Button("返回关注列表") { withMotion(CompanionMotion.pageChange()) { selectedSubTab = .contacts } }
             .buttonStyle(CompanionPressStyle())
             .foregroundStyle(CompanionPalette.jadeInk)
-            .font(.system(size: 13, weight: .medium))
+            .companionFont(size: 13, weight: .medium)
     }
 }
 
@@ -129,7 +129,7 @@ private struct ContactsListSubView: View {
                 TextField("搜索联系人或群聊", text: $searchText)
                     .accessibilityLabel("搜索联系人")
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .frame(minWidth: 180, idealWidth: 260, maxWidth: 320)
 
                 Spacer()
@@ -158,7 +158,7 @@ private struct ContactsListSubView: View {
             if let error = operationError, pendingDeleteContact == nil {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(error)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.orange)
                     Spacer(minLength: 8)
                     Button("知道了") { self.operationError = nil }
@@ -259,12 +259,12 @@ private struct ContactsListSubView: View {
                 CompanionDialog(title: "确认删除联系人？", onClose: { if !isDeletingContact { pendingDeleteContact = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("会忘掉助手对这个人的关注和整理结果。微信里的聊天记录不会被删。")
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let operationError {
                             Text(operationError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -327,7 +327,7 @@ private struct ContactsListSubView: View {
             Text(status.label)
                 .monospacedDigit()
         }
-        .font(.system(size: 10, weight: .medium))
+        .companionFont(size: 10, weight: .medium)
         .foregroundColor(status.isRunning ? .blue : .secondary)
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
@@ -342,7 +342,7 @@ private struct ContactsListSubView: View {
         let available = addCandidates()
         return VStack(alignment: .leading, spacing: 12) {
             Text("只开始整理选中的对话")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             TextField("搜索联系人或群聊", text: $addSearchText)
                 .textFieldStyle(.roundedBorder)
@@ -355,18 +355,18 @@ private struct ContactsListSubView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("正在读取微信联系人…")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
             } else if available.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(addSearchText.isEmpty ? "没有可添加的对话。已关注的不会出现在这里。" : "没有匹配的对话。换个名字试试。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                     if let candidateLoadError, addSearchText.isEmpty {
                         Text(candidateLoadError)
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                             .transition(.companionStatusReveal)
@@ -398,9 +398,9 @@ private struct ContactsListSubView: View {
                             HStack(spacing: 10) {
                                 CompanionAvatar(name: contact.displayName, size: 28)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(contact.displayName).font(.system(size: 13, weight: .medium))
+                                    Text(contact.displayName).companionFont(size: 13, weight: .medium)
                                     Text(contact.isGroup ? "群聊" : "私聊")
-                                        .font(.system(size: 11))
+                                        .companionFont(size: 11)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
@@ -417,7 +417,7 @@ private struct ContactsListSubView: View {
             }
             HStack {
                 Text("已选 \(selectedAddUsernames.count) 个")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("取消") { showAddPopover = false }
@@ -545,8 +545,8 @@ private struct ContactsListSubView: View {
             } header: {
                 HStack(spacing: 5) {
                     Circle().fill(color).frame(width: 7, height: 7)
-                    Text(title).font(.system(size: 11, weight: .semibold))
-                    Text("(\(items.count))").font(.system(size: 10)).foregroundColor(.secondary)
+                    Text(title).companionFont(size: 11, weight: .semibold)
+                    Text("(\(items.count))").companionFont(size: 10).foregroundColor(.secondary)
                 }
             }
         }
@@ -557,36 +557,36 @@ private struct ContactsListSubView: View {
         return Button { selectedContactID = contact.username } label: {
             HStack(spacing: 8) {
                 Image(systemName: contactRoleSymbol(contact.role))
-                    .font(.system(size: 13, weight: .medium))
+                    .companionFont(size: 13, weight: .medium)
                     .foregroundStyle(color)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(contact.displayName).font(.system(size: 13)).foregroundColor(.primary)
+                    Text(contact.displayName).companionFont(size: 13).foregroundColor(.primary)
                     if !contact.roleNote.isEmpty {
-                        Text(contact.roleNote).font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                        Text(contact.roleNote).companionFont(size: 11).foregroundColor(.secondary).lineLimit(1)
                     }
                 }
                 Spacer()
                 Text(contact.role.label)
-                    .font(.system(size: 11, weight: .medium)).foregroundColor(color)
+                    .companionFont(size: 11, weight: .medium).foregroundColor(color)
                     .padding(.horizontal, 5).padding(.vertical, 2)
                     .background(color.opacity(0.12)).cornerRadius(3)
                 if contact.replyWindowMinutes > 0 {
-                    // Was "120m": an English unit, and a bare number that never
-                    // said 120 minutes of *what*. The detail pane below calls the
-                    // same value 分钟没回算超时.
-                    Text("\(contact.replyWindowMinutes) 分钟")
-                        .font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
+                    // Was "120m", then a bare "120 分钟" whose only explanation
+                    // lived in hover/AX — a scanning reader still takes it for
+                    // time already waited. The threshold words ride along.
+                    Text("\(contact.replyWindowMinutes) 分钟算超时")
+                        .companionFont(size: 11, design: .monospaced).foregroundColor(.secondary)
                         .help("超过 \(contact.replyWindowMinutes) 分钟没回，这条就标成超时")
                         .accessibilityLabel("\(contact.replyWindowMinutes) 分钟没回算超时")
                 }
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .companionFont(size: 11, weight: .semibold)
                         .foregroundStyle(CompanionPalette.accent)
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundColor(Color(nsColor: .tertiaryLabelColor))
             }
             .padding(.horizontal, 6)
@@ -720,7 +720,7 @@ private struct ContactInspectorView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: contactRoleSymbol(contact.role))
-                    .font(.system(size: WorkspaceType.title))
+                    .companionFont(size: WorkspaceType.title)
                     .foregroundStyle(contactLevelColor(contact.attentionLevel))
                     .frame(width: 36, height: 36)
                     .background(contactLevelColor(contact.attentionLevel).opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -735,17 +735,23 @@ private struct ContactInspectorView: View {
 
             if !contact.roleNote.isEmpty {
                 Text(contact.roleNote)
-                    .font(.system(size: 13))
+                    .companionFont(size: 13)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
             }
 
-            DisclosureGroup("账号信息") {
+            DisclosureGroup {
                 // 类型 lives in 这个对话 below; stating it here too put the
                 // same fact twice in one panel.
                 infoRow("微信 ID", value: contact.username)
+            } label: {
+                // The stock label is its glyph height (15pt) — under the 24pt
+                // hit floor measured by the HIG audit.
+                Text("账号信息")
+                    .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .font(.system(size: 12, weight: .medium))
+            .companionFont(size: 12, weight: .medium)
         }
     }
 
@@ -793,7 +799,7 @@ private struct ContactInspectorView: View {
                 infoRow("口吻", value: profile.tonePreference.label)
                 if let context = profile.context, !context.isEmpty {
                     Text(context)
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -801,17 +807,17 @@ private struct ContactInspectorView: View {
                     ProgressView(value: profile.confidence)
                         .frame(width: 90)
                     Text("\(Int(profile.confidence * 100))%")
-                        .font(.system(size: 11, design: .monospaced))
+                        .companionFont(size: 11, design: .monospaced)
                         .foregroundColor(.secondary)
                     if profile.userEdited {
                         Text("已人工校准")
-                            .font(.system(size: 10, weight: .medium))
+                            .companionFont(size: 10, weight: .medium)
                             .foregroundColor(.green)
                     }
                 }
             } else {
                 Text("还不知道这个人是谁。点右边的「重新整理」，会在后台进行，不影响你继续用。")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -847,18 +853,18 @@ private struct ContactInspectorView: View {
 
     private func sectionTitle(_ title: String, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
-            .font(.system(size: 12, weight: .semibold))
+            .companionFont(size: 12, weight: .semibold)
             .foregroundColor(.primary)
     }
 
     private func infoRow(_ label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundColor(.secondary)
-                .frame(width: 58, alignment: .leading)
+                .companionScaledWidth(58, alignment: .leading)
             Text(value)
-                .font(.system(size: 12, weight: .medium))
+                .companionFont(size: 12, weight: .medium)
                 .foregroundColor(.primary)
                 .lineLimit(2)
             Spacer(minLength: 0)
@@ -867,7 +873,7 @@ private struct ContactInspectorView: View {
 
     private func levelBadge(_ level: AttentionLevel) -> some View {
         Text(attentionLevelTitle(level))
-            .font(.system(size: 10, weight: .semibold))
+            .companionFont(size: 10, weight: .semibold)
             .foregroundColor(contactLevelColor(level))
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
@@ -898,13 +904,23 @@ private struct BlockRulesSubView: View {
     @Binding var organizeTab: ContactsSettingsView.SubTab
 
     @State private var ignoredSenders: [IgnoredSenderRule] = []
+    /// A failed read is not an empty list — see AdmissionSettingsView.
+    @State private var unreadable = false
     @State private var didLoad = false
     @State private var busyRestoreKey: String?
     @State private var restoreError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if ignoredSenders.isEmpty {
+            if unreadable {
+                VStack(spacing: 10) {
+                    emptyState(icon: "exclamationmark.triangle", text: "没能读到忽略名单——不代表它是空的。", hint: "名单还在磁盘上，只是这次没读出来。")
+                    Button("重新读取") { reload() }
+                        .buttonStyle(CompanionPressStyle())
+                        .foregroundStyle(CompanionPalette.jadeInk)
+                        .accessibilityLabel("重新读取忽略名单")
+                }
+            } else if ignoredSenders.isEmpty {
                 VStack(spacing: 10) {
                     emptyState(icon: "person.slash", text: "没有忽略的发送人", hint: "按人全局设置在「什么会提醒我」，按对话则在消息上右键。")
                     Button("什么会提醒我") {
@@ -916,10 +932,10 @@ private struct BlockRulesSubView: View {
                 }
             } else {
                 Text("被忽略的发送人不计入未读统计。要按人全局设置，用「什么会提醒我」。")
-                    .font(.system(size: 11)).foregroundColor(.secondary)
+                    .companionFont(size: 11).foregroundColor(.secondary)
                 if let restoreError {
                     Label(restoreError, systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                         .transition(.companionStatusReveal)
@@ -968,7 +984,14 @@ private struct BlockRulesSubView: View {
         .onAppear { if !didLoad { reload(); didLoad = true } }
     }
 
-    private func reload() { ignoredSenders = store.loadIgnoredSenders() }
+    private func reload() {
+        if let rules = store.ignoredSendersRead() {
+            ignoredSenders = rules
+            unreadable = false
+        } else {
+            unreadable = true
+        }
+    }
 }
 
 // MARK: - Silenced Chats
@@ -998,10 +1021,10 @@ private struct SilencedChatsSubView: View {
                     // conversation reaching the assistant and withdraws a draft that
                     // was already queued, which is the part worth saying out loud.
                     Text("已静音的对话不会出现在收件箱、不会弹提醒，助手也不会替你回复它。")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                        .companionFont(size: 11).foregroundColor(.secondary)
                     if let unmuteError {
                         Label(unmuteError, systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
                             .transition(.companionStatusReveal)
@@ -1045,7 +1068,7 @@ private struct SilencedChatsSubView: View {
                 // hatch that refusal names was taken away by the same failed read.
                 Label("暂时读不到静音名单：这里既不能说没人被静音，也拿不出「取消静音」。稍后再打开这一页看一次。",
                       systemImage: "exclamationmark.triangle")
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("重新读取") { monitor.refreshNow() }
@@ -1061,7 +1084,7 @@ private struct SilencedChatsSubView: View {
 private func emptyState(icon: String, text: String, hint: String) -> some View {
     VStack(spacing: 6) {
         Image(systemName: icon)
-            .font(.system(size: WorkspaceType.title))
+            .companionFont(size: WorkspaceType.title)
             .foregroundColor(.secondary.opacity(0.3))
         Text(text)
             .workspaceBody()
@@ -1124,12 +1147,12 @@ struct ContactEditSheet: View {
             HStack {
                 HStack(spacing: 8) {
                     Image(systemName: contactRoleSymbol(contact.role))
-                        .font(.system(size: WorkspaceType.title, weight: .medium))
+                        .companionFont(size: WorkspaceType.title, weight: .medium)
                         .foregroundStyle(contactLevelColor(contact.attentionLevel))
                         .frame(width: 28, height: 28)
                         .background(contactLevelColor(contact.attentionLevel).opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(contact.displayName).font(.system(size: 14, weight: .semibold))
+                        Text(contact.displayName).companionFont(size: 14, weight: .semibold)
                     }
                 }
                 Spacer()
@@ -1157,7 +1180,7 @@ struct ContactEditSheet: View {
 
             if let saveError {
                 Text(saveError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal)
@@ -1172,9 +1195,13 @@ struct ContactEditSheet: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    DisclosureGroup("账号信息") {
+                    DisclosureGroup {
                         LabeledContent("微信 ID", value: contact.username)
                         LabeledContent("类型", value: ContactWhitelistTracking.typeLabel(store: store, username: contact.username))
+                    } label: {
+                        Text("账号信息")
+                            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                 }
 
@@ -1207,9 +1234,9 @@ struct ContactEditSheet: View {
                     // counting as 超时, which is what raises its priority.
                     Stepper("多久算超时", value: $replyWindow, in: 0...480, step: 15)
                     Text("\(replyWindow) 分钟")
-                        .font(.system(size: 12, design: .monospaced))
+                        .companionFont(size: 12, design: .monospaced)
                         .foregroundColor(.secondary)
-                        .frame(width: 60, alignment: .trailing)
+                        .companionScaledWidth(60, alignment: .trailing)
                 }
                 Text("超过这个时长还没回，这条就标成超时、排得更靠前。0 = 用默认时长。")
                     .font(.caption).foregroundColor(.secondary)
@@ -1242,7 +1269,7 @@ struct ContactEditSheet: View {
                             ProgressView(value: profile.confidence)
                                 .frame(maxWidth: 80)
                             Text("\(Int(profile.confidence * 100))%")
-                                .font(.system(size: 11, design: .monospaced))
+                                .companionFont(size: 11, design: .monospaced)
                                 .foregroundColor(.secondary)
                             Spacer()
                             Button(isInferring ? "正在推断…" : "重新推断") { runInference() }

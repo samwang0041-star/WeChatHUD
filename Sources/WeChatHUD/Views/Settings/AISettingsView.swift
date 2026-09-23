@@ -39,7 +39,7 @@ struct ModelPicker: View {
                             .frame(width: 14, height: 14)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
@@ -53,7 +53,7 @@ struct ModelPicker: View {
                 if !models.isEmpty {
                     Button { withMotion(CompanionMotion.drawer()) { isExpanded.toggle() } } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             // Measured at 10×6pt — the smallest target in the
                             // app, on the control that reveals the model list.
                             // A chevron is a full-size button with a small
@@ -86,7 +86,7 @@ struct ModelPicker: View {
                                 withMotion(nil) { isExpanded = false }
                             } label: {
                                 Text(m)
-                                    .font(.system(size: 13))
+                                    .companionFont(size: 13)
                                     .foregroundColor(.primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.vertical, 2)
@@ -218,7 +218,7 @@ struct ProviderCard: View {
                     }
                 }
             } else {
-                DisclosureGroup("高级连接设置", isExpanded: $advancedConnectionExpanded) {
+                DisclosureGroup(isExpanded: $advancedConnectionExpanded, content: {
                     SettingsRowDivider()
                     SettingsRow("服务地址") {
                         VStack(alignment: .leading, spacing: 5) {
@@ -231,14 +231,16 @@ struct ProviderCard: View {
                             .frame(maxWidth: 220)
                             if usesUnencryptedRemoteHTTP {
                                 Text("此连接未加密，请确认网络可信或改用安全连接")
-                                    .font(.system(size: 11))
+                                    .companionFont(size: 11)
                                     .foregroundColor(.orange)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
-                }
-                .font(.system(size: 12, weight: .medium))
+                }, label: {
+                    Text("高级连接设置").companionDisclosureLabel()
+                })
+                .companionFont(size: 12, weight: .medium)
                 .tint(CompanionPalette.accent)
             }
 
@@ -268,7 +270,7 @@ struct ProviderCard: View {
 
             if let signupOpenError {
                 Text(signupOpenError)
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 14)
                     .transition(.companionStatusReveal)
@@ -276,7 +278,7 @@ struct ProviderCard: View {
 
            if providerID == "openai-codex" {
                 Text("使用这台 Mac 上 Codex 的登录状态。连接测试会向 ChatGPT 发送一条测试请求，不包含聊天记录。")
-                    .font(.system(size: 12)).foregroundColor(.secondary)
+                    .companionFont(size: 12).foregroundColor(.secondary)
                     .padding(14)
             }
 
@@ -297,14 +299,14 @@ struct ProviderCard: View {
                 if testVerdict == .failed {
                     VStack(alignment: .leading, spacing: 8) {
                         Label("连接没有通过", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                            .companionFont(size: 13, weight: .semibold)
                             .foregroundStyle(.orange)
                         CompanionCopyableText(text: testResult, lineLimit: nil)
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundColor(.primary)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("配置仍保留。原文和已整理的事项还能用。请核对服务地址、模型和访问凭据，再重新测试。")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -314,7 +316,7 @@ struct ProviderCard: View {
                     .padding(14)
                 } else {
                     CompanionCopyableText(text: testResult, lineLimit: nil)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
@@ -352,10 +354,10 @@ struct ProviderCard: View {
                 if isTesting {
                     HStack(spacing: 4) {
                         ProgressView().scaleEffect(0.5).frame(width: 12, height: 12)
-                        Text("正在测试…").font(.system(size: 12))
+                        Text("正在测试…").companionFont(size: 12)
                     }
                 } else {
-                    Text("测试连接").font(.system(size: 12))
+                    Text("测试连接").companionFont(size: 12)
                 }
             }
             .buttonStyle(.bordered).controlSize(.mini)
@@ -524,7 +526,7 @@ struct AISettingsView: View {
     private var serviceStatusCard: some View {
         HStack(alignment: .top, spacing: 16) {
             Image(systemName: "sparkles")
-                .font(.system(size: WorkspaceType.title, weight: .semibold))
+                .companionFont(size: WorkspaceType.title, weight: .semibold)
                 .foregroundStyle(CompanionPalette.accent)
                 .frame(width: 30, height: 30)
 
@@ -543,7 +545,7 @@ struct AISettingsView: View {
                 // 「打开后」 pointed at a switch that is not on this page — the
                 // on/off toggles live under AI 分析与建议.
                 Text("改完会自动保存。相关聊天会发给这个服务来写摘要和草稿。先点测试，确认能用。")
-                    .font(.system(size: 12))
+                    .companionFont(size: 12)
                     .foregroundStyle(.secondary)
             }
 
@@ -585,7 +587,7 @@ struct AISettingsView: View {
                             .controlSize(.small)
                     }
                     Text("填好服务和模型后，消息摘要和回复建议就会开始工作。测试连接用来确认还能不能用。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -598,30 +600,30 @@ struct AISettingsView: View {
     private var originalExampleCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("你始终可以查看原文")
-                .font(.system(size: 15, weight: .semibold))
+                .companionFont(size: 15, weight: .semibold)
             Text("AI 只整理，不代替聊天。每个关键决定都留着原文入口。")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
-                Text("示例").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Text("示例").companionFont(size: 11, weight: .semibold).foregroundStyle(.secondary)
                 HStack(alignment: .top, spacing: 8) {
                     Text("原文")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.secondary)
-                        .frame(width: 52, alignment: .leading)
+                        .companionScaledWidth(52, alignment: .leading)
                     Text("明天中午前发我修改稿吧。")
-                        .font(.system(size: 13))
+                        .companionFont(size: 13)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(CompanionPalette.secondarySurface, in: RoundedRectangle(cornerRadius: 8))
                 }
                 HStack(alignment: .top, spacing: 8) {
                     Text("AI 提炼")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(CompanionPalette.jadeInk)
-                        .frame(width: 52, alignment: .leading)
+                        .companionScaledWidth(52, alignment: .leading)
                     Text("明天 12:00 前提交修改稿")
-                        .font(.system(size: 13))
+                        .companionFont(size: 13)
                         .foregroundStyle(CompanionPalette.jadeInk)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -661,12 +663,12 @@ struct AISettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 220)
+                .companionScaledWidth(220)
                 .accessibilityLabel("AI 服务来源")
             }
             SettingsRowDivider()
             Text("选择预设供应商（DeepSeek、Kimi、智谱等），或填入自定义服务。")
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
@@ -699,8 +701,8 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("回复最长写多少")
                         Text(String(Int(maxTokens)))
-                            .font(.system(size: 12, design: .monospaced))
-                            .frame(width: 42, alignment: .trailing)
+                            .companionFont(size: 12, design: .monospaced)
+                            .companionScaledWidth(42, alignment: .trailing)
                     }
                 }
                 SettingsRowDivider()
@@ -710,8 +712,8 @@ struct AISettingsView: View {
                             .frame(width: 120)
                             .accessibilityLabel("写得更随意一些")
                         Text(String(format: "%.1f", temperature))
-                            .font(.system(size: 12, design: .monospaced))
-                            .frame(width: 28, alignment: .trailing)
+                            .companionFont(size: 12, design: .monospaced)
+                            .companionScaledWidth(28, alignment: .trailing)
                     }
                 }
                 Text("这两项是默认值，只有没被单独设定的任务才用到。摘要和草稿各有固定写法，不受这里影响；用 ChatGPT 登录时两项也不生效。")
@@ -722,8 +724,9 @@ struct AISettingsView: View {
             }
         } label: {
             Label("写作习惯", systemImage: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(.primary)
+                .companionDisclosureLabel()
         }
         .tint(CompanionPalette.accent)
         .companionSurface(padding: 16)
@@ -777,7 +780,7 @@ struct AISettingsView: View {
                 // "没有单独开关" described the interface instead of the
                 // behaviour; the missing control is already obvious.
                 SettingsRow("整理待办", subtitle: "有可用的 AI 服务时自动从聊天里找待办；未设 AI 时仍可看原文。") {
-                    Text("随 AI 服务").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("随 AI 服务").companionFont(size: 12).foregroundStyle(.secondary)
                 }
             }
             originalExampleCard
@@ -799,14 +802,15 @@ struct AISettingsView: View {
                 Text("访问凭据仅保存在本机私有设置中，不会显示在界面或测试结果里。")
                 Text("预设与自定义服务多为远程服务，请确认你信任其数据处理方式。")
             }
-            .font(.system(size: 12))
+            .companionFont(size: 12)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 10)
         } label: {
             Label("数据与隐私", systemImage: "lock.shield")
-                .font(.system(size: 13, weight: .medium))
+                .companionFont(size: 13, weight: .medium)
                 .foregroundStyle(.primary)
+                .companionDisclosureLabel()
         }
         .tint(CompanionPalette.accent)
         .companionSurface(padding: 16)
@@ -818,10 +822,10 @@ struct AISettingsView: View {
                 .foregroundStyle(saveError.isEmpty ? CompanionPalette.accent : .red)
             VStack(alignment: .leading, spacing: 3) {
                 Text(serviceSaveStatusText)
-                    .font(.system(size: 12, weight: .medium))
+                    .companionFont(size: 12, weight: .medium)
                 if !saveError.isEmpty {
                     Text(saveError)
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.red)
                         .transition(.companionStatusReveal)
                 }

@@ -658,7 +658,7 @@ struct CompanionGlowButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: compact ? 12 : 13, weight: .semibold))
+            .companionFont(size: compact ? 12 : 13, weight: .semibold)
             .foregroundStyle(.white)
             .padding(.horizontal, compact ? 12 : 14)
             .padding(.vertical, compact ? 6 : 7)
@@ -810,7 +810,7 @@ struct CompanionModuleTile: View {
 
     var body: some View {
         Image(systemName: systemImage)
-            .font(.system(size: size * 0.46, weight: selected ? .semibold : .medium))
+            .companionFont(size: size * 0.46, weight: selected ? .semibold : .medium)
             .foregroundStyle(selected || hovered ? tint : Color.secondary)
             .frame(width: size, height: size)
             .background {
@@ -818,5 +818,47 @@ struct CompanionModuleTile: View {
                 shape.fill(tint.opacity(selected ? 0.16 : (hovered ? 0.10 : 0.06)))
             }
             .accessibilityHidden(true)
+    }
+}
+
+/// Where scrolling content meets fixed chrome (page header, composer,
+/// status bar).
+///
+/// Apple's scroll-edge rule: content guillotined by a hairline under a fixed
+/// header reads as the content *ending*. A short wash of the host ground lets
+/// it fade into the chrome instead, so the eye reads "there is more
+/// underneath" even though the cut is unchanged. The wash is the host's own
+/// ground colour — no new colour enters the palette — and the matching
+/// content margin keeps a page that fits in one screen from washing its own
+/// first and last rows.
+enum CompanionScrollEdge {
+    /// 8pt: enough to soften the cut, short enough that a dense row passing
+    /// through it is recognisable the whole way.
+    static let fadeHeight: CGFloat = 8
+}
+
+extension View {
+    /// Softens the top and bottom cuts of a scrolling surface with the host
+    /// ground. Static — no animation, no hit testing, hidden from AX.
+    func companionScrollEdgeFade(_ ground: Color) -> some View {
+        contentMargins(.vertical, CompanionScrollEdge.fadeHeight, for: .scrollContent)
+            .overlay(alignment: .top) {
+                LinearGradient(
+                    colors: [ground, ground.opacity(0)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: CompanionScrollEdge.fadeHeight)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+            .overlay(alignment: .bottom) {
+                LinearGradient(
+                    colors: [ground.opacity(0), ground],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: CompanionScrollEdge.fadeHeight)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
     }
 }

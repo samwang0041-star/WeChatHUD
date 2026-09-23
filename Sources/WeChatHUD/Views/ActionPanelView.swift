@@ -284,7 +284,7 @@ struct ActionPanelView: View {
             Text(label)
                 .islandMicro()
                 .foregroundColor(IslandInk.tertiary)
-                .frame(width: 28, alignment: .leading)
+                .companionScaledWidth(28, alignment: .leading)
             Text(text)
                 .islandRowBody()
                 .foregroundColor(IslandInk.secondary)

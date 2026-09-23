@@ -151,4 +151,28 @@ final class IslandTypeScaleTests: XCTestCase {
             "the detail surface scales through companionFont; a drop here means the wiring was replaced by something else"
         )
     }
+
+    /// Page body text — not just the island badge — grows with Dynamic Type.
+    /// §86 task #10 found a whole page rendering byte-identical at 文字大小=更大
+    /// because its `.font(.system(size:))` runs never scale; equal boxes here
+    /// would mean the app-wide conversion to `companionFont` had regressed.
+    func testConvertedBodyTextGrowsWithTheTypeScale() throws {
+        func sample(at size: DynamicTypeSize) -> some View {
+            Text("字号测试")
+                .companionFont(size: WorkspaceType.body)
+                .foregroundColor(.white)
+                .fixedSize()
+                .environment(\.dynamicTypeSize, size)
+        }
+        let small = try inkBox(sample(at: .large))
+        let large = try inkBox(sample(at: .accessibility2))
+        XCTAssertGreaterThan(
+            large.height, small.height * 1.35,
+            "body text did not grow with the type scale (12pt → accessibility2 is ×1.48)"
+        )
+        XCTAssertGreaterThan(
+            large.width, small.width * 1.35,
+            "body text did not grow with the type scale"
+        )
+    }
 }

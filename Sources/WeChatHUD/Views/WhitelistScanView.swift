@@ -79,10 +79,10 @@ struct WhitelistScanView: View {
                         if isScanning {
                             ProgressView().controlSize(.small).scaleEffect(0.8)
                         } else {
-                            Image(systemName: "sparkles").font(.system(size: 12))
+                            Image(systemName: "sparkles").companionFont(size: 12)
                         }
                         Text(isScanning ? "停止扫描" : "开始扫描")
-                            .font(.system(size: 12, weight: .medium))
+                            .companionFont(size: 12, weight: .medium)
                     }
                 }
                 .tint(CompanionPalette.accent)
@@ -93,7 +93,7 @@ struct WhitelistScanView: View {
 
                 if !pendingResults.isEmpty {
                     Text("\(pendingResults.count) 条待处理")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                        .companionFont(size: 11).foregroundColor(.secondary)
                     Button {
                         commit(.acceptAll) { acceptAll() }
                     } label: {
@@ -119,7 +119,7 @@ struct WhitelistScanView: View {
 
             if let statusMessage {
                 Text(statusMessage)
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundColor(statusIsError ? .red : .secondary)
                     .padding(.bottom, 8)
                     .transition(.companionStatusReveal)
@@ -130,10 +130,10 @@ struct WhitelistScanView: View {
                     ProgressView(value: Double(scanProgress.completed), total: Double(max(scanProgress.total, 1)))
                         .frame(maxWidth: 180)
                     Text("正在读取会话 \(scanProgress.completed)/\(scanProgress.total)")
-                        .font(.system(size: 11)).foregroundColor(.secondary)
+                        .companionFont(size: 11).foregroundColor(.secondary)
                     if scanProgress.failed > 0 {
                         Text("不可读 \(scanProgress.failed)")
-                            .font(.system(size: 11)).foregroundColor(.orange)
+                            .companionFont(size: 11).foregroundColor(.orange)
                     }
                 }
                 .padding(.bottom, 8)
@@ -144,7 +144,7 @@ struct WhitelistScanView: View {
                 VStack(alignment: .leading, spacing: 16) {
                    if !results.isEmpty && pendingResults.isEmpty && !isScanning {
                        Label("扫描完成，没有新的建议", systemImage: "checkmark.circle")
-                           .font(.system(size: 12)).foregroundColor(.secondary)
+                           .companionFont(size: 12).foregroundColor(.secondary)
                    }
 
                     if results.isEmpty && groupedResults.isEmpty && !isScanning && dismissed.isEmpty {
@@ -152,7 +152,7 @@ struct WhitelistScanView: View {
                             Text(didCompleteScan
                                  ? "这一轮没有待处理的建议。已关注的人仍在「关注谁」里。"
                                  : "还没有扫描建议。开始扫描后，近期会话会出现在这里。")
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundStyle(.secondary)
                             if didCompleteScan {
                                 Button("查看已关注") {
@@ -175,9 +175,9 @@ struct WhitelistScanView: View {
                             HStack(spacing: 6) {
                                 Circle().fill(colorFor(category)).frame(width: 8, height: 8)
                                 Text(labelFor(category))
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .companionFont(size: 12, weight: .semibold)
                                 Text("(\(items.count))")
-                                    .font(.system(size: 11)).foregroundColor(.secondary)
+                                    .companionFont(size: 11).foregroundColor(.secondary)
                             }
                             VStack(spacing: 1) {
                                 ForEach(items) { item in resultRow(item) }
@@ -197,7 +197,7 @@ struct WhitelistScanView: View {
                             .cornerRadius(8)
                         } label: {
                             Text("已忽略 (\(dismissed.count))")
-                                .font(.system(size: 12, weight: .semibold))
+                                .companionFont(size: 12, weight: .semibold)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -212,12 +212,12 @@ struct WhitelistScanView: View {
                 CompanionDialog(title: "删除这条忽略记录？", onClose: { if !isRemovingDismissed { pendingRemoveDismissed = nil } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("删除后该联系人可能重新出现在以后的扫描建议中。")
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if statusIsError, let statusMessage {
                             Text(statusMessage)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -264,9 +264,9 @@ struct WhitelistScanView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(item.displayName)
-                        .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        .companionFont(size: 12, weight: .medium).lineLimit(1)
                     if item.isGroup {
-                        Text("群").font(.system(size: 10, weight: .semibold))
+                        Text("群").companionFont(size: 10, weight: .semibold)
                             .foregroundColor(.orange)
                             .padding(.horizontal, 4).padding(.vertical, 1)
                             .background(Color.orange.opacity(0.12)).cornerRadius(3)
@@ -274,9 +274,9 @@ struct WhitelistScanView: View {
                 }
                 HStack(spacing: 8) {
                     Text("\(item.recentCount) 条 / 45 天")
-                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .companionFont(size: 10).foregroundColor(.secondary)
                     Text(item.reason)
-                        .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                        .companionFont(size: 10).foregroundColor(.secondary).lineLimit(1)
                 }
             }
             Spacer()
@@ -307,9 +307,9 @@ struct WhitelistScanView: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.displayName.isEmpty ? entry.username : entry.displayName)
-                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    .companionFont(size: 12, weight: .medium).lineLimit(1)
                 Text("忽略于 \(entry.dismissedAt.formatted(.dateTime.month().day()))")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                    .companionFont(size: 10).foregroundColor(.secondary)
             }
             Spacer()
             Button {

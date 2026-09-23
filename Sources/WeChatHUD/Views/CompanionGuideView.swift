@@ -162,7 +162,7 @@ struct CompanionGuideView: View {
             HStack {
                 Text(title).foregroundStyle(.primary)
                 Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").companionFont(size: 11, weight: .semibold).foregroundStyle(.tertiary)
             }
             .padding(.vertical, 8)
         }

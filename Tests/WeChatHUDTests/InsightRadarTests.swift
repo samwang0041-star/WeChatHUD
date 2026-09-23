@@ -456,7 +456,9 @@ final class InsightRadarTests: XCTestCase {
             pendingAsks: pendingAsks,
             urgentAsks: urgentAsks,
             recalledMessages: 0,
-            recentDensityRatio: 0
+            recentDensityRatio: 0,
+            recentDailyAvg: 0,
+            overallDailyAvg: 1
         )
     }
 }

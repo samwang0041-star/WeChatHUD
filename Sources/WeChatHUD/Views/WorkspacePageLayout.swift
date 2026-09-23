@@ -65,6 +65,9 @@ extension View {
             .padding(.horizontal, WorkspacePage.inset)
             .padding(.bottom, WorkspacePage.bottomGap)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Scrolling pages fade into the fixed header / status bar
+            // instead of being cut by them (apple-design scroll edges).
+            .companionScrollEdgeFade(WorkspacePage.ground)
     }
 
     /// Opaque page ground in the shared colour. For pages whose content is not

@@ -13,36 +13,48 @@ final class CompanionMotionTests: XCTestCase {
         super.tearDown()
     }
 
-    func testAllAnimationsNilWhenReduceMotion() {
+    /// Reduce Motion is "gentler, not zero": everything that moves in space
+    /// snaps, while pure opacity swaps keep a short crossfade so state
+    /// replacements read as replacements rather than glitches.
+    func testSpatialMotionStaysOffWhenReduceMotion() {
         CompanionMotion.reduceMotionProvider = { true }
         XCTAssertTrue(CompanionMotion.reduceMotion)
-        XCTAssertNil(CompanionMotion.ease(0.2))
-        XCTAssertNil(CompanionMotion.ease())
-        XCTAssertNil(CompanionMotion.enter())
-        XCTAssertNil(CompanionMotion.exit())
         XCTAssertNil(CompanionMotion.easeOut(0.25))
         XCTAssertNil(CompanionMotion.spring)
         XCTAssertNil(CompanionMotion.springResponse(response: 0.6, dampingFraction: 0.8))
         XCTAssertNil(CompanionMotion.press())
-        XCTAssertNil(CompanionMotion.systemDefault)
         XCTAssertNil(CompanionMotion.hover())
         XCTAssertNil(CompanionMotion.islandExpand())
         XCTAssertNil(CompanionMotion.islandCollapse())
         XCTAssertNil(CompanionMotion.openMorph)
         XCTAssertNil(CompanionMotion.closeMorph)
-        XCTAssertNil(CompanionMotion.pageChange())
         XCTAssertNil(CompanionMotion.rowExpand())
         XCTAssertNil(CompanionMotion.islandRowExpand())
         XCTAssertNil(CompanionMotion.drawer())
-        XCTAssertNil(CompanionMotion.dialog())
-        XCTAssertNil(CompanionMotion.complete())
-        XCTAssertNil(CompanionMotion.saveReceipt())
         XCTAssertNil(CompanionMotion.pulse())
+        XCTAssertNil(CompanionMotion.staggerEntrance(index: 0))
+    }
+
+    func testContentCrossfadesSurviveReduceMotion() {
+        CompanionMotion.reduceMotionProvider = { true }
+        XCTAssertNotNil(CompanionMotion.reducedCrossfade())
+        XCTAssertEqual(CompanionMotion.reducedCrossfadeDuration, 0.12, accuracy: 0.001)
+        // Every content-swap token degrades to that one crossfade.
+        XCTAssertNotNil(CompanionMotion.ease(0.2))
+        XCTAssertNotNil(CompanionMotion.ease())
+        XCTAssertNotNil(CompanionMotion.enter())
+        XCTAssertNotNil(CompanionMotion.exit())
+        XCTAssertNotNil(CompanionMotion.systemDefault)
+        XCTAssertNotNil(CompanionMotion.pageChange())
+        XCTAssertNotNil(CompanionMotion.dialog())
+        XCTAssertNotNil(CompanionMotion.complete())
+        XCTAssertNotNil(CompanionMotion.saveReceipt())
     }
 
     func testAllAnimationsNonNilWhenMotionEnabled() {
         CompanionMotion.reduceMotionProvider = { false }
         XCTAssertFalse(CompanionMotion.reduceMotion)
+        XCTAssertNil(CompanionMotion.reducedCrossfade())
         XCTAssertNotNil(CompanionMotion.ease(0.2))
         XCTAssertNotNil(CompanionMotion.ease())
         XCTAssertNotNil(CompanionMotion.enter())

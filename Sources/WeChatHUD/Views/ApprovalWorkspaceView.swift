@@ -206,7 +206,7 @@ struct ApprovalWorkspaceView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Label(receipt.text,
                           systemImage: receipt.isFailure ? "exclamationmark.triangle" : "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .medium))
+                        .companionFont(size: 13, weight: .medium)
                         .foregroundStyle(receipt.isFailure ? .orange : CompanionPalette.jadeInk)
                     if receipt.offersUnsilence, let chatUsername = selected?.chatUsername {
                         Button("取消静音") {
@@ -247,12 +247,12 @@ struct ApprovalWorkspaceView: View {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { if !isSending { showSendConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: selected?.chatName ?? "", text: editedReply))
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let sendConfirmError {
                             Text(sendConfirmError)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -323,7 +323,7 @@ struct ApprovalWorkspaceView: View {
                             .accessibilityHint(isStartingAutopilot ? AutopilotStartCopy.startingHint : AutopilotStartCopy.startHint)
                     }
                 }
-                .font(.system(size: 12))
+                .companionFont(size: 12)
                 .foregroundStyle(.secondary)
             }
         }
@@ -374,9 +374,9 @@ struct ApprovalWorkspaceView: View {
                 if !humanNeededSends.isEmpty {
                     HStack {
                         Text(autoSendOn ? "需人工确认" : "等你确认")
-                            .font(.system(size: 12, weight: .semibold))
+                            .companionFont(size: 12, weight: .semibold)
                         Text("\(humanNeededSends.count)")
-                            .font(.system(size: 11, weight: .medium))
+                            .companionFont(size: 11, weight: .medium)
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -406,14 +406,14 @@ struct ApprovalWorkspaceView: View {
                             CompanionAvatar(name: entry.senderName, size: 32)
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(entry.senderName).font(.system(size: 13, weight: .semibold))
+                                    Text(entry.senderName).companionFont(size: 13, weight: .semibold)
                                     Spacer()
                                     Text(CommitmentPresentation.timeLabel(entry.createdAt))
-                                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                                        .companionFont(size: 11).foregroundStyle(.secondary)
                                 }
                                 statusLabel(entry)
                                 Text(entry.triggerText)
-                                    .font(.system(size: 12))
+                                    .companionFont(size: 12)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                                     .multilineTextAlignment(.leading)
@@ -434,11 +434,11 @@ struct ApprovalWorkspaceView: View {
     private func statusLabel(_ entry: AutopilotLogEntry) -> some View {
         if entry.riskLevel == .high || (entry.aiReasoning?.contains("转账") == true) {
             Text("涉及转账需人工处理")
-                .font(.system(size: 11, weight: .medium))
+                .companionFont(size: 11, weight: .medium)
                 .foregroundStyle(.orange)
         } else {
             Text(entry.action == .pending ? "待确认回复" : actionTitle(entry.action))
-                .font(.system(size: 11))
+                .companionFont(size: 11)
                 .foregroundStyle(.secondary)
         }
     }
@@ -462,7 +462,7 @@ struct ApprovalWorkspaceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(selected.chatName).workspaceTitle()
                         Text("收件人 \(selected.senderName) · \(MessageHelpers.isGroupChat(selected.chatUsername) ? "群聊" : "私聊")")
-                            .font(.system(size: 12))
+                            .companionFont(size: 12)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -475,9 +475,9 @@ struct ApprovalWorkspaceView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(selected.triggerText)
-                        .font(.system(size: 14))
+                        .companionFont(size: 14)
                     Text(CommitmentPresentation.timeLabel(selected.createdAt))
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundStyle(.secondary)
                 }
                 .padding(12)
@@ -487,12 +487,12 @@ struct ApprovalWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("拟回复", systemImage: "sparkles")
-                            .font(.system(size: 13, weight: .semibold))
+                            .companionFont(size: 13, weight: .semibold)
                         CompanionBadge(title: "AI 草稿", systemImage: "text.badge.star")
                     }
                     TextEditor(text: $editedReply)
                         .accessibilityLabel("拟回复")
-                        .font(.system(size: 14))
+                        .companionFont(size: 14)
                         .frame(minHeight: 90)
                         .scrollContentBackground(.hidden)
                     HStack {
@@ -500,12 +500,12 @@ struct ApprovalWorkspaceView: View {
                             Label(autoSendState == nil
                                 ? "暂时读不到自动发送设置，这条是否已经发出请在微信里核对。"
                                 : "当前未开启自动发送，这条回复尚未发出。", systemImage: "info.circle")
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Text(replyLengthHint)
-                            .font(.system(size: 11))
+                            .companionFont(size: 11)
                             .foregroundStyle(replyOverSuggestedLength ? Color.red : Color.secondary)
                     }
                 }
@@ -572,7 +572,7 @@ struct ApprovalWorkspaceView: View {
                    }
                 } else if selected.action == .failed {
                     Text("这条没有发出。先到微信里看过，再决定要不要重发。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                        Button("在微信中打开") {
@@ -593,7 +593,7 @@ struct ApprovalWorkspaceView: View {
                    }
                 } else if selected.action == .sent || selected.action == .vipNotified {
                     Text("要核对请到微信里看这条对话。")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                    Button("在微信中打开") {
                        monitor.openWeChatChat(selected.chatUsername)
@@ -620,24 +620,24 @@ struct ApprovalWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.chatName).workspaceTitle()
                     Text("收件人 \(item.senderName) · \(MessageHelpers.isGroupChat(item.chatUsername) ? "群聊" : "私聊")")
-                        .font(.system(size: 12))
+                        .companionFont(size: 12)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(item.manualOnlyReason == nil
                      ? "\(item.remainingSeconds) 秒后将尝试发送"
                      : "等你确认后才会发出")
-                    .font(.system(size: 12, design: .monospaced))
+                    .companionFont(size: 12, design: .monospaced)
                     .foregroundStyle(.secondary)
             }
             if let reason = item.manualOnlyReason {
                 Text(reason)
-                    .font(.system(size: 13))
+                    .companionFont(size: 13)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Text(item.replyText)
-                .font(.system(size: 14))
+                .companionFont(size: 14)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
@@ -768,20 +768,20 @@ private struct ApprovalPendingSendRow: View {
                         CompanionAvatar(name: item.senderName, size: 32)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                Text(item.chatName).font(.system(size: 13, weight: .semibold))
+                                Text(item.chatName).companionFont(size: 13, weight: .semibold)
                                 Spacer()
                                 Text("\(item.remainingSeconds) 秒")
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .companionFont(size: 11, design: .monospaced)
                                     .foregroundStyle(.secondary)
                             }
                             Text(item.replyText)
-                                .font(.system(size: 12))
+                                .companionFont(size: 12)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                             if let reason = item.manualOnlyReason {
                                 Text(reason)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .companionFont(size: 11, weight: .medium)
                                     .foregroundStyle(.orange)
                                     .lineLimit(2)
                             }
@@ -820,7 +820,7 @@ private struct ApprovalPendingSendRow: View {
             }
             if let error {
                 Text(error)
-                    .font(.system(size: 11))
+                    .companionFont(size: 11)
                     .foregroundStyle(.orange)
                     .transition(.companionStatusReveal)
             }
@@ -838,12 +838,12 @@ private struct ApprovalPendingSendRow: View {
                 CompanionDialog(title: CompanionProductCopy.sendConfirmTitle, onClose: { if !busy { showConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(CompanionProductCopy.sendConfirmMessage(name: item.chatName, text: item.replyText))
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let error {
                             Text(error)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)

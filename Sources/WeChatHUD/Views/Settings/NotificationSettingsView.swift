@@ -28,7 +28,7 @@ struct NotificationSettingsView: View {
                     ForEach(Array(Set([3, 5, 8, 15, config.durationSeconds])).sorted(), id: \.self) { seconds in
                         Text("\(seconds) 秒").tag(seconds)
                     }
-                }.labelsHidden().frame(width: 100)
+                }.labelsHidden().companionScaledWidth(100)
             }
             SettingsRowDivider()
             VStack(alignment: .leading, spacing: 8) {

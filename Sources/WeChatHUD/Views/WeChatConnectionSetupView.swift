@@ -229,7 +229,7 @@ struct WeChatConnectionSetupView: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: connected ? "checkmark.bubble.fill" : "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: WorkspaceType.display, weight: .medium))
+                    .companionFont(size: WorkspaceType.display, weight: .medium)
                     .foregroundStyle(CompanionPalette.accent)
                     .frame(width: 48, height: 48)
                     .background(CompanionPalette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
@@ -345,12 +345,12 @@ struct WeChatConnectionSetupView: View {
                 CompanionDialog(title: "更换微信账号？", onClose: { if !isChangingAccount { showChangeAccountConfirm = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("更换后只读取新账号的聊天。已整理的待办、草稿和关注名单按账号分开，不会混用旧账号的操作目标。")
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let errorMessage {
                             Text(errorMessage)
-                                .font(.system(size: 13))
+                                .companionFont(size: 13)
                                 .foregroundStyle(.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.companionStatusReveal)
@@ -385,7 +385,7 @@ struct WeChatConnectionSetupView: View {
                 CompanionDialog(title: connectionCopy.consentTitle, onClose: { if !isStartingPreparation { showPreparationConsent = false } }) {
                     VStack(alignment: .leading, spacing: 16) {
                         Text(connectionCopy.consentMessage)
-                            .font(.system(size: 13))
+                            .companionFont(size: 13)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack {

@@ -57,7 +57,14 @@ struct InboxView: View {
 
     @State private var undoItem: InboxItem? = nil
     @State private var undoAction: String = ""  // "已忽略" or "已贪睡" or "已静音"
-    @State private var undoTimer: Timer? = nil
+    /// The undo window countdown. Pauseable: a lock or display sleep must not
+    /// silently eat the user's chance to take back a dismissal.
+    @State private var undoDeadline: PauseableDeadline? = nil
+    /// Pointer and keyboard focus hold the same clock through one rule: being
+    /// on (or in) the bar means reading it. Two separate suspend/resume hooks
+    /// would cut each other's holds short.
+    @State private var undoHovering = false
+    @FocusState private var undoFocused: Bool
     @State private var showHandled = false
     @State private var showAllPassiveUpdates = false
     @State private var restoringHandledID: String?
@@ -232,7 +239,7 @@ if hiddenPassiveCount > 0 || showAllPassiveUpdates {
     private var islandBrandStrip: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .companionFont(size: 13, weight: .semibold)
                 .foregroundStyle(CompanionPalette.islandMint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(CompanionProductCopy.brandName)
@@ -354,7 +361,7 @@ Button {
     private func barAction(glyph: String, title: String, ink: Color) -> some View {
         HStack(spacing: 5) {
             Image(systemName: glyph)
-                .font(.system(size: 11))
+                .companionFont(size: 11)
             Text(title)
                 .companionFont(size: 11)
         }
@@ -441,7 +448,7 @@ Button {
 
                 Button(action: { panelState.showDetail() }) {
                     Image(systemName: "gearshape.fill")
-                        .font(.system(size: 11))
+                        .companionFont(size: 11)
                         .foregroundColor(IslandInk.tertiary)
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
@@ -482,17 +489,18 @@ Button {
             Spacer()
             Button("撤销") {
                 guard monitor.restoreInboxItem(item) else { return }
+                CompanionMotion.performCommitTick()
                 withMotion(CompanionMotion.exit()) {
                     undoItem = nil
                     panelState.islandSnoozeUndo = nil
                 }
-                undoTimer?.invalidate()
-                undoTimer = nil
+                undoDeadline?.cancel()
             }
             .islandMicro()
             .buttonStyle(IslandRowButtonStyle())
             .foregroundColor(CompanionPalette.islandMint)
             .accessibilityLabel("撤销")
+            .focused($undoFocused)
         }
         .padding(.horizontal, IslandMetrics.sectionInset)
         .padding(.vertical, 7)
@@ -501,6 +509,21 @@ Button {
         // slide was a layout-property animation and left/entered a different
         // edge from the toast that hangs off this same island.
         .transition(.islandDetailReveal)
+        // Pointing at the bar — or sitting on its button with the keyboard —
+        // means reading it: freeze the undo window until both are clear.
+        .onHover { hovering in
+            undoHovering = hovering
+            applyUndoClockHold()
+        }
+        .onChange(of: undoFocused) { applyUndoClockHold() }
+    }
+
+    private func applyUndoClockHold() {
+        if undoHovering || undoFocused {
+            undoDeadline?.suspend()
+        } else {
+            undoDeadline?.resume()
+        }
     }
 
     // MARK: - Handled Section
@@ -517,7 +540,7 @@ Button {
                        .islandMicro()
                         .foregroundColor(IslandInk.meta)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .companionFont(size: 10, weight: .semibold)
                         .foregroundColor(IslandInk.quaternary)
 .rotationEffect(.degrees(showHandled ? 180 : 0))
                         .companionAnimation(CompanionMotion.islandRowExpand(), value: showHandled)
@@ -572,7 +595,7 @@ Button {
                             .controlSize(.mini)
                     } else {
                         Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 10, weight: .medium))
+                            .companionFont(size: 10, weight: .medium)
                             .foregroundColor(IslandInk.tertiary)
                     }
                 }
@@ -798,13 +821,12 @@ run: {
     }
 
     private func scheduleUndoExpiry() {
-        undoTimer?.invalidate()
-        undoTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { _ in
-            Task { @MainActor in
+        if undoDeadline == nil {
+            undoDeadline = PauseableDeadline {
                 withMotion(CompanionMotion.exit()) { undoItem = nil }
-                undoTimer = nil
             }
         }
+        undoDeadline?.start(3)
     }
 }
 
@@ -1014,7 +1036,7 @@ Button {
                 .buttonStyle(IslandRowButtonStyle())
                 Spacer()
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .companionFont(size: 10, weight: .semibold)
                     .foregroundStyle(IslandInk.quaternary)
             }
             if expanded {
